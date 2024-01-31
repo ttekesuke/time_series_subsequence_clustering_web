@@ -1,0 +1,30 @@
+version: '3'
+services:
+ db:
+   image: postgres:14.3
+   ports:
+     - 5432:5432
+   volumes:
+     - ./data:/var/lib/postgresql/data
+   environment:
+     POSTGRES_USER: ${DB_USER}
+     POSTGRES_PASSWORD: ${DB_PASSWORD}
+   restart: always
+
+ web:
+   build: 
+     context: web
+     dockerfile: Dockerfile
+   command: bash -c "rm -f tmp/pids/server.pid && bundle exec rails s -p 3000 -b '0.0.0.0'"
+   volumes:
+     - ./web:/app
+   environment:
+     DB_HOST: ${DB_HOST}
+     DB_USER: ${DB_USER}
+     DB_PASSWORD: ${DB_PASSWORD}
+     EDITOR: vim
+     RAILS_ENV: development
+   ports:
+     - "3000:3000"
+   depends_on:
+     - db

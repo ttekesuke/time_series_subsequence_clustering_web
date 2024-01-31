@@ -1,0 +1,8 @@
+= javascript_include_tag "https://www.gstatic.com/charts/loader.js"
+/ = form_with method: :post, url:  tops_path do |form|
+/   = form.text_area :time_series
+/   = form.submit
+div(id='timeline' styls='height: 70vh;')
+div(id='timeseries' styls='height: 20vh;')
+
+
