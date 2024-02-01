@@ -6,10 +6,10 @@ class TopsController < ApplicationController
   end
 
   def create
-    data_length = 200
-    data = Array.new(data_length){ |e| rand(1..12) }
-    # data =[1,2,3,4,1,2,3,4,1,2,3,4,1,2,3,4,1,2,3,4,]
-    # data_length = data.length
+    # data_length = 200
+    # data = Array.new(data_length){ |e| rand(1..12) }
+    data = params[:time_series].split(',').map{|elm|elm.to_i}
+    data_length = data.length
     p data
     min_window_size = 2
     current_window_size = min_window_size
@@ -73,8 +73,6 @@ class TopsController < ApplicationController
           cluster_merge_counter += 1
         end
       end
-      p 'current_window_clusters'
-      p current_window_clusters
       # そのwindow_sizeにおけるクラスタリング結果を保存
       all_window_clusters << current_window_clusters
       next_window_clusters = Marshal.load(Marshal.dump(current_window_clusters))
@@ -107,8 +105,8 @@ class TopsController < ApplicationController
   
     all_window_clusters.each_with_index do |window_clusters, window_cluster_index|
       window_clusters.each_with_index do |cluster, cluster_index|
-        cluster[:subsequences].each_with_index do |subsequence, subsequence_index|
-          @clustered_subsequences << [(window_cluster_index + 2).to_s, cluster_index.to_s, subsequence[:start_index] * 1000, (subsequence[:end_index] + 1) * 1000] 
+        cluster[:subsequences].each do |subsequence|
+          @clustered_subsequences << [(window_cluster_index + min_window_size).to_s, cluster_index.to_s(26).tr("0-9a-p", "a-z") + (data[subsequence[:start_index]..subsequence[:end_index]]).to_s, subsequence[:start_index] * 1000, (subsequence[:end_index] + 1) * 1000] 
         end
       end
     end

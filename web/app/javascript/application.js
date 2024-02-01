@@ -3,7 +3,7 @@ const timeSeries = gon.timeSeries
 
 google.charts.load("current", {packages:["timeline", "corechart"]})
 google.charts.setOnLoadCallback(drawTimeline)
-google.charts.setOnLoadCallback(drawTimeSeries)
+google.charts.setOnLoadCallback(drawTimeSeries(timeSeries))
 
 function drawTimeline() {
   const container = document.getElementById('timeline')
@@ -19,7 +19,6 @@ function drawTimeline() {
   chart.draw(dataTable, options)
   google.visualization.events.addListener(chart, 'onmouseover', (e) => {
     onSelectedSubsequence(e)
-
   })
 }
 
@@ -43,72 +42,43 @@ function onSelectedSubsequence(selected) {
   timeSeriesWithoutHeader.forEach((elm, index) => {
     subsequencesInSameCluster.push(subsequencesIndexes.includes(index) ? elm[1] : null)
   })
-  console.log(subsequencesInSameCluster)
   timeSeries.forEach((elm, index) => {
     if(elm.length > 2){
       elm.pop()
     }
     elm.push(subsequencesInSameCluster[index])
   })
-  redrawTimeSeries(timeSeries)
+  drawTimeSeries(timeSeries)()
 
 }
-function redrawTimeSeries(timeSeries){
-  const options = {
-    'height': 350, 
-    'width': 1850, 
-    isStacked: false, 
-    legend: 'none', 
-    series: [
-      {areaOpacity : 0},
-      {areaOpacity : 0},
-    ],
-    interpolateNulls:false,
-    chartArea:{
-      left:30,
-      top:0,
-      width:'100%',
-      height:'100%',
-      backgroundColor:{
-        fill: 'white',
-        fillOpacity: 100,
-        strokeWidth: 10
+function drawTimeSeries(timeSeries){
+  return function(){
+    const options = {
+      'height': 350, 
+      'width': 1850, 
+      isStacked: false, 
+      legend: 'none', 
+      series: [
+        {areaOpacity : 0},
+        {areaOpacity : 0},
+      ],
+      interpolateNulls:false,    
+      chartArea:{
+        left:30,
+        top:0,
+        width:'100%',
+        height:'100%',
+        backgroundColor:{
+          fill: 'white',
+          fillOpacity: 100,
+          strokeWidth: 10
+        }
       }
     }
+    const data = google.visualization.arrayToDataTable(
+      timeSeries,
+    )
+    const chart = new google.visualization.SteppedAreaChart(document.getElementById('timeseries'));
+    chart.draw(data , options)
   }
-  const data = google.visualization.arrayToDataTable(
-    timeSeries,
-  )
-  const chart = new google.visualization.SteppedAreaChart(document.getElementById('timeseries'));
-  chart.draw(data , options)
-}
-
-function drawTimeSeries() {
-  const options = {
-    'height': 350, 
-    'width': 1850, 
-    isStacked: false, 
-    legend: 'none', 
-    series: [
-      {areaOpacity : 0},
-      {areaOpacity : 0},
-    ],
-    interpolateNulls:false,    
-    chartArea:{
-      left:30,
-      top:0,
-      width:'100%',
-      height:'100%',
-      backgroundColor:{
-        fill: 'white',
-        fillOpacity: 100,
-        strokeWidth: 10
-      }
-    }
-  }
-  const data = google.visualization.arrayToDataTable(
-    timeSeries,
-  )
-  const chart = new google.visualization.SteppedAreaChart(document.getElementById('timeseries'));
-  chart.draw(data , options)
 }
