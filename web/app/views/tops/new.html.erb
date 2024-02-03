@@ -1,0 +1,50 @@
+<%= javascript_include_tag "https://www.gstatic.com/charts/loader.js" %>
+<div id="app" v-cloak>
+  <v-app id="inspire">
+    <v-app-bar app>
+      <v-toolbar-title>Timeseries subsequence-clustering</v-toolbar-title>
+      <v-dialog width="1200">
+        <template v-slot:activator="{ props }">
+          <v-btn v-bind="props" text="set data"> </v-btn>
+        </template>
+
+        <template v-slot:default="{ isActive }">
+          <v-form fast-fail @submit.prevent method="post" action="/tops">
+            <v-card title="please set timeseries (like 1,2,3,4,5)">
+              <v-card-text>
+                <v-textarea v-model='timeSeries' label="timeseries" name="time_series"></v-textarea>
+              </v-card-text>
+              <v-card-actions>
+                <v-spacer></v-spacer>
+                <v-btn @click="submit">Submit</v-btn>        
+              </v-card-actions>
+            </v-card>
+          </v-form>
+        </template>
+      </v-dialog>
+    </v-app-bar>
+
+    <v-main>
+      <!-- メインコンテンツ  -->
+      <v-row no-gutters>
+        <v-col>
+          <div id='timeline' styls='height: 70vh;'></div>
+        </v-col>
+      </v-row>
+      <v-row no-gutters>
+        <v-col>
+          <div id='timeseries' styls='height: 20vh;'></div>
+        </v-col>
+      </v-row>
+
+    </v-main>
+  </v-app>
+</div>
+<%# /   = form_with method: :post, url:  tops_path do |form|
+/     = text_area_tag :time_series, params[:time_series]
+/     = form.submit
+
+/     app[]
+
+/     
+/     div() %>
