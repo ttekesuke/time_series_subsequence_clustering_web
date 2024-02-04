@@ -102,7 +102,7 @@ class Api::Web::TopsController < ApplicationController
     all_window_clusters.each_with_index do |window_clusters, window_cluster_index|
       window_clusters.each_with_index do |cluster, cluster_index|
         cluster[:subsequences].each do |subsequence|
-          @clustered_subsequences << [(window_cluster_index + min_window_size).to_s, cluster_index.to_s(26).tr("0-9a-p", "a-z") + (data[subsequence[:start_index]..subsequence[:end_index]]).to_s, subsequence[:start_index] * 1000, (subsequence[:end_index] + 1) * 1000] 
+          @clustered_subsequences << [(window_cluster_index + min_window_size).to_s, cluster_index.to_s(26).tr("0-9a-p", "a-z"), subsequence[:start_index] * 1000, (subsequence[:end_index] + 1) * 1000] 
         end
       end
     end

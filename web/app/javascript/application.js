@@ -1,14 +1,17 @@
-const { createApp } = Vue;
+const { createApp, reactive, toRefs  } = Vue;
 const { createVuetify } = Vuetify;
 
 const vuetify = createVuetify()
 const app = createApp({
   setup(){
-    return {
-      timeSeries: null,
+    const state = reactive({
+      timeSeries: '',
       clusteredSubsequences: null,
-      timeSeriesChart: null
-    }
+      timeSeriesChart: null,
+      dialog: false
+    })
+
+    return { ...toRefs(state) };
   },
   mounted() {
     google.charts.load("current", {packages:["timeline", "corechart"]})
@@ -24,6 +27,7 @@ const app = createApp({
 
          this.drawTimeline()
          this.drawTimeSeries()
+         this.dialog = false
       })
       .catch(error => {
          console.log(error)
