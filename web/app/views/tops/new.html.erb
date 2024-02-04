@@ -1,19 +1,80 @@
 <%= javascript_include_tag "https://www.gstatic.com/charts/loader.js" %>
 <div id="app" v-cloak>
   <v-app>
-    <v-app-bar app clipped-lefts>
+    <v-app-bar app>
       <v-toolbar-title>Timeseries subsequence-clustering</v-toolbar-title>
-      <v-btn v-bind="props" text="set data"> </v-btn>
-      <v-dialog width="1200" v-model="dialog" activator="parent">
-        <v-form fast-fail @submit.prevent method="post" action="/tops">
-          <v-card title="please set timeseries (like 1,2,3,4,5)">
+      <v-btn>set data</v-btn>
+      <v-dialog width="1600" v-model="dialog" activator="parent">
+        <v-form fast-fail @submit.prevent method="post" action="/tops" ref="form">
+          <v-card>
             <v-card-text>
-              <v-textarea v-model='timeSeries' label="timeseries" name="time_series"></v-textarea>
+              <v-row>
+                <v-col cols="10">
+                  <v-textarea 
+                  placeholder="please set timeseries (like 1,2,3,4,5)" 
+                  required 
+                  v-model='timeSeries' 
+                  label="timeseries" 
+                  name="time_series"
+                  rows="20"
+                ></v-textarea>
+                </v-col>
+                <v-col cols="2">
+                  <v-row>
+                    <v-col>                   
+                      <v-card>
+                        <v-card-title>
+                          generate randoms
+                        </v-card-title>
+                        <v-card-text>
+                          <v-row>
+                            <v-col>
+                              <v-text-field
+                                label="min"
+                                type="number"
+                                v-model="random.min"
+                                min="1"
+                              ></v-text-field>
+                            </v-col>
+                          </v-row>
+                          <v-row>
+                            <v-col>
+                              <v-text-field
+                                label="max"
+                                type="number"
+                                v-model="random.max"
+                                :min="random.min"
+                              ></v-text-field>
+                            </v-col>
+                          </v-row>
+                          <v-row>
+                            <v-col>                  
+                              <v-text-field
+                                label="length"
+                                type="number"
+                                v-model="random.length"
+                                min="3"
+                                max="300"
+                              ></v-text-field>
+                            </v-col>
+                          </v-row>
+                          <v-row>
+                            <v-col>              
+                              <v-btn @click="setRandoms">set randoms</v-btn>      
+                            </v-col>
+                          </v-row>
+                        </v-card-text>
+                      </v-card>
+                    </v-col>
+                  </v-row>
+                  <v-row>
+                    <v-col>              
+                      <v-btn @click="submit" :loading="loading">Submit</v-btn>        
+                    </v-col>
+                  </v-row>                  
+                </v-col>
+              </v-row>
             </v-card-text>
-            <v-card-actions>
-              <v-spacer></v-spacer>
-              <v-btn @click="submit">Submit</v-btn>        
-            </v-card-actions>
           </v-card>
         </v-form>
       </v-dialog>

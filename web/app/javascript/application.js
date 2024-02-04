@@ -5,10 +5,16 @@ const vuetify = createVuetify()
 const app = createApp({
   setup(){
     const state = reactive({
-      timeSeries: '',
+      timeSeries: null,
       clusteredSubsequences: null,
       timeSeriesChart: null,
-      dialog: false
+      dialog: false,
+      loading: false,
+      random: {
+        min: null,
+        max: null,
+        length: null
+      }
     })
 
     return { ...toRefs(state) };
@@ -18,16 +24,18 @@ const app = createApp({
   },
   methods: {
     submit () {
+      this.loading = true
+      this.$refs.form.validate()
       let data = { time_series: this.timeSeries }
       axios.post('/api/web/tops', data)
       .then(response => {
          console.log(response)
          this.clusteredSubsequences = response.data.clusteredSubsequences
          this.timeSeriesChart = response.data.timeSeries
-
+         this.loading = false
+         this.dialog = false
          this.drawTimeline()
          this.drawTimeSeries()
-         this.dialog = false
       })
       .catch(error => {
          console.log(error)
@@ -105,6 +113,9 @@ const app = createApp({
       )
       const chart = new google.visualization.SteppedAreaChart(document.getElementById('timeseries'));
       chart.draw(data , options)
+    },
+    setRandoms(){
+      this.timeSeries = [...Array(parseInt(this.random.length))].map(() => Math.floor(Math.random() * (parseInt(this.random.max) - parseInt(this.random.min)+ 1)) + parseInt(this.random.min)).join(',')
     }
   }
   
