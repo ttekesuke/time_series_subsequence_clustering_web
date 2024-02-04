@@ -45,7 +45,7 @@ const app = createApp({
       const container = document.getElementById('timeline')
       const chart = new google.visualization.Timeline(container)
       const dataTable = new google.visualization.DataTable()
-      const options = {'height': 500, 'width': 1850}
+      const options = {'height': 500, 'width': window.innerWidth}
       dataTable.addColumn({ type: 'string', id: 'WindowSize' })
       dataTable.addColumn({ type: 'string', id: 'Cluster' })
       dataTable.addColumn({ type: 'number', id: 'Start' })
@@ -88,7 +88,7 @@ const app = createApp({
     drawTimeSeries(){
       const options = {
         'height': 350, 
-        'width': 1850, 
+        'width': window.innerWidth, 
         isStacked: false, 
         legend: 'none', 
         series: [
