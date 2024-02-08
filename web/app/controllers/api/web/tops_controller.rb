@@ -2,23 +2,19 @@ class Api::Web::TopsController < ApplicationController
   include StatisticsCalculator
 
   def create
-    # data_length = 200
-    # data = Array.new(data_length){ |e| rand(1..12) }
     data = params[:time_series].split(',').map{|elm|elm.to_i}
     data_length = data.length
-    p data
     min_window_size = 2
     current_window_size = min_window_size
     cluster_id_counter = 0
     all_window_clusters = []
-    tolerance_diff_sitance_between_average_and_latest = 1
+    tolerance_diff_distance = 1
     start_indexes = 0.step(data_length - min_window_size, 1).to_a
   
     # 部分列を生成
     current_window_subsequences = generate_subsequences(current_window_size, start_indexes)
   
-    # データの半分になるまで部分列を伸ばして調査
-    while current_window_size <= data.length / 2 && current_window_subsequences.length > 0 do
+    while current_window_subsequences.length > 0 do
       p "current_window_size:#{current_window_size}"
       min_distances = []
       cluster_merge_counter = 0
@@ -54,9 +50,11 @@ class Api::Web::TopsController < ApplicationController
         end
   
         min_distances << min_distance
+
         
-        # 許容値となる距離を超えたら結合終了
-        if cluster_merge_counter > 1 && min_distances.last - mean(min_distances[0...min_distances.length - 1]) > tolerance_diff_sitance_between_average_and_latest
+        # 過去結合してきた最短距離群の最短と、今結合した最短距離との差が規定値×window_sizeを超えると結合終了
+        current_tolerance_diff_distance = tolerance_diff_distance * current_window_size / 2.to_d
+        if (cluster_merge_counter == 0 && min_distances.last > current_tolerance_diff_distance) || (cluster_merge_counter > 1 && min_distances.last - min_distances.min > current_tolerance_diff_distance) 
           tolerance_over = true
         else
           current_window_clusters.delete_if { |c| c[:id] == closest_pair[0][:id] || c[:id] == closest_pair[1][:id] }
