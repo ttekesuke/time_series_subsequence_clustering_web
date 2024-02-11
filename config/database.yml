@@ -2,18 +2,17 @@ default: &default
   adapter: postgresql
   encoding: unicode
   pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
-  host: <%= ENV["DB_HOST"] %>
-  username: <%= ENV["DB_USER"] %>
-  password: <%= ENV["DB_PASSWORD"] %>
+  host: db
+  username: <%= ENV["POSTGRES_USER"] %>
+  password: <%= ENV["POSTGRES_PASSWORD"] %>
+  database: <%= ENV["POSTGRES_NAME"] %>
 
 development:
   <<: *default
-  database: app_development
 
 test:
   <<: *default
-  database: app_test
 
 production:
   <<: *default
-  database: app_production
+  url: <%= ENV["DATABASE_URL"] %>
