@@ -24,7 +24,6 @@ class Api::Web::TopsController < ApplicationController
       current_window_subsequences.each do |subsequence|
         current_window_clusters << {
           id: cluster_id_counter, 
-          average: data[subsequence[:start_index]..subsequence[:end_index]], 
           subsequences: [subsequence]
         }
         cluster_id_counter += 1
@@ -35,32 +34,37 @@ class Api::Web::TopsController < ApplicationController
         min_distance = Float::INFINITY
         closest_pair = nil
         current_window_clusters.combination(2).each do |c1, c2|
-          distance = euclidean_distance(c1[:average], c2[:average])
+          sum_distances = 0
+          
+          c1[:subsequences].each do |c1_subsequence|
+            c2[:subsequences].each do |c2_subsequence|
+              sum_distances += euclidean_distance(data[c1_subsequence[:start_index]..c1_subsequence[:end_index]], data[c2_subsequence[:start_index]..c2_subsequence[:end_index]])
+            end
+          end
           # 部分列が完全一致なら結合して終わり
-          if distance == 0.0
-            min_distance = distance
+          if sum_distances == 0.0
+            min_distance = sum_distances
             closest_pair = [c1, c2]
             break
           end
           # 最短になったら更新
-          if distance < min_distance
-            min_distance = distance
+          if sum_distances < min_distance
+            min_distance = sum_distances
             closest_pair = [c1, c2]
           end
         end
   
         min_distances << min_distance
 
-        
-        # 過去結合してきた最短距離群の最短と、今結合した最短距離との差が規定値×window_sizeを超えると結合終了
-        current_tolerance_diff_distance = tolerance_diff_distance * current_window_size / 2.to_d
+        combination_length = closest_pair[0][:subsequences].length * closest_pair[1][:subsequences].length
+        # 許容値値を超えると結合終了
+        current_tolerance_diff_distance = tolerance_diff_distance * current_window_size / combination_length.to_d
         if (cluster_merge_counter == 0 && min_distances.last > current_tolerance_diff_distance) || (cluster_merge_counter > 1 && min_distances.last - min_distances.min > current_tolerance_diff_distance) 
           tolerance_over = true
         else
           current_window_clusters.delete_if { |c| c[:id] == closest_pair[0][:id] || c[:id] == closest_pair[1][:id] }
           current_window_clusters << {
             id: cluster_id_counter, 
-            average: closest_pair.map{|c|c[:average]}.transpose.map {|x| x.inject(:+) / x.size.to_f },
             subsequences: closest_pair[0][:subsequences] + closest_pair[1][:subsequences]
           }
           cluster_id_counter += 1
