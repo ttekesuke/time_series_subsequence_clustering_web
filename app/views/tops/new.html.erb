@@ -3,13 +3,11 @@
   <v-app>
     <v-app-bar app>
       <v-toolbar-title>Time series subsequence-clustering</v-toolbar-title>
-      <v-dialog width="1000" v-model="dialog" activator="parent">
-      </v-dialog>
       <v-btn @click="infoDialog = true">
         <v-icon icon="$info"></v-icon>
         Info
       </v-btn>
-      <v-dialog width="500" v-model="infoDialog">
+      <v-dialog width="1000" v-model="infoDialog" >
         <v-card>
           <v-card-title class="headline">Information</v-card-title>
           <v-card-text>
@@ -30,15 +28,15 @@
             <a href='https://tekesuke1986.tumblr.com' target='_blank'>Takuya SHIMIZU</a></v-icon></p>
 
           </v-card-text>
-        </v-card>
+        </v-card>        
       </v-dialog>
-      <v-btn>set data</v-btn>
-      <v-dialog width="1600" v-model="dialog" activator="parent">
+      <v-btn @click="dialog = true">set data</v-btn>
+      <v-dialog width="1000" v-model="dialog" >
         <v-form v-model='valid' fast-fail @submit.prevent method="post" action="/tops" ref="form">
           <v-card>
             <v-card-text>
               <v-row>
-                <v-col cols="10">
+                <v-col cols="9">
                   <v-textarea 
                   placeholder="please set timeseries (like 1,2,3,4,5)" 
                   required 
@@ -49,7 +47,7 @@
                   :rules="timeSeriesRules"
                 ></v-textarea>
                 </v-col>
-                <v-col cols="2">
+                <v-col cols="3">
                   <v-row>
                     <v-col>                   
                       <v-card>
