@@ -5,7 +5,7 @@
       <v-toolbar-title>Time series subsequence-clustering</v-toolbar-title>
       <v-btn>set data</v-btn>
       <v-dialog width="1600" v-model="dialog" activator="parent">
-        <v-form fast-fail @submit.prevent method="post" action="/tops" ref="form">
+        <v-form v-model='valid' fast-fail @submit.prevent method="post" action="/tops" ref="form">
           <v-card>
             <v-card-text>
               <v-row>
@@ -17,6 +17,7 @@
                   label="timeseries" 
                   name="time_series"
                   rows="20"
+                  :rules="timeSeriesRules"
                 ></v-textarea>
                 </v-col>
                 <v-col cols="2">
@@ -54,13 +55,13 @@
                                 type="number"
                                 v-model="random.length"
                                 min="3"
-                                max="300"
+                                max="200"
                               ></v-text-field>
                             </v-col>
                           </v-row>
                           <v-row>
-                            <v-col>              
-                              <v-btn @click="setRandoms">set randoms</v-btn>      
+                            <v-col>   
+                              <v-btn :disabled='!random.max || !random.min || !random.length' @click="setRandoms">set randoms</v-btn>      
                             </v-col>
                           </v-row>
                         </v-card-text>
@@ -69,7 +70,7 @@
                   </v-row>
                   <v-row>
                     <v-col>              
-                      <v-btn @click="submit" :loading="loading">Submit</v-btn>        
+                      <v-btn :disabled='!valid' @click="submit" :loading="loading">Submit</v-btn>        
                     </v-col>
                   </v-row>                  
                 </v-col>

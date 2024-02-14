@@ -1,4 +1,4 @@
-const { createApp, reactive, toRefs  } = Vue;
+const { createApp, reactive, toRefs } = Vue;
 const { createVuetify } = Vuetify;
 
 const vuetify = createVuetify()
@@ -14,7 +14,14 @@ const app = createApp({
         min: null,
         max: null,
         length: null
-      }
+      },
+      valid: false,      
+      timeSeriesRules: [
+        v => !!v || 'timeseries is required',
+        v => (v && v.split(',').every(n => !isNaN(n))) || 'timeseries must be comma separated numbers',
+        v => (v && v.split(',').length >= 2) || 'timeseries must have at least 2 numbers',
+        v => (v && v.split(',').length <= 200) || 'timeseries must have no more than 200 numbers'
+      ],      
     })
 
     return { ...toRefs(state) };
@@ -25,7 +32,6 @@ const app = createApp({
   methods: {
     submit () {
       this.loading = true
-      this.$refs.form.validate()
       let data = { time_series: this.timeSeries }
       axios.post('/api/web/tops', data)
       .then(response => {
