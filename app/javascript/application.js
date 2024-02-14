@@ -9,6 +9,7 @@ const app = createApp({
       clusteredSubsequences: null,
       timeSeriesChart: null,
       dialog: false,
+      infoDialog: false,
       loading: false,
       random: {
         min: null,
