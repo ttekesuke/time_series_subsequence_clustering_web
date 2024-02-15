@@ -1,14 +1,14 @@
-class Api::Web::TopsController < ApplicationController
+class Api::Web::TimeSeriesAnalysisController < ApplicationController
   include StatisticsCalculator
 
   def create
-    data = params[:time_series].split(',').map{|elm|elm.to_i}
+    data = time_series_analysis_params[:time_series].split(',').map{|elm|elm.to_i}
     data_length = data.length
     min_window_size = 2
     current_window_size = min_window_size
     cluster_id_counter = 0
     all_window_clusters = []
-    tolerance_diff_distance = 1
+    tolerance_diff_distance = time_series_analysis_params[:tolerance_diff_distance].to_d
     start_indexes = 0.step(data_length - min_window_size, 1).to_a
   
     # 部分列を生成
@@ -58,7 +58,8 @@ class Api::Web::TopsController < ApplicationController
 
         combination_length = closest_pair[0][:subsequences].length * closest_pair[1][:subsequences].length
         # 許容値値を超えると結合終了
-        current_tolerance_diff_distance = tolerance_diff_distance * current_window_size / combination_length.to_d
+        current_tolerance_diff_distance = tolerance_diff_distance * current_window_size / combination_length.to_d / 2
+        
         if (cluster_merge_counter == 0 && min_distances.last > current_tolerance_diff_distance) || (cluster_merge_counter > 1 && min_distances.last - min_distances.min > current_tolerance_diff_distance) 
           tolerance_over = true
         else
@@ -118,6 +119,13 @@ class Api::Web::TopsController < ApplicationController
   private
     def generate_subsequences(window_size, start_indexes)
       start_indexes.map{|start_index|{start_index: start_index, end_index: start_index + window_size - 1}}
+    end
+
+    def time_series_analysis_params
+      params.require(:time_series_analysis).permit(
+        :time_series,
+        :tolerance_diff_distance
+      )
     end
 
 end

@@ -101,6 +101,18 @@
                   </v-row>
                   <v-row>
                     <v-col>              
+                      <v-text-field
+                        label="tolerance diff distance"
+                        type="number"
+                        v-model="toleranceDiffDistance"
+                        name="tolerance_diff_distance"
+                        min="1"
+                      ></v-text-field>
+
+                    </v-col>
+                  </v-row>                  
+                  <v-row>
+                    <v-col>              
                       <v-btn :disabled='!valid' @click="submit" :loading="loading">Submit</v-btn>        
                     </v-col>
                   </v-row>                  

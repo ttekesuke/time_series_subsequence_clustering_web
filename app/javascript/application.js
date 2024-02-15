@@ -23,6 +23,7 @@ const app = createApp({
         v => (v && v.split(',').length >= 2) || 'timeseries must have at least 2 numbers',
         v => (v && v.split(',').length <= 200) || 'timeseries must have no more than 200 numbers'
       ],      
+      toleranceDiffDistance: 1
     })
 
     return { ...toRefs(state) };
@@ -33,8 +34,8 @@ const app = createApp({
   methods: {
     submit () {
       this.loading = true
-      let data = { time_series: this.timeSeries }
-      axios.post('/api/web/tops', data)
+      let data = { time_series_analysis: {time_series: this.timeSeries, tolerance_diff_distance: this.toleranceDiffDistance }}
+      axios.post('/api/web/time_series_analysis', data)
       .then(response => {
          console.log(response)
          this.clusteredSubsequences = response.data.clusteredSubsequences
