@@ -83,11 +83,10 @@ class Api::Web::TimeSeriesAnalysisController < ApplicationController
         end
   
         min_distances << min_distance
-  
         combination_length = closest_pair[0][1].length * closest_pair[1][1].length
         current_tolerance_diff_distance = tolerance_diff_distance * current_window_size / combination_length.to_d
-  
-        if (cluster_merge_counter == 0 && min_distances.last > current_tolerance_diff_distance) || (cluster_merge_counter > 1 && min_distances.last - min_distances.min > current_tolerance_diff_distance)
+        gap_last_and_min = cluster_merge_counter == 0 ? min_distances.last : min_distances.last - min_distances.min
+        if gap_last_and_min > current_tolerance_diff_distance
           tolerance_over = true
         else
           cluster_id_counter += 1
