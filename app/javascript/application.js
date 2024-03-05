@@ -19,8 +19,8 @@ const app = createApp({
       valid: false,      
       timeSeriesRules: [
         v => !!v || 'timeseries is required',
-        v => (v && v.split(',').every(n => !isNaN(n))) || 'timeseries must be comma separated numbers',
-        v => (v && v.split(',').length >= 2) || 'timeseries must have at least 2 numbers',
+        v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'timeseries must be comma separated numbers',
+        v => (v && v.split(',').filter(n => n !== "").length >= 2) || 'timeseries must have at least 2 numbers',
         v => (v && v.split(',').length <= 200) || 'timeseries must have no more than 200 numbers'
       ],      
       toleranceDiffDistance: 1
