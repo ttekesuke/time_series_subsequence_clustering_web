@@ -58,31 +58,31 @@ module TimeSeriesAnalyser
         closest_pair = nil
   
         clusters.to_a.combination(2).each do |c1, c2|
-          sum_distances = 0
-  
+          distances = []  
           c1[1].each do |c1_subsequence|
             c2[1].each do |c2_subsequence|
-              sum_distances += euclidean_distance(data[c1_subsequence[:start_index]..c1_subsequence[:end_index]], data[c2_subsequence[:start_index]..c2_subsequence[:end_index]])
+              distances << euclidean_distance(data[c1_subsequence[:start_index]..c1_subsequence[:end_index]], data[c2_subsequence[:start_index]..c2_subsequence[:end_index]])
             end
           end
+
+          average_distances = mean(distances)
   
-          if sum_distances == 0.0
-            min_distance = sum_distances
+          if average_distances == 0.0
+            min_distance = average_distances
             closest_pair = [c1, c2]
             break
           end
   
-          if sum_distances < min_distance
-            min_distance = sum_distances
+          if average_distances < min_distance
+            min_distance = average_distances
             closest_pair = [c1, c2]
           end
         end
   
         min_distances << min_distance
         combination_length = closest_pair[0][1].length * closest_pair[1][1].length
-        current_tolerance_diff_distance = tolerance_diff_distance * current_window_size / combination_length.to_d
         gap_last_and_min = cluster_merge_counter == 0 ? min_distances.last : min_distances.last - min_distances.min
-        if gap_last_and_min > current_tolerance_diff_distance
+        if gap_last_and_min > tolerance_diff_distance
           tolerance_over = true
         else
           cluster_id_counter += 1
