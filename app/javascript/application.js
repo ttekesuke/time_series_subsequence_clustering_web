@@ -8,7 +8,8 @@ const app = createApp({
       timeSeries: null,
       clusteredSubsequences: null,
       timeSeriesChart: null,
-      dialog: false,
+      analyseTimeseriesDialog: false,
+      generateTimeseriesDialog: false,
       infoDialog: false,
       loading: false,
       random: {
@@ -16,6 +17,7 @@ const app = createApp({
         max: null,
         length: null
       },
+      complexityTransition: null,
       valid: false,      
       timeSeriesRules: [
         v => !!v || 'timeseries is required',
@@ -32,23 +34,6 @@ const app = createApp({
     google.charts.load("current", {packages:["timeline", "corechart"]})
   },
   methods: {
-    submit () {
-      this.loading = true
-      let data = { time_series_analysis: {time_series: this.timeSeries, tolerance_diff_distance: this.toleranceDiffDistance }}
-      axios.post('/api/web/time_series_analysis', data)
-      .then(response => {
-         console.log(response)
-         this.clusteredSubsequences = response.data.clusteredSubsequences
-         this.timeSeriesChart = response.data.timeSeries
-         this.loading = false
-         this.dialog = false
-         this.drawTimeline()
-         this.drawTimeSeries()
-      })
-      .catch(error => {
-         console.log(error)
-      })
-    },
     drawTimeline() {
       const container = document.getElementById('timeline')
       const chart = new google.visualization.Timeline(container)
@@ -124,7 +109,35 @@ const app = createApp({
     },
     setRandoms(){
       this.timeSeries = [...Array(parseInt(this.random.length))].map(() => Math.floor(Math.random() * (parseInt(this.random.max) - parseInt(this.random.min)+ 1)) + parseInt(this.random.min)).join(',')
-    }
+    },
+    analyseTimeseries() {
+      this.loading = true
+      let data = { analyse: {time_series: this.timeSeries, tolerance_diff_distance: this.toleranceDiffDistance }}
+      axios.post('/api/web/time_series/analyse', data)
+      .then(response => {
+         console.log(response)
+         this.clusteredSubsequences = response.data.clusteredSubsequences
+         this.timeSeriesChart = response.data.timeSeries
+         this.loading = false
+         this.analyseTimeseriesDialog = false
+         this.drawTimeline()
+         this.drawTimeSeries()
+      })
+      .catch(error => {
+         console.log(error)
+      })
+    },
+    generateTimeseries() {
+      this.loading = true
+      let data = { generate: {complexity_transition: this.complexityTransition }}
+      axios.post('/api/web/time_series/generate', data)
+      .then(response => {
+         console.log(response)
+      })
+      .catch(error => {
+         console.log(error)
+      })
+    },    
   }
   
 })

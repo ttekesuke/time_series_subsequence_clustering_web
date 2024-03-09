@@ -34,9 +34,9 @@
           </v-card-text>
         </v-card>        
       </v-dialog>
-      <v-btn @click="dialog = true">set data</v-btn>
-      <v-dialog width="1000" v-model="dialog" >
-        <v-form v-model='valid' fast-fail @submit.prevent method="post" action="/tops" ref="form">
+      <v-btn @click="analyseTimeseriesDialog = true">analyse</v-btn>
+      <v-dialog width="1000" v-model="analyseTimeseriesDialog" >
+        <v-form v-model='valid' fast-fail ref="form">
           <v-card>
             <v-card-text>
               <v-row>
@@ -108,12 +108,11 @@
                         name="tolerance_diff_distance"
                         min="1"
                       ></v-text-field>
-
                     </v-col>
                   </v-row>                  
                   <v-row>
                     <v-col>              
-                      <v-btn :disabled='!valid' @click="submit" :loading="loading">Submit</v-btn>        
+                      <v-btn :disabled='!valid' @click="analyseTimeseries" :loading="loading">Submit</v-btn>        
                     </v-col>
                   </v-row>                  
                 </v-col>
@@ -122,6 +121,33 @@
           </v-card>
         </v-form>
       </v-dialog>
+      <v-btn @click="generateTimeseriesDialog = true">generate</v-btn>
+      <v-dialog width="1000" v-model="generateTimeseriesDialog" >
+        <v-form v-model='valid' fast-fail ref="form">
+          <v-card>
+            <v-card-text>
+              <v-row>
+                <v-col cols="12">
+                  <v-textarea 
+                  placeholder="please set complexity transition (like 1,2,3,4,5)" 
+                  required 
+                  v-model='complexityTransition' 
+                  label="complexityTransition" 
+                  name="complexity_transition"
+                  rows="20"
+                  :rules="timeSeriesRules"
+                ></v-textarea>
+                </v-col>             
+              </v-row>
+              <v-row>
+                <v-col>              
+                  <v-btn :disabled='!valid' @click="generateTimeseries" :loading="loading">Submit</v-btn>        
+                </v-col>
+              </v-row>
+            </v-card-text>
+          </v-card>
+        </v-form>
+      </v-dialog>      
     </v-app-bar>
     <v-main>
       <!-- メインコンテンツ  -->
