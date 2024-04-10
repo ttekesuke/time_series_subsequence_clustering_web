@@ -5,7 +5,7 @@ Rails.application.routes.draw do
   namespace :api do
     namespace :web do
       namespace :time_series do
-        post 'analysde'
+        post 'analyse'
         post 'generate'
       end
     end

@@ -17,6 +17,11 @@ const app = createApp({
         max: null,
         length: null
       },
+      generate: {
+        rangeMin: null,
+        rangeMax: null,
+        length: null
+      },
       complexityTransition: null,
       valid: false,      
       timeSeriesRules: [

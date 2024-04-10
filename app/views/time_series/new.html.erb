@@ -127,7 +127,7 @@
           <v-card>
             <v-card-text>
               <v-row>
-                <v-col cols="12">
+                <v-col cols="9">
                   <v-textarea 
                   placeholder="please set complexity transition (like 1,2,3,4,5)" 
                   required 
@@ -137,12 +137,56 @@
                   rows="20"
                   :rules="timeSeriesRules"
                 ></v-textarea>
-                </v-col>             
-              </v-row>
-              <v-row>
-                <v-col>              
-                  <v-btn :disabled='!valid' @click="generateTimeseries" :loading="loading">Submit</v-btn>        
-                </v-col>
+                </v-col>  
+                <v-col cols="3">
+                  <v-row>
+                    <v-col>                   
+                      <v-card>
+                        <v-card-title>
+                          available range
+                        </v-card-title>
+                        <v-card-text>
+                          <v-row>
+                            <v-col>
+                              <v-text-field
+                                label="min"
+                                type="number"
+                                v-model="generate.rangeMin"
+                                min="1"
+                              ></v-text-field>
+                            </v-col>
+                          </v-row>
+                          <v-row>
+                            <v-col>
+                              <v-text-field
+                                label="max"
+                                type="number"
+                                v-model="generate.availableMax"
+                                :min="generate.rangeMin"
+                              ></v-text-field>
+                            </v-col>
+                          </v-row>
+                          <v-row>
+                            <v-col>                  
+                              <v-text-field
+                                label="length"
+                                type="number"
+                                v-model="generate.length"
+                                min="3"
+                                max="2400"
+                              ></v-text-field>
+                            </v-col>
+                          </v-row>
+                        </v-card-text>
+                      </v-card>
+                    </v-col>
+                  </v-row>
+                  <v-row>
+                    <v-col>              
+                      <v-btn :disabled='!valid' @click="generateTimeseries" :loading="loading">Submit</v-btn>        
+                    </v-col>
+                  </v-row>                   
+                </v-col>                           
               </v-row>
             </v-card-text>
           </v-card>
