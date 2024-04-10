@@ -1,5 +1,7 @@
 module TimeSeriesAnalyser
   include StatisticsCalculator
+  include Utility
+
   def clustering_subsequences_all_timeseries(data, tolerance_diff_distance)
     min_window_size = 2
     cluster_id_counter = 0
@@ -106,4 +108,109 @@ module TimeSeriesAnalyser
 
     return clustered_subsequences, reached_to_max_window_size
   end
+
+  def clustering_subsequences_incremental(data, tolerance_diff_distance)
+    min_window_size = 2
+    cluster_id_counter = 0
+    current_window_size = min_window_size
+    tasks = []
+    clusters = {
+      min_window_size => {
+        cluster_id_counter => [{s: 0, e: min_window_size - 1}]
+      }
+    }
+
+    data.each_with_index do |elm, data_index|
+      # 最小幅+1から検知開始
+      if data_index > 1
+        new_tasks = []
+        # タスクがあれば処理する
+        tasks.each do |current_task|        
+          # 比較対象の部分列を延伸する
+          extended_target = {s: current_task[2][:s], e: current_task[2][:e] + 1}
+
+          # 延伸比較対象の部分列群を取り出す その際、比較対象の部分列もクラスタに入っているので除外する
+          current_clustered_subsequences = clusters[current_task[0]][current_task[1]].filter{|subsequence|subsequence[:s] != current_task[2][:s]}
+          extended_current_clustered_subsequences = current_clustered_subsequences.map{|subsequence| {s: subsequence[:s], e: subsequence[:e] + 1}}
+          similar_subsequences = []
+          extended_current_clustered_subsequences.each do |old_subsequence|
+            distance = euclidean_distance(
+              data[old_subsequence[:s]..old_subsequence[:e]],
+              data[extended_target[:s]..extended_target[:e]]
+            )
+            # 許容値以下なら更に延伸し比較する
+            if distance <= tolerance_diff_distance
+              similar_subsequences << old_subsequence
+            end
+          end
+
+          if similar_subsequences.length > 0
+            # 比較対象の部分列も追加する
+            similar_subsequences << extended_target
+            cluster_id_counter += 1
+            if clusters.key?(current_task[0] + 1)
+              clusters[current_task[0] + 1][cluster_id_counter] = similar_subsequences
+            else
+              clusters[current_task[0] + 1] = {cluster_id_counter => similar_subsequences}
+            end
+
+            # 長さ、結合したクラスタid、ターゲットの部分列を次回のタスクに追加する
+            new_tasks << [current_task[0] + 1, cluster_id_counter, extended_target]
+          end
+        end
+
+        # 次回のタスクに入れ替える
+        tasks = new_tasks
+
+        # 最短・最新の部分列のクラスタリング開始
+        current_subsequence = {s: data_index - 1, e: data_index}
+        min_distance = Float::INFINITY
+        closest_cluster_id = nil   
+        # 長さ2の古い部分列群を取り出す
+        clusters[current_window_size].each do |cluster_id, old_subsequences|
+          # クラスタ内の距離を累積する
+          distances_in_cluster = []
+          old_subsequences.each do |old_subsequence|
+            distances_in_cluster << euclidean_distance(
+              data[old_subsequence[:s]..old_subsequence[:e]],
+              data[current_subsequence[:s]..current_subsequence[:e]]
+            )
+          end
+          # 平均を得る
+          average_distances = mean(distances_in_cluster)
+          if average_distances == 0.0
+            min_distance = average_distances
+            closest_cluster_id = cluster_id
+            break
+          end
+
+          if average_distances < min_distance
+            min_distance = average_distances
+            closest_cluster_id = cluster_id
+          end
+        end
+        # 全て取り出して、最短が許容値以下の場合結合する
+        if min_distance <= tolerance_diff_distance
+          clusters[current_window_size][closest_cluster_id] << current_subsequence
+          # 長さ、結合したクラスタid、ターゲットの部分列を保持する
+          tasks << [current_window_size, closest_cluster_id, current_subsequence]
+        # 許容値以上の場合は別クラスタに追加
+        else
+          cluster_id_counter += 1
+          clusters[current_window_size][cluster_id_counter] = [current_subsequence]
+        end
+      end
+    end
+
+    clustered_subsequences = []
+    clusters.each do |window_size, cluster|
+      cluster.each do |cluster_id, subsequences|
+        subsequences.each do |subsequence|
+          clustered_subsequences << [window_size.to_s, cluster_id.to_s(26).tr("0-9a-p", "a-z"), subsequence[:s] * 1000, (subsequence[:e] + 1) * 1000] 
+        end
+      end
+    end
+    return clustered_subsequences, false
+  end
+
 end
