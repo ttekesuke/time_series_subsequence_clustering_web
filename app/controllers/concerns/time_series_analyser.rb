@@ -5,7 +5,6 @@ module TimeSeriesAnalyser
   def clustering_subsequences_incremental(data, tolerance_diff_distance)
     min_window_size = 2
     cluster_id_counter = 0
-    current_window_size = min_window_size
     tasks = []
 
     # clustersの構成
@@ -36,9 +35,9 @@ module TimeSeriesAnalyser
       # 最小幅+1から検知開始
       if data_index > 1
         new_tasks = []
-        # タスクがあれば処理する
+        # タスク(延伸された類似部分列が結合候補のクラスタ内の部分列群と似てればクラスタへ結合)があれば処理する
         tasks.each do |task|     
-          # 比較対象の部分列（延伸済）
+          # クラスタに結合予定の最新部分列（延伸済）
           current_subsequence = task[1]
 
           # task[0]は
@@ -48,19 +47,19 @@ module TimeSeriesAnalyser
           # }
           has_children = !task[0][:c].empty?
 
-          # 子クラスタがあればそれと比較
+          # 子クラスタがあれば、最新部分列の結合予定先となる
           if has_children
-            past_clusters = task[0][:c]
-            past_clusters = past_clusters.transform_values do |cluster|
+            will_merge_clusters = task[0][:c]
+            will_merge_clusters = will_merge_clusters.transform_values do |cluster|
               {
                 s: cluster[:s].filter{|subsequence|subsequence[0] != task[1][0]},
                 c: cluster[:c]
               }
             end
           else
-            # なければ類似していた前回長さの部分列群を延伸して比較
+            # なければ、最新部分列が前回（延伸前に）結合したクラスタの部分列群を延伸して比較
             cluster_id_counter += 1
-            past_clusters = {
+            will_merge_clusters = {
               cluster_id_counter => {
                 s: task[0][:s].filter{|subsequence|subsequence[0] != task[1][0]}.map{|subsequence|[subsequence[0], subsequence[1] + 1]},
                 c: {}
@@ -69,9 +68,9 @@ module TimeSeriesAnalyser
           end
 
           # 結合候補のクラスタを一つずつ処理                    
-          past_clusters.each do |cluster_id, cluster|
-            # 候補側の部分列群を取り出す
+          will_merge_clusters.each do |cluster_id, cluster|
             similar_subsequences = []
+            # 候補側の部分列群を取り出し、最新部分列と距離比較           
             cluster[:s].each do |past_subsequence|
               distance = euclidean_distance(
                 data[past_subsequence[0]..past_subsequence[1]],
@@ -88,16 +87,18 @@ module TimeSeriesAnalyser
               # 結合候補クラスタ内の全ての部分列群が、比較対象部分列との比較が許容値以下なら既存クラスタに追加
               if similar_subsequences.length == cluster[:s].length
                 next_cluster_id = cluster_id
-                # 部分列を追加
+                # 部分列群に追加
                 cluster[:s] << current_subsequence
 
-                # 追加
+                # クラスタを更新または追加
                 task[0][:c][next_cluster_id] = cluster
 
               # 結合候補クラスタ内の一部の部分列群と比較対象部分列が許容値以下なら新しいクラスタを作成
               else
+                # 類似していた、結合候補クラスタの類似部分列群に、最新部分列を追加
                 similar_subsequences << current_subsequence
                 cluster_id_counter += 1
+                # 新しいクラスタを作成
                 next_cluster_id = cluster_id_counter
                 new_cluster = {
                   s: similar_subsequences,
@@ -105,10 +106,12 @@ module TimeSeriesAnalyser
                 }
                 # 新しいクラスタを親クラスタに追加
                 task[0][:c][cluster_id_counter] = new_cluster
-                # 候補クラスタ側の部分列群に追加する
               end
-              extended_current_subsequence = [current_subsequence[0], current_subsequence[1] + 1]
-              new_tasks << [task[0][:c][next_cluster_id], extended_current_subsequence]
+              # 次回の結合用に最新部分列を延伸する
+              if data_index != data.length - 1
+                extended_current_subsequence = [current_subsequence[0], current_subsequence[1] + 1]
+                new_tasks << [task[0][:c][next_cluster_id], extended_current_subsequence]
+              end
             end
           end
         end
@@ -116,13 +119,14 @@ module TimeSeriesAnalyser
         # 次回のタスクに入れ替える
         tasks = new_tasks
 
-        # 最短・最新の部分列のクラスタリング開始
+        # 取り出した要素とその一つ前の要素からなる、最短・最新の部分列を、
+        # 同じ長さの過去のクラスタへ結合する処理開始
         current_subsequence = [data_index - 1, data_index]
         min_distance = Float::INFINITY
         closest_cluster_id = nil   
-        # 長さ2の過去の部分列群を取り出す
+        # 最短の過去の部分列群を取り出す。clustersの直下のクラスタ群は全て同じ最短の部分列群を持つクラスタ群。
         clusters.each do |cluster_id, cluster|
-          # クラスタ内の距離を累積する
+          # クラスタ内の部分列群と最短・最新の部分列との距離を累積する
           distances_in_cluster = []
           cluster[:s].each do |past_subsequence|
             distances_in_cluster << euclidean_distance(
@@ -132,12 +136,15 @@ module TimeSeriesAnalyser
           end
           # 平均を得る
           average_distances = mean(distances_in_cluster)
+
+          # 平均が0なら部分列が完全一致しているのでそこに結合して終了
           if average_distances == 0.0
             min_distance = average_distances
             closest_cluster_id = cluster_id
             break
           end
 
+          # 他のクラスタより最短になったら更新
           if average_distances < min_distance
             min_distance = average_distances
             closest_cluster_id = cluster_id
@@ -148,14 +155,14 @@ module TimeSeriesAnalyser
         if min_distance <= tolerance_diff_distance
           # クラスタ結合する
           clusters[closest_cluster_id][:s] << current_subsequence
-          # まだ次の要素があれば
+          # 元の時系列データから取り出した要素が最後の要素でなければ、
           if data_index != data.length - 1
-            # 最新最短の部分列を延伸
+            # 最新・最短の部分列の結尾を延伸
             extended_current_subsequence = [current_subsequence[0], current_subsequence[1] + 1]
-            # 親クラスタと延伸部分列を送る
+            # 結合したクラスタと延伸部分列をタスクに追加
             tasks << [clusters[closest_cluster_id], extended_current_subsequence]
           end
-        # 許容値以上の場合は別クラスタを作成
+        # 許容値以上の場合は別クラスタを作成し、タスクには追加しない
         else
           cluster_id_counter += 1
           clusters[cluster_id_counter] = {
@@ -166,6 +173,7 @@ module TimeSeriesAnalyser
       end
     end
 
+    # 完成した木構造のクラスタを、表示用にフラットな構造に変換する。
     stack = clusters.map { |cluster_id, cluster| [min_window_size, cluster_id, cluster] }
     result = []
   
@@ -174,6 +182,7 @@ module TimeSeriesAnalyser
       current[:s].each do |subsequence|
         result << [window_size.to_s, cluster_id.to_s(26).tr("0-9a-p", "a-z"), subsequence[0] * 1000, (subsequence[1] + 1) * 1000]
       end
+      # 子クラスタがあればスタックに追加
       current[:c].each do |child_id, child_cluster|
         stack.push([window_size + 1, child_id, child_cluster])
       end
