@@ -5,11 +5,10 @@ class Api::Web::TimeSeriesController < ApplicationController
     data = analyse_params[:time_series].split(',').map{|elm|elm.to_i}
     tolerance_diff_distance = analyse_params[:tolerance_diff_distance].to_d
 
-    clustered_subsequences, reached_to_max_window_size = clustering_subsequences_all_timeseries(data, tolerance_diff_distance)
+    clustered_subsequences = clustering_subsequences_incremental(data, tolerance_diff_distance)
     render json: {
       clusteredSubsequences: clustered_subsequences,
       timeSeries: [['index', 'allValue']] + data.map.with_index{|elm, index|[index.to_s, elm]},
-      reachedToMaxWindowSize: reached_to_max_window_size
     }
   end
 

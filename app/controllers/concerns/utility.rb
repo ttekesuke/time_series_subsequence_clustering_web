@@ -41,4 +41,8 @@ module Utility
   def round_array(d)
     d.map{|e|e.round(ROUNDING_DIGIT).to_f}
   end
+
+  def generate_random_array(size, lower_bound, upper_bound)
+    Array.new(size) { rand(lower_bound..upper_bound) }
+  end
 end
