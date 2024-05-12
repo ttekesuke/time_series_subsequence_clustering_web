@@ -94,4 +94,23 @@ module StatisticsCalculator
     compare_original_and_shifted_data(d) {|d1, d2| cosine_similarity(d1, d2)}
   end
 
+  # 平均時系列データを計算する
+  def calculate_average_time_series(data)
+    # 要素数の取得
+    length = data.first.size
+    # 各時系列データが同じ要素数を持つことを確認
+    unless data.all? { |series| series.size == length }
+      raise 'All time series must have the same number of elements.'
+    end
+
+    # 各インデックスにおける平均を計算
+    average_series = Array.new(length, 0)
+    data.each do |series|
+      series.each_with_index do |value, index|
+        average_series[index] += value.to_f / data.size
+      end
+    end
+
+    average_series
+  end
 end

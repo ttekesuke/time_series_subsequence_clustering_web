@@ -2,11 +2,7 @@ module TimeSeriesAnalyser
   include StatisticsCalculator
   include Utility
 
-  def clustering_subsequences_incremental(data, tolerance_diff_distance)
-    min_window_size = 2
-    cluster_id_counter = 0
-    tasks = []
-
+  def clustering_subsequences_incremental(data, tolerance_diff_distance, elm, data_index, min_window_size, clusters, cluster_id_counter, tasks, reached_to_end)
     # clustersの構成
     # clusters = {
     #   cluster_id1 => {
@@ -24,155 +20,160 @@ module TimeSeriesAnalyser
     #   }
     # }
 
-    clusters = {
-      cluster_id_counter => {
-        s: [[0, min_window_size - 1]],
-        c: {}
-      }
-    }
+    new_tasks = []
+    # タスク(延伸された類似部分列が結合候補のクラスタ内の部分列群と似てればクラスタへ結合)があれば処理する
+    tasks.each do |task|    
+      # クラスタに結合予定の最新部分列（延伸済）
+      current_subsequence = task[1]
 
-    data.each_with_index do |elm, data_index|
-      # 最小幅+1から検知開始
-      if data_index > 1
-        new_tasks = []
-        # タスク(延伸された類似部分列が結合候補のクラスタ内の部分列群と似てればクラスタへ結合)があれば処理する
-        tasks.each do |task|     
-          # クラスタに結合予定の最新部分列（延伸済）
-          current_subsequence = task[1]
+      # task[0]はclusters内部の当該クラスタにアクセスするキーが入ってる
+      current_cluster = dig_clusters_by_keys(clusters, task[0])
+      # {
+      #   s: [[si, ei],..],
+      #   c: {ci: {..}}
+      # }
+      has_children = !current_cluster[:c].empty?
 
-          # task[0]は
-          # {
-          #   s: [[si, ei],..],
-          #   c: {ci: {..}}
-          # }
-          has_children = !task[0][:c].empty?
-
-          # 子クラスタがあれば、最新部分列の結合予定先となる
-          if has_children
-            will_merge_clusters = task[0][:c]
-            will_merge_clusters = will_merge_clusters.transform_values do |cluster|
-              {
-                s: cluster[:s].filter{|subsequence|subsequence[0] != task[1][0]},
-                c: cluster[:c]
-              }
-            end
-          else
-            # なければ、最新部分列が前回（延伸前に）結合したクラスタの部分列群を延伸して比較
-            cluster_id_counter += 1
-            will_merge_clusters = {
-              cluster_id_counter => {
-                s: task[0][:s].filter{|subsequence|subsequence[0] != task[1][0]}.map{|subsequence|[subsequence[0], subsequence[1] + 1]},
-                c: {}
-              }
-            }
-          end
-
-          # 結合候補のクラスタを一つずつ処理                    
-          will_merge_clusters.each do |cluster_id, cluster|
-            similar_subsequences = []
-            # 候補側の部分列群を取り出し、最新部分列と距離比較           
-            cluster[:s].each do |past_subsequence|
-              distance = euclidean_distance(
-                data[past_subsequence[0]..past_subsequence[1]],
-                data[current_subsequence[0]..current_subsequence[1]]
-              )
-              # 許容値以下なら結合予定とする
-              if distance <= tolerance_diff_distance
-                similar_subsequences << past_subsequence
-              end
-            end
-
-            # 一つでも許容値以下のペアがあれば結合処理
-            if similar_subsequences.length > 0
-              # 結合候補クラスタ内の全ての部分列群が、比較対象部分列との比較が許容値以下なら既存クラスタに追加
-              if similar_subsequences.length == cluster[:s].length
-                next_cluster_id = cluster_id
-                # 部分列群に追加
-                cluster[:s] << current_subsequence
-
-                # クラスタを更新または追加
-                task[0][:c][next_cluster_id] = cluster
-
-              # 結合候補クラスタ内の一部の部分列群と比較対象部分列が許容値以下なら新しいクラスタを作成
-              else
-                # 類似していた、結合候補クラスタの類似部分列群に、最新部分列を追加
-                similar_subsequences << current_subsequence
-                cluster_id_counter += 1
-                # 新しいクラスタを作成
-                next_cluster_id = cluster_id_counter
-                new_cluster = {
-                  s: similar_subsequences,
-                  c: {}
-                }
-                # 新しいクラスタを親クラスタに追加
-                task[0][:c][cluster_id_counter] = new_cluster
-              end
-              # 次回の結合用に最新部分列を延伸する
-              if data_index != data.length - 1
-                extended_current_subsequence = [current_subsequence[0], current_subsequence[1] + 1]
-                new_tasks << [task[0][:c][next_cluster_id], extended_current_subsequence]
-              end
-            end
-          end
+      # 子クラスタがあれば、最新部分列の結合予定先となる
+      if has_children
+        will_merge_clusters = current_cluster[:c]
+        will_merge_clusters = will_merge_clusters.transform_values do |cluster|
+          {
+            s: cluster[:s].filter{|subsequence|subsequence[0] != task[1][0]},
+            c: cluster[:c]
+          }
         end
-
-        # 次回のタスクに入れ替える
-        tasks = new_tasks
-
-        # 取り出した要素とその一つ前の要素からなる、最短・最新の部分列を、
-        # 同じ長さの過去のクラスタへ結合する処理開始
-        current_subsequence = [data_index - 1, data_index]
-        min_distance = Float::INFINITY
-        closest_cluster_id = nil   
-        # 最短の過去の部分列群を取り出す。clustersの直下のクラスタ群は全て同じ最短の部分列群を持つクラスタ群。
-        clusters.each do |cluster_id, cluster|
-          # クラスタ内の部分列群と最短・最新の部分列との距離を累積する
-          distances_in_cluster = []
-          cluster[:s].each do |past_subsequence|
-            distances_in_cluster << euclidean_distance(
-              data[past_subsequence[0]..past_subsequence[1]],
-              data[current_subsequence[0]..current_subsequence[1]]
-            )
-          end
-          # 平均を得る
-          average_distances = mean(distances_in_cluster)
-
-          # 平均が0なら部分列が完全一致しているのでそこに結合して終了
-          if average_distances == 0.0
-            min_distance = average_distances
-            closest_cluster_id = cluster_id
-            break
-          end
-
-          # 他のクラスタより最短になったら更新
-          if average_distances < min_distance
-            min_distance = average_distances
-            closest_cluster_id = cluster_id
-          end
-        end
-
-        # 最短が許容値以下の場合、
-        if min_distance <= tolerance_diff_distance
-          # クラスタ結合する
-          clusters[closest_cluster_id][:s] << current_subsequence
-          # 元の時系列データから取り出した要素が最後の要素でなければ、
-          if data_index != data.length - 1
-            # 最新・最短の部分列の結尾を延伸
-            extended_current_subsequence = [current_subsequence[0], current_subsequence[1] + 1]
-            # 結合したクラスタと延伸部分列をタスクに追加
-            tasks << [clusters[closest_cluster_id], extended_current_subsequence]
-          end
-        # 許容値以上の場合は別クラスタを作成し、タスクには追加しない
-        else
-          cluster_id_counter += 1
-          clusters[cluster_id_counter] = {
-            s: [current_subsequence],
+      else
+        # なければ、最新部分列が前回（延伸前に）結合したクラスタの部分列群を延伸して比較
+        cluster_id_counter += 1
+        will_merge_clusters = {
+          cluster_id_counter => {
+            s: current_cluster[:s].filter{|subsequence|subsequence[0] != task[1][0]}.map{|subsequence|[subsequence[0], subsequence[1] + 1]},
             c: {}
           }
+        }
+      end
+
+      # 結合候補のクラスタを一つずつ処理                    
+      will_merge_clusters.each do |cluster_id, cluster|
+        similar_subsequences = []
+        # 候補側の部分列群を取り出し、最新部分列と距離比較           
+        cluster[:s].each do |past_subsequence|
+          distance = euclidean_distance(
+            data[past_subsequence[0]..past_subsequence[1]],
+            data[current_subsequence[0]..current_subsequence[1]]
+          )
+          # 許容値以下なら結合予定とする
+          if distance <= tolerance_diff_distance
+            similar_subsequences << past_subsequence
+          end
+        end
+
+        # 一つでも許容値以下のペアがあれば結合処理
+        if similar_subsequences.length > 0
+          # 結合候補クラスタ内の全ての部分列群が、比較対象部分列との比較が許容値以下なら既存クラスタに追加
+          if similar_subsequences.length == cluster[:s].length
+            next_cluster_id = cluster_id
+            # 部分列群に追加
+            cluster[:s] << current_subsequence
+            # クラスタを更新または追加
+            current_cluster[:c][next_cluster_id] = cluster
+          # 結合候補クラスタ内の一部の部分列群と比較対象部分列が許容値以下なら新しいクラスタを作成
+          else
+            # 類似していた、結合候補クラスタの類似部分列群に、最新部分列を追加
+            similar_subsequences << current_subsequence
+            cluster_id_counter += 1
+            # 新しいクラスタを作成
+            next_cluster_id = cluster_id_counter
+            new_cluster = {
+              s: similar_subsequences,
+              c: {}
+            }
+            # 新しいクラスタを親クラスタに追加
+            current_cluster[:c][cluster_id_counter] = new_cluster
+          end
+          # 次回の結合用に最新部分列を延伸する
+          if !reached_to_end
+            extended_current_subsequence = [current_subsequence[0], current_subsequence[1] + 1]
+            new_tasks << [task[0] + [next_cluster_id], extended_current_subsequence]
+          end
         end
       end
     end
 
+    # 次回のタスクに入れ替える
+    tasks = new_tasks
+
+    # 取り出した要素とその一つ前の要素からなる、最短・最新の部分列を、
+    # 同じ長さの過去のクラスタへ結合する処理開始
+    current_subsequence = [data_index - 1, data_index]
+    min_distance = Float::INFINITY
+    closest_cluster_id = nil   
+    # 最短の過去の部分列群を取り出す。clustersの直下のクラスタ群は全て同じ最短の部分列群を持つクラスタ群。
+    clusters.each do |cluster_id, cluster|
+      # クラスタ内の部分列群と最短・最新の部分列との距離を累積する
+      distances_in_cluster = []
+      cluster[:s].each do |past_subsequence|
+        distances_in_cluster << euclidean_distance(
+          data[past_subsequence[0]..past_subsequence[1]],
+          data[current_subsequence[0]..current_subsequence[1]]
+        )
+      end
+      # 平均を得る
+      average_distances = mean(distances_in_cluster)
+
+      # 平均が0なら部分列が完全一致しているのでそこに結合して終了
+      if average_distances == 0.0
+        min_distance = average_distances
+        closest_cluster_id = cluster_id
+        break
+      end
+
+      # 他のクラスタより最短になったら更新
+      if average_distances < min_distance
+        min_distance = average_distances
+        closest_cluster_id = cluster_id
+      end
+    end
+
+    # 最短が許容値以下の場合、
+    if min_distance <= tolerance_diff_distance
+      # クラスタ結合する
+      clusters[closest_cluster_id][:s] << current_subsequence
+      # 元の時系列データから取り出した要素が最後の要素でなければ、
+      if !reached_to_end
+        # 最新・最短の部分列の結尾を延伸
+        extended_current_subsequence = [current_subsequence[0], current_subsequence[1] + 1]
+        # 結合したクラスタと延伸部分列をタスクに追加
+        tasks << [[closest_cluster_id], extended_current_subsequence]
+      end
+    # 許容値以上の場合は別クラスタを作成し、タスクには追加しない
+    else
+      cluster_id_counter += 1
+      clusters[cluster_id_counter] = {
+        s: [current_subsequence],
+        c: {}
+      }
+    end
+    return clusters, tasks, cluster_id_counter
+  end
+
+  def dig_clusters_by_keys(clusters, keys)
+    current = clusters
+    keys.each_with_index do |key, index|
+      # 最後のキーの場合は:cを介さずにアクセス
+      if index == keys.length - 1
+        current = current[key]
+      else
+        current = current[key]
+        current = current[:c] if current && current.is_a?(Hash) && !current[:c].nil?
+      end
+      return nil if current.nil?
+    end
+    current
+  end
+
+  def clusters_to_timeline(clusters, min_window_size)
     # 完成した木構造のクラスタを、表示用にフラットな構造に変換する。
     stack = clusters.map { |cluster_id, cluster| [min_window_size, cluster_id, cluster] }
     result = []
