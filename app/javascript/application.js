@@ -12,10 +12,10 @@ const app = createApp({
         setDataDialog: false,
         loading: false,
         timeSeriesRules: [
-          v => !!v || 'timeseries is required',
-          v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'timeseries must be comma separated numbers',
-          v => (v && v.split(',').filter(n => n !== "").length >= 2) || 'timeseries must have at least 2 numbers',
-          v => (v && v.split(',').length <= 2000) || 'timeseries must have no more than 2000 numbers'
+          v => !!v || 'required',
+          v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
+          v => (v && v.split(',').filter(n => n !== "").length >= 2) || 'must have at least 2 numbers',
+          v => (v && v.split(',').length <= 2000) || 'must have no more than 2000 numbers'
         ],      
         valid: false, 
         random: {
@@ -32,10 +32,17 @@ const app = createApp({
         distanceTransitionsBetweenClusters: null,
         loading: false,
         distanceTransitionsBetweenClustersRules: [
-          v => !!v || 'complexity transition is required',
-          v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'complexity transition must be comma separated numbers',
-          v => (v && v.split(',').filter(n => n !== "").length >= 2) || 'complexity transition must have at least 2 numbers',
-          v => (v && v.split(',').length <= 2000) || 'complexity transition must have no more than 2000 numbers'
+          v => !!v || 'required',
+          v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
+          v => (v && v.split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
+          v => (v && v.split(',').length <= 2000) || 'must have no more than 2000 numbers'
+        ],
+        similarityTransitions: null,
+        similarityTransitionsRules: [
+          v => !!v || 'required',
+          v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
+          v => (v && v.split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
+          v => (v && v.split(',').length <= 2000) || 'must have no more than 2000 numbers'
         ],      
         valid: false, 
       },      
@@ -148,6 +155,7 @@ const app = createApp({
           distance_tansitions_between_clusters: this.generate.distanceTransitionsBetweenClusters,
           range_min: this.generate.rangeMin,
           range_max: this.generate.rangeMax,
+          similarity_transitions: this.generate.similarityTransitions
         }
       }
       axios.post('/api/web/time_series/generate', data)

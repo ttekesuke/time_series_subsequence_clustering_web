@@ -125,57 +125,61 @@
           <v-card>
             <v-card-text>
               <v-row>
-                <v-col cols="9">
+                <v-col>
                   <v-textarea 
-                  style="white-space: pre !important; overflow-x: auto !important;"
-                  placeholder="please set the distance transitions between clusters. (like 1,2,3,4,5)" 
-                  required 
-                  v-model='generate.distanceTransitionsBetweenClusters' 
-                  label="distance transitions between clusters" 
-                  rows="1"
-                  :rules="generate.distanceTransitionsBetweenClustersRules"
-                  
-                ></v-textarea>
-                </v-col>  
-                <v-col cols="3">
-                  <v-row>
-                    <v-col>                   
-                      <v-card>
-                        <v-card-title>
-                          available range
-                        </v-card-title>
-                        <v-card-text>
-                          <v-row>
-                            <v-col>
-                              <v-text-field
-                                label="min"
-                                type="number"
-                                v-model="generate.rangeMin"
-                                min="1"
-                              ></v-text-field>
-                            </v-col>
-                          </v-row>
-                          <v-row>
-                            <v-col>
-                              <v-text-field
-                                label="max"
-                                type="number"
-                                v-model="generate.rangeMax"
-                                :min="generate.rangeMin"
-                              ></v-text-field>
-                            </v-col>
-                          </v-row>
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
-                  </v-row>
-                  <v-row>
-                    <v-col>              
-                      <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>        
-                    </v-col>
-                  </v-row>                   
-                </v-col>                           
-              </v-row>
+                    placeholder="please set the distance transitions between clusters. (like 1,2,3,4,5)" 
+                    required 
+                    v-model='generate.distanceTransitionsBetweenClusters' 
+                    label="distance transitions between clusters" 
+                    rows="1"
+                    :rules="generate.distanceTransitionsBetweenClustersRules"
+                  ></v-textarea>
+                </v-col>
+              </v-row>  
+              <v-row>
+                <v-col>
+                  <v-textarea 
+                    placeholder="please set the similarity transitions. (like 1,2,3,4,5)" 
+                    required 
+                    v-model='generate.similarityTransitions' 
+                    label="similarity transitions" 
+                    rows="1"
+                    :rules="generate.similarityTransitionsRules"
+                  ></v-textarea>
+                </v-col>
+              </v-row>                  
+              <v-row>
+                <v-col cols="4">                   
+                  <v-card>
+                    <v-card-title>
+                      available range
+                    </v-card-title>
+                    <v-card-text>
+                      <v-row>
+                        <v-col>
+                          <v-text-field
+                          label="min"
+                          type="number"
+                          v-model="generate.rangeMin"
+                          min="1"
+                        ></v-text-field>
+                        </v-col>
+                        <v-col>
+                          <v-text-field
+                          label="max"
+                          type="number"
+                          v-model="generate.rangeMax"
+                          :min="generate.rangeMin"
+                        ></v-text-field>                        
+                        </v-col>
+                      </v-row>
+                    </v-card-text>
+                  </v-card>
+                </v-col>
+                <v-col cols="4">                
+                  <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>        
+                </v-col>   
+              </v-row>  
             </v-card-text>
           </v-card>
         </v-form>
