@@ -5,25 +5,49 @@ const vuetify = createVuetify()
 const app = createApp({
   setup(){
     const state = reactive({
-      timeSeries: null,
-      clusteredSubsequences: null,
-      timeSeriesChart: null,
-      dialog: false,
-      infoDialog: false,
-      loading: false,
-      random: {
-        min: null,
-        max: null,
-        length: null
+      analyse: {
+        timeSeries: null,
+        clusteredSubsequences: null,
+        timeSeriesChart: null,
+        setDataDialog: false,
+        loading: false,
+        timeSeriesRules: [
+          v => !!v || 'required',
+          v => (v && String(v).split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
+          v => (v && String(v).split(',').filter(n => n !== "").length >= 2) || 'must have at least 2 numbers',
+          v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers'
+        ],
+        valid: false, 
+        random: {
+          min: null,
+          max: null,
+          length: null
+        },      
+        mergeThresholdRatio: 0.1  
       },
-      valid: false,      
-      timeSeriesRules: [
-        v => !!v || 'timeseries is required',
-        v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'timeseries must be comma separated numbers',
-        v => (v && v.split(',').filter(n => n !== "").length >= 2) || 'timeseries must have at least 2 numbers',
-        v => (v && v.split(',').length <= 2000) || 'timeseries must have no more than 2000 numbers'
-      ],      
-      toleranceDiffDistance: 1
+      generate: {
+        setDataDialog: false,
+        rangeMin: null,
+        rangeMax: null,
+        distanceTransitionsBetweenClusters: null,
+        loading: false,
+        distanceTransitionsBetweenClustersRules: [
+          v => !!v || 'required',
+          v => (v && String(v).split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
+          v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
+          v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers'
+        ],
+        similarityTransitions: null,
+        similarityTransitionsRules: [
+          v => !!v || 'required',
+          v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
+          v => (v && v.split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
+          v => (v && v.split(',').length <= 2000) || 'must have no more than 2000 numbers'
+        ],      
+        valid: false, 
+        mergeThresholdRatio: 0.1  
+      },      
+      infoDialog: false,
     })
 
     return { ...toRefs(state) };
@@ -32,23 +56,6 @@ const app = createApp({
     google.charts.load("current", {packages:["timeline", "corechart"]})
   },
   methods: {
-    submit () {
-      this.loading = true
-      let data = { time_series_analysis: {time_series: this.timeSeries, tolerance_diff_distance: this.toleranceDiffDistance }}
-      axios.post('/api/web/time_series_analysis', data)
-      .then(response => {
-         console.log(response)
-         this.clusteredSubsequences = response.data.clusteredSubsequences
-         this.timeSeriesChart = response.data.timeSeries
-         this.loading = false
-         this.dialog = false
-         this.drawTimeline()
-         this.drawTimeSeries()
-      })
-      .catch(error => {
-         console.log(error)
-      })
-    },
     drawTimeline() {
       const container = document.getElementById('timeline')
       const chart = new google.visualization.Timeline(container)
@@ -123,8 +130,47 @@ const app = createApp({
       chart.draw(data , options)
     },
     setRandoms(){
-      this.timeSeries = [...Array(parseInt(this.random.length))].map(() => Math.floor(Math.random() * (parseInt(this.random.max) - parseInt(this.random.min)+ 1)) + parseInt(this.random.min)).join(',')
-    }
+      this.analyse.timeSeries = [...Array(parseInt(this.analyse.random.length))].map(() => Math.floor(Math.random() * (parseInt(this.analyse.random.max) - parseInt(this.analyse.random.min)+ 1)) + parseInt(this.analyse.random.min)).join(',')
+    },
+    analyseTimeseries() {
+      this.analyse.loading = true
+      let data = { analyse: {time_series: this.analyse.timeSeries, merge_threshold_ratio: this.analyse.mergeThresholdRatio }}
+      axios.post('/api/web/time_series/analyse', data)
+      .then(response => {
+         console.log(response)
+         this.clusteredSubsequences = response.data.clusteredSubsequences
+         this.timeSeriesChart = response.data.timeSeries
+         this.analyse.loading = false
+         this.analyse.setDataDialog = false
+         this.drawTimeline()
+         this.drawTimeSeries()
+      })
+      .catch(error => {
+         console.log(error)
+      })
+    },
+    generateTimeseries() {
+      this.generate.loading = true
+      let data = { generate: 
+        {
+          distance_tansitions_between_clusters: this.generate.distanceTransitionsBetweenClusters,
+          range_min: this.generate.rangeMin,
+          range_max: this.generate.rangeMax,
+          similarity_transitions: this.generate.similarityTransitions
+        }
+      }
+      axios.post('/api/web/time_series/generate', data)
+      .then(response => {
+         console.log(response)
+         this.generate.loading = false
+         this.analyse.timeSeries = String(response.data.result)
+         this.generate.setDataDialog = false
+         this.analyse.setDataDialog = true
+      })
+      .catch(error => {
+         console.log(error)
+      })
+    },    
   }
   
 })

@@ -45,4 +45,12 @@ module Utility
   def generate_random_array(size, lower_bound, upper_bound)
     Array.new(size) { rand(lower_bound..upper_bound) }
   end
+
+  def generate_linear_array(start_val, end_val, num_elements)
+    # 配列を生成するためのステップ数を計算します。このステップ数により、開始値から終了値までどのように増加させるかを決定します。
+    step = (end_val - start_val).to_f / (num_elements / 2 - 1)
+    # 指定された要素数に応じて数値を線形に増加させていく配列を生成します。
+    Array.new(num_elements) { |i| (start_val + (i / 2 * step)).round }
+  end
+  
 end
