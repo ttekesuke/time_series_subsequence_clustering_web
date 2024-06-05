@@ -4,6 +4,11 @@ module StatisticsCalculator
     d.sum / d.length.to_d
   end
 
+  def median(d)
+    sorted = d.sort
+    sorted.length.odd? ? sorted[sorted.length / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2.0
+  end
+
   def covariance(d1, d2)
     raise "The two data lengths are different." if d1.size != d2.size
 

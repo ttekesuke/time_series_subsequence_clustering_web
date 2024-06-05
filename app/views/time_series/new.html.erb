@@ -101,10 +101,12 @@
                   <v-row>
                     <v-col>              
                       <v-text-field
-                        label="tolerance diff distance"
+                        label="merge threshold ratio"
                         type="number"
-                        v-model="analyse.toleranceDiffDistance"
-                        min="1"
+                        v-model="analyse.mergeThresholdRatio"
+                        min="0"
+                        max="1"
+                        step="0.01"
                       ></v-text-field>
                     </v-col>
                   </v-row>                  
@@ -119,7 +121,7 @@
           </v-card>
         </v-form>
       </v-dialog>
-      <v-btn @click="generate.setDataDialog = true">generate</v-btn>
+      <v-btn @click="generate.setDataDialog = true">generate(experimental)</v-btn>
       <v-dialog width="1000" v-model="generate.setDataDialog" >
         <v-form v-model='generate.valid' fast-fail ref="form">
           <v-card>
@@ -176,7 +178,15 @@
                     </v-card-text>
                   </v-card>
                 </v-col>
-                <v-col cols="4">                
+                <v-col cols="4">     
+                  <v-text-field
+                    label="merge threshold ratio"
+                    type="number"
+                    v-model="generate.mergeThresholdRatio"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                  ></v-text-field>                           
                   <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>        
                 </v-col>   
               </v-row>  
@@ -186,7 +196,6 @@
       </v-dialog>      
     </v-app-bar>
     <v-main>
-      <!-- メインコンテンツ  -->
       <v-row no-gutters>
         <v-col>
           <div id='timeline' styls='height: 70vh;'></div>

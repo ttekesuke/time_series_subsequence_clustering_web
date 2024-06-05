@@ -3,7 +3,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
   def analyse
     data = analyse_params[:time_series].split(',').map{|elm|elm.to_i}
-    tolerance_diff_distance = analyse_params[:tolerance_diff_distance].to_d
+    merge_threshold_ratio = analyse_params[:merge_threshold_ratio].to_d
 
     min_window_size = 2
     cluster_id_counter = 0
@@ -20,7 +20,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         reached_to_end = data_index == data.length - 1
         clusters, tasks, cluster_id_counter = clustering_subsequences_incremental(
           data,
-          tolerance_diff_distance,
+          merge_threshold_ratio,
           elm,
           data_index,
           min_window_size,
@@ -53,7 +53,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       }
     }
     tasks = []
-    tolerance_diff_distance = 1
+    merge_threshold_ratio = generate_params[:merge_threshold_ratio].to_d
     distances_between_clusters_each_window_size = {}
     # 設定ランキング群のループ
     distance_tansitions_between_clusters.each_with_index do |rank, rank_index|
@@ -74,7 +74,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         temporary_tasks = tasks.dup
         temporary_clusters, temporary_tasks, temporary_cluster_id_counter = clustering_subsequences_incremental(
           temporary_results,
-          tolerance_diff_distance,
+          merge_threshold_ratio,
           candidate,
           temporary_results.length - 1,
           min_window_size,
@@ -144,20 +144,19 @@ class Api::Web::TimeSeriesController < ApplicationController
           index: distance_index,
           list: sorted_indexed_average_distances_between_clusters,
           sum_distances_between_other_rules_rank: 0,
-          rank: rank
+          rank: rank,
+          intersection_index_length_between_other_rules: 0
         },
         similarity: {
           index: similarity_index,
           list: sorted_indexed_similarity,
           sum_distances_between_other_rules_rank: 0,
-          rank: similarity_transitions[rank_index]
+          rank: similarity_transitions[rank_index],
+          intersection_index_length_between_other_rules: 0
         },
         
       }
       result_index = nil
-
-
-
       index_candidates.each do |parent_rule_key, parent_rule|
         parent_first = parent_rule[:list][parent_rule[:rank]][0]
         parent_same = parent_rule[:list].filter{|elm|elm[0] == parent_first}
@@ -175,19 +174,13 @@ class Api::Web::TimeSeriesController < ApplicationController
           child_same_index = child_rule[:list].select { |sub_array| target_distance_steps.include?(sub_array[0]) }.map{|elm|elm[1]}
 
           intersection = parent_same_index & child_same_index
-
-          if intersection.length == 1
-            result_index = intersection[0]
-            break
-          else
-            parent_rule[:sum_distances_between_other_rules_rank] += dtw_distance(parent_same_index.sort, child_same_index.sort)
-          end
+          parent_rule[:intersection_index_length_between_other_rules] += intersection.length
         end
       end
 
       if result_index.nil?
         min_key = index_candidates.min_by do |key, value|
-          [value[:sum_distances_between_other_rules_rank], rules_priority.index(key)]
+          [value[:intersection_index_length_between_other_rules], rules_priority.index(key)]
         end.first
 
         if min_key == :distance
@@ -201,7 +194,9 @@ class Api::Web::TimeSeriesController < ApplicationController
       cluster_id_counter = cluster_id_counter_candidates[result_index]
       tasks = tasks_candidates[result_index]
     end
-    p results
+    render json: {
+      result: results,
+   }
   end
 
   private  
@@ -251,7 +246,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     def analyse_params
       params.require(:analyse).permit(
         :time_series,
-        :tolerance_diff_distance
+        :merge_threshold_ratio
       )
     end
     

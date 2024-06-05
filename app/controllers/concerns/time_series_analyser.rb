@@ -2,7 +2,7 @@ module TimeSeriesAnalyser
   include StatisticsCalculator
   include Utility
 
-  def clustering_subsequences_incremental(data, tolerance_diff_distance, elm, data_index, min_window_size, clusters, cluster_id_counter, tasks, reached_to_end)
+  def clustering_subsequences_incremental(data, merge_threshold_ratio, elm, data_index, min_window_size, clusters, cluster_id_counter, tasks, reached_to_end)
     # clustersの構成
     # clusters = {
     #   cluster_id1 => {
@@ -20,12 +20,25 @@ module TimeSeriesAnalyser
     #   }
     # }
 
+    data_median = median(data)
+    lower_half_average = mean(data.select { |x| x <= data_median })
+    upper_half_average = mean(data.select { |x| x >= data_median })
+    max_distance_between_lower_and_upper_each_window_size = {}
+    
     new_tasks = []
     # タスク(延伸された類似部分列が結合候補のクラスタ内の部分列群と似てればクラスタへ結合)があれば処理する
     tasks.each do |task|    
       # クラスタに結合予定の最新部分列（延伸済）
       current_subsequence = task[1]
-
+      current_window_size = current_subsequence[1] - current_subsequence[0] + 1
+      max_distance_between_lower_and_upper = nil
+      if max_distance_between_lower_and_upper_each_window_size.key? current_window_size
+        max_distance_between_lower_and_upper = max_distance_between_lower_and_upper_each_window_size[current_window_size]
+      else
+        max_distance_between_lower_and_upper = euclidean_distance(Array.new(current_window_size, lower_half_average), Array.new(current_window_size, upper_half_average))
+        max_distance_between_lower_and_upper_each_window_size[current_window_size] = max_distance_between_lower_and_upper
+      end
+      
       # task[0]はclusters内部の当該クラスタにアクセスするキーが入ってる
       current_cluster = dig_clusters_by_keys(clusters, task[0])
       # {
@@ -63,8 +76,9 @@ module TimeSeriesAnalyser
             data[past_subsequence[0]..past_subsequence[1]],
             data[current_subsequence[0]..current_subsequence[1]]
           )
-          # 許容値以下なら結合予定とする
-          if distance <= tolerance_diff_distance
+          # 許容割合以下なら結合予定とする
+          ratio_in_max_distance = distance / max_distance_between_lower_and_upper
+          if ratio_in_max_distance <= merge_threshold_ratio
             similar_subsequences << past_subsequence
           end
         end
@@ -136,8 +150,17 @@ module TimeSeriesAnalyser
       end
     end
 
+    current_window_size = current_subsequence[1] - current_subsequence[0] + 1
+    max_distance_between_lower_and_upper = nil
+    if max_distance_between_lower_and_upper_each_window_size.key? current_window_size
+      max_distance_between_lower_and_upper = max_distance_between_lower_and_upper_each_window_size[current_window_size]
+    else
+      max_distance_between_lower_and_upper = euclidean_distance(Array.new(current_window_size, lower_half_average), Array.new(current_window_size, upper_half_average))
+      max_distance_between_lower_and_upper_each_window_size[current_window_size] = max_distance_between_lower_and_upper
+    end
     # 最短が許容値以下の場合、
-    if min_distance <= tolerance_diff_distance
+    ratio_in_max_distance = min_distance / max_distance_between_lower_and_upper
+    if ratio_in_max_distance <= merge_threshold_ratio
       # クラスタ結合する
       clusters[closest_cluster_id][:s] << current_subsequence
       # 元の時系列データから取り出した要素が最後の要素でなければ、
@@ -192,7 +215,7 @@ module TimeSeriesAnalyser
   end
 
   # deprecated
-  def clustering_subsequences_all_timeseries(data, tolerance_diff_distance)
+  def clustering_subsequences_all_timeseries(data, merge_threshold_ratio)
     min_window_size = 2
     cluster_id_counter = 0
     max_window_size = 100
@@ -274,7 +297,7 @@ module TimeSeriesAnalyser
         min_distances << min_distance
         combination_length = closest_pair[0][1].length * closest_pair[1][1].length
         gap_last_and_min = cluster_merge_counter == 0 ? min_distances.last : min_distances.last - min_distances.min
-        if gap_last_and_min > tolerance_diff_distance
+        if gap_last_and_min > merge_threshold_ratio
           tolerance_over = true
         else
           cluster_id_counter += 1

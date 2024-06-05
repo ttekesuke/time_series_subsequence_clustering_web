@@ -13,17 +13,17 @@ const app = createApp({
         loading: false,
         timeSeriesRules: [
           v => !!v || 'required',
-          v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
-          v => (v && v.split(',').filter(n => n !== "").length >= 2) || 'must have at least 2 numbers',
-          v => (v && v.split(',').length <= 2000) || 'must have no more than 2000 numbers'
-        ],      
+          v => (v && String(v).split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
+          v => (v && String(v).split(',').filter(n => n !== "").length >= 2) || 'must have at least 2 numbers',
+          v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers'
+        ],
         valid: false, 
         random: {
           min: null,
           max: null,
           length: null
         },      
-        toleranceDiffDistance: 1   
+        mergeThresholdRatio: 0.1  
       },
       generate: {
         setDataDialog: false,
@@ -33,9 +33,9 @@ const app = createApp({
         loading: false,
         distanceTransitionsBetweenClustersRules: [
           v => !!v || 'required',
-          v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
-          v => (v && v.split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
-          v => (v && v.split(',').length <= 2000) || 'must have no more than 2000 numbers'
+          v => (v && String(v).split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
+          v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
+          v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers'
         ],
         similarityTransitions: null,
         similarityTransitionsRules: [
@@ -45,6 +45,7 @@ const app = createApp({
           v => (v && v.split(',').length <= 2000) || 'must have no more than 2000 numbers'
         ],      
         valid: false, 
+        mergeThresholdRatio: 0.1  
       },      
       infoDialog: false,
     })
@@ -133,7 +134,7 @@ const app = createApp({
     },
     analyseTimeseries() {
       this.analyse.loading = true
-      let data = { analyse: {time_series: this.analyse.timeSeries, tolerance_diff_distance: this.analyse.toleranceDiffDistance }}
+      let data = { analyse: {time_series: this.analyse.timeSeries, merge_threshold_ratio: this.analyse.mergeThresholdRatio }}
       axios.post('/api/web/time_series/analyse', data)
       .then(response => {
          console.log(response)
@@ -161,6 +162,10 @@ const app = createApp({
       axios.post('/api/web/time_series/generate', data)
       .then(response => {
          console.log(response)
+         this.generate.loading = false
+         this.analyse.timeSeries = String(response.data.result)
+         this.generate.setDataDialog = false
+         this.analyse.setDataDialog = true
       })
       .catch(error => {
          console.log(error)
