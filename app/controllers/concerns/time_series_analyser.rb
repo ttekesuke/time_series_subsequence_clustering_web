@@ -20,9 +20,9 @@ module TimeSeriesAnalyser
     #   }
     # }
 
-    data_median = median(data)
-    lower_half_average = mean(data.select { |x| x <= data_median })
-    upper_half_average = mean(data.select { |x| x >= data_median })
+    data_mean = mean(data)
+    lower_half_average = mean(data.select { |x| x <= data_mean })
+    upper_half_average = mean(data.select { |x| x >= data_mean })
     max_distance_between_lower_and_upper_each_window_size = {}
     
     new_tasks = []
