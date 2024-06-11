@@ -60,7 +60,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       # ハッシュが入る
       clusters_candidates = []
       cluster_id_counter_candidates = []
-      average_all_window_candidates = []
+      sum_distances_all_window_candidates = []
       tasks_candidates = []
       similarity_candidates = []
 
@@ -88,7 +88,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
         similarity_candidate = 0
         
-        averages_all_window = []
+        sum_distances_in_all_window = []
         clusters_each_window_size.each do |window_size, same_window_size_clusters|
           sum_distances = 0
           sum_pattern_length = 0
@@ -100,19 +100,11 @@ class Api::Web::TimeSeriesController < ApplicationController
             subsequences2 = subsequence_indexes2.map{|subsequence|temporary_results[subsequence[0]..subsequence[1]]}
             c1_average = calculate_average_time_series(subsequences1)
             c2_average = calculate_average_time_series(subsequences2)
-
             distance = euclidean_distance(c1_average, c2_average)
-
-            pattern_length = subsequence_indexes1.length * subsequence_indexes2.length
-            sum_pattern_length += pattern_length
-            sum_distances += pattern_length * distance
+            sum_distances += distance
           end
 
-          if sum_pattern_length == 0
-            averages_all_window << 0
-          else
-            averages_all_window << sum_distances / sum_pattern_length
-          end
+          sum_distances_in_all_window << sum_distances
           # 類似度のスコアは、同じクラスタ内の部分列の数の二乗に比例する
           same_window_size_clusters.values.each do |cluster|
             variances = []
@@ -124,13 +116,13 @@ class Api::Web::TimeSeriesController < ApplicationController
           end
         end
 
-        average_all_window_candidates << mean(averages_all_window )
+        sum_distances_all_window_candidates << sum_distances_in_all_window.sum
         clusters_candidates << temporary_clusters
         cluster_id_counter_candidates << temporary_cluster_id_counter
         tasks_candidates << temporary_tasks
         similarity_candidates << similarity_candidate
       end
-      indexed_average_distances_between_clusters = average_all_window_candidates.map.with_index { |distance, index| [distance, index] }
+      indexed_average_distances_between_clusters = sum_distances_all_window_candidates.map.with_index { |distance, index| [distance, index] }
       sorted_indexed_average_distances_between_clusters = convert_same_distance_same_index(indexed_average_distances_between_clusters)
       distance_at_rank, distance_index = sorted_indexed_average_distances_between_clusters[rank]
 
