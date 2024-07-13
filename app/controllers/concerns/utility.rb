@@ -52,5 +52,18 @@ module Utility
     # 指定された要素数に応じて数値を線形に増加させていく配列を生成します。
     Array.new(num_elements) { |i| (start_val + (i / 2 * step)).round }
   end
+
+  def convert_to_monotonic_change(d)
+    difference_sequence = difference_sequence(d)
+    difference_sequence.map do |x|
+      if x > 0
+        1
+      elsif x < 0
+        -1
+      else
+        0
+      end
+    end
+  end
   
 end
