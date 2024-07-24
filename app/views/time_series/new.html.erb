@@ -129,24 +129,24 @@
               <v-row>
                 <v-col>
                   <v-textarea 
-                    placeholder="please set the distance transitions between clusters. (like 1,2,3,4,5)" 
+                    placeholder="please set the distance transition between clusters. (like 1,2,3,4,5)" 
                     required 
-                    v-model='generate.distanceTransitionsBetweenClusters' 
-                    label="distance transitions between clusters" 
+                    v-model='generate.distanceTransitionBetweenClusters' 
+                    label="distance transition between clusters" 
                     rows="1"
-                    :rules="generate.distanceTransitionsBetweenClustersRules"
+                    :rules="generate.distanceTransitionBetweenClustersRules"
                   ></v-textarea>
                 </v-col>
               </v-row>  
               <v-row>
                 <v-col>
                   <v-textarea 
-                    placeholder="please set the similarity transitions. (like 1,2,3,4,5)" 
+                    placeholder="please set the sparsity transition of the subsequences (like 1,2,3,4,5)" 
                     required 
-                    v-model='generate.similarityTransitions' 
-                    label="similarity transitions" 
+                    v-model='generate.subsequencesSparsityTransition' 
+                    label="sparsity transition of the subsequences" 
                     rows="1"
-                    :rules="generate.similarityTransitionsRules"
+                    :rules="generate.subsequencesSparsityTransitionRules"
                   ></v-textarea>
                 </v-col>
               </v-row>                  

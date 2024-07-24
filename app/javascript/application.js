@@ -29,16 +29,16 @@ const app = createApp({
         setDataDialog: false,
         rangeMin: null,
         rangeMax: null,
-        distanceTransitionsBetweenClusters: null,
+        distanceTransitionBetweenClusters: null,
         loading: false,
-        distanceTransitionsBetweenClustersRules: [
+        distanceTransitionBetweenClustersRules: [
           v => !!v || 'required',
           v => (v && String(v).split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
           v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
           v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers'
         ],
-        similarityTransitions: null,
-        similarityTransitionsRules: [
+        subsequencesSparsityTransition: null,
+        subsequencesSparsityTransitionRules: [
           v => !!v || 'required',
           v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
           v => (v && v.split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
@@ -153,10 +153,10 @@ const app = createApp({
       this.generate.loading = true
       let data = { generate: 
         {
-          distance_tansitions_between_clusters: this.generate.distanceTransitionsBetweenClusters,
+          distance_tansition_between_clusters: this.generate.distanceTransitionBetweenClusters,
           range_min: this.generate.rangeMin,
           range_max: this.generate.rangeMax,
-          similarity_transitions: this.generate.similarityTransitions
+          subsequences_sparsity_transition  : this.generate.subsequencesSparsityTransition
         }
       }
       axios.post('/api/web/time_series/generate', data)
