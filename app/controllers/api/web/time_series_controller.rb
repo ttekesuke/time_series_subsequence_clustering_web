@@ -172,9 +172,9 @@ class Api::Web::TimeSeriesController < ApplicationController
           # 他の指標とだけ比較する
           next if parent_metric_key == child_metric_key
           # ある指標で必要となる処理順群と同じ処理順群を他の指標から得る
-          parent_index_in_child = child_metrc[:list].select { |sorted_index_and_processed_index| parent_same_processed_index.include?(index_and_rank_index[1]) }
+          parent_index_in_child = child_metric[:list].select { |sorted_index_and_processed_index| parent_same_processed_index.include?(sorted_index_and_processed_index[1]) }
           # 他の指標の処理順群の同率順位群を得る
-          parent_rank_in_child = parent_index_in_child.map { |sorted_index_and_processed_index| index_and_rank_index[0] }.uniq
+          parent_rank_in_child = parent_index_in_child.map { |sorted_index_and_processed_index| sorted_index_and_processed_index[0] }.uniq
           # parent_rank_in_childの候補群の処理順を得る
           child_same_index = child_metric[:list].select { |sorted_index_and_processed_index| parent_rank_in_child.include?(sorted_index_and_processed_index[0]) }.map{|elm|elm[1]}
           # ある指標と他の指標とで積集合となる処理順を得て、その長さを足す
@@ -184,7 +184,10 @@ class Api::Web::TimeSeriesController < ApplicationController
       end
 
       if result_index.nil?
-        # 処理順の候補が一番少ない指標を優先する
+        # 処理順の候補が一番少ない指標を優先する。
+        # ある指標で求められる候補群が、他の指標にまたがっても多数存在している場合、
+        # 結果としてその指標での候補群は絞り込めていない＝どれを選んでも一緒という状況になったと考えられる。
+        # そのような指標は優先されない。候補が一意になりやすい指標を優先する、という扱い。
         min_key = index_candidates.min_by do |key, value|
           [value[:intersection_index_length_between_other_metrics], metrics_priority.index(key)]
         end.first
