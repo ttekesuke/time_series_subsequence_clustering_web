@@ -39,7 +39,7 @@ class Api::Web::TimeSeriesController < ApplicationController
   end
 
   def generate
-    rules_priority = [:sparsity,:distance]
+    metrics_priority = [:sparsity,:distance]
     # 遷移系のパラメータ
     distance_tansition_between_clusters = generate_params[:distance_tansition_between_clusters].split(',').map{|elm|elm.to_i}
     subsequences_sparsity_transition = generate_params[:subsequences_sparsity_transition].split(',').map{|elm|elm.to_i}
@@ -128,64 +128,65 @@ class Api::Web::TimeSeriesController < ApplicationController
 
       # [[距離、index(0)], [距離、index(1)],...]の形式にする。indexは候補を処理した順番。
       indexed_average_distances_between_clusters = sum_distances_all_window_candidates.map.with_index { |distance, index| [distance, index] }
-      # 同じ距離の場合は同じindexにして小さい順に並べる。[[2、index(0)], [2、index(1)], [3、index(2)]...]は[[2、index(0)], [2、index(0)], [3、index(2)]...]となる。
+      # 処理した順番を距離が小さい順に並べる。要素の1番目にはその順位の数字が並ぶ。ただし同じ距離は同率順位となる。
+      # [[1、index(0)], [2、index(1)], [1、index(2)]...]は[[0、index(0)], [0、index(2)], [2、index(1)]...]となる。
       sorted_indexed_average_distances_between_clusters = convert_same_distance_same_index(indexed_average_distances_between_clusters)
-      # ユーザが指定したランクにおける距離とインデックスを取得
+      # ユーザが指定したランクの実際の順位と処理順を取得
       distance_at_rank, distance_index = sorted_indexed_average_distances_between_clusters[rank]
 
-      # [[類似度、index(0)], [類似度、index(1)],...]の形式にする
+      # [[まばら度、index(0)], [まばら度、index(1)],...]の形式にする。indexは候補を処理した順番。
       indexed_sparsity = sparsity_candidates.map.with_index { |sparsity, index| [sparsity, index] }
-      # 同じ類似度の場合は同じindexにして小さい順に並べる。[[2、index(0)], [2、index(1)], [3、index(2)]...]は[[2、index(0)], [2、index(0)], [3、index(2)]...]となる。
+      # 処理した順番をまばら度が小さい順に並べる。要素の1番目にはその順位の数字が並ぶ。ただし同じ距離は同率順位となる。
+      # [[1、index(0)], [2、index(1)], [1、index(2)]...]は[[0、index(0)], [0、index(2)], [2、index(1)]...]となる。
       sorted_indexed_sparsity = convert_same_distance_same_index(indexed_sparsity)
-      # ユーザが指定したランクにおける類似度とインデックスを取得。ランクの順番を使って類似度遷移のランクを得る。
+      # ユーザが指定したランクの実際の順位と処理淳を取得。ランクの順番を使う。
       sparsity_at_rank, sparsity_index = sorted_indexed_sparsity[subsequences_sparsity_transition[rank_index]]
 
       index_candidates = {
         distance: {
-          index: distance_index,
           list: sorted_indexed_average_distances_between_clusters,
-          sum_distances_between_other_rules_rank: 0,
+          sum_distances_between_other_metrics_rank: 0,
           rank: rank,
-          intersection_index_length_between_other_rules: 0
+          intersection_index_length_between_other_metrics: 0
         },
         sparsity: {
-          index: sparsity_index,
           list: sorted_indexed_sparsity,
-          sum_distances_between_other_rules_rank: 0,
+          sum_distances_between_other_metrics_rank: 0,
           rank: subsequences_sparsity_transition[rank_index],
-          intersection_index_length_between_other_rules: 0
+          intersection_index_length_between_other_metrics: 0
         },
         
       }
       result_index = nil
 
-      # ある指標で指定したランクの候補が、他の指標で指定したランクの候補とで、ランキング上の差が一番少ない候補を選ぶ
-      index_candidates.each do |parent_rule_key, parent_rule|
-        # ソートされた候補群から、ある指標で指定したランクにある候補の結果を得る
-        parent_value = parent_rule[:list][parent_rule[:rank]][0]
-        # その結果と同じ値の候補群を得る
-        parent_same = parent_rule[:list].filter{|elm|elm[0] == parent_value}
-        # 候補群のindexを得る
-        parent_same_index = parent_same.map{|elm|elm[1]}
+      index_candidates.each do |parent_metric_key, parent_metric|
+        # ソートされた候補群から、ある指標で指定されたランクにある候補の実際の順位を得る
+        parent_index = parent_metric[:list][parent_metric[:rank]][0]
+        # 得た順位と同率順位の候補群を得る。つまり指定したランクと同等の結果となった候補群を得ることになる。
+        parent_same = parent_metric[:list].filter{|elm|elm[0] == parent_index}
+        # 同率順位の候補群の、処理順を得る
+        parent_same_processed_index = parent_same.map{|elm|elm[1]}
 
         # 他の指標をループする
-        index_candidates.each do |child_rule_key, child_rule|
-          # 親と同じ指標は比較しない
-          next if parent_rule_key == child_rule_key
-          # 2番目の要素がparent_same_indexに含まれるものを見つける
-          parent_index_in_child = child_rule[:list].select { |sub_array| parent_same_index.include?(sub_array[1]) }
-          # 見つかった要素の1番目の要素を抽出
-          target_distance_steps = parent_index_in_child.map { |sub_array| sub_array[0] }.uniq
-          # 1番目の要素がtarget_distance_steps
-          child_same_index = child_rule[:list].select { |sub_array| target_distance_steps.include?(sub_array[0]) }.map{|elm|elm[1]}
-          intersection = parent_same_index & child_same_index
-          parent_rule[:intersection_index_length_between_other_rules] += intersection.length
+        index_candidates.each do |child_metric_key, child_metric|
+          # 他の指標とだけ比較する
+          next if parent_metric_key == child_metric_key
+          # ある指標で必要となる処理順群と同じ処理順群を他の指標から得る
+          parent_index_in_child = child_metrc[:list].select { |sorted_index_and_processed_index| parent_same_processed_index.include?(index_and_rank_index[1]) }
+          # 他の指標の処理順群の同率順位群を得る
+          parent_rank_in_child = parent_index_in_child.map { |sorted_index_and_processed_index| index_and_rank_index[0] }.uniq
+          # parent_rank_in_childの候補群の処理順を得る
+          child_same_index = child_metric[:list].select { |sorted_index_and_processed_index| parent_rank_in_child.include?(sorted_index_and_processed_index[0]) }.map{|elm|elm[1]}
+          # ある指標と他の指標とで積集合となる処理順を得て、その長さを足す
+          intersection = parent_same_processed_index & child_same_index
+          parent_metric[:intersection_index_length_between_other_metrics] += intersection.length
         end
       end
 
       if result_index.nil?
+        # 処理順の候補が一番少ない指標を優先する
         min_key = index_candidates.min_by do |key, value|
-          [value[:intersection_index_length_between_other_rules], rules_priority.index(key)]
+          [value[:intersection_index_length_between_other_metrics], metrics_priority.index(key)]
         end.first
 
         if min_key == :distance
@@ -201,7 +202,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     end
     render json: {
       result: results,
-   }
+    }
   end
 
   private  
