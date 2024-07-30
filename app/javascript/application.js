@@ -37,13 +37,6 @@ const app = createApp({
           v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
           v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers'
         ],
-        subsequencesSparsityTransition: null,
-        subsequencesSparsityTransitionRules: [
-          v => !!v || 'required',
-          v => (v && v.split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
-          v => (v && v.split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
-          v => (v && v.split(',').length <= 2000) || 'must have no more than 2000 numbers'
-        ],      
         valid: false, 
         mergeThresholdRatio: 0.1  
       },      
@@ -156,7 +149,6 @@ const app = createApp({
           distance_tansition_between_clusters: this.generate.distanceTransitionBetweenClusters,
           range_min: this.generate.rangeMin,
           range_max: this.generate.rangeMax,
-          subsequences_sparsity_transition  : this.generate.subsequencesSparsityTransition
         }
       }
       axios.post('/api/web/time_series/generate', data)
