@@ -120,7 +120,7 @@ module TimeSeriesAnalyser
 
     # 取り出した要素とその一つ前の要素からなる、最短・最新の部分列を、
     # 同じ長さの過去のクラスタへ結合する処理開始
-    current_subsequence = [data_index - 1, data_index]
+    current_subsequence = [data_index - (min_window_size - 1), data_index]
     min_distance = Float::INFINITY
     closest_cluster_id = nil   
     # 最短の過去の部分列群を取り出す。clustersの直下のクラスタ群は全て同じ最短の部分列群を持つクラスタ群。

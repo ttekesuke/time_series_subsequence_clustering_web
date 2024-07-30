@@ -163,7 +163,7 @@ const app = createApp({
       .then(response => {
          console.log(response)
          this.generate.loading = false
-         this.analyse.timeSeries = String(response.data.result)
+         this.analyse.timeSeries = String(response.data.results)
          this.generate.setDataDialog = false
          this.analyse.setDataDialog = true
       })
