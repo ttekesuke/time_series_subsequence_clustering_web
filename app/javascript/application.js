@@ -29,9 +29,9 @@ const app = createApp({
         setDataDialog: false,
         rangeMin: null,
         rangeMax: null,
-        distanceTransitionBetweenClusters: null,
+        complexityTransition: null,
         loading: false,
-        distanceTransitionBetweenClustersRules: [
+        complexityTransitionRules: [
           v => !!v || 'required',
           v => (v && String(v).split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
           v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
@@ -146,7 +146,7 @@ const app = createApp({
       this.generate.loading = true
       let data = { generate: 
         {
-          distance_tansition_between_clusters: this.generate.distanceTransitionBetweenClusters,
+          complexity_transition: this.generate.complexityTransition,
           range_min: this.generate.rangeMin,
           range_max: this.generate.rangeMax,
         }

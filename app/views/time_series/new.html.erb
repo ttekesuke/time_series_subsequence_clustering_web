@@ -129,12 +129,12 @@
               <v-row>
                 <v-col>
                   <v-textarea 
-                    placeholder="please set the distance transition between clusters. (like 1,2,3,4,5)" 
+                    placeholder="please set the complexity transition. (like 1,2,3,4,5)" 
                     required 
-                    v-model='generate.distanceTransitionBetweenClusters' 
-                    label="distance transition between clusters" 
+                    v-model='generate.complexityTransition' 
+                    label="complexity transition" 
                     rows="1"
-                    :rules="generate.distanceTransitionBetweenClustersRules"
+                    :rules="generate.complexityTransitionRules"
                   ></v-textarea>
                 </v-col>
               </v-row>  
