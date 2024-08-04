@@ -129,6 +129,18 @@
               <v-row>
                 <v-col>
                   <v-textarea 
+                    placeholder="please set the first elements of the time series. (like 0,1,2,3,4,5)" 
+                    required 
+                    v-model='generate.firstElements' 
+                    label="first elements" 
+                    rows="1"
+                    :rules="generate.firstElementsRules"
+                  ></v-textarea>
+                </v-col>
+              </v-row>  
+              <v-row>
+                <v-col>
+                  <v-textarea 
                     placeholder="please set the complexity transition. (like 1,2,3,4,5)" 
                     required 
                     v-model='generate.complexityTransition' 
@@ -137,7 +149,7 @@
                     :rules="generate.complexityTransitionRules"
                   ></v-textarea>
                 </v-col>
-              </v-row>  
+              </v-row>                
               <v-row>
                 <v-col cols="4">                   
                   <v-card>

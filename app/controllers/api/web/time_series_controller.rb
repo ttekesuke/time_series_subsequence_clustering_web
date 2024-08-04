@@ -43,7 +43,9 @@ class Api::Web::TimeSeriesController < ApplicationController
     merge_threshold_ratio = generate_params[:merge_threshold_ratio].to_d
     candidate_min_master = generate_params[:range_min].to_i
     candidate_max_master = generate_params[:range_max].to_i
-    results = [0, 0]
+    trend_candidate_min_master = -1
+    trend_candidate_max_master = 1
+    results = generate_params[:first_elements].split(',').map { |elm| elm.to_i }
     min_window_size = 2
   
     # 実データのクラスタ初期化
@@ -57,29 +59,28 @@ class Api::Web::TimeSeriesController < ApplicationController
     complexity_transition.each_with_index do |rank, rank_index|
       # 生成するデータの確定値の最後の要素の値が上限か下限にいると、必然的に
       # 次に候補となるデータに制約が入る。トレンドの候補も制約を入れる。
-      trend_transition_pattern = 
-        if results.last == candidate_min_master
-          [0, 1]
-        elsif results.last == candidate_max_master
-          [-1, 0]
-        else
-          [-1, 0, 1]
-        end
+      trend_candidate_min = trend_candidate_min_master
+      trend_candidate_max = trend_candidate_max_master
+      if results.last == candidate_min_master
+        trend_candidate_min = 0
+      elsif results.last == candidate_max_master
+        trend_candidate_max = 0
+      end
+
+      trend_candidates = (trend_candidate_min..trend_candidate_max).to_a
 
       # トレンドの候補からベストマッチを得るために評価値を得る
       trend_average_distances_all_window_candidates, trend_sum_similar_subsequences_quantities, trend_clusters_candidates, trend_cluster_id_counter_candidates, trend_tasks_candidates =
-        find_best_candidate(trend_results, trend_transition_pattern, merge_threshold_ratio, min_window_size, trend_clusters, trend_cluster_id_counter, trend_tasks, rank_index, complexity_transition.length)
+        find_best_candidate(trend_results, trend_candidates, merge_threshold_ratio, min_window_size, trend_clusters, trend_cluster_id_counter, trend_tasks, rank_index, complexity_transition.length)
       # 距離の小さい順に並び替え
       trend_indexed_average_distances = trend_average_distances_all_window_candidates.map.with_index { |distance, index| [distance, index] }.sort_by { |candidate| candidate[0] }
       # 類似数の大きい順に並び替え
       trend_indexed_subsequences_quantities = trend_sum_similar_subsequences_quantities.map.with_index { |quantity, index| [quantity, index] }.sort_by { |candidate| -candidate[0] }
       # 指定ランクを候補数に合わせて正規化
-      converted_rank = find_group_index((candidate_min_master..candidate_max_master).to_a.length, trend_transition_pattern.length, rank)
-
+      converted_rank = find_group_index((candidate_min_master..candidate_max_master).to_a.length, trend_candidates.length, rank)
       diff_and_indexes = []
-      trend_transition_pattern.each_with_index do |trend, index|
+      trend_candidates.each_with_index do |trend, index|
         diff = 0
-
         diff += calculate_rank_diff(trend_indexed_average_distances, converted_rank, index)
         diff += calculate_rank_diff(trend_indexed_subsequences_quantities, converted_rank, index)
         diff_and_indexes << [diff, index]
@@ -87,11 +88,12 @@ class Api::Web::TimeSeriesController < ApplicationController
       trend_sorted = diff_and_indexes.sort_by {|diff_and_index|diff_and_index[0]}
 
       # 正規化したランクを使ってベストマッチのトレンドを得る
-      trend_result = trend_transition_pattern[trend_sorted[0][1]]
+      result_index_in_trend_candidates = trend_sorted[0][1]
+      trend_result = trend_candidates[result_index_in_trend_candidates]
       trend_results << trend_result
-      trend_clusters = trend_clusters_candidates[trend_result]
-      trend_cluster_id_counter = trend_cluster_id_counter_candidates[trend_result]
-      trend_tasks = trend_tasks_candidates[trend_result]
+      trend_clusters = trend_clusters_candidates[result_index_in_trend_candidates]
+      trend_cluster_id_counter = trend_cluster_id_counter_candidates[result_index_in_trend_candidates]
+      trend_tasks = trend_tasks_candidates[result_index_in_trend_candidates]
   
       candidate_max = candidate_max_master
       candidate_min = candidate_min_master
@@ -105,32 +107,33 @@ class Api::Web::TimeSeriesController < ApplicationController
       elsif trend_result == 1
         candidate_min = results.last + 1
       end
+      candidates = (candidate_min..candidate_max).to_a
   
       # 実データの候補からベストマッチを得るために評価値を得る
       sum_average_distances_all_window_candidates, sum_similar_subsequences_quantities, clusters_candidates, cluster_id_counter_candidates, tasks_candidates =
-        find_best_candidate(results, (candidate_min..candidate_max).to_a, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank_index, complexity_transition.length)
+        find_best_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank_index, complexity_transition.length)
       # 距離の小さい順に並び替え  
-      indexed_average_distances_between_clusters = sum_average_distances_all_window_candidates.map.with_index { |distance, index| [distance, index + candidate_min] }.sort_by { |candidate| candidate[0] }
+      indexed_average_distances_between_clusters = sum_average_distances_all_window_candidates.map.with_index { |distance, index| [distance, index] }.sort_by { |candidate| candidate[0] }
       # 類似数の大きい順に並び替え
-      indexed_subsequences_quantities = sum_similar_subsequences_quantities.map.with_index { |quantity, index| [quantity, index + candidate_min] }.sort_by { |candidate| -candidate[0] }
+      indexed_subsequences_quantities = sum_similar_subsequences_quantities.map.with_index { |quantity, index| [quantity, index] }.sort_by { |candidate| -candidate[0] }
       # 指定ランクを候補数に合わせて正規化  
       converted_rank = find_group_index((candidate_min_master..candidate_max_master).to_a.length, candidate_max - candidate_min + 1, rank)
 
       diff_and_indexes = []
-      (candidate_min..candidate_max).to_a.each_with_index do |candidate, index|
-        diff = 0
-   
-        diff += calculate_rank_diff(indexed_average_distances_between_clusters, converted_rank, index + candidate_min)
-        diff += calculate_rank_diff(indexed_subsequences_quantities, converted_rank, index + candidate_min)
-        diff_and_indexes << [diff, index + candidate_min]
+      candidates.each_with_index do |candidate, index|
+        diff = 0   
+        diff += calculate_rank_diff(indexed_average_distances_between_clusters, converted_rank, index)
+        diff += calculate_rank_diff(indexed_subsequences_quantities, converted_rank, index)
+        diff_and_indexes << [diff, index]
       end
       sorted = diff_and_indexes.sort_by {|diff_and_index|diff_and_index[0]}
-      # 正規化したランクを使ってベストマッチの実データを得る      
-      result = (candidate_min..candidate_max).to_a[sorted[0][1] - candidate_min]
+      # 正規化したランクを使ってベストマッチの実データを得る
+      result_index_in_candidates = sorted[0][1]       
+      result = candidates[result_index_in_candidates]
       results << result
-      clusters = clusters_candidates[result - candidate_min]
-      cluster_id_counter = cluster_id_counter_candidates[result - candidate_min]
-      tasks = tasks_candidates[result - candidate_min]
+      clusters = clusters_candidates[result_index_in_candidates]
+      cluster_id_counter = cluster_id_counter_candidates[result_index_in_candidates]
+      tasks = tasks_candidates[result_index_in_candidates]
     end
   
     render json: {
@@ -323,7 +326,8 @@ class Api::Web::TimeSeriesController < ApplicationController
       params.require(:generate).permit(
         :complexity_transition,
         :range_min,
-        :range_max
+        :range_max,
+        :first_elements
       )
     end
 

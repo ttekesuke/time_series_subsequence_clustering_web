@@ -27,15 +27,22 @@ const app = createApp({
       },
       generate: {
         setDataDialog: false,
-        rangeMin: null,
-        rangeMax: null,
+        rangeMin: 0,
+        rangeMax: 11,
         complexityTransition: null,
+        firstElements: null,
         loading: false,
         complexityTransitionRules: [
           v => !!v || 'required',
           v => (v && String(v).split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
           v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
           v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers'
+        ],
+        firstElementsRules: [
+          v => !!v || 'required',
+          v => (v && String(v).split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
+          v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
+          v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers'
         ],
         valid: false, 
         mergeThresholdRatio: 0.1  
@@ -149,6 +156,7 @@ const app = createApp({
           complexity_transition: this.generate.complexityTransition,
           range_min: this.generate.rangeMin,
           range_max: this.generate.rangeMax,
+          first_elements: this.generate.firstElements
         }
       }
       axios.post('/api/web/time_series/generate', data)
