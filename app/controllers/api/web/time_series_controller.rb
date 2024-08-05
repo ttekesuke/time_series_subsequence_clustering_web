@@ -39,22 +39,62 @@ class Api::Web::TimeSeriesController < ApplicationController
   end
 
   def generate
+    user_set_results = generate_params[:first_elements].split(',').map { |elm| elm.to_i }
     complexity_transition = generate_params[:complexity_transition].split(',').map { |elm| elm.to_i }
     merge_threshold_ratio = generate_params[:merge_threshold_ratio].to_d
     candidate_min_master = generate_params[:range_min].to_i
     candidate_max_master = generate_params[:range_max].to_i
     trend_candidate_min_master = -1
     trend_candidate_max_master = 1
-    results = generate_params[:first_elements].split(',').map { |elm| elm.to_i }
     min_window_size = 2
-  
-    # 実データのクラスタ初期化
-    cluster_id_counter, clusters, tasks = initialize_clusters(min_window_size)
-  
+    
+    # ユーザ指定の冒頭の時系列データを解析しクラスタを作成する
+    # ユーザ指定の冒頭の時系列データをトレンドにする
+    trend_user_set_results = convert_to_monotonic_change(user_set_results)
     # 実データのトレンドデータのクラスタ初期化
-    trend_results = convert_to_monotonic_change(results)
     trend_cluster_id_counter, trend_clusters, trend_tasks = initialize_clusters(min_window_size)
-  
+
+    # トレンドの解析のために必要な冒頭の要素は2つ
+    first_trend_user_set_results = trend_user_set_results[0..min_window_size - 1]
+    # 3以上あれば解析する
+    if trend_user_set_results.length >= min_window_size
+      trend_user_set_results[min_window_size..trend_user_set_results.length - 1].each_with_index do |result, index|
+        single_candidate = [result]
+        trend_average_distances_all_window_candidates, trend_sum_similar_subsequences_quantities, trend_clusters_candidates, trend_cluster_id_counter_candidates, trend_tasks_candidates =
+          find_best_candidate(first_trend_user_set_results, single_candidate, merge_threshold_ratio, min_window_size, trend_clusters, trend_cluster_id_counter, trend_tasks, index, complexity_transition.length)
+        trend_result = single_candidate[0]
+        first_trend_user_set_results << trend_result
+        trend_clusters = trend_clusters_candidates[0]
+        trend_cluster_id_counter = trend_cluster_id_counter_candidates[0]
+        trend_tasks = trend_tasks_candidates[0]
+      end
+    end
+
+    # 移行
+    trend_results = first_trend_user_set_results
+
+    # 解析のために3つの要素が必要（トレンドの要素が2つあれば、次の候補が来てクラスタの比較ができる）
+    first_results = user_set_results[0..min_window_size - 1]
+    cluster_id_counter, clusters, tasks = initialize_clusters(min_window_size)
+    
+    # ユーザ指定の冒頭の時系列データ自体を解析しクラスタとタスクを得る
+    if user_set_results.length >= min_window_size + 1
+      user_set_results[min_window_size..user_set_results.length - 1].each_with_index do |result, result_index|
+        single_candidate = [result]
+        # トレンドの候補からベストマッチを得るために評価値を得る
+        first_average_distances_all_window_candidates, first_sum_similar_subsequences_quantities, first_clusters_candidates, first_cluster_id_counter_candidates, first_tasks_candidates =
+          find_best_candidate(first_results, single_candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, result_index, complexity_transition.length)
+        first_result = single_candidate[0]
+        first_results << first_result
+        clusters = first_clusters_candidates[0]
+        cluster_id_counter = first_cluster_id_counter_candidates[0]
+        tasks = first_tasks_candidates[0]
+      end
+    end
+
+    # 移行
+    results = first_results
+
     # ユーザ指定の順位のループ
     complexity_transition.each_with_index do |rank, rank_index|
       # 生成するデータの確定値の最後の要素の値が上限か下限にいると、必然的に
@@ -88,6 +128,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       trend_sorted = diff_and_indexes.sort_by {|diff_and_index|diff_and_index[0]}
 
       # 正規化したランクを使ってベストマッチのトレンドを得る
+      # todo:trend_sortedの先頭の同率トップが複数あれば選ぶ方法が必要
       result_index_in_trend_candidates = trend_sorted[0][1]
       trend_result = trend_candidates[result_index_in_trend_candidates]
       trend_results << trend_result
@@ -164,7 +205,6 @@ class Api::Web::TimeSeriesController < ApplicationController
       clusters_each_window_size = transform_clusters(temporary_clusters, min_window_size)
       sum_distances_in_all_window = []
       sum_similar_subsequences_quantities = 0
-    
       clusters_each_window_size.each do |window_size, same_window_size_clusters|
         sum_distances = 0
     
@@ -176,7 +216,8 @@ class Api::Web::TimeSeriesController < ApplicationController
           distance = euclidean_distance(c1_average, c2_average)
           sum_distances += distance
         end
-        sum_distances_in_all_window << sum_distances
+        # 長い部分列同士の距離は少なく見積もる
+        sum_distances_in_all_window << sum_distances / window_size
 
         # 類似部分列の数は、偏りがあり密集しているほど・窓幅が大きいものほど類似していると見なす。
         # また類似部分列が2個以上のものだけ対象とする
