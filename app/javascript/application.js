@@ -45,8 +45,12 @@ const app = createApp({
           v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers'
         ],
         valid: false, 
-        mergeThresholdRatio: 0.1  
+        mergeThresholdRatio: 0.1,
+        complexityTransitionChart: null
       },      
+      showTimeseriesChart: false,
+      showTimeseriesComplexityChart: false,
+      showTimeline: false,
       infoDialog: false,
     })
 
@@ -57,19 +61,22 @@ const app = createApp({
   },
   methods: {
     drawTimeline() {
-      const container = document.getElementById('timeline')
-      const chart = new google.visualization.Timeline(container)
-      const dataTable = new google.visualization.DataTable()
-      const options = {'height': 500, 'width': window.innerWidth}
-      dataTable.addColumn({ type: 'string', id: 'WindowSize' })
-      dataTable.addColumn({ type: 'string', id: 'Cluster' })
-      dataTable.addColumn({ type: 'number', id: 'Start' })
-      dataTable.addColumn({ type: 'number', id: 'End' })
-      dataTable.addRows(this.clusteredSubsequences)
-    
-      chart.draw(dataTable, options)
-      google.visualization.events.addListener(chart, 'onmouseover', (e) => {
-        this.onSelectedSubsequence(e)
+      this.showTimeline = true
+      this.$nextTick(() => {
+        const container = document.getElementById('timeline')
+        const chart = new google.visualization.Timeline(container)
+        const dataTable = new google.visualization.DataTable()
+        const options = {'height': 470, 'width': window.innerWidth, 'title': 'clustering'}
+        dataTable.addColumn({ type: 'string', id: 'WindowSize' })
+        dataTable.addColumn({ type: 'string', id: 'Cluster' })
+        dataTable.addColumn({ type: 'number', id: 'Start' })
+        dataTable.addColumn({ type: 'number', id: 'End' })
+        dataTable.addRows(this.clusteredSubsequences)
+      
+        chart.draw(dataTable, options)
+        google.visualization.events.addListener(chart, 'onmouseover', (e) => {
+          this.onSelectedSubsequence(e)
+        })
       })
     },
     onSelectedSubsequence(selected) {
@@ -98,11 +105,23 @@ const app = createApp({
         }
         elm.push(subsequencesInSameCluster[index])
       })
-      this.drawTimeSeries()
+      this.drawTimeSeries('timeseries', this.timeSeriesChart)
     },
-    drawTimeSeries(){
+    drawTimeSeries(elementId, drawData){
+      this.showTimeseriesChart = true
+      this.$nextTick(() => {
+        this.drawSteppedAreaChart(elementId, drawData, 200)
+      })
+    },
+    drawTimeSeriesComplexity(elementId, drawData){
+      this.showTimeseriesComplexityChart = true
+      this.$nextTick(() => {
+        this.drawSteppedAreaChart(elementId, drawData, 100)
+      })
+    },
+    drawSteppedAreaChart(elementId, drawData, height){
       const options = {
-        'height': 350, 
+        'height': height, 
         'width': window.innerWidth, 
         isStacked: false, 
         legend: 'none', 
@@ -121,13 +140,18 @@ const app = createApp({
             fillOpacity: 100,
             strokeWidth: 10
           }
+        },
+        vAxis: {
+          viewWindow: {
+            min: 0,
+            max: 11  
+          },
+          ticks: [0,1,2,3,4,5,6,7,8,9,10,11]
         }
       }
-      const data = google.visualization.arrayToDataTable(
-        this.timeSeriesChart,
-      )
-      const chart = new google.visualization.SteppedAreaChart(document.getElementById('timeseries'));
-      chart.draw(data , options)
+      const dataTable = google.visualization.arrayToDataTable(drawData)
+      const chart = new google.visualization.SteppedAreaChart(document.getElementById(elementId))
+      chart.draw(dataTable, options)
     },
     setRandoms(){
       this.analyse.timeSeries = [...Array(parseInt(this.analyse.random.length))].map(() => Math.floor(Math.random() * (parseInt(this.analyse.random.max) - parseInt(this.analyse.random.min)+ 1)) + parseInt(this.analyse.random.min)).join(',')
@@ -139,11 +163,12 @@ const app = createApp({
       .then(response => {
          console.log(response)
          this.clusteredSubsequences = response.data.clusteredSubsequences
-         this.timeSeriesChart = response.data.timeSeries
+         this.timeSeriesChart = response.data.timeSeriesChart
          this.analyse.loading = false
          this.analyse.setDataDialog = false
+         this.showTimeseriesComplexityChart = false
          this.drawTimeline()
-         this.drawTimeSeries()
+         this.drawTimeSeries('timeseries', this.timeSeriesChart)
       })
       .catch(error => {
          console.log(error)
@@ -162,10 +187,16 @@ const app = createApp({
       axios.post('/api/web/time_series/generate', data)
       .then(response => {
          console.log(response)
+         this.clusteredSubsequences = response.data.clusteredSubsequences
+         this.analyse.timeSeries = String(response.data.timeSeries)
+         this.timeSeriesChart = response.data.timeSeriesChart
+         this.generate.complexityTransitionChart = response.data.timeSeriesComplexityChart
+         this.drawTimeline()
+         this.drawTimeSeries('timeseries', this.timeSeriesChart)
+         this.drawTimeSeriesComplexity('timeseries-complexity', this.generate.complexityTransitionChart)
          this.generate.loading = false
-         this.analyse.timeSeries = String(response.data.results)
          this.generate.setDataDialog = false
-         this.analyse.setDataDialog = true
+
       })
       .catch(error => {
          console.log(error)

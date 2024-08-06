@@ -196,14 +196,22 @@
       </v-dialog>      
     </v-app-bar>
     <v-main>
-      <v-row no-gutters>
+      <v-row no-gutters v-if='showTimeseriesChart'>
         <v-col>
-          <div id='timeline' styls='height: 70vh;'></div>
+          <div class='text-h6 ml-3'>timeseries</div>
+          <div id='timeseries' styls='height: 20vh;'></div>
+        </v-col>
+      </v-row>    
+      <v-row no-gutters v-if='showTimeseriesComplexityChart'>
+        <v-col>
+          <div class='text-h6 ml-3'>timeseries-complexity</div>
+          <div id='timeseries-complexity' styls='height: 20vh;'></div>
         </v-col>
       </v-row>
-      <v-row no-gutters>
+      <v-row no-gutters v-if='showTimeline'>
         <v-col>
-          <div id='timeseries' styls='height: 20vh;'></div>
+          <div class='text-h6 ml-3'>clusters</div>
+          <div id='timeline' styls='height: 70vh;'></div>
         </v-col>
       </v-row>
     </v-main>

@@ -34,7 +34,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     timeline = clusters_to_timeline(clusters, min_window_size)
     render json: {
       clusteredSubsequences: timeline,
-      timeSeries: [['index', 'allValue']] + data.map.with_index{|elm, index|[index.to_s, elm]},
+      timeSeriesChart: [['index', 'allValue']] + data.map.with_index{|elm, index|[index.to_s, elm]},
     }
   end
 
@@ -176,9 +176,15 @@ class Api::Web::TimeSeriesController < ApplicationController
       cluster_id_counter = cluster_id_counter_candidates[result_index_in_candidates]
       tasks = tasks_candidates[result_index_in_candidates]
     end
-  
+
+    chart_elements_for_complexity = Array.new(user_set_results.length) { |index| [index, nil] }
+
+    timeline = clusters_to_timeline(clusters, min_window_size)
     render json: {
-      results: results,
+      clusteredSubsequences: timeline,
+      timeSeriesChart: [['index', 'allValue']] + results.map.with_index{|elm, index|[index.to_s, elm]},
+      timeSeries: results,
+      timeSeriesComplexityChart: [['index', 'allValue']] + chart_elements_for_complexity + complexity_transition.map.with_index{|elm, index|[(user_set_results.length + 1 + index).to_s, elm]},
     }
   end
 
