@@ -120,6 +120,9 @@ const app = createApp({
       })
     },
     drawSteppedAreaChart(elementId, drawData, height){
+      const onlyData = drawData.map(data => data[1]).slice(1, drawData.length)
+      const dataMin = Math.min(...onlyData)
+      const dataMax = Math.max(...onlyData)
       const options = {
         'height': height, 
         'width': window.innerWidth, 
@@ -143,10 +146,10 @@ const app = createApp({
         },
         vAxis: {
           viewWindow: {
-            min: 0,
-            max: 11  
+            min: dataMin,
+            max: dataMax
           },
-          ticks: [0,1,2,3,4,5,6,7,8,9,10,11]
+          ticks: [...Array(dataMax + 1)].map((_, i) => i + dataMin)
         }
       }
       const dataTable = google.visualization.arrayToDataTable(drawData)
