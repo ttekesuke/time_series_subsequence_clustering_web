@@ -1,8 +1,8 @@
 module Utility
   require 'bigdecimal'
   require 'bigdecimal/util'
-  ROUNDING_DIGIT = 3  
-  
+  ROUNDING_DIGIT = 3
+
   def max_peak_indexes(d)
     old = d[0]
     result = [0]
@@ -14,7 +14,7 @@ module Utility
     end
     result
   end
-    
+
   def min_peak_indexes(d)
     old = d[0]
     result = [0]
@@ -65,5 +65,5 @@ module Utility
       end
     end
   end
-  
+
 end

@@ -32,7 +32,7 @@
               <a href='https://tekesuke1986.tumblr.com' target='_blank'>Takuya SHIMIZU</a></v-icon></p>
             </div>
           </v-card-text>
-        </v-card>        
+        </v-card>
       </v-dialog>
       <v-btn @click="analyse.setDataDialog = true">analyse</v-btn>
       <v-dialog width="1000" v-model="analyse.setDataDialog" >
@@ -42,17 +42,17 @@
               <v-row>
                 <v-col cols="9">
                   <v-textarea
-                  placeholder="please set timeseries (like 1,2,3,4,5)" 
-                  required 
-                  v-model='analyse.timeSeries' 
-                  label="timeseries" 
+                  placeholder="please set timeseries (like 1,2,3,4,5)"
+                  required
+                  v-model='analyse.timeSeries'
+                  label="timeseries"
                   rows="1"
                   :rules="analyse.timeSeriesRules"
                 ></v-textarea>
                 </v-col>
                 <v-col cols="3">
                   <v-row>
-                    <v-col>                   
+                    <v-col>
                       <v-card>
                         <v-card-title>
                           generate randoms
@@ -79,7 +79,7 @@
                             </v-col>
                           </v-row>
                           <v-row>
-                            <v-col>                  
+                            <v-col>
                               <v-text-field
                                 label="length"
                                 type="number"
@@ -90,8 +90,8 @@
                             </v-col>
                           </v-row>
                           <v-row>
-                            <v-col>   
-                              <v-btn :disabled='!analyse.random.max || !analyse.random.min || !analyse.random.length' @click="setRandoms">set randoms</v-btn>      
+                            <v-col>
+                              <v-btn :disabled='!analyse.random.max || !analyse.random.min || !analyse.random.length' @click="setRandoms">set randoms</v-btn>
                             </v-col>
                           </v-row>
                         </v-card-text>
@@ -99,7 +99,7 @@
                     </v-col>
                   </v-row>
                   <v-row>
-                    <v-col>              
+                    <v-col>
                       <v-text-field
                         label="merge threshold ratio"
                         type="number"
@@ -109,12 +109,12 @@
                         step="0.01"
                       ></v-text-field>
                     </v-col>
-                  </v-row>                  
+                  </v-row>
                   <v-row>
-                    <v-col>              
-                      <v-btn :disabled='!analyse.valid' @click="analyseTimeseries" :loading="analyse.loading">Submit</v-btn>        
+                    <v-col>
+                      <v-btn :disabled='!analyse.valid' @click="analyseTimeseries" :loading="analyse.loading">Submit</v-btn>
                     </v-col>
-                  </v-row>                  
+                  </v-row>
                 </v-col>
               </v-row>
             </v-card-text>
@@ -128,30 +128,30 @@
             <v-card-text>
               <v-row>
                 <v-col>
-                  <v-textarea 
-                    placeholder="please set the first elements of the time series. (like 0,1,2,3,4,5)" 
-                    required 
-                    v-model='generate.firstElements' 
-                    label="first elements" 
+                  <v-textarea
+                    placeholder="please set the first elements of the time series. (like 0,1,2,3,4,5)"
+                    required
+                    v-model='generate.firstElements'
+                    label="first elements"
                     rows="1"
                     :rules="generate.firstElementsRules"
                   ></v-textarea>
                 </v-col>
-              </v-row>  
+              </v-row>
               <v-row>
                 <v-col>
-                  <v-textarea 
-                    placeholder="please set the complexity transition. (like 1,2,3,4,5)" 
-                    required 
-                    v-model='generate.complexityTransition' 
-                    label="complexity transition" 
+                  <v-textarea
+                    placeholder="please set the complexity transition. (like 1,2,3,4,5)"
+                    required
+                    v-model='generate.complexityTransition'
+                    label="complexity transition"
                     rows="1"
                     :rules="generate.complexityTransitionRules"
                   ></v-textarea>
                 </v-col>
-              </v-row>                
+              </v-row>
               <v-row>
-                <v-col cols="4">                   
+                <v-col cols="4">
                   <v-card>
                     <v-card-title>
                       available range
@@ -172,13 +172,13 @@
                           type="number"
                           v-model="generate.rangeMax"
                           :min="generate.rangeMin"
-                        ></v-text-field>                        
+                        ></v-text-field>
                         </v-col>
                       </v-row>
                     </v-card-text>
                   </v-card>
                 </v-col>
-                <v-col cols="4">     
+                <v-col cols="4">
                   <v-text-field
                     label="merge threshold ratio"
                     type="number"
@@ -186,14 +186,14 @@
                     min="0"
                     max="1"
                     step="0.01"
-                  ></v-text-field>                           
-                  <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>        
-                </v-col>   
-              </v-row>  
+                  ></v-text-field>
+                  <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>
+                </v-col>
+              </v-row>
             </v-card-text>
           </v-card>
         </v-form>
-      </v-dialog>      
+      </v-dialog>
     </v-app-bar>
     <v-main>
       <v-row no-gutters v-if='showTimeseriesChart'>
@@ -201,7 +201,7 @@
           <div class='text-h6 ml-3'>timeseries</div>
           <div id='timeseries' styls='height: 20vh;'></div>
         </v-col>
-      </v-row>    
+      </v-row>
       <v-row no-gutters v-if='showTimeseriesComplexityChart'>
         <v-col>
           <div class='text-h6 ml-3'>timeseries-complexity</div>

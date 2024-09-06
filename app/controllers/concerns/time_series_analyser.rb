@@ -24,10 +24,10 @@ module TimeSeriesAnalyser
     lower_half_average = mean(data.select { |x| x <= data_mean })
     upper_half_average = mean(data.select { |x| x >= data_mean })
     max_distance_between_lower_and_upper_each_window_size = {}
-    
+
     new_tasks = []
     # タスク(延伸された類似部分列が結合候補のクラスタ内の部分列群と似てればクラスタへ結合)があれば処理する
-    tasks.each do |task|    
+    tasks.each do |task|
       # クラスタに結合予定の最新部分列（延伸済）
       current_subsequence = task[1]
       current_window_size = current_subsequence[1] - current_subsequence[0] + 1
@@ -38,7 +38,7 @@ module TimeSeriesAnalyser
         max_distance_between_lower_and_upper = euclidean_distance(Array.new(current_window_size, lower_half_average), Array.new(current_window_size, upper_half_average))
         max_distance_between_lower_and_upper_each_window_size[current_window_size] = max_distance_between_lower_and_upper
       end
-      
+
       # task[0]はclusters内部の当該クラスタにアクセスするキーが入ってる
       current_cluster = dig_clusters_by_keys(clusters, task[0])
       # {
@@ -67,10 +67,10 @@ module TimeSeriesAnalyser
         }
       end
 
-      # 結合候補のクラスタを一つずつ処理                    
+      # 結合候補のクラスタを一つずつ処理
       will_merge_clusters.each do |cluster_id, cluster|
         similar_subsequences = []
-        # 候補側の部分列群を取り出し、最新部分列と距離比較           
+        # 候補側の部分列群を取り出し、最新部分列と距離比較
         cluster[:s].each do |past_subsequence|
           distance = euclidean_distance(
             data[past_subsequence[0]..past_subsequence[1]],
@@ -122,7 +122,7 @@ module TimeSeriesAnalyser
     # 同じ長さの過去のクラスタへ結合する処理開始
     current_subsequence = [data_index - (min_window_size - 1), data_index]
     min_distance = Float::INFINITY
-    closest_cluster_id = nil   
+    closest_cluster_id = nil
     # 最短の過去の部分列群を取り出す。clustersの直下のクラスタ群は全て同じ最短の部分列群を持つクラスタ群。
     clusters.each do |cluster_id, cluster|
       # クラスタ内の部分列群と最短・最新の部分列との距離を累積する
@@ -200,7 +200,7 @@ module TimeSeriesAnalyser
     # 完成した木構造のクラスタを、表示用にフラットな構造に変換する。
     stack = clusters.map { |cluster_id, cluster| [min_window_size, cluster_id, cluster] }
     result = []
-  
+
     until stack.empty?
       window_size, cluster_id, current = stack.pop
       current[:s].each do |subsequence|
@@ -254,26 +254,26 @@ module TimeSeriesAnalyser
       end
       # クラスタリング対象の部分列群がなければスキップ
       next if subsequences.length < 2
-  
+
       # クラスタリング開始
       clusters = {}
       min_distances = []
       cluster_merge_counter = 0
       tolerance_over = false
-  
+
       # 部分列群を初期クラスタ群に変換
       subsequences.each do |subsequence|
         cluster_id_counter += 1
         clusters[cluster_id_counter] = [subsequence]
       end
-  
+
       # クラスタ数が2以上かつ許容値内の間クラスタリング
       while clusters.length > 1 && !tolerance_over do
         min_distance = Float::INFINITY
         closest_pair = nil
-  
+
         clusters.to_a.combination(2).each do |c1, c2|
-          distances = []  
+          distances = []
           c1[1].each do |c1_subsequence|
             c2[1].each do |c2_subsequence|
               distances << euclidean_distance(data[c1_subsequence[:start_index]..c1_subsequence[:end_index]], data[c2_subsequence[:start_index]..c2_subsequence[:end_index]])
@@ -281,19 +281,19 @@ module TimeSeriesAnalyser
           end
 
           average_distances = mean(distances)
-  
+
           if average_distances == 0.0
             min_distance = average_distances
             closest_pair = [c1, c2]
             break
           end
-  
+
           if average_distances < min_distance
             min_distance = average_distances
             closest_pair = [c1, c2]
           end
         end
-  
+
         min_distances << min_distance
         combination_length = closest_pair[0][1].length * closest_pair[1][1].length
         gap_last_and_min = cluster_merge_counter == 0 ? min_distances.last : min_distances.last - min_distances.min
@@ -310,12 +310,12 @@ module TimeSeriesAnalyser
       new_nodes = []
       clusters.each do |cluster_id, subsequences|
         subsequences.each do |subsequence|
-          clustered_subsequences << [current_window_size.to_s, cluster_id.to_s(26).tr("0-9a-p", "a-z"), subsequence[:start_index] * 1000, (subsequence[:end_index] + 1) * 1000] 
+          clustered_subsequences << [current_window_size.to_s, cluster_id.to_s(26).tr("0-9a-p", "a-z"), subsequence[:start_index] * 1000, (subsequence[:end_index] + 1) * 1000]
         end
         current_node[cluster_id] = {}
         new_nodes << {node: current_node[cluster_id], window_size: current_window_size + 1, cluster_id: cluster_id, parent_subsequences: subsequences}
       end
-      # スタックに追加（若い数字から深くなるように順序を逆にして追加） 
+      # スタックに追加（若い数字から深くなるように順序を逆にして追加）
       stack.concat(new_nodes.reverse)
     end
 

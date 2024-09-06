@@ -31,38 +31,38 @@ module StatisticsCalculator
       covariance(d1, d2) / standard_deviations.to_d
     end
   end
-  
+
   def dtw_distance(d1, d2)
     n = d1.length
     m = d2.length
-  
+
     matrix = Array.new(n + 1) { Array.new(m + 1) }
-  
+
     for i in 0..n
       for j in 0..m
         matrix[i][j] = Float::INFINITY
       end
     end
     matrix[0][0] = 0
-  
+
     for i in 1..n
       for j in 1..m
         cost = (d1[i - 1] - d2[j - 1])**2
         matrix[i][j] = cost + [matrix[i - 1][j], matrix[i][j - 1], matrix[i - 1][j - 1]].min
       end
     end
-  
+
     return Math.sqrt(matrix[n][m])
   end
 
   def euclidean_distance(d1, d2)
     raise "The two data lengths are different." if d1.size != d2.size
-  
+
     sum_of_squares = 0.0
     d1.each_index do |i|
       sum_of_squares += (d1[i] - d2[i])**2
     end
-  
+
     return Math.sqrt(sum_of_squares)
   end
 
@@ -72,7 +72,7 @@ module StatisticsCalculator
     magnitude2 = Math.sqrt(d2.map { |_d1| _d1**2 }.sum)
     dot_product / (magnitude1 * magnitude2)
   end
-  
+
   def compare_original_and_shifted_data(d)
     raise "Block not provided." unless block_given?
 
@@ -82,15 +82,15 @@ module StatisticsCalculator
     end
     result
   end
-  
+
   def autocorrelation_coefficient(d)
     compare_original_and_shifted_data(d) {|d1, d2| correlation_coefficient(d1, d2)}
   end
-  
+
   def compare_original_and_shifted_by_euclidean_distance(d)
     compare_original_and_shifted_data(d) {|d1, d2| euclidean_distance(d1, d2)}
   end
-  
+
   def compare_original_and_shifted_by_dtw_distance(d)
     compare_original_and_shifted_data(d) {|d1, d2| dtw_distance(d1, d2)}
   end

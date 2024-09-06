@@ -17,13 +17,13 @@ const app = createApp({
           v => (v && String(v).split(',').filter(n => n !== "").length >= 2) || 'must have at least 2 numbers',
           v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers'
         ],
-        valid: false, 
+        valid: false,
         random: {
           min: null,
           max: null,
           length: null
-        },      
-        mergeThresholdRatio: 0.1  
+        },
+        mergeThresholdRatio: 0.1
       },
       generate: {
         setDataDialog: false,
@@ -44,10 +44,10 @@ const app = createApp({
           v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
           v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers'
         ],
-        valid: false, 
+        valid: false,
         mergeThresholdRatio: 0.1,
         complexityTransitionChart: null
-      },      
+      },
       showTimeseriesChart: false,
       showTimeseriesComplexityChart: false,
       showTimeline: false,
@@ -72,7 +72,7 @@ const app = createApp({
         dataTable.addColumn({ type: 'number', id: 'Start' })
         dataTable.addColumn({ type: 'number', id: 'End' })
         dataTable.addRows(this.clusteredSubsequences)
-      
+
         chart.draw(dataTable, options)
         google.visualization.events.addListener(chart, 'onmouseover', (e) => {
           this.onSelectedSubsequence(e)
@@ -81,8 +81,8 @@ const app = createApp({
     },
     onSelectedSubsequence(selected) {
       let subsequencesIndexes = []
-    
-      this.clusteredSubsequences.filter(subsequence => 
+
+      this.clusteredSubsequences.filter(subsequence =>
         subsequence[0] === this.clusteredSubsequences[selected['row']][0] && subsequence[1] === this.clusteredSubsequences[selected['row']][1]
       ).forEach(subsequence => {
         const startIndex = subsequence[2] / 1000
@@ -124,15 +124,15 @@ const app = createApp({
       const dataMin = Math.min(...onlyData)
       const dataMax = Math.max(...onlyData)
       const options = {
-        'height': height, 
-        'width': window.innerWidth, 
-        isStacked: false, 
-        legend: 'none', 
+        'height': height,
+        'width': window.innerWidth,
+        isStacked: false,
+        legend: 'none',
         series: [
           {areaOpacity : 0},
           {areaOpacity : 0},
         ],
-        interpolateNulls:false,    
+        interpolateNulls:false,
         chartArea:{
           left:30,
           top:0,
@@ -179,7 +179,7 @@ const app = createApp({
     },
     generateTimeseries() {
       this.generate.loading = true
-      let data = { generate: 
+      let data = { generate:
         {
           complexity_transition: this.generate.complexityTransition,
           range_min: this.generate.rangeMin,
@@ -204,9 +204,9 @@ const app = createApp({
       .catch(error => {
          console.log(error)
       })
-    },    
+    },
   }
-  
+
 })
 app.use(vuetify)
 app.mount('#app')
