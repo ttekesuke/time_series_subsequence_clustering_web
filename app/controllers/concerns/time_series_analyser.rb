@@ -158,10 +158,10 @@ module TimeSeriesAnalyser
       max_distance_between_lower_and_upper = euclidean_distance(Array.new(current_window_size, lower_half_average), Array.new(current_window_size, upper_half_average))
       max_distance_between_lower_and_upper_each_window_size[current_window_size] = max_distance_between_lower_and_upper
     end
-    # 最短が許容値以下の場合、
-    ratio_in_max_distance = min_distance / max_distance_between_lower_and_upper
+    # 確定した要素の最大から最小までの長さが0の場合1種類しか要素が存在していないので0にして常に結合されるようにする。
+    ratio_in_max_distance = max_distance_between_lower_and_upper == 0 ? 0 : min_distance / max_distance_between_lower_and_upper
+    # 指定した結合閾値割合よりも少なければクラスタ結合
     if ratio_in_max_distance <= merge_threshold_ratio
-      # クラスタ結合する
       clusters[closest_cluster_id][:s] << current_subsequence
       # 元の時系列データから取り出した要素が最後の要素でなければ、
       if !reached_to_end
