@@ -121,8 +121,8 @@ class Api::Web::TimeSeriesController < ApplicationController
       diff_and_indexes = []
       trend_candidates.each_with_index do |trend, index|
         diff = 0
-        diff += calculate_rank_diff(trend_indexed_average_distances, converted_rank, index)
-        diff += calculate_rank_diff(trend_indexed_subsequences_quantities, converted_rank, index)
+        diff += calculate_rank_diff(trend_indexed_average_distances, converted_rank, index) * normalize_values(trend_average_distances_all_window_candidates).max
+        diff += calculate_rank_diff(trend_indexed_subsequences_quantities, converted_rank, index) * normalize_values(trend_sum_similar_subsequences_quantities).max
         diff_and_indexes << [diff, index]
       end
       trend_sorted = diff_and_indexes.sort_by {|diff_and_index|diff_and_index[0]}
@@ -163,8 +163,8 @@ class Api::Web::TimeSeriesController < ApplicationController
       diff_and_indexes = []
       candidates.each_with_index do |candidate, index|
         diff = 0
-        diff += calculate_rank_diff(indexed_average_distances_between_clusters, converted_rank, index)
-        diff += calculate_rank_diff(indexed_subsequences_quantities, converted_rank, index)
+        diff += calculate_rank_diff(indexed_average_distances_between_clusters, converted_rank, index) * normalize_values(sum_average_distances_all_window_candidates).max
+        diff += calculate_rank_diff(indexed_subsequences_quantities, converted_rank, index) * normalize_values(sum_similar_subsequences_quantities).max
         diff_and_indexes << [diff, index]
       end
       sorted = diff_and_indexes.sort_by {|diff_and_index|diff_and_index[0]}
@@ -237,6 +237,17 @@ class Api::Web::TimeSeriesController < ApplicationController
       average_distances_in_all_window = mean(sum_distances_in_all_window)
 
       [average_distances_in_all_window, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks]
+    end
+
+    # 指標の最小値を1にスケーリングするメソッド
+    def normalize_values(indicator_values)
+      # 指標の最小値 0除算を避けるため1加算する
+      min_value = indicator_values.min + 1
+
+      # 全ての値+1を最小値で割って最小値を1に揃える
+      normalized_values = indicator_values.map { |value| value + 1 / min_value.to_f }
+
+      return normalized_values
     end
 
     def find_best_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank_index, complexity_transition)
