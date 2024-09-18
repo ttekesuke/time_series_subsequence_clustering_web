@@ -23,7 +23,8 @@ const app = createApp({
           max: null,
           length: null
         },
-        mergeThresholdRatio: 0.1
+        mergeThresholdRatio: 0.1,
+        allowBelongsToMultipleClusters: false
       },
       generate: {
         setDataDialog: false,
@@ -46,7 +47,8 @@ const app = createApp({
         ],
         valid: false,
         mergeThresholdRatio: 0.1,
-        complexityTransitionChart: null
+        complexityTransitionChart: null,
+        allowBelongsToMultipleClusters: false
       },
       showTimeseriesChart: false,
       showTimeseriesComplexityChart: false,
@@ -161,7 +163,13 @@ const app = createApp({
     },
     analyseTimeseries() {
       this.analyse.loading = true
-      let data = { analyse: {time_series: this.analyse.timeSeries, merge_threshold_ratio: this.analyse.mergeThresholdRatio }}
+      let data = {
+        analyse: {
+          time_series: this.analyse.timeSeries,
+          merge_threshold_ratio: this.analyse.mergeThresholdRatio,
+          allow_belongs_to_multiple_clusters: this.analyse.allowBelongsToMultipleClusters
+        }
+      }
       axios.post('/api/web/time_series/analyse', data)
       .then(response => {
          console.log(response)
@@ -184,7 +192,9 @@ const app = createApp({
           complexity_transition: this.generate.complexityTransition,
           range_min: this.generate.rangeMin,
           range_max: this.generate.rangeMax,
-          first_elements: this.generate.firstElements
+          first_elements: this.generate.firstElements,
+          merge_threshold_ratio: this.generate.mergeThresholdRatio,
+          allow_belongs_to_multiple_clusters: this.generate.allowBelongsToMultipleClusters
         }
       }
       axios.post('/api/web/time_series/generate', data)

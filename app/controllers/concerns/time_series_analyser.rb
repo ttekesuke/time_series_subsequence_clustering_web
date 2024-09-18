@@ -2,7 +2,7 @@ module TimeSeriesAnalyser
   include StatisticsCalculator
   include Utility
 
-  def clustering_subsequences_incremental(data, merge_threshold_ratio, elm, data_index, min_window_size, clusters, cluster_id_counter, tasks, reached_to_end)
+  def clustering_subsequences_incremental(data, merge_threshold_ratio, elm, data_index, min_window_size, clusters, cluster_id_counter, tasks, reached_to_end, allow_belongs_to_multiple_clusters)
     # clustersの構成
     # clusters = {
     #   cluster_id1 => {
@@ -92,25 +92,33 @@ module TimeSeriesAnalyser
             cluster[:s] << current_subsequence
             # クラスタを更新または追加
             current_cluster[:c][next_cluster_id] = cluster
-          # 結合候補クラスタ内の一部の部分列群と比較対象部分列が許容値以下なら新しいクラスタを作成
+            # 次回の結合用に最新部分列を延伸する
+            if !reached_to_end
+              extended_current_subsequence = [current_subsequence[0], current_subsequence[1] + 1]
+              new_tasks << [task[0] + [next_cluster_id], extended_current_subsequence]
+            end
           else
-            # 類似していた、結合候補クラスタの類似部分列群に、最新部分列を追加
-            similar_subsequences << current_subsequence
-            cluster_id_counter += 1
-            # 新しいクラスタを作成
-            next_cluster_id = cluster_id_counter
-            new_cluster = {
-              s: similar_subsequences,
-              c: {}
-            }
-            # 新しいクラスタを親クラスタに追加
-            current_cluster[:c][cluster_id_counter] = new_cluster
+            # 部分列が複数のクラスタに属していい場合、一つでも他の部分列と類似していれば新しいクラスタを作成
+            if allow_belongs_to_multiple_clusters
+              # 類似していた、結合候補クラスタの類似部分列群に、最新部分列を追加
+              similar_subsequences << current_subsequence
+              cluster_id_counter += 1
+              # 新しいクラスタを作成
+              next_cluster_id = cluster_id_counter
+              new_cluster = {
+                s: similar_subsequences,
+                c: {}
+              }
+              # 新しいクラスタを親クラスタに追加
+              current_cluster[:c][cluster_id_counter] = new_cluster
+              # 次回の結合用に最新部分列を延伸する
+              if !reached_to_end
+                extended_current_subsequence = [current_subsequence[0], current_subsequence[1] + 1]
+                new_tasks << [task[0] + [next_cluster_id], extended_current_subsequence]
+              end
+            end
           end
-          # 次回の結合用に最新部分列を延伸する
-          if !reached_to_end
-            extended_current_subsequence = [current_subsequence[0], current_subsequence[1] + 1]
-            new_tasks << [task[0] + [next_cluster_id], extended_current_subsequence]
-          end
+
         end
       end
     end
