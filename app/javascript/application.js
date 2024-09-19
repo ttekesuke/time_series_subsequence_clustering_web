@@ -23,7 +23,7 @@ const app = createApp({
           max: null,
           length: null
         },
-        mergeThresholdRatio: 0.1,
+        mergeThresholdRatio: 0.2,
         allowBelongsToMultipleClusters: false
       },
       generate: {
@@ -46,7 +46,7 @@ const app = createApp({
           v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers'
         ],
         valid: false,
-        mergeThresholdRatio: 0.1,
+        mergeThresholdRatio: 0.2,
         complexityTransitionChart: null,
         allowBelongsToMultipleClusters: false
       },
