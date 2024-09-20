@@ -224,7 +224,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       tasks = tasks_candidates[result_index_in_candidates]
     end
 
-    chart_elements_for_complexity = Array.new(user_set_results.length) { |index| [index.to_s, nil] }
+    chart_elements_for_complexity = Array.new(user_set_results.length) { |index| [index.to_s, nil, nil, nil] }
 
     timeline = clusters_to_timeline(clusters, min_window_size)
     render json: {
