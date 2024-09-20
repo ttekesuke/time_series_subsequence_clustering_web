@@ -48,20 +48,125 @@ const app = createApp({
         valid: false,
         mergeThresholdRatio: 0.2,
         complexityTransitionChart: null,
-        allowBelongsToMultipleClusters: false
+        allowBelongsToMultipleClusters: false,
+        linear: {
+          start: null,
+          end: null,
+          length: null
+        }
       },
       showTimeseriesChart: false,
       showTimeseriesComplexityChart: false,
       showTimeline: false,
       infoDialog: false,
+      pitchMap: ['C4', 'C#4', 'D4', 'D#4', 'E4', 'F4', 'F#4', 'G4', 'G#4', 'A4', 'A#4', 'B4'],
+      nowPlaying: false,
+      tempo: 60,
+      velocity: 1,
+      sequenceCounter: 0
     })
 
-    return { ...toRefs(state) };
+    return { ...toRefs(state) }
   },
   mounted() {
     google.charts.load("current", {packages:["timeline", "corechart"]})
   },
   methods: {
+    playNotes(){
+      this.nowPlaying ? this.stopPlayingNotes() : this.startPlayingNotes()
+    },
+    startPlayingNotes() {
+      this.nowPlaying = true
+      this.sequenceCounter = 0
+      const timeSeriesArray = this.analyse.timeSeries.split(',').map(Number)
+      let score = []
+      const groupedTimeSeries = this.groupArray(timeSeriesArray, [4,4])
+      groupedTimeSeries.forEach((measure, measureIndex) => {
+        measure.forEach((quater, quaterIndex) => {
+          quater.forEach((sixteenth, sixteenthIndex) => {
+            score.push({
+              "time": `${measureIndex}:${quaterIndex}:${sixteenthIndex}`,
+              "note": `${this.pitchMap[sixteenth]}`,
+              "duration": "16n",
+              "velocity": this.velocity
+            })
+          })
+        })
+      })
+      Tone.Transport.bpm.value = this.tempo
+
+      const sampler = new Tone.Sampler({
+        urls: {
+          A0: "A0.mp3",
+          C1: "C1.mp3",
+          "D#1": "Ds1.mp3",
+          "F#1": "Fs1.mp3",
+          A1: "A1.mp3",
+          C2: "C2.mp3",
+          "D#2": "Ds2.mp3",
+          "F#2": "Fs2.mp3",
+          A2: "A2.mp3",
+          C3: "C3.mp3",
+          "D#3": "Ds3.mp3",
+          "F#3": "Fs3.mp3",
+          A3: "A3.mp3",
+          C4: "C4.mp3",
+          "D#4": "Ds4.mp3",
+          "F#4": "Fs4.mp3",
+          A4: "A4.mp3",
+          C5: "C5.mp3",
+          "D#5": "Ds5.mp3",
+          "F#5": "Fs5.mp3",
+          A5: "A5.mp3",
+          C6: "C6.mp3",
+          "D#6": "Ds6.mp3",
+          "F#6": "Fs6.mp3",
+          A6: "A6.mp3",
+          C7: "C7.mp3",
+          "D#7": "Ds7.mp3",
+          "F#7": "Fs7.mp3",
+          A7: "A7.mp3",
+          C8: "C8.mp3",
+        },
+        baseUrl: "https://tonejs.github.io/audio/salamander/",
+        onload: () => {
+          const part = new Tone.Part(((time, note) => {
+            sampler.triggerAttackRelease(note.note, note.duration, time, note.velocity)
+            if(this.sequenceCounter === timeSeriesArray.length){
+              this.stopPlayingNotes()
+            }else{
+              const noteLengthInSeconds = Tone.Time(note.duration).toSeconds()
+              setTimeout( () => {
+              }, noteLengthInSeconds * 1000)
+              this.drawSequence(this.sequenceCounter, false)
+              this.sequenceCounter += 1
+            }
+          }), score).start()
+          Tone.Transport.start()
+        }
+      }).toDestination()
+    },
+    stopPlayingNotes() {
+      this.nowPlaying = false
+      this.drawSequence(null, true)
+      Tone.Transport.stop()
+      Tone.Transport.cancel()
+    },
+    createLinearIntegerArray(start, end, count) {
+      const result = [];
+      const step = (end - start) / (count - 1); // ステップを計算
+
+      for (let i = 0; i < count; i++) {
+          const value = parseInt(start) + step * i;
+          // start < end の場合は Math.ceil、start > end の場合は Math.floor を使う
+          if (start < end) {
+              result.push(Math.ceil(value)); // 小数点を切り上げ
+          } else {
+              result.push(Math.floor(value)); // 小数点を切り捨て
+          }
+      }
+      return result
+    },
     drawTimeline() {
       this.showTimeline = true
       this.$nextTick(() => {
@@ -96,18 +201,44 @@ const app = createApp({
         subsequencesIndexes.push(indexes)
       })
       subsequencesIndexes = subsequencesIndexes.flat()
-      let subsequencesInSameCluster = ['selectedValue']
-      const timeSeriesWithoutHeader = this.timeSeriesChart.slice(1,this.timeSeriesChart.length)
+      let subsequencesInSameCluster = []
+      const timeSeriesWithoutHeader = this.timeSeriesChart.slice(0,this.timeSeriesChart.length)
       timeSeriesWithoutHeader.forEach((elm, index) => {
         subsequencesInSameCluster.push(subsequencesIndexes.includes(index) ? elm[1] : null)
       })
       this.timeSeriesChart.forEach((elm, index) => {
-        if(elm.length > 2){
-          elm.pop()
+        if(elm.length === 4){
+          elm[2] = subsequencesInSameCluster[index]
+        }else if (elm.length === 3){
+          elm[2] = subsequencesInSameCluster[index]
+        }else if (elm.length === 2){
+          elm.push(subsequencesInSameCluster[index])
         }
-        elm.push(subsequencesInSameCluster[index])
+
       })
       this.drawTimeSeries('timeseries', this.timeSeriesChart)
+    },
+    drawSequence(index, finish){
+      let displaySeries = new Array(this.timeSeriesChart.length).fill(null)
+      if(!finish){
+        displaySeries[index] = 11
+      }
+      this.timeSeriesChart.forEach((elm, index) => {
+        if(elm.length === 4){
+          elm[3] = displaySeries[index]
+        }else if (elm.length === 3){
+          elm.push(displaySeries[index])
+        }else if (elm.length === 2){
+          if(index === 0){
+            elm.push(displaySeries[index])
+          }else{
+            elm.push(null)
+            elm.push(displaySeries[index])
+          }
+        }
+      })
+      this.drawTimeSeries('timeseries', this.timeSeriesChart)
+
     },
     drawTimeSeries(elementId, drawData){
       this.showTimeseriesChart = true
@@ -133,6 +264,7 @@ const app = createApp({
         series: [
           {areaOpacity : 0},
           {areaOpacity : 0},
+          {areaOpacity : 0.5},
         ],
         interpolateNulls:false,
         chartArea:{
@@ -154,9 +286,30 @@ const app = createApp({
           ticks: [...Array(dataMax + 1)].map((_, i) => i + dataMin)
         }
       }
-      const dataTable = google.visualization.arrayToDataTable(drawData)
+      const dataTable = new google.visualization.DataTable()
+      dataTable.addColumn('string', 'index')
+      dataTable.addColumn('number', 'allValue')
+      dataTable.addColumn('number', 'selectedValue')
+      dataTable.addColumn('number', 'sequenceValue')
+      dataTable.addRows(drawData)
       const chart = new google.visualization.SteppedAreaChart(document.getElementById(elementId))
       chart.draw(dataTable, options)
+    },
+    setLinearIntegers(setType){
+      const linearIntegerArray = this.createLinearIntegerArray(
+        this.generate.linear.start,
+        this.generate.linear.end,
+        this.generate.linear.length
+      ).join(',')
+      if(setType === 'overwrite'){
+        this.generate.complexityTransition = linearIntegerArray
+      }else if(setType === 'add'){
+        if(this.generate.complexityTransition === null || this.generate.complexityTransition === ''){
+          this.generate.complexityTransition = linearIntegerArray
+        }else{
+          this.generate.complexityTransition += (',' + linearIntegerArray)
+        }
+      }
     },
     setRandoms(){
       this.analyse.timeSeries = [...Array(parseInt(this.analyse.random.length))].map(() => Math.floor(Math.random() * (parseInt(this.analyse.random.max) - parseInt(this.analyse.random.min)+ 1)) + parseInt(this.analyse.random.min)).join(',')
@@ -215,8 +368,25 @@ const app = createApp({
          console.log(error)
       })
     },
-  }
+    groupArray(arr, sizes) {
+      // sizes配列に従って階層的にグループ化する再帰関数
+      function group(arr, size) {
+        const grouped = [];
+        for (let i = 0; i < arr.length; i += size) {
+          grouped.push(arr.slice(i, i + size));
+        }
+        return grouped;
+      }
 
+      // sizes配列に従って順次グループ化
+      let result = arr;
+      for (let size of sizes) {
+        result = group(result, size);
+      }
+
+      return result;
+    }
+  }
 })
 app.use(vuetify)
 app.mount('#app')
