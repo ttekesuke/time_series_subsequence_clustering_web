@@ -18,7 +18,7 @@ const app = createApp({
           v => (v && String(v).split(',').filter(n => n !== "").length >= 2) || 'must have at least 2 numbers',
           v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
           v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-          v => (v && String(v).split(',').every(n => Number(n) <= 84)) || 'numbers must be 100 or less'
+          v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
         ],
         valid: false,
         random: {
@@ -42,7 +42,7 @@ const app = createApp({
           v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
           v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
           v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-          v => (v && String(v).split(',').every(n => Number(n) <= 84)) || 'numbers must be 100 or less'
+          v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
         ],
         firstElementsRules: [
           v => !!v || 'required',
@@ -50,7 +50,7 @@ const app = createApp({
           v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
           v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers',
           v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-          v => (v && String(v).split(',').every(n => Number(n) <= 84)) || 'numbers must be 100 or less'
+          v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
         ],
         valid: false,
         mergeThresholdRatio: 0.2,
