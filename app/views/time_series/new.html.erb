@@ -80,6 +80,7 @@
                                 type="number"
                                 v-model="analyse.random.max"
                                 :min="analyse.random.min"
+                                :max="timeseriesMax"
                               ></v-text-field>
                             </v-col>
                           </v-row>
@@ -184,6 +185,7 @@
                           label="max"
                           type="number"
                           v-model="generate.linear.end"
+                          :max="timeseriesMax"
                         ></v-text-field>
                         </v-col>
                       </v-row>
@@ -226,6 +228,7 @@
                           type="number"
                           v-model="generate.rangeMax"
                           :min="generate.rangeMin"
+                          :max="timeseriesMax"
                         ></v-text-field>
                         </v-col>
                       </v-row>
@@ -277,7 +280,7 @@
                           label="tempo"
                           type="number"
                           v-model="tempo"
-                          min="60"
+                          min="30"
                           max="180"
                           hide-details="auto"
                         ></v-text-field>

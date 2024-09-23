@@ -5,6 +5,7 @@ const vuetify = createVuetify()
 const app = createApp({
   setup(){
     const state = reactive({
+      timeseriesMax: 100,
       analyse: {
         timeSeries: null,
         clusteredSubsequences: null,
@@ -15,7 +16,9 @@ const app = createApp({
           v => !!v || 'required',
           v => (v && String(v).split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
           v => (v && String(v).split(',').filter(n => n !== "").length >= 2) || 'must have at least 2 numbers',
-          v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers'
+          v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
+          v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
+          v => (v && String(v).split(',').every(n => Number(n) <= 84)) || 'numbers must be 100 or less'
         ],
         valid: false,
         random: {
@@ -37,13 +40,17 @@ const app = createApp({
           v => !!v || 'required',
           v => (v && String(v).split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
           v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
-          v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers'
+          v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
+          v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
+          v => (v && String(v).split(',').every(n => Number(n) <= 84)) || 'numbers must be 100 or less'
         ],
         firstElementsRules: [
           v => !!v || 'required',
           v => (v && String(v).split(',').every(n => !isNaN(n) && n !== "")) || 'must be comma separated numbers',
           v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
-          v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers'
+          v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers',
+          v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
+          v => (v && String(v).split(',').every(n => Number(n) <= 84)) || 'numbers must be 100 or less'
         ],
         valid: false,
         mergeThresholdRatio: 0.2,
@@ -59,11 +66,96 @@ const app = createApp({
       showTimeseriesComplexityChart: false,
       showTimeline: false,
       infoDialog: false,
-      pitchMap: ['C4', 'C#4', 'D4', 'D#4', 'E4', 'F4', 'F#4', 'G4', 'G#4', 'A4', 'A#4', 'B4'],
+      pitchMap: [
+        'C1',
+        'C#1',
+        'D1',
+        'D#1',
+        'E1',
+        'F1',
+        'F#1',
+        'G1',
+        'G#1',
+        'A1',
+        'A#1',
+        'B1',
+        'C2',
+        'C#2',
+        'D2',
+        'D#2',
+        'E2',
+        'F2',
+        'F#2',
+        'G2',
+        'G#2',
+        'A2',
+        'A#2',
+        'B2',
+        'C3',
+        'C#3',
+        'D3',
+        'D#3',
+        'E3',
+        'F3',
+        'F#3',
+        'G3',
+        'G#3',
+        'A3',
+        'A#3',
+        'B3',
+        'C4',
+        'C#4',
+        'D4',
+        'D#4',
+        'E4',
+        'F4',
+        'F#4',
+        'G4',
+        'G#4',
+        'A4',
+        'A#4',
+        'B4',
+        'C5',
+        'C#5',
+        'D5',
+        'D#5',
+        'E5',
+        'F5',
+        'F#5',
+        'G5',
+        'G#5',
+        'A5',
+        'A#5',
+        'B5',
+        'C6',
+        'C#6',
+        'D6',
+        'D#6',
+        'E6',
+        'F6',
+        'F#6',
+        'G6',
+        'G#6',
+        'A6',
+        'A#6',
+        'B6',
+        'C7',
+        'C#7',
+        'D7',
+        'D#7',
+        'E7',
+        'F7',
+        'F#7',
+        'G7',
+        'G#7',
+        'A7',
+        'A#7',
+        'B7',
+      ],
       nowPlaying: false,
       tempo: 60,
       velocity: 1,
-      sequenceCounter: 0
+      sequenceCounter: 0,
     })
 
     return { ...toRefs(state) }
@@ -84,11 +176,21 @@ const app = createApp({
       groupedTimeSeries.forEach((measure, measureIndex) => {
         measure.forEach((quater, quaterIndex) => {
           quater.forEach((sixteenth, sixteenthIndex) => {
+            let pitch = null
+            const outOfRange = this.pitchMap[sixteenth] === undefined
+            let velocity = null
+            if(outOfRange){
+              pitch = 'C1'
+              velocity = 0
+            }else{
+              pitch = this.pitchMap[sixteenth]
+              velocity = this.velocity
+            }
             score.push({
               "time": `${measureIndex}:${quaterIndex}:${sixteenthIndex}`,
-              "note": `${this.pitchMap[sixteenth]}`,
+              "note": `${pitch}`,
               "duration": "16n",
-              "velocity": this.velocity
+              "velocity": velocity
             })
           })
         })
@@ -202,8 +304,7 @@ const app = createApp({
       })
       subsequencesIndexes = subsequencesIndexes.flat()
       let subsequencesInSameCluster = []
-      const timeSeriesWithoutHeader = this.timeSeriesChart.slice(0,this.timeSeriesChart.length)
-      timeSeriesWithoutHeader.forEach((elm, index) => {
+      this.timeSeriesChart.forEach((elm, index) => {
         subsequencesInSameCluster.push(subsequencesIndexes.includes(index) ? elm[1] : null)
       })
       this.timeSeriesChart.forEach((elm, index) => {
@@ -221,7 +322,7 @@ const app = createApp({
     drawSequence(index, finish){
       let displaySeries = new Array(this.timeSeriesChart.length).fill(null)
       if(!finish){
-        displaySeries[index] = 11
+        displaySeries[index] = this.timeSeriesMaxValue
       }
       this.timeSeriesChart.forEach((elm, index) => {
         if(elm.length === 4){
@@ -385,6 +486,11 @@ const app = createApp({
       }
 
       return result;
+    }
+  },
+  computed: {
+    timeSeriesMaxValue(){
+      return Math.max(...this.timeSeriesChart.map(elm => elm[1]))
     }
   }
 })
