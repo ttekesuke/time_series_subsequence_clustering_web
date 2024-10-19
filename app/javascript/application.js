@@ -26,8 +26,7 @@ const app = createApp({
           max: null,
           length: null
         },
-        mergeThresholdRatio: 0.2,
-        allowBelongsToMultipleClusters: false
+        mergeThresholdRatio: 0.1,
       },
       generate: {
         setDataDialog: false,
@@ -53,9 +52,8 @@ const app = createApp({
           v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
         ],
         valid: false,
-        mergeThresholdRatio: 0.2,
+        mergeThresholdRatio: 0.1,
         complexityTransitionChart: null,
-        allowBelongsToMultipleClusters: false,
         linear: {
           start: null,
           end: null,
@@ -421,7 +419,6 @@ const app = createApp({
         analyse: {
           time_series: this.analyse.timeSeries,
           merge_threshold_ratio: this.analyse.mergeThresholdRatio,
-          allow_belongs_to_multiple_clusters: this.analyse.allowBelongsToMultipleClusters
         }
       }
       axios.post('/api/web/time_series/analyse', data)
@@ -448,7 +445,6 @@ const app = createApp({
           range_max: this.generate.rangeMax,
           first_elements: this.generate.firstElements,
           merge_threshold_ratio: this.generate.mergeThresholdRatio,
-          allow_belongs_to_multiple_clusters: this.generate.allowBelongsToMultipleClusters
         }
       }
       axios.post('/api/web/time_series/generate', data)

@@ -118,14 +118,6 @@
                   </v-row>
                   <v-row>
                     <v-col>
-                      <v-checkbox
-                      v-model="analyse.allowBelongsToMultipleClusters"
-                      label="Allow subsequences to belong to multiple clusters"
-                    ></v-checkbox>
-                    </v-col>
-                  </v-row>
-                  <v-row>
-                    <v-col>
                       <v-btn :disabled='!analyse.valid' @click="analyseTimeseries" :loading="analyse.loading">Submit</v-btn>
                     </v-col>
                   </v-row>
@@ -244,14 +236,6 @@
                     max="1"
                     step="0.01"
                   ></v-text-field>
-                  <v-row>
-                    <v-col>
-                      <v-checkbox
-                      v-model="generate.allowBelongsToMultipleClusters"
-                      label="Allow subsequences to belong to multiple clusters"
-                    ></v-checkbox>
-                    </v-col>
-                  </v-row>
                   <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>
                 </v-col>
               </v-row>
