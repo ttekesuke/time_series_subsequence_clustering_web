@@ -15,9 +15,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - .:/myapp
+      - .:/app
     ports:
-      - "3000:3000"
+      - 3000:3000
+      - 3036:3036
     restart: always
     tty: true
     stdin_open: true

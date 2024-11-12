@@ -1,0 +1,18 @@
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "vue": "^3.5.12",
+    "vuetify": "^3.7.0-beta.1",
+    "pug": "^3.0.3",
+    "pug-plain-loader": "^1.1.0",
+    "tone": "^15.0.4",
+    "axios": "^1.7.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.4",
+    "vite": "^5.0.0",
+    "vite-plugin-ruby": "^5.1.0",
+    "@types/google.visualization": "^0.0.74"
+  }
+}

@@ -1,7 +1,8 @@
 Rails.application.routes.draw do
   # Define your application routes per the DSL in https://guides.rubyonrails.org/routing.html
 
-  root 'time_series#new'
+  root to: 'time_series#index'
+  get 'time_series/index'
   namespace :api do
     namespace :web do
       namespace :time_series do
