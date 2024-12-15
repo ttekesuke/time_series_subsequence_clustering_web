@@ -12,10 +12,10 @@
     "vuetify": "^3.7.0-beta.1",
     "vite-plugin-vuetify": "^2.0.4",
     "@vitejs/plugin-vue": "^5.1.4",
-    "@types/google.visualization": "^0.0.74"
+    "@types/google.visualization": "^0.0.74",
+    "vite": "^5.0.0"
   },
   "devDependencies": {
-    "vite": "^5.0.0",
     "vite-plugin-ruby": "^5.1.0"
   }
 }
