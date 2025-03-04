@@ -117,6 +117,14 @@
                   </v-row>
                   <v-row>
                     <v-col>
+                      <v-checkbox
+                        label="Show single cluster"
+                        v-model="generate.showSingleCluster"
+                      ></v-checkbox>
+                    </v-col>
+                  </v-row>
+                  <v-row>
+                    <v-col>
                       <v-btn :disabled='!analyse.valid' @click="analyseTimeseries" :loading="analyse.loading">Submit</v-btn>
                     </v-col>
                   </v-row>
@@ -338,14 +346,14 @@ const analyse = ref({
     max: null,
     length: null
   },
-  mergeThresholdRatio: 0.1,
+  mergeThresholdRatio: 0.05,
 })
 const generate = ref({
   setDataDialog: false,
   rangeMin: 0,
   rangeMax: 11,
-  complexityTransition: null,
-  firstElements: null,
+  complexityTransition: '',
+  firstElements: '',
   loading: false,
   complexityTransitionRules: [
     v => !!v || 'required',
@@ -364,13 +372,14 @@ const generate = ref({
     v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
   ],
   valid: false,
-  mergeThresholdRatio: 0.1,
+  mergeThresholdRatio: 0.05,
   complexityTransitionChart: null,
   linear: {
     start: null,
     end: null,
     length: null
-  }
+  },
+  showSingleCluster: false
 })
 let showTimeseriesChart = ref(false)
 let showTimeseriesComplexityChart = ref(false)
@@ -728,6 +737,7 @@ const analyseTimeseries = () => {
     analyse: {
       time_series: analyse.value.timeSeries,
       merge_threshold_ratio: analyse.value.mergeThresholdRatio,
+      show_single_cluster: generate.value.showSingleCluster
     }
   }
   axios.post('/api/web/time_series/analyse', data)
@@ -794,7 +804,7 @@ const groupArray = <T>(arr: T[], sizes: number[]): T[] | T[][] => {
 };
 
 const timeSeriesMaxValue = computed(() => {
-  return Math.max(...analyse.value.timeSeriesChart.map(elm => elm[1]))
+  return analyse.value.timeSeriesChart ? Math.max(...analyse.value.timeSeriesChart.map(elm => elm[1])) : 0
 })
 </script>
 

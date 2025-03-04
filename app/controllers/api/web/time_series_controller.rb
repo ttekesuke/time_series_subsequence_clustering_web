@@ -7,31 +7,25 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     min_window_size = 2
     cluster_id_counter = 0
-    clusters = {
-      cluster_id_counter => {
-        s: [[0, min_window_size - 1]],
-        c: {}
-      }
-    }
+    clusters = {cluster_id_counter => { si: [0], cc: {} }}
+    cluster_id_counter += 1
     tasks = []
-    belongs_to_cluster_each_window_size = {}
     data.each_with_index do |elm, data_index|
       # 最小幅+1から検知開始
       if data_index > min_window_size - 1
-        reached_to_end = data_index == data.length - 1
-        clusters, tasks, cluster_id_counter, belongs_to_cluster_each_window_size = clustering_subsequences_incremental(
+        clusters, tasks, cluster_id_counter = clustering_subsequences_incremental(
           data,
           merge_threshold_ratio,
-          elm,
           data_index,
           min_window_size,
           clusters,
           cluster_id_counter,
           tasks,
-          reached_to_end,
-          belongs_to_cluster_each_window_size
         )
       end
+    end
+    if analyse_params[:show_single_cluster] == false
+      clusters = clean_clusters(clusters)
     end
     timeline = clusters_to_timeline(clusters, min_window_size)
     render json: {
@@ -49,31 +43,23 @@ class Api::Web::TimeSeriesController < ApplicationController
     trend_candidate_min_master = -1
     trend_candidate_max_master = 1
     min_window_size = 2
-
     # ユーザ指定の冒頭の時系列データを解析しクラスタを作成する
     # ユーザ指定の冒頭の時系列データをトレンドにする
     trend_user_set_results = convert_to_monotonic_change(user_set_results)
     # 実データのトレンドデータのクラスタ初期化
     trend_cluster_id_counter, trend_clusters, trend_tasks = initialize_clusters(min_window_size)
 
-    trend_belongs_to_cluster_each_window_size = {}
-
     trend_user_set_results.each_with_index do |elm, data_index|
       # 最小幅+1から検知開始
       if data_index > min_window_size - 1
-        reached_to_end = false
-
-        trend_clusters, trend_tasks, trend_cluster_id_counter, trend_belongs_to_cluster_each_window_size = clustering_subsequences_incremental(
+        trend_clusters, trend_tasks, trend_cluster_id_counter = clustering_subsequences_incremental(
           trend_user_set_results,
           merge_threshold_ratio,
-          elm,
           data_index,
           min_window_size,
           trend_clusters,
           trend_cluster_id_counter,
           trend_tasks,
-          reached_to_end,
-          trend_belongs_to_cluster_each_window_size
         )
       end
     end
@@ -82,22 +68,17 @@ class Api::Web::TimeSeriesController < ApplicationController
     trend_results = trend_user_set_results.dup
     # 解析
     cluster_id_counter, clusters, tasks = initialize_clusters(min_window_size)
-    belongs_to_cluster_each_window_size = {}
     user_set_results.each_with_index do |elm, data_index|
       # 最小幅+1から検知開始
       if data_index > min_window_size - 1
-        reached_to_end = false
-        clusters, tasks, cluster_id_counter, belongs_to_cluster_each_window_size = clustering_subsequences_incremental(
+        clusters, tasks, cluster_id_counter = clustering_subsequences_incremental(
           user_set_results,
           merge_threshold_ratio,
-          elm,
           data_index,
           min_window_size,
           clusters,
           cluster_id_counter,
           tasks,
-          reached_to_end,
-          belongs_to_cluster_each_window_size
         )
       end
     end
@@ -120,7 +101,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       trend_candidates = (trend_candidate_min..trend_candidate_max).to_a
 
       # トレンドの候補からベストマッチを得るために評価値を得る
-      trend_average_distances_all_window_candidates, trend_sum_similar_subsequences_quantities, trend_clusters_candidates, trend_cluster_id_counter_candidates, trend_tasks_candidates, trend_belongs_to_cluster_each_window_size_candidates =
+      trend_average_distances_all_window_candidates, trend_sum_similar_subsequences_quantities, trend_clusters_candidates, trend_cluster_id_counter_candidates, trend_tasks_candidates =
         find_best_candidate(
           trend_results,
           trend_candidates,
@@ -130,8 +111,6 @@ class Api::Web::TimeSeriesController < ApplicationController
           trend_cluster_id_counter,
           trend_tasks,
           rank_index,
-          complexity_transition.length,
-          trend_belongs_to_cluster_each_window_size
         )
       # 距離にindex付与
       trend_indexed_average_distances = trend_average_distances_all_window_candidates.map.with_index { |distance, index| [distance, index] }
@@ -155,7 +134,6 @@ class Api::Web::TimeSeriesController < ApplicationController
       trend_clusters = trend_clusters_candidates[result_index_in_trend_candidates]
       trend_cluster_id_counter = trend_cluster_id_counter_candidates[result_index_in_trend_candidates]
       trend_tasks = trend_tasks_candidates[result_index_in_trend_candidates]
-      trend_belongs_to_cluster_each_window_size = trend_belongs_to_cluster_each_window_size_candidates[result_index_in_trend_candidates]
 
       candidate_max = candidate_max_master
       candidate_min = candidate_min_master
@@ -172,7 +150,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       candidates = (candidate_min..candidate_max).to_a
 
       # 実データの候補からベストマッチを得るために評価値を得る
-      sum_average_distances_all_window_candidates, sum_similar_subsequences_quantities, clusters_candidates, cluster_id_counter_candidates, tasks_candidates, belongs_to_cluster_each_window_size_candidates =
+      sum_average_distances_all_window_candidates, sum_similar_subsequences_quantities, clusters_candidates, cluster_id_counter_candidates, tasks_candidates =
         find_best_candidate(
           results,
           candidates,
@@ -182,8 +160,6 @@ class Api::Web::TimeSeriesController < ApplicationController
           cluster_id_counter,
           tasks,
           rank_index,
-          complexity_transition.length,
-          belongs_to_cluster_each_window_size
         )
       # 距離の小さい順に並び替え
       indexed_average_distances_between_clusters = sum_average_distances_all_window_candidates.map.with_index { |distance, index| [distance, index] }
@@ -206,7 +182,6 @@ class Api::Web::TimeSeriesController < ApplicationController
       clusters = clusters_candidates[result_index_in_candidates]
       cluster_id_counter = cluster_id_counter_candidates[result_index_in_candidates]
       tasks = tasks_candidates[result_index_in_candidates]
-      belongs_to_cluster_each_window_size = belongs_to_cluster_each_window_size_candidates[result_index_in_candidates]
     end
 
     chart_elements_for_complexity = Array.new(user_set_results.length) { |index| [index.to_s, nil, nil, nil] }
@@ -221,25 +196,21 @@ class Api::Web::TimeSeriesController < ApplicationController
   end
 
   private
-    def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank_index, complexity_transition, belongs_to_cluster_each_window_size)
+    def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank_index)
       temporary_results = results.dup
       temporary_results << candidate
       temporary_clusters = clusters.deep_dup
       temporary_cluster_id_counter = cluster_id_counter
       temporary_tasks = tasks.dup
-      temporary_belongs_to_cluster_each_window_size = belongs_to_cluster_each_window_size.deep_dup
 
-      temporary_clusters, temporary_tasks, temporary_cluster_id_counter, temporary_belongs_to_cluster_each_window_size = clustering_subsequences_incremental(
+      temporary_clusters, temporary_tasks, temporary_cluster_id_counter = clustering_subsequences_incremental(
         temporary_results,
         merge_threshold_ratio,
-        candidate,
         temporary_results.length - 1,
         min_window_size,
         temporary_clusters,
         temporary_cluster_id_counter,
         temporary_tasks,
-        rank_index == complexity_transition - 1,
-        temporary_belongs_to_cluster_each_window_size
       )
 
       clusters_each_window_size = transform_clusters(temporary_clusters, min_window_size)
@@ -270,7 +241,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       # クラスタ間の距離は平均を取る
       average_distances_in_all_window = mean(sum_distances_in_all_window)
 
-      [average_distances_in_all_window, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks, temporary_belongs_to_cluster_each_window_size]
+      [average_distances_in_all_window, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks]
     end
 
     # 正規化関数：配列の最小・最大を基に0〜1にスケール
@@ -292,16 +263,15 @@ class Api::Web::TimeSeriesController < ApplicationController
       end
     end
 
-    def find_best_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank_index, complexity_transition, belongs_to_cluster_each_window_size)
+    def find_best_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank_index)
       average_distances_all_window_candidates = []
       sum_similar_subsequences_quantities_all_window_candidates = []
       clusters_candidates = []
       cluster_id_counter_candidates = []
       tasks_candidates = []
-      belongs_to_cluster_each_window_size_candidates = []
 
       candidates.each do |candidate|
-        average_distances, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks, temporary_belongs_to_cluster_each_window_size = calculate_cluster_details(
+        average_distances, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks = calculate_cluster_details(
           results,
           candidate,
           merge_threshold_ratio,
@@ -310,8 +280,6 @@ class Api::Web::TimeSeriesController < ApplicationController
           cluster_id_counter,
           tasks,
           rank_index,
-          complexity_transition,
-          belongs_to_cluster_each_window_size
         )
 
         average_distances_all_window_candidates << average_distances
@@ -319,20 +287,15 @@ class Api::Web::TimeSeriesController < ApplicationController
         clusters_candidates << temporary_clusters
         cluster_id_counter_candidates << temporary_cluster_id_counter
         tasks_candidates << temporary_tasks
-        belongs_to_cluster_each_window_size_candidates << temporary_belongs_to_cluster_each_window_size
       end
 
-      [average_distances_all_window_candidates, sum_similar_subsequences_quantities_all_window_candidates, clusters_candidates, cluster_id_counter_candidates, tasks_candidates, belongs_to_cluster_each_window_size_candidates]
+      [average_distances_all_window_candidates, sum_similar_subsequences_quantities_all_window_candidates, clusters_candidates, cluster_id_counter_candidates, tasks_candidates]
     end
 
     def initialize_clusters(min_window_size)
       cluster_id_counter = 0
-      clusters = {
-        cluster_id_counter => {
-          s: [[0, min_window_size - 1]],
-          c: {}
-        }
-      }
+      clusters = {cluster_id_counter => { si: [0], cc: {} }}
+      cluster_id_counter += 1
       tasks = []
 
       [cluster_id_counter, clusters, tasks]
@@ -345,13 +308,13 @@ class Api::Web::TimeSeriesController < ApplicationController
 
       until stack.empty?
         cluster_id, current_cluster, depth = stack.pop
-        sequences = current_cluster[:s]
+        sequences = current_cluster[:si].map{|start_index|[start_index, start_index + depth - 1]}
 
         clusters_each_window_size[depth] ||= {}
         clusters_each_window_size[depth][cluster_id] = sequences
 
         # 子クラスタがあればスタックに追加
-        current_cluster[:c].each do |sub_cluster_id, sub_cluster|
+        current_cluster[:cc].each do |sub_cluster_id, sub_cluster|
           stack.push([sub_cluster_id, sub_cluster, depth + 1])
         end
       end
@@ -400,6 +363,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       params.require(:analyse).permit(
         :time_series,
         :merge_threshold_ratio,
+        :show_single_cluster
       )
     end
 
