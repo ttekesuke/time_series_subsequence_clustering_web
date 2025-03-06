@@ -6,9 +6,15 @@ import vuetify from 'vite-plugin-vuetify'
 export default defineConfig({
   build: {
     minify: false, // Terserによる圧縮を無効化
-    chunkSizeWarningLimit: 1024,
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
-      maxParallelFileOps: 1 // ファイルの並列処理を制限
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            return "vendor";
+          }
+        }
+      }
     }
   },
   plugins: [

@@ -25,5 +25,8 @@ COPY entrypoint.sh /usr/bin/
 RUN chmod +x /usr/bin/entrypoint.sh
 ENTRYPOINT ["entrypoint.sh"]
 EXPOSE 3000
+# 先に Vite ビルドだけ実行
+RUN NODE_OPTIONS="--max-old-space-size=256" yarn vite build
 
-CMD ["bash", "-c", "NODE_OPTIONS='--max-old-space-size=256' yarn vite build && rails server -b 0.0.0.0"]
+# その後に Rails を起動
+CMD ["bash", "-c", "rails server -b 0.0.0.0"]
