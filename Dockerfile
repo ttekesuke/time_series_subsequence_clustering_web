@@ -1,6 +1,6 @@
 FROM ruby:3.2.2
 
-# 必要なパッケージのインストール（余計なキャッシュを削除）
+# 必要なパッケージをインストール（不要なキャッシュを削除）
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends build-essential libpq-dev nodejs vim curl && \
     curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \
@@ -19,14 +19,15 @@ COPY package.json yarn.lock /app/
 RUN NODE_OPTIONS="--max-old-space-size=256" \
     yarn install --network-concurrency 1 --prefer-offline --pure-lockfile --frozen-lockfile
 
+# 事前ビルド済みの JS ファイルを含める
+COPY public/assets /app/public/assets
+
 # アプリ全体をコピー
 COPY . /app
 COPY entrypoint.sh /usr/bin/
 RUN chmod +x /usr/bin/entrypoint.sh
 ENTRYPOINT ["entrypoint.sh"]
 EXPOSE 3000
-# 先に Vite ビルドだけ実行
-RUN NODE_OPTIONS="--max-old-space-size=256" yarn vite build
 
-# その後に Rails を起動
+# Vite のビルドはしない（Rails のみ起動）
 CMD ["bash", "-c", "rails server -b 0.0.0.0"]
