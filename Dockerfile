@@ -19,8 +19,8 @@ COPY package.json yarn.lock /app/
 RUN NODE_OPTIONS="--max-old-space-size=256" \
     yarn install --network-concurrency 1 --prefer-offline --pure-lockfile --frozen-lockfile
 
-# 事前ビルド済みの JS ファイルを含める
-COPY public/assets /app/public/assets
+# # 事前ビルド済みの JS ファイルを含める
+# COPY public/assets /app/public/assets
 
 # アプリ全体をコピー
 COPY . /app
