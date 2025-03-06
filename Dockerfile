@@ -26,4 +26,4 @@ RUN chmod +x /usr/bin/entrypoint.sh
 ENTRYPOINT ["entrypoint.sh"]
 EXPOSE 3000
 
-CMD ["bash", "-c", "yarn vite build && rails server -b 0.0.0.0"]
+CMD ["bash", "-c", "NODE_OPTIONS='--max-old-space-size=256' yarn vite build && rails server -b 0.0.0.0"]
