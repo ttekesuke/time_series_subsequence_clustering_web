@@ -1,22 +1,25 @@
 FROM ruby:3.2.2
 
+# 必要なパッケージのインストール（余計なキャッシュを削除）
 RUN apt-get update -qq && \
-    apt-get install -y build-essential libpq-dev nodejs vim && \
+    apt-get install -y --no-install-recommends build-essential libpq-dev nodejs vim curl && \
     curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \
     echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list && \
-    apt-get update && apt-get install -y yarn
+    apt-get update && apt-get install -y --no-install-recommends yarn && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# 先に Gemfile をコピーして bundle install のキャッシュを有効化
+# Gemfile のキャッシュを活用
 COPY Gemfile Gemfile.lock /app/
 RUN bundle install
 
-# 先に package.json, yarn.lock をコピーして yarn install のキャッシュを有効化
+# package.json, yarn.lock のキャッシュを活用し、メモリを節約しながら yarn install
 COPY package.json yarn.lock /app/
-RUN yarn install --check-files --frozen-lockfile
+RUN NODE_OPTIONS="--max-old-space-size=256" \
+    yarn install --network-concurrency 1 --prefer-offline --pure-lockfile --frozen-lockfile
 
-# その後、全てのファイルをコピー
+# アプリ全体をコピー
 COPY . /app
 COPY entrypoint.sh /usr/bin/
 RUN chmod +x /usr/bin/entrypoint.sh
