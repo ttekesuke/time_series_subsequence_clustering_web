@@ -9,8 +9,7 @@ export default defineConfig({
     vue(),
     vuetify({ autoImport: true }),
   ],
-  // build: {
-  //   outDir: "public/assets", // 出力ディレクトリを変更
-  //   assetsDir: "", // `assets/` ではなく直下に配置する場合
-  // }
+  build: {
+    outDir: "public/vite",
+  },
 })
