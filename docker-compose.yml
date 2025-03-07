@@ -14,6 +14,8 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      RAILS_ENV: ${RAILS_ENV}
+      COMPOSE_FILE: ${COMPOSE_FILE}
     volumes:
       - .:/app
     ports:
