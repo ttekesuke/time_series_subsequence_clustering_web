@@ -69,15 +69,8 @@ yarn-debug.log*
 /public/uploads
 
 # Vite Ruby
-/public/vite-dev
+/public/vite*
 node_modules
 # Vite uses dotenv and suggests to ignore local-only env files. See
 # https://vitejs.dev/guide/env-and-mode.html#env-files
 *.local
-
-# Vite の開発用ビルドフォルダ（ローカル開発では不要）
-dist/
-
-# 本番用のビルド済みファイルは Git に含める
-!public/assets/
-

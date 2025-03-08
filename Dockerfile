@@ -13,14 +13,10 @@ WORKDIR /app
 # Gemfile のキャッシュを活用
 COPY Gemfile Gemfile.lock /app/
 RUN bundle install
-
+ENV NODE_OPTIONS="--max_old_space_size=384"
 # package.json, yarn.lock のキャッシュを活用し、メモリを節約しながら yarn install
 COPY package.json yarn.lock /app/
-RUN NODE_OPTIONS="--max-old-space-size=256" \
-    yarn install --network-concurrency 1 --prefer-offline --pure-lockfile --frozen-lockfile
-
-# # 事前ビルド済みの JS ファイルを含める
-# COPY public/assets /app/public/assets
+RUN yarn install --network-concurrency 1 --prefer-offline --pure-lockfile --frozen-lockfile
 
 # アプリ全体をコピー
 COPY . /app
@@ -29,5 +25,6 @@ RUN chmod +x /usr/bin/entrypoint.sh
 ENTRYPOINT ["entrypoint.sh"]
 EXPOSE 3000
 
-# Vite のビルドはしない（Rails のみ起動）
-CMD ["bash", "-c", "rails server -b 0.0.0.0"]
+RUN node --max_old_space_size=384 node_modules/.bin/vite build --no-minify
+
+CMD [ "rails","server","-b","0.0.0.0" ]
