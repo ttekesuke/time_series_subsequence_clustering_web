@@ -13,7 +13,10 @@ WORKDIR /app
 # Gemfile のキャッシュを活用
 COPY Gemfile Gemfile.lock /app/
 RUN bundle install
+
+# メモリ節約のため、環境変数を設定
 ENV NODE_OPTIONS="--max_old_space_size=384"
+
 # package.json, yarn.lock のキャッシュを活用し、メモリを節約しながら yarn install
 COPY package.json yarn.lock /app/
 RUN yarn install --network-concurrency 1 --prefer-offline --pure-lockfile --frozen-lockfile
@@ -25,6 +28,7 @@ RUN chmod +x /usr/bin/entrypoint.sh
 ENTRYPOINT ["entrypoint.sh"]
 EXPOSE 3000
 
-RUN node --max_old_space_size=384 node_modules/.bin/vite build --no-minify
+# vite build をメモリ制限付きで実行
+RUN node node_modules/.bin/vite build --no-minify
 
 CMD [ "rails","server","-b","0.0.0.0" ]
