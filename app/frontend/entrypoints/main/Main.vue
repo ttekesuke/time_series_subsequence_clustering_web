@@ -302,16 +302,23 @@
           <div id='timeseries' styls='height: 20vh;'></div>
         </v-col>
       </v-row>
-      <v-row no-gutters v-if='showTimeseriesComplexityChart'>
+      <v-row no-gutters>
         <v-col>
-          <div class='text-h6 ml-3 mb-2'>timeseries-complexity</div>
-          <div id='timeseries-complexity' styls='height: 20vh;'></div>
+          <template v-if='showTimeseriesComplexityChart'>
+            <div class='text-h6 ml-3 mb-2'>timeseries-complexity</div>
+            <div id='timeseries-complexity' styls='height: 20vh;'></div>
+          </template>
         </v-col>
       </v-row>
-      <v-row no-gutters v-if='showTimeline'>
+      <v-row no-gutters >
         <v-col>
-          <div class='text-h6 ml-3 mb-2'>clusters</div>
-          <div id='timeline' styls='height: 70vh;'></div>
+          <template v-if='showTimeline'>
+            <div class='text-h6 ml-3 mb-2'>clusters</div>
+            <div id='timeline' styls='height: 70vh;'></div>
+          </template>
+          <template v-else>
+            <span>no similar clusters</span>
+          </template>
         </v-col>
       </v-row>
     </v-main>
@@ -329,7 +336,7 @@ const timeseriesMax = ref(100)
 const analyse = ref({
   timeSeries: '',
   clusteredSubsequences: null,
-  timeSeriesChart: null,
+  timeSeriesChart: [],
   setDataDialog: false,
   loading: false,
   timeSeriesRules: [
@@ -386,90 +393,13 @@ let showTimeseriesComplexityChart = ref(false)
 let showTimeline = ref(false)
 let infoDialog = ref(false)
 let pitchMap = ref([
-  'C1',
-  'C#1',
-  'D1',
-  'D#1',
-  'E1',
-  'F1',
-  'F#1',
-  'G1',
-  'G#1',
-  'A1',
-  'A#1',
-  'B1',
-  'C2',
-  'C#2',
-  'D2',
-  'D#2',
-  'E2',
-  'F2',
-  'F#2',
-  'G2',
-  'G#2',
-  'A2',
-  'A#2',
-  'B2',
-  'C3',
-  'C#3',
-  'D3',
-  'D#3',
-  'E3',
-  'F3',
-  'F#3',
-  'G3',
-  'G#3',
-  'A3',
-  'A#3',
-  'B3',
-  'C4',
-  'C#4',
-  'D4',
-  'D#4',
-  'E4',
-  'F4',
-  'F#4',
-  'G4',
-  'G#4',
-  'A4',
-  'A#4',
-  'B4',
-  'C5',
-  'C#5',
-  'D5',
-  'D#5',
-  'E5',
-  'F5',
-  'F#5',
-  'G5',
-  'G#5',
-  'A5',
-  'A#5',
-  'B5',
-  'C6',
-  'C#6',
-  'D6',
-  'D#6',
-  'E6',
-  'F6',
-  'F#6',
-  'G6',
-  'G#6',
-  'A6',
-  'A#6',
-  'B6',
-  'C7',
-  'C#7',
-  'D7',
-  'D#7',
-  'E7',
-  'F7',
-  'F#7',
-  'G7',
-  'G#7',
-  'A7',
-  'A#7',
-  'B7',
+  'C1','C#1','D1','D#1','E1','F1','F#1','G1','G#1','A1','A#1','B1',
+  'C2','C#2','D2','D#2','E2','F2','F#2','G2','G#2','A2','A#2','B2',
+  'C3','C#3','D3','D#3','E3','F3','F#3','G3','G#3','A3','A#3','B3',
+  'C4','C#4','D4','D#4','E4','F4','F#4','G4','G#4','A4','A#4','B4',
+  'C5','C#5','D5','D#5','E5','F5','F#5','G5','G#5','A5','A#5','B5',
+  'C6','C#6','D6','D#6','E6','F6','F#6','G6','G#6','A6','A#6','B6',
+  'C7','C#7','D7','D#7','E7','F7','F#7','G7','G#7','A7','A#7','B7',
 ])
 let nowPlaying = ref(false)
 let tempo = ref(60)
@@ -480,7 +410,7 @@ onMounted(() => {
 })
 
 const playNotes = () =>{
-  nowPlaying ? stopPlayingNotes() : startPlayingNotes()
+  nowPlaying.value ? stopPlayingNotes() : startPlayingNotes()
 }
 const startPlayingNotes = () => {
   nowPlaying.value = true
@@ -493,13 +423,13 @@ const startPlayingNotes = () => {
       quater.forEach((sixteenth, sixteenthIndex) => {
         let setPitch: string
         let setVelocity: number
-        const outOfRange = pitchMap[sixteenth] === undefined
+        const outOfRange = pitchMap.value[sixteenth] === undefined
 
         if(outOfRange){
           setPitch = 'C1'
           setVelocity = 0
         }else{
-          setPitch = pitchMap[sixteenth]
+          setPitch = pitchMap.value[sixteenth]
           setVelocity = velocity.value
         }
         score.push({
@@ -511,7 +441,6 @@ const startPlayingNotes = () => {
       })
     })
   })
-  Tone.Transport.bpm.value = tempo.value
 
   const sampler = new Tone.Sampler({
     urls: {
@@ -548,7 +477,7 @@ const startPlayingNotes = () => {
     },
     baseUrl: "https://tonejs.github.io/audio/salamander/",
     onload: () => {
-      const part = new Tone.Part(((time, note) => {
+      const part = new Tone.Part((time, note) => {
         sampler.triggerAttackRelease(note.note, note.duration, time, note.velocity)
         if(sequenceCounter.value === timeSeriesArray.length){
           stopPlayingNotes()
@@ -556,11 +485,11 @@ const startPlayingNotes = () => {
           const noteLengthInSeconds = Tone.Time(note.duration).toSeconds()
           setTimeout( () => {
           }, noteLengthInSeconds * 1000)
-          drawSequence(sequenceCounter, false)
+          drawSequence(sequenceCounter.value, false)
           sequenceCounter.value += 1
         }
-      }), score).start()
-      Tone.start()
+      }, score).start(0)
+      Tone.Transport.start()
     }
   }).toDestination()
 }
@@ -638,7 +567,7 @@ const onSelectedSubsequence = (selected) => {
 const drawSequence = (index, finish) => {
   let displaySeries = new Array(analyse.value.timeSeriesChart.length).fill(null)
   if(!finish){
-    displaySeries[index] = timeSeriesMaxValue
+    displaySeries[index] = timeSeriesMaxValue.value
   }
   analyse.value.timeSeriesChart.forEach((elm, index) => {
     if(elm.length === 4){
@@ -721,7 +650,7 @@ const setLinearIntegers = (setType) => {
   if(setType === 'overwrite'){
     generate.value.complexityTransition = linearIntegerArray
   }else if(setType === 'add'){
-    if(generate.value.complexityTransition === null || generate.value.complexityTransition === ''){
+    if(generate.value.complexityTransition === ''){
       generate.value.complexityTransition = linearIntegerArray
     }else{
       generate.value.complexityTransition += (',' + linearIntegerArray)
