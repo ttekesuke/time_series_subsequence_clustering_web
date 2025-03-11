@@ -31,7 +31,10 @@ module TimeSeriesAnalyser
     current_tasks = tasks.dup
     tasks.clear
 
-    current_tasks.each do |(parent, length)|
+    current_tasks.each do |task|
+      keys_to_parent = task[0].dup
+      length = task[1].dup
+      parent = dig_clusters_by_keys(clusters, keys_to_parent)
       new_length = length + 1
       latest_start = data_index - new_length + 1
       latest_seq = data[latest_start, new_length]
@@ -40,7 +43,7 @@ module TimeSeriesAnalyser
 
       if parent[:cc].any?
         new_clusters = {}
-        min_distance, best_clusters = Float::INFINITY, []
+        min_distance, best_clusters, best_cluster_id = Float::INFINITY, [], nil
         parent[:cc].each do |cluster_id, child|
           distance = nil
           child[:si].each do |s|
@@ -49,18 +52,19 @@ module TimeSeriesAnalyser
           if distance < min_distance
             min_distance = distance
             best_clusters = [child]
+            best_cluster_id = cluster_id
           elsif distance == min_distance
             min_distance = distance
             best_clusters << child
+            best_cluster_id = cluster_id
           end
         end
         # 許容割合以下なら結合予定とする
         ratio_in_max_distance = max_distance_between_lower_and_upper == 0 ? 0 : min_distance / max_distance_between_lower_and_upper
-
         if ratio_in_max_distance <= merge_threshold_ratio
             # todo:
             best_clusters.first[:si] << latest_start
-            tasks << [best_clusters.first, new_length]
+            tasks << [keys_to_parent << best_cluster_id, new_length]
         else
             parent[:cc][cluster_id_counter] = { si: [latest_start], cc: {} }
         end
@@ -78,11 +82,11 @@ module TimeSeriesAnalyser
 
         if valid_group.any?
           parent[:cc][cluster_id_counter] = { si: valid_group + [latest_start], cc: {} }
-          tasks << [parent[:cc][cluster_id_counter], new_length]
+          tasks << [keys_to_parent << cluster_id_counter, new_length]
           cluster_id_counter += 1
         else
           parent[:cc][cluster_id_counter] = { si: [latest_start], cc: {} }
-          tasks << [parent[:cc][cluster_id_counter], new_length]
+          tasks << [keys_to_parent << cluster_id_counter, new_length]
           cluster_id_counter += 1
         end
       end
@@ -90,22 +94,22 @@ module TimeSeriesAnalyser
 
     latest_start = data_index - 1
     latest_seq = data[latest_start, min_window_size]
-    min_distance, best_cluster = Float::INFINITY, nil
+    min_distance, best_cluster, best_cluster_id = Float::INFINITY, nil, nil
 
-    clusters.each do |_cid, cluster|
+    clusters.each do |cluster_id, cluster|
       next if cluster[:si].include?(latest_start)
       compare_seq = cluster[:si].size == 1 ? data[cluster[:si].first, min_window_size] : average_sequences(cluster[:si].sort[0..1].map { |s| data[s, min_window_size] })
       distance = euclidean_distance(compare_seq, latest_seq)
-      min_distance, best_cluster = distance, cluster if distance < min_distance
+      min_distance, best_cluster, best_cluster_id = distance, cluster, cluster_id if distance < min_distance
     end
     ratio_in_max_distance = max_distance_between_lower_and_upper == 0 ? 0 : min_distance / max_distance_between_lower_and_upper
 
     if ratio_in_max_distance <= merge_threshold_ratio
       best_cluster[:si] << latest_start unless best_cluster[:si].include?(latest_start)
-      tasks << [best_cluster, min_window_size]
+      tasks << [[best_cluster_id], min_window_size]
     else
       clusters[cluster_id_counter] = { si: [latest_start], cc: {} }
-      tasks << [clusters[cluster_id_counter], min_window_size]
+      tasks << [[cluster_id_counter], min_window_size]
       cluster_id_counter += 1
     end
 
@@ -145,5 +149,20 @@ module TimeSeriesAnalyser
       # si の要素が1つしかなければ削除
       cluster[:si].size == 1
     end
+  end
+
+  def dig_clusters_by_keys(clusters, keys)
+    current = clusters
+    keys.each_with_index do |key, index|
+      # 最後のキーの場合は:cを介さずにアクセス
+      if index == keys.length - 1
+        current = current[key]
+      else
+        current = current[key]
+        current = current[:cc] if current && current.is_a?(Hash) && !current[:cc].nil?
+      end
+      return nil if current.nil?
+    end
+    current
   end
 end
