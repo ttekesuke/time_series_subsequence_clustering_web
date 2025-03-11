@@ -114,21 +114,22 @@ class Api::Web::TimeSeriesController < ApplicationController
         )
       # 距離にindex付与
       trend_indexed_average_distances = trend_average_distances_all_window_candidates.map.with_index { |distance, index| [distance, index] }
+
       # 類似数にindex付与
       trend_indexed_subsequences_quantities = trend_sum_similar_subsequences_quantities.map.with_index { |quantity, index| [quantity, index] }
+
       # 指定ランクを割合に変換
-      converted_rank = rank / (candidate_min_master..candidate_max_master).to_a.length.to_d
+
+      converted_rank = ((rank.to_d + 1) * trend_candidates.length / (candidate_min_master..candidate_max_master).to_a.length) - 1
 
       metrics_with_direction = [
-        { is_complex_when_larger: true, data: normalize(trend_indexed_average_distances)},
-        { is_complex_when_larger: false, data: normalize(trend_indexed_subsequences_quantities) }
+        { is_complex_when_larger: true, data: trend_indexed_average_distances},
+        { is_complex_when_larger: false, data: trend_indexed_subsequences_quantities }
       ]
-      diff_and_indexes = calculate_total_differences(metrics_with_direction, converted_rank)
-      trend_sorted = diff_and_indexes.sort_by {|diff_and_index|diff_and_index[:difference_value]}
 
       # 正規化したランクを使ってベストマッチのトレンドを得る
       # todo:trend_sortedの先頭の同率トップが複数あれば選ぶ方法が必要
-      result_index_in_trend_candidates = trend_sorted[0][:index]
+      result_index_in_trend_candidates = find_complex_candidate(metrics_with_direction, converted_rank)
       trend_result = trend_candidates[result_index_in_trend_candidates]
       trend_results << trend_result
       trend_clusters = trend_clusters_candidates[result_index_in_trend_candidates]
@@ -166,17 +167,15 @@ class Api::Web::TimeSeriesController < ApplicationController
       # 類似数の大きい順に並び替え
       indexed_subsequences_quantities = sum_similar_subsequences_quantities.map.with_index { |quantity, index| [quantity, index] }
       # 指定ランクを割合に変換
-      converted_rank = rank / (candidate_min_master..candidate_max_master).to_a.length.to_d
+      converted_rank = ((rank.to_d + 1) * candidates.length / (candidate_min_master..candidate_max_master).to_a.length) - 1
 
       metrics_with_direction = [
-        { is_complex_when_larger: true, data: normalize(indexed_average_distances_between_clusters)},
-        { is_complex_when_larger: false, data: normalize(indexed_subsequences_quantities) }
+        { is_complex_when_larger: true, data: indexed_average_distances_between_clusters},
+        { is_complex_when_larger: false, data: indexed_subsequences_quantities }
       ]
 
-      diff_and_indexes = calculate_total_differences(metrics_with_direction, converted_rank)
-      sorted = diff_and_indexes.sort_by {|diff_and_index|diff_and_index[:difference_value]}
       # 正規化したランクを使ってベストマッチの実データを得る
-      result_index_in_candidates = sorted[0][:index]
+      result_index_in_candidates = find_complex_candidate(metrics_with_direction, converted_rank)
       result = candidates[result_index_in_candidates]
       results << result
       clusters = clusters_candidates[result_index_in_candidates]
@@ -199,10 +198,10 @@ class Api::Web::TimeSeriesController < ApplicationController
     def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank_index)
       temporary_results = results.dup
       temporary_results << candidate
-      temporary_clusters = clusters.deep_dup
+      temporary_clusters = Marshal.load(Marshal.dump(clusters))
+
       temporary_cluster_id_counter = cluster_id_counter
       temporary_tasks = tasks.dup
-
       temporary_clusters, temporary_tasks, temporary_cluster_id_counter = clustering_subsequences_incremental(
         temporary_results,
         merge_threshold_ratio,
@@ -213,9 +212,12 @@ class Api::Web::TimeSeriesController < ApplicationController
         temporary_tasks,
       )
 
+
+
       clusters_each_window_size = transform_clusters(temporary_clusters, min_window_size)
       sum_distances_in_all_window = []
       sum_similar_subsequences_quantities = 0
+
       clusters_each_window_size.each do |window_size, same_window_size_clusters|
         sum_distances = 0
 
@@ -244,24 +246,6 @@ class Api::Web::TimeSeriesController < ApplicationController
       [average_distances_in_all_window, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks]
     end
 
-    # 正規化関数：配列の最小・最大を基に0〜1にスケール
-    def normalize(results)
-      values = results.map { |value, index| BigDecimal(value.to_s) }  # BigDecimalに変換
-      min_value = values.min
-      max_value = values.max
-      range = max_value - min_value
-
-      if range == 0
-        # すべての値が同じ場合、全ての値を0にする
-        results.map { [BigDecimal("0"), _2] }  # 候補のindexは維持しつつ、すべて0に
-      else
-        # 通常の正規化
-        results.map do |value, index|
-          normalized_value = (BigDecimal(value.to_s) - min_value) / range  # 0から1に正規化
-          [normalized_value, index]
-        end
-      end
-    end
 
     def find_best_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank_index)
       average_distances_all_window_candidates = []
@@ -333,29 +317,54 @@ class Api::Web::TimeSeriesController < ApplicationController
       split_count - 1
     end
 
-    # 差分の合計を求める関数
-    # metrics: 指標の正規化結果をまとめた配列 ([[normalized_distances], [normalized_quantities], ...])
-    def calculate_total_differences(metrics_with_direction, target)
-      num_candidates = metrics_with_direction.first[:data].size
-      differences = Array.new(num_candidates, 0.0)
-      differences.each_with_index do |difference, index|
-        original_index = metrics_with_direction.first[:data][index][1]
-        differences[index] = {difference_value: 0, index: original_index}
+
+
+    def find_complex_candidate(criteria, converted_rank)
+      candidates = Hash.new { |h, k| h[k] = 0 } # 候補インデックスごとのスコア
+      criteria.each do |criterion|
+        is_complex_when_larger = criterion[:is_complex_when_larger]
+        data = criterion[:data]
+        values = data.map { |v| v[0] } # すべての値を抽出
+        min_value, max_value = 0, values.max
+
+        # minとmaxが同じなら全て0、それ以外は正規化
+        normalized_values = if min_value == max_value
+                              Array.new(values.size, 0)
+                            else
+                              values.map { |v| (v - min_value).to_d / (max_value - min_value) }
+                            end
+
+        # もし値が小さいほど複雑なら逆数を取る
+        normalized_values.map! { |v| is_complex_when_larger ? v : 1 - v }
+        # 各候補のスコアを加算
+        data.each_with_index do |(_, index), i|
+          candidates[index] += normalized_values[i]
+        end
       end
+      # スコアが高い順にソート
+      sorted_candidates = candidates.sort_by { |_, score| score }
 
-      metrics_with_direction.each do |metric|
-        is_complex_when_larger = metric[:is_complex_when_larger]
-        data = metric[:data]
+      # 指定されたランクの候補インデックスを返す（0-based index）
+      sorted_candidates[converted_rank.to_i]&.first
+    end
 
-        data.each do |normalized_value, index|
-          normalized_value = normalized_value.to_d
-          adjusted_value = is_complex_when_larger ? normalized_value : (1 - normalized_value)
-          difference = differences.find{|difference|difference[:index] == index}
-          difference[:difference_value] += (adjusted_value - target).abs
+    def find_corresponding_hash(temporary_clusters, original_clusters, original_hash)
+      return nil if original_hash.nil?
+
+      queue = [[temporary_clusters, original_clusters]]
+
+      while queue.any?
+        temp, orig = queue.shift
+
+        return temp if orig.equal?(original_hash)  # 元の clusters で指していたハッシュを発見したら返す
+
+        # 再帰的に探索（ネストした :cc を見る）
+        orig[:cc]&.each do |key, orig_child|
+          queue << [temp[:cc][key], orig_child] if temp[:cc].key?(key)
         end
       end
 
-      differences
+      nil  # 見つからなかった場合
     end
 
 
