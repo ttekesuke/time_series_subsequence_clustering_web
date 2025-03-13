@@ -1,5 +1,6 @@
 class Api::Web::TimeSeriesController < ApplicationController
   include TimeSeriesAnalyser
+  include MusicAnalyser
 
   def analyse
     data = analyse_params[:time_series].split(',').map{|elm|elm.to_i}
@@ -10,6 +11,9 @@ class Api::Web::TimeSeriesController < ApplicationController
     clusters = {cluster_id_counter => { si: [0], cc: {} }}
     cluster_id_counter += 1
     tasks = []
+
+    dominance_hash = Hash.new { |hash, key| hash[key] = [] }
+    dominance_pitches = []
     data.each_with_index do |elm, data_index|
       # 最小幅+1から検知開始
       if data_index > min_window_size - 1
@@ -22,6 +26,11 @@ class Api::Web::TimeSeriesController < ApplicationController
           cluster_id_counter,
           tasks,
         )
+        dominance_pitch, dominance_hash = get_dominant_pitch_incremental(
+          elm,
+          dominance_hash
+        )
+        dominance_pitches << dominance_pitch
       end
     end
     if analyse_params[:show_single_cluster] == false
@@ -30,7 +39,8 @@ class Api::Web::TimeSeriesController < ApplicationController
     timeline = clusters_to_timeline(clusters, min_window_size)
     render json: {
       clusteredSubsequences: timeline,
-      timeSeriesChart: [] + data.map.with_index{|elm, index|[index.to_s, elm, nil, nil]},
+      timeSeriesChart: [] + data.map.with_index{|elm, index|[index.to_s, elm, nil, nil, dominance_pitches[index]]},
+      dominancePitches: dominance_pitches
     }
   end
 

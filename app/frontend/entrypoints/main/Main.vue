@@ -603,12 +603,13 @@ const drawSteppedAreaChart = (elementId, drawData, height) => {
   const dataMin = Math.min(...onlyData)
   const dataMax = Math.max(...onlyData)
   const options = {
+    pointSize: 20,
     'height': height,
     'width': window.innerWidth,
     isStacked: false,
     legend: 'none' as 'none' | google.visualization.ChartLegend,
     series: [
-      {areaOpacity : 0},
+      {areaOpacity : 0, pointShape: 'square'},
       {areaOpacity : 0},
       {areaOpacity : 0.5},
     ],
@@ -634,11 +635,12 @@ const drawSteppedAreaChart = (elementId, drawData, height) => {
   }
   const dataTable = new google.visualization.DataTable()
   dataTable.addColumn('string', 'index')
-  dataTable.addColumn('number', 'allValue')
+  dataTable.addColumn('number', 'value')
   dataTable.addColumn('number', 'selectedValue')
   dataTable.addColumn('number', 'sequenceValue')
+  dataTable.addColumn('number', 'dominanceValue')
   dataTable.addRows(drawData)
-  const chart = new google.visualization.SteppedAreaChart(document.getElementById(elementId) as HTMLElement)
+  const chart = new google.visualization.ScatterChart(document.getElementById(elementId) as HTMLElement)
   chart.draw(dataTable, options)
 }
 const setLinearIntegers = (setType) => {
