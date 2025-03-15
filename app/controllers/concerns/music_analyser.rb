@@ -1,6 +1,6 @@
 module MusicAnalyser
 
-  def get_dominant_pitch_incremental(pitch, dominance_hash)
+  def get_dominance_pitch_incremental(pitch, dominance_hash)
     intervals_harmonious_sorted_inverted = [0, 5, 8, 1, 10, 3, 7, 2, 9, 4, 6, 11]
     dominance_pitch_candidates = (0..11).to_a
     window_size = 5  # 直近N個の音のみ考慮

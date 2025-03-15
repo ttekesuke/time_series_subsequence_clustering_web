@@ -26,21 +26,22 @@ class Api::Web::TimeSeriesController < ApplicationController
           cluster_id_counter,
           tasks,
         )
-        dominance_pitch, dominance_hash = get_dominant_pitch_incremental(
-          elm,
-          dominance_hash
-        )
-        dominance_pitches << dominance_pitch
       end
+      dominance_pitch, dominance_hash = get_dominance_pitch_incremental(
+        elm,
+        dominance_hash
+      )
+      dominance_pitches << dominance_pitch
+
     end
-    if analyse_params[:show_single_cluster] == false
+    if analyse_params[:hide_single_cluster] == true
       clusters = clean_clusters(clusters)
     end
     timeline = clusters_to_timeline(clusters, min_window_size)
     render json: {
       clusteredSubsequences: timeline,
-      timeSeriesChart: [] + data.map.with_index{|elm, index|[index.to_s, elm, nil, nil, dominance_pitches[index]]},
-      dominancePitches: dominance_pitches
+      timeSeriesChart: [] + data.map.with_index{|elm, index|[index.to_s, elm, nil, nil]},
+      dominanceChart: [] + dominance_pitches.map.with_index{|elm, index|[index.to_s, elm, nil, nil]}
     }
   end
 
@@ -192,15 +193,29 @@ class Api::Web::TimeSeriesController < ApplicationController
       cluster_id_counter = cluster_id_counter_candidates[result_index_in_candidates]
       tasks = tasks_candidates[result_index_in_candidates]
     end
+    if generate_params[:hide_single_cluster] == true
+      clusters = clean_clusters(clusters)
+    end
 
     chart_elements_for_complexity = Array.new(user_set_results.length) { |index| [index.to_s, nil, nil, nil] }
 
     timeline = clusters_to_timeline(clusters, min_window_size)
+    dominance_hash = Hash.new { |hash, key| hash[key] = [] }
+    dominance_pitches = []
+
+    results.each do |elm|
+      dominance_pitch, dominance_hash = get_dominance_pitch_incremental(
+        elm,
+        dominance_hash
+      )
+      dominance_pitches << dominance_pitch
+    end
     render json: {
       clusteredSubsequences: timeline,
-      timeSeriesChart: [] + results.map.with_index{|elm, index|[index.to_s, elm, nil, nil]},
+      timeSeriesChart: [] + results.map.with_index{|elm, index|[index.to_s, elm, nil, nil,]},
       timeSeries: results,
       timeSeriesComplexityChart: [] + chart_elements_for_complexity + complexity_transition.map.with_index{|elm, index|[(user_set_results.length + index).to_s, elm, nil, nil]},
+      dominanceChart: [] + dominance_pitches.map.with_index{|elm, index|[index.to_s, elm, nil, nil]}
     }
   end
 
@@ -382,7 +397,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       params.require(:analyse).permit(
         :time_series,
         :merge_threshold_ratio,
-        :show_single_cluster
+        :hide_single_cluster
       )
     end
 
@@ -393,6 +408,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         :range_max,
         :first_elements,
         :merge_threshold_ratio,
+        :hide_single_cluster
       )
     end
 
