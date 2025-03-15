@@ -596,7 +596,6 @@ const generateTimeseries = () => {
       drawTimeSeriesDominance('timeseries-dominance', analyse.value.dominanceChart)
       generate.value.loading = false
       generate.value.setDataDialog = false
-
   })
   .catch(error => {
       console.log(error)

@@ -237,8 +237,6 @@ class Api::Web::TimeSeriesController < ApplicationController
         temporary_tasks,
       )
 
-
-
       clusters_each_window_size = transform_clusters(temporary_clusters, min_window_size)
       sum_distances_in_all_window = []
       sum_similar_subsequences_quantities = 0
@@ -342,8 +340,6 @@ class Api::Web::TimeSeriesController < ApplicationController
       split_count - 1
     end
 
-
-
     def find_complex_candidate(criteria, converted_rank)
       candidates = Hash.new { |h, k| h[k] = 0 } # 候補インデックスごとのスコア
       criteria.each do |criterion|
@@ -372,26 +368,6 @@ class Api::Web::TimeSeriesController < ApplicationController
       # 指定されたランクの候補インデックスを返す（0-based index）
       sorted_candidates[converted_rank.to_i]&.first
     end
-
-    def find_corresponding_hash(temporary_clusters, original_clusters, original_hash)
-      return nil if original_hash.nil?
-
-      queue = [[temporary_clusters, original_clusters]]
-
-      while queue.any?
-        temp, orig = queue.shift
-
-        return temp if orig.equal?(original_hash)  # 元の clusters で指していたハッシュを発見したら返す
-
-        # 再帰的に探索（ネストした :cc を見る）
-        orig[:cc]&.each do |key, orig_child|
-          queue << [temp[:cc][key], orig_child] if temp[:cc].key?(key)
-        end
-      end
-
-      nil  # 見つからなかった場合
-    end
-
 
     def analyse_params
       params.require(:analyse).permit(
