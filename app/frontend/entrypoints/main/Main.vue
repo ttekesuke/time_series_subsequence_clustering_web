@@ -263,7 +263,7 @@
           <div class='text-h6 ml-3 mb-2'>
             <v-row>
               <v-col cols="1">
-                <span>timeseries</span>
+                <span>Timeseries</span>
               </v-col>
               <v-col cols="3">
                 <v-card>
@@ -311,23 +311,21 @@
       <v-row no-gutters>
         <v-col>
           <template v-if='showTimeseriesComplexityChart'>
-            <div class='text-h6 ml-3 mb-2'>complexity</div>
+            <div class='text-h6 ml-3 mb-2'>Complexity</div>
             <div id='timeseries-complexity' styls='height: 20vh;'></div>
           </template>
         </v-col>
       </v-row>
-      <v-row no-gutters>
-        <v-col>
-          <template v-if='showTimeseriesDominanceChart'>
-            <div class='text-h6 ml-3 mb-2'>dominance</div>
-            <div id='timeseries-dominance' styls='height: 10vh;'></div>
-          </template>
+      <v-row no-gutters v-if='Object.keys(analyse.normalizedDominanceHash).length > 0'>
+        <v-col style="height: 16rem;">
+          <div class='text-h6 ml-3 mb-2'>Dominance Heatmap</div>
+          <Heatmap :data="analyse.normalizedDominanceHash" />
         </v-col>
       </v-row>
       <v-row no-gutters >
         <v-col>
           <template v-if='showTimeline'>
-            <div class='text-h6 ml-3 mb-2'>clusters</div>
+            <div class='text-h6 ml-3 mb-2'>Clusters</div>
             <div id='timeline' styls='height: 70vh;'></div>
           </template>
           <template v-else>
@@ -345,6 +343,7 @@ import { onMounted, computed, nextTick, ref } from 'vue'
 import * as Tone from 'tone'
 import axios from 'axios'
 import { ScoreEntry } from '../../types/types';
+import Heatmap from '../../components/Heatmap.vue';
 
 const timeseriesMax = ref(100)
 const analyse = ref({
@@ -368,7 +367,7 @@ const analyse = ref({
     length: null
   },
   mergeThresholdRatio: 0.05,
-  dominanceChart: [],
+  normalizedDominanceHash: {},
   hideSingleCluster: false
 })
 const complexityTransitionRules = computed(() => [
@@ -558,13 +557,13 @@ const analyseTimeseries = () => {
       console.log(response)
       analyse.value.clusteredSubsequences = response.data.clusteredSubsequences
       analyse.value.timeSeriesChart = response.data.timeSeriesChart
-      analyse.value.dominanceChart = response.data.dominanceChart
+      analyse.value.normalizedDominanceHash = response.data.normalizedDominanceHash
       analyse.value.loading = false
       analyse.value.setDataDialog = false
       showTimeseriesComplexityChart.value = false
       drawTimeline()
       drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
-      drawTimeSeriesDominance('timeseries-dominance', analyse.value.dominanceChart)
+      // drawTimeSeriesDominance('timeseries-dominance', analyse.value.normalizedDominanceHash)
   })
   .catch(error => {
       console.log(error)
@@ -588,12 +587,12 @@ const generateTimeseries = () => {
       analyse.value.clusteredSubsequences = response.data.clusteredSubsequences
       analyse.value.timeSeries = String(response.data.timeSeries)
       analyse.value.timeSeriesChart = response.data.timeSeriesChart
-      analyse.value.dominanceChart = response.data.dominanceChart
+      analyse.value.normalizedDominanceHash = response.data.normalizedDominanceHash
       generate.value.complexityTransitionChart = response.data.timeSeriesComplexityChart
       drawTimeline()
       drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
       drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
-      drawTimeSeriesDominance('timeseries-dominance', analyse.value.dominanceChart)
+      // drawTimeSeriesDominance('timeseries-dominance', analyse.value.normalizedDominanceHash)
       generate.value.loading = false
       generate.value.setDataDialog = false
   })

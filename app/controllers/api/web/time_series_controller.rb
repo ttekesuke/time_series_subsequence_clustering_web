@@ -37,11 +37,12 @@ class Api::Web::TimeSeriesController < ApplicationController
     if analyse_params[:hide_single_cluster] == true
       clusters = clean_clusters(clusters)
     end
+    p dominance_hash
     timeline = clusters_to_timeline(clusters, min_window_size)
     render json: {
       clusteredSubsequences: timeline,
       timeSeriesChart: [] + data.map.with_index{|elm, index|[index.to_s, elm, nil, nil]},
-      dominanceChart: [] + dominance_pitches.map.with_index{|elm, index|[index.to_s, elm, nil, nil]}
+      normalizedDominanceHash: normalize_dominance_hash(dominance_hash),
     }
   end
 
@@ -215,7 +216,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       timeSeriesChart: [] + results.map.with_index{|elm, index|[index.to_s, elm, nil, nil,]},
       timeSeries: results,
       timeSeriesComplexityChart: [] + chart_elements_for_complexity + complexity_transition.map.with_index{|elm, index|[(user_set_results.length + index).to_s, elm, nil, nil]},
-      dominanceChart: [] + dominance_pitches.map.with_index{|elm, index|[index.to_s, elm, nil, nil]}
+      normalizedDominanceHash: normalize_dominance_hash(dominance_hash),
     }
   end
 
@@ -368,6 +369,31 @@ class Api::Web::TimeSeriesController < ApplicationController
       # 指定されたランクの候補インデックスを返す（0-based index）
       sorted_candidates[converted_rank.to_i]&.first
     end
+
+    def normalize_dominance_hash(dominance_hash, window_size = 10)
+      # 各キー（0〜11）ごとの時系列データを取得
+      time_series = dominance_hash.values.transpose
+
+      normalized_data = time_series.map.with_index do |values, i|
+        # 各値について、直近window_size個の平均を計算
+        smoothed_values = values.map.with_index do |_, idx|
+          start_idx = [0, i - window_size + 1].max
+          history = time_series[start_idx..i].map { |row| row[idx] }
+          history.sum.to_f / history.size
+        end
+
+        # 最小値・最大値を求めて正規化
+        min_val = smoothed_values.min.to_f
+        max_val = smoothed_values.max.to_f
+        range = max_val - min_val
+        range.zero? ? Array.new(values.size, 0.5) : smoothed_values.map { |v| 1 - (v - min_val) / range } # 低い値ほど濃く
+      end
+
+      # 元のdominance_hashのキーにマッピング
+      keys = dominance_hash.keys
+      keys.zip(normalized_data.transpose).to_h
+    end
+
 
     def analyse_params
       params.require(:analyse).permit(
