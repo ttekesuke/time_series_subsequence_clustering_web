@@ -44,7 +44,7 @@ export default {
       const saturation = 100;
       const lightness = 100 - value * 70; // 低い値ほど濃く
       return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-    },
+    }
   },
 };
 </script>

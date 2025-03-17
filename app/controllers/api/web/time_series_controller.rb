@@ -37,7 +37,6 @@ class Api::Web::TimeSeriesController < ApplicationController
     if analyse_params[:hide_single_cluster] == true
       clusters = clean_clusters(clusters)
     end
-    p dominance_hash
     timeline = clusters_to_timeline(clusters, min_window_size)
     render json: {
       clusteredSubsequences: timeline,
@@ -373,27 +372,21 @@ class Api::Web::TimeSeriesController < ApplicationController
     def normalize_dominance_hash(dominance_hash, window_size = 10)
       # 各キー（0〜11）ごとの時系列データを取得
       time_series = dominance_hash.values.transpose
-
+      smoothed_values = []
       normalized_data = time_series.map.with_index do |values, i|
-        # 各値について、直近window_size個の平均を計算
+        # 直近 `window_size` 個の平均を計算（スムージング）
         smoothed_values = values.map.with_index do |_, idx|
           start_idx = [0, i - window_size + 1].max
           history = time_series[start_idx..i].map { |row| row[idx] }
           history.sum.to_f / history.size
         end
-
-        # 最小値・最大値を求めて正規化
-        min_val = smoothed_values.min.to_f
-        max_val = smoothed_values.max.to_f
-        range = max_val - min_val
-        range.zero? ? Array.new(values.size, 0.5) : smoothed_values.map { |v| 1 - (v - min_val) / range } # 低い値ほど濃く
+        smoothed_values
       end
 
-      # 元のdominance_hashのキーにマッピング
+      # 元の dominance_hash のキーにマッピング
       keys = dominance_hash.keys
       keys.zip(normalized_data.transpose).to_h
     end
-
 
     def analyse_params
       params.require(:analyse).permit(

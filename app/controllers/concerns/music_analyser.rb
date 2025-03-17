@@ -12,8 +12,8 @@ module MusicAnalyser
     dominance_pitch_candidates.each do |dominance_pitch_candidate|
       # intervals_invertedでのインデックス位置を二乗し距離を計算
       distance_index = intervals_harmonious_sorted_inverted.index((dominance_pitch_candidate - normalized_pitch) % 12)
-      distance = distance_index ** 1  # 二乗により後半のインデックスの距離がより増大する
-
+      # 指数関数を適用し、距離が近いほど影響を大きくする
+      distance = Math.exp(-distance_index)
       dominance_hash[dominance_pitch_candidate] << distance
       # dominance_hash[dominance_pitch_candidate].shift if dominance_hash[dominance_pitch_candidate].size > window_size
 
