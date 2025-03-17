@@ -13,7 +13,6 @@ class Api::Web::TimeSeriesController < ApplicationController
     tasks = []
 
     dominance_hash = Hash.new { |hash, key| hash[key] = [] }
-    dominance_pitches = []
     data.each_with_index do |elm, data_index|
       # 最小幅+1から検知開始
       if data_index > min_window_size - 1
@@ -27,11 +26,10 @@ class Api::Web::TimeSeriesController < ApplicationController
           tasks,
         )
       end
-      dominance_pitch, dominance_hash = get_dominance_pitch_incremental(
+      dominance_hash = get_dominance_pitch_incremental(
         elm,
         dominance_hash
       )
-      dominance_pitches << dominance_pitch
 
     end
     if analyse_params[:hide_single_cluster] == true
@@ -201,14 +199,12 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     timeline = clusters_to_timeline(clusters, min_window_size)
     dominance_hash = Hash.new { |hash, key| hash[key] = [] }
-    dominance_pitches = []
 
     results.each do |elm|
-      dominance_pitch, dominance_hash = get_dominance_pitch_incremental(
+      dominance_hash = get_dominance_pitch_incremental(
         elm,
         dominance_hash
       )
-      dominance_pitches << dominance_pitch
     end
     render json: {
       clusteredSubsequences: timeline,
