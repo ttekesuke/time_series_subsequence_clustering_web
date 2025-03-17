@@ -317,9 +317,11 @@
         </v-col>
       </v-row>
       <v-row no-gutters v-if='Object.keys(analyse.normalizedDominanceHash).length > 0'>
-        <v-col style="height: 16rem;">
+        <v-col>
           <div class='text-h6 ml-3 mb-2'>Dominance Heatmap</div>
-          <Heatmap :data="analyse.normalizedDominanceHash" />
+          <div style="height: 10rem;">
+            <Heatmap :data="analyse.normalizedDominanceHash" />
+          </div>
         </v-col>
       </v-row>
       <v-row no-gutters >

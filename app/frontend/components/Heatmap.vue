@@ -65,12 +65,11 @@ export default {
   min-width: 20px;
   text-align: right;
   margin-right: 5px;
-  font-size: 12px;
+  font-size: 9px;
 }
 .cell {
   flex: 1; /* 幅を自動調整 */
-  min-height: 10px; /* 最小高さを設定して色を見えるように */
-  margin: 1px;
-  border-radius: 3px;
+  height: 100%; /* 最小高さを設定して色を見えるように */
+  margin: 0px;
 }
 </style>
