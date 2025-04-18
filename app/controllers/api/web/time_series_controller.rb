@@ -43,33 +43,8 @@ class Api::Web::TimeSeriesController < ApplicationController
     merge_threshold_ratio = generate_params[:merge_threshold_ratio].to_d
     candidate_min_master = generate_params[:range_min].to_i
     candidate_max_master = generate_params[:range_max].to_i
-    trend_candidate_min_master = -1
-    trend_candidate_max_master = 1
     min_window_size = 2
     # ユーザ指定の冒頭の時系列データを解析しクラスタを作成する
-    # ユーザ指定の冒頭の時系列データをトレンドにする
-    trend_user_set_results = convert_to_monotonic_change(user_set_results)
-    # 実データのトレンドデータのクラスタ初期化
-    trend_cluster_id_counter, trend_clusters, trend_tasks = initialize_clusters(min_window_size)
-
-    trend_user_set_results.each_with_index do |elm, data_index|
-      # 最小幅+1から検知開始
-      if data_index > min_window_size - 1
-        trend_clusters, trend_tasks, trend_cluster_id_counter = clustering_subsequences_incremental(
-          trend_user_set_results,
-          merge_threshold_ratio,
-          data_index,
-          min_window_size,
-          trend_clusters,
-          trend_cluster_id_counter,
-          trend_tasks,
-        )
-      end
-    end
-
-    # 移行
-    trend_results = trend_user_set_results.dup
-    # 解析
     cluster_id_counter, clusters, tasks = initialize_clusters(min_window_size)
     user_set_results.each_with_index do |elm, data_index|
       # 最小幅+1から検知開始
@@ -91,66 +66,9 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     # ユーザ指定の順位のループ
     complexity_transition.each_with_index do |rank, rank_index|
-      # 生成するデータの確定値の最後の要素の値が上限か下限にいると、必然的に
-      # 次に候補となるデータに制約が入る。トレンドの候補も制約を入れる。
-      trend_candidate_min = trend_candidate_min_master
-      trend_candidate_max = trend_candidate_max_master
-      if results.last == candidate_min_master
-        trend_candidate_min = 0
-      elsif results.last == candidate_max_master
-        trend_candidate_max = 0
-      end
-
-      trend_candidates = (trend_candidate_min..trend_candidate_max).to_a
-
-      # トレンドの候補からベストマッチを得るために評価値を得る
-      trend_average_distances_all_window_candidates, trend_sum_similar_subsequences_quantities, trend_clusters_candidates, trend_cluster_id_counter_candidates, trend_tasks_candidates =
-        find_best_candidate(
-          trend_results,
-          trend_candidates,
-          merge_threshold_ratio,
-          min_window_size,
-          trend_clusters,
-          trend_cluster_id_counter,
-          trend_tasks,
-          rank_index,
-        )
-      # 距離にindex付与
-      trend_indexed_average_distances = trend_average_distances_all_window_candidates.map.with_index { |distance, index| [distance, index] }
-
-      # 類似数にindex付与
-      trend_indexed_subsequences_quantities = trend_sum_similar_subsequences_quantities.map.with_index { |quantity, index| [quantity, index] }
-
-      # 指定ランクを割合に変換
-
-      converted_rank = ((rank.to_d + 1) * trend_candidates.length / (candidate_min_master..candidate_max_master).to_a.length) - 1
-
-      metrics_with_direction = [
-        { is_complex_when_larger: true, data: trend_indexed_average_distances},
-        { is_complex_when_larger: false, data: trend_indexed_subsequences_quantities }
-      ]
-
-      # 正規化したランクを使ってベストマッチのトレンドを得る
-      # todo:trend_sortedの先頭の同率トップが複数あれば選ぶ方法が必要
-      result_index_in_trend_candidates = find_complex_candidate(metrics_with_direction, converted_rank)
-      trend_result = trend_candidates[result_index_in_trend_candidates]
-      trend_results << trend_result
-      trend_clusters = trend_clusters_candidates[result_index_in_trend_candidates]
-      trend_cluster_id_counter = trend_cluster_id_counter_candidates[result_index_in_trend_candidates]
-      trend_tasks = trend_tasks_candidates[result_index_in_trend_candidates]
-
       candidate_max = candidate_max_master
       candidate_min = candidate_min_master
 
-      # トレンドに応じて生成する実データに制約を入れる
-      if trend_result == -1
-        candidate_max = results.last - 1
-      elsif trend_result == 0
-        candidate_max = results.last
-        candidate_min = results.last
-      elsif trend_result == 1
-        candidate_min = results.last + 1
-      end
       candidates = (candidate_min..candidate_max).to_a
 
       # 実データの候補からベストマッチを得るために評価値を得る
@@ -170,7 +88,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       # 類似数の大きい順に並び替え
       indexed_subsequences_quantities = sum_similar_subsequences_quantities.map.with_index { |quantity, index| [quantity, index] }
       # 指定ランクを割合に変換
-      converted_rank = ((rank.to_d + 1) * candidates.length / (candidate_min_master..candidate_max_master).to_a.length) - 1
+      converted_rank = rank / (candidate_min_master..candidate_max_master).to_a.length.to_d
 
       metrics_with_direction = [
         { is_complex_when_larger: true, data: indexed_average_distances_between_clusters},
@@ -324,32 +242,39 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     def find_complex_candidate(criteria, converted_rank)
       candidates = Hash.new { |h, k| h[k] = 0 } # 候補インデックスごとのスコア
+
       criteria.each do |criterion|
         is_complex_when_larger = criterion[:is_complex_when_larger]
         data = criterion[:data]
-        values = data.map { |v| v[0] } # すべての値を抽出
-        min_value, max_value = 0, values.max
 
-        # minとmaxが同じなら全て0、それ以外は正規化
+        values = data.map { |v| v[0] }
+        min_value, max_value = values.min, values.max
+
         normalized_values = if min_value == max_value
                               Array.new(values.size, 0)
                             else
-                              values.map { |v| (v - min_value).to_d / (max_value - min_value) }
+                              values.map { |v| (v - min_value).to_f / (max_value - min_value) }
                             end
 
-        # もし値が小さいほど複雑なら逆数を取る
         normalized_values.map! { |v| is_complex_when_larger ? v : 1 - v }
-        # 各候補のスコアを加算
+
         data.each_with_index do |(_, index), i|
           candidates[index] += normalized_values[i]
         end
       end
+
       # スコアが高い順にソート
       sorted_candidates = candidates.sort_by { |_, score| score }
 
-      # 指定されたランクの候補インデックスを返す（0-based index）
-      sorted_candidates[converted_rank.to_i]&.first
+      # converted_rank に対応するインデックスを取得
+      n = sorted_candidates.size
+      rank_index = (converted_rank * n).floor
+      rank_index = [rank_index, n - 1].min
+
+      # 指定されたランクの候補インデックスを返す
+      sorted_candidates[rank_index]&.first
     end
+
 
     def windowing_dominance_hash(dominance_hash, window_size = 100)
       # 各キー（0〜11）ごとの時系列データを取得
