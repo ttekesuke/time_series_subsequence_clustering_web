@@ -316,14 +316,6 @@
           </template>
         </v-col>
       </v-row>
-      <v-row no-gutters v-if='Object.keys(analyse.normalizedDominanceHash).length > 0'>
-        <v-col>
-          <div class='text-h6 ml-3 mb-2'>Dominance Heatmap</div>
-          <div style="height: 10rem;">
-            <Heatmap :data="analyse.normalizedDominanceHash" />
-          </div>
-        </v-col>
-      </v-row>
       <v-row no-gutters >
         <v-col>
           <template v-if='showTimeline'>
@@ -345,7 +337,6 @@ import { onMounted, computed, nextTick, ref } from 'vue'
 import * as Tone from 'tone'
 import axios from 'axios'
 import { ScoreEntry } from '../../types/types';
-import Heatmap from '../../components/Heatmap.vue';
 
 const timeseriesMax = ref(100)
 const analyse = ref({
@@ -369,7 +360,6 @@ const analyse = ref({
     length: null
   },
   mergeThresholdRatio: 0.05,
-  normalizedDominanceHash: {},
   hideSingleCluster: false
 })
 const complexityTransitionRules = computed(() => [
@@ -407,7 +397,6 @@ const generate = ref({
 })
 let showTimeseriesChart = ref(false)
 let showTimeseriesComplexityChart = ref(false)
-let showTimeseriesDominanceChart = ref(false)
 let showTimeline = ref(false)
 let infoDialog = ref(false)
 let pitchMap = ref([
@@ -493,12 +482,6 @@ const drawTimeSeriesComplexity = (elementId, drawData) => {
     drawScatterChart(elementId, drawData, 100)
   })
 }
-const drawTimeSeriesDominance = (elementId, drawData) => {
-  showTimeseriesDominanceChart.value = true
-  nextTick(() => {
-    drawScatterChart(elementId, drawData, 100)
-  })
-}
 
 const drawScatterChart = (elementId, drawData, height) => {
   const onlyData = drawData.map(data => data[1]).slice(1, drawData.length)
@@ -559,13 +542,11 @@ const analyseTimeseries = () => {
       console.log(response)
       analyse.value.clusteredSubsequences = response.data.clusteredSubsequences
       analyse.value.timeSeriesChart = response.data.timeSeriesChart
-      analyse.value.normalizedDominanceHash = response.data.normalizedDominanceHash
       analyse.value.loading = false
       analyse.value.setDataDialog = false
       showTimeseriesComplexityChart.value = false
       drawTimeline()
       drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
-      // drawTimeSeriesDominance('timeseries-dominance', analyse.value.normalizedDominanceHash)
   })
   .catch(error => {
       console.log(error)
@@ -589,12 +570,10 @@ const generateTimeseries = () => {
       analyse.value.clusteredSubsequences = response.data.clusteredSubsequences
       analyse.value.timeSeries = String(response.data.timeSeries)
       analyse.value.timeSeriesChart = response.data.timeSeriesChart
-      analyse.value.normalizedDominanceHash = response.data.normalizedDominanceHash
       generate.value.complexityTransitionChart = response.data.timeSeriesComplexityChart
       drawTimeline()
       drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
       drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
-      // drawTimeSeriesDominance('timeseries-dominance', analyse.value.normalizedDominanceHash)
       generate.value.loading = false
       generate.value.setDataDialog = false
   })

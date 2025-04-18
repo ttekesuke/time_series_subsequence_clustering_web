@@ -12,7 +12,6 @@ class Api::Web::TimeSeriesController < ApplicationController
     cluster_id_counter += 1
     tasks = []
 
-    dominance_hash = Hash.new { |hash, key| hash[key] = [] }
     data.each_with_index do |elm, data_index|
       # 最小幅+1から検知開始
       if data_index > min_window_size - 1
@@ -26,10 +25,6 @@ class Api::Web::TimeSeriesController < ApplicationController
           tasks,
         )
       end
-      dominance_hash = get_dominance_pitch_incremental(
-        elm,
-        dominance_hash
-      )
 
     end
     if analyse_params[:hide_single_cluster] == true
@@ -39,7 +34,6 @@ class Api::Web::TimeSeriesController < ApplicationController
     render json: {
       clusteredSubsequences: timeline,
       timeSeriesChart: [] + data.map.with_index{|elm, index|[index.to_s, elm, nil, nil]},
-      normalizedDominanceHash: windowing_dominance_hash(dominance_hash),
     }
   end
 
@@ -198,20 +192,12 @@ class Api::Web::TimeSeriesController < ApplicationController
     chart_elements_for_complexity = Array.new(user_set_results.length) { |index| [index.to_s, nil, nil, nil] }
 
     timeline = clusters_to_timeline(clusters, min_window_size)
-    dominance_hash = Hash.new { |hash, key| hash[key] = [] }
 
-    results.each do |elm|
-      dominance_hash = get_dominance_pitch_incremental(
-        elm,
-        dominance_hash
-      )
-    end
     render json: {
       clusteredSubsequences: timeline,
       timeSeriesChart: [] + results.map.with_index{|elm, index|[index.to_s, elm, nil, nil,]},
       timeSeries: results,
       timeSeriesComplexityChart: [] + chart_elements_for_complexity + complexity_transition.map.with_index{|elm, index|[(user_set_results.length + index).to_s, elm, nil, nil]},
-      normalizedDominanceHash: windowing_dominance_hash(dominance_hash),
     }
   end
 
