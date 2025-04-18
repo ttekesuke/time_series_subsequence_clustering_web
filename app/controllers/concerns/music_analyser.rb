@@ -8,10 +8,10 @@ module MusicAnalyser
 
     # 各音の主要度を計算
     dominance_pitch_candidates.each do |dominance_pitch_candidate|
-      distance_index = intervals_harmonious_sorted_inverted.index((dominance_pitch_candidate - normalized_pitch) % 12)
+      score_index = intervals_harmonious_sorted_inverted.index((dominance_pitch_candidate - normalized_pitch) % 12)
       # 指数関数を適用し、距離が近いほど影響を大きくする
-      distance = Math.exp(-distance_index)
-      dominance_hash[dominance_pitch_candidate] << distance
+      score = Math.exp(-score_index)
+      dominance_hash[dominance_pitch_candidate] << score
     end
 
      dominance_hash
