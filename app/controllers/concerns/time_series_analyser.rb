@@ -32,16 +32,23 @@ module TimeSeriesAnalyser
     tasks.clear
 
     current_tasks.each do |task|
+      p 'in current_tasks'
+      p "task:#{task}"
       keys_to_parent = task[0].dup
       length = task[1].dup
       parent = dig_clusters_by_keys(clusters, keys_to_parent)
       new_length = length + 1
       latest_start = data_index - new_length + 1
       latest_seq = data[latest_start, new_length]
+      p parent[:si]
+      p new_length
+      p data_index
+      p latest_start
       valid_si = parent[:si].select { |s| s + new_length <= data_index + 1 && s != latest_start }
       next if valid_si.empty?
 
       if parent[:cc].any?
+        p 'aruyo'
         new_clusters = {}
         min_distance, best_clusters, best_cluster_id = Float::INFINITY, [], nil
         parent[:cc].each do |cluster_id, child|
@@ -69,7 +76,10 @@ module TimeSeriesAnalyser
             parent[:cc][cluster_id_counter] = { si: [latest_start], cc: {} }
         end
       else
+        p 'kotti'
+        p valid_si
         valid_group  = []
+        invalid_group = []
         valid_si.each do |s|
           distance = euclidean_distance(data[s, new_length], latest_seq)
           # 許容割合以下なら結合予定とする
@@ -77,17 +87,26 @@ module TimeSeriesAnalyser
 
           if ratio_in_max_distance <= merge_threshold_ratio
             valid_group << s
+          else
+            invalid_group << s
           end
         end
 
         if valid_group.any?
+          p 'sotti'
           parent[:cc][cluster_id_counter] = { si: valid_group + [latest_start], cc: {} }
           tasks << [keys_to_parent << cluster_id_counter, new_length]
           cluster_id_counter += 1
         else
           parent[:cc][cluster_id_counter] = { si: [latest_start], cc: {} }
-          tasks << [keys_to_parent << cluster_id_counter, new_length]
           cluster_id_counter += 1
+        end
+
+         p invalid_group
+        invalid_group.each do |s|
+          parent[:cc][cluster_id_counter] = { si: [s], cc: {} }
+          cluster_id_counter += 1
+
         end
       end
     end
@@ -105,11 +124,14 @@ module TimeSeriesAnalyser
     ratio_in_max_distance = max_distance_between_lower_and_upper == 0 ? 0 : min_distance / max_distance_between_lower_and_upper
 
     if ratio_in_max_distance <= merge_threshold_ratio
+      p "latest_start:#{latest_start}"
       best_cluster[:si] << latest_start unless best_cluster[:si].include?(latest_start)
+      p "best_cluster:#{best_cluster}"
+      p "best_cluster_id:#{best_cluster_id}"
       tasks << [[best_cluster_id], min_window_size]
     else
       clusters[cluster_id_counter] = { si: [latest_start], cc: {} }
-      tasks << [[cluster_id_counter], min_window_size]
+      # tasks << [[cluster_id_counter], min_window_size]
       cluster_id_counter += 1
     end
 
