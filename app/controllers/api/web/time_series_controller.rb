@@ -3,6 +3,8 @@ class Api::Web::TimeSeriesController < ApplicationController
   include MusicAnalyser
 
   def analyse
+    job_id = analyse_params[:job_id]
+    broadcast_start(job_id)
     data = analyse_params[:time_series].split(',').map{|elm|elm.to_i}
     merge_threshold_ratio = analyse_params[:merge_threshold_ratio].to_d
 
@@ -25,12 +27,11 @@ class Api::Web::TimeSeriesController < ApplicationController
           tasks,
         )
       end
-
-    end
-    if analyse_params[:hide_single_cluster] == true
-      clusters = clean_clusters(clusters)
+      broadcast_progress(job_id, data_index + 1, data.length)
     end
     timeline = clusters_to_timeline(clusters, min_window_size)
+
+    broadcast_done(job_id)
     render json: {
       clusteredSubsequences: timeline,
       timeSeriesChart: [] + data.map.with_index{|elm, index|[index.to_s, elm, nil, nil]},
@@ -38,6 +39,8 @@ class Api::Web::TimeSeriesController < ApplicationController
   end
 
   def generate
+    job_id = generate_params[:job_id]
+    broadcast_start(job_id)
     user_set_results = generate_params[:first_elements].split(',').map { |elm| elm.to_i }
     complexity_transition = generate_params[:complexity_transition].split(',').map { |elm| elm.to_i }
     merge_threshold_ratio = generate_params[:merge_threshold_ratio].to_d
@@ -102,14 +105,15 @@ class Api::Web::TimeSeriesController < ApplicationController
       clusters = clusters_candidates[result_index_in_candidates]
       cluster_id_counter = cluster_id_counter_candidates[result_index_in_candidates]
       tasks = tasks_candidates[result_index_in_candidates]
-    end
-    if generate_params[:hide_single_cluster] == true
-      clusters = clean_clusters(clusters)
+      broadcast_progress(job_id, rank_index + 1, complexity_transition.length)
+
     end
 
     chart_elements_for_complexity = Array.new(user_set_results.length) { |index| [index.to_s, nil, nil, nil] }
 
     timeline = clusters_to_timeline(clusters, min_window_size)
+
+    broadcast_done(job_id)
 
     render json: {
       clusteredSubsequences: timeline,
@@ -299,7 +303,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       params.require(:analyse).permit(
         :time_series,
         :merge_threshold_ratio,
-        :hide_single_cluster
+        :job_id
       )
     end
 
@@ -310,8 +314,29 @@ class Api::Web::TimeSeriesController < ApplicationController
         :range_max,
         :first_elements,
         :merge_threshold_ratio,
-        :hide_single_cluster
+        :job_id
       )
     end
 
+    def broadcast_start(job_id)
+      raise "job_id missing" if job_id.blank?
+      ActionCable.server.broadcast("progress_#{job_id}", {
+        status: 'start',
+        job_id: job_id
+      })
+    end
+
+    def broadcast_progress(job_id, current, total)
+      percent = (current.to_f * 100 / total).floor
+      ActionCable.server.broadcast("progress_#{job_id}", {
+        status: 'progress',
+        progress: percent
+      })
+    end
+
+    def broadcast_done(job_id)
+      ActionCable.server.broadcast("progress_#{job_id}", {
+        status: 'done',
+      })
+    end
 end

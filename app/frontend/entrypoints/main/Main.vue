@@ -117,15 +117,8 @@
                   </v-row>
                   <v-row>
                     <v-col>
-                      <v-checkbox
-                        label="Hide single cluster"
-                        v-model="analyse.hideSingleCluster"
-                      ></v-checkbox>
-                    </v-col>
-                  </v-row>
-                  <v-row>
-                    <v-col>
                       <v-btn :disabled='!analyse.valid' @click="analyseTimeseries" :loading="analyse.loading">Submit</v-btn>
+                      <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
                     </v-col>
                   </v-row>
                 </v-col>
@@ -243,13 +236,10 @@
                     max="1"
                     step="0.01"
                   ></v-text-field>
-                  <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>
                 </v-col>
-                <v-col  cols="2">
-                  <v-checkbox
-                    label="Hide single cluster"
-                    v-model="generate.hideSingleCluster"
-                  ></v-checkbox>
+                <v-col cols="2">
+                  <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>
+                  <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
                 </v-col>
               </v-row>
             </v-card-text>
@@ -336,7 +326,9 @@
 import { onMounted, computed, nextTick, ref } from 'vue'
 import * as Tone from 'tone'
 import axios from 'axios'
+import { v4 as uuidv4 } from 'uuid'
 import { ScoreEntry } from '../../types/types';
+import { useJobChannel } from '../../composables/useJobChannel'
 
 const timeseriesMax = ref(100)
 const analyse = ref({
@@ -360,7 +352,6 @@ const analyse = ref({
     length: null
   },
   mergeThresholdRatio: 0.05,
-  hideSingleCluster: false
 })
 const complexityTransitionRules = computed(() => [
     v => !!v || 'required',
@@ -393,7 +384,6 @@ const generate = ref({
     end: null,
     length: null
   },
-  hideSingleCluster: false
 })
 let showTimeseriesChart = ref(false)
 let showTimeseriesComplexityChart = ref(false)
@@ -412,6 +402,11 @@ let nowPlaying = ref(false)
 let tempo = ref(60)
 let velocity = ref(1)
 let sequenceCounter = ref(0)
+const progress = ref({
+  percent: 0,
+  status: 'beforeStart'
+})
+const jobId = ref('')
 onMounted(() => {
   google.charts.load("current", {packages:["timeline", "corechart"]})
 })
@@ -528,13 +523,29 @@ const drawScatterChart = (elementId, drawData, height) => {
   chart.draw(dataTable, options)
 }
 
+const subscribeToProgress = () =>{
+  jobId.value = uuidv4()
+
+  progress.value.percent = 0
+
+  const { unsubscribe } = useJobChannel(jobId.value, (data) => {
+    progress.value.status = data.status
+    progress.value.percent = data.progress
+
+    if (data.status === 'done') {
+      unsubscribe()
+    }
+  })
+}
+
 const analyseTimeseries = () => {
+  subscribeToProgress()
   analyse.value.loading = true
   let data = {
     analyse: {
       time_series: analyse.value.timeSeries,
       merge_threshold_ratio: analyse.value.mergeThresholdRatio,
-      hide_single_cluster: analyse.value.hideSingleCluster
+      job_id: jobId.value
     }
   }
   axios.post('/api/web/time_series/analyse', data)
@@ -553,6 +564,7 @@ const analyseTimeseries = () => {
   })
 }
 const generateTimeseries = () => {
+  subscribeToProgress()
   generate.value.loading = true
   let data = { generate:
     {
@@ -561,7 +573,7 @@ const generateTimeseries = () => {
       range_max: generate.value.rangeMax,
       first_elements: generate.value.firstElements,
       merge_threshold_ratio: generate.value.mergeThresholdRatio,
-      hide_single_cluster: generate.value.hideSingleCluster
+      job_id: jobId.value
     }
   }
   axios.post('/api/web/time_series/generate', data)
@@ -748,22 +760,19 @@ const stopPlayingNotes = () => {
 </script>
 
 <style scoped>
-  [v-cloak] { display: none;}
   .custom-list {
     padding-left: 0;
     list-style-position: inside;
   }
 
-  h3:not(:first-of-type) {
+  h3 + h3,
+  h5 + h5 {
     margin-top: 1.5rem;
   }
-  h5:not(:first-of-type) {
-    margin-top: 1.5rem;
-  }
-  .v-textarea textarea {
+
+  ::v-deep(.v-textarea textarea) {
     white-space: pre !important;
     overflow-x: auto !important;
-    padding-top: 40px;
-    height: 90px;
+    height: 68px;
   }
 </style>
