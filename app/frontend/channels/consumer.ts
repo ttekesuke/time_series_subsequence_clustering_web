@@ -1,6 +1,6 @@
-// frontend/channels/consumer.ts
-import { createConsumer } from "@rails/actioncable"
 
-const consumer = createConsumer("ws://localhost:3000/cable") // 適宜修正（Dockerなら backend:3000）
+import { createConsumer } from "@rails/actioncable"
+const cableUrl = (import.meta as any).env.VITE_CABLE_URL || "ws://localhost:3000/cable"
+const consumer = createConsumer(cableUrl)
 
 export default consumer
