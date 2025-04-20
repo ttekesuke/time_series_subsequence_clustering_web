@@ -44,10 +44,10 @@
           <v-card>
             <v-card-title>
               <v-row>
-                <v-col cols="8">
-                  <span>Analyse</span>
+                <v-col cols="5">
+                  <div class="text-h4 d-flex align-center fill-height">Analyse</div>
                 </v-col>
-                <v-col cols="4">
+                <v-col cols="7">
                   <v-file-input
                   label="upload json file"
                   accept=".json"
@@ -60,7 +60,7 @@
             </v-card-title>
             <v-card-text>
               <v-row>
-                <v-col cols="9">
+                <v-col cols="12">
                   <v-textarea
                   placeholder="please set timeseries (like 1,2,3,4,5)"
                   required
@@ -70,57 +70,51 @@
                   :rules="analyse.timeSeriesRules"
                 ></v-textarea>
                 </v-col>
-                <v-col cols="3">
+              </v-row>
+              <v-row>
+                <v-col cols="6">
+                  <v-card>
+                    <v-card-title>
+                      generate randoms
+                    </v-card-title>
+                    <v-card-text>
+                      <v-row>
+                        <v-col cols="3">
+                          <v-text-field
+                            label="min"
+                            type="number"
+                            v-model="analyse.random.min"
+                            min="1"
+                          ></v-text-field>
+                        </v-col>
+                        <v-col cols="3">
+                          <v-text-field
+                            label="max"
+                            type="number"
+                            v-model="analyse.random.max"
+                            :min="analyse.random.min"
+                            :max="timeseriesMax"
+                          ></v-text-field>
+                        </v-col>
+                        <v-col cols="3">
+                          <v-text-field
+                            label="length"
+                            type="number"
+                            v-model="analyse.random.length"
+                            min="3"
+                            max="2000"
+                          ></v-text-field>
+                        </v-col>
+                        <v-col cols="3">
+                          <v-btn :disabled='!analyse.random.max || !analyse.random.min || !analyse.random.length' @click="setRandoms">set</v-btn>
+                        </v-col>
+                      </v-row>
+                    </v-card-text>
+                  </v-card>
+                </v-col>
+                <v-col>
                   <v-row>
-                    <v-col>
-                      <v-card>
-                        <v-card-title>
-                          generate randoms
-                        </v-card-title>
-                        <v-card-text>
-                          <v-row>
-                            <v-col>
-                              <v-text-field
-                                label="min"
-                                type="number"
-                                v-model="analyse.random.min"
-                                min="1"
-                              ></v-text-field>
-                            </v-col>
-                          </v-row>
-                          <v-row>
-                            <v-col>
-                              <v-text-field
-                                label="max"
-                                type="number"
-                                v-model="analyse.random.max"
-                                :min="analyse.random.min"
-                                :max="timeseriesMax"
-                              ></v-text-field>
-                            </v-col>
-                          </v-row>
-                          <v-row>
-                            <v-col>
-                              <v-text-field
-                                label="length"
-                                type="number"
-                                v-model="analyse.random.length"
-                                min="3"
-                                max="2000"
-                              ></v-text-field>
-                            </v-col>
-                          </v-row>
-                          <v-row>
-                            <v-col>
-                              <v-btn :disabled='!analyse.random.max || !analyse.random.min || !analyse.random.length' @click="setRandoms">set randoms</v-btn>
-                            </v-col>
-                          </v-row>
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
-                  </v-row>
-                  <v-row>
-                    <v-col>
+                    <v-col cols="4">
                       <v-text-field
                         label="merge threshold ratio"
                         type="number"
@@ -130,12 +124,11 @@
                         step="0.01"
                       ></v-text-field>
                     </v-col>
-                  </v-row>
-                  <v-row>
-                    <v-col>
+                    <v-col cols="4">
                       <v-btn :disabled='!analyse.valid' @click="analyseTimeseries" :loading="analyse.loading">Submit</v-btn>
                       <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
                     </v-col>
+
                   </v-row>
                 </v-col>
               </v-row>
@@ -149,10 +142,10 @@
           <v-card>
             <v-card-title>
               <v-row>
-                <v-col cols="8">
-                  <span>Generate</span>
+                <v-col cols="5">
+                  <div class="text-h4 d-flex align-center fill-height">Generate</div>
                 </v-col>
-                <v-col cols="4">
+                <v-col cols="7">
                   <v-file-input
                   label="upload json file"
                   accept=".json"
