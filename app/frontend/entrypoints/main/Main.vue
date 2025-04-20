@@ -42,6 +42,22 @@
       <v-dialog width="1000" v-model="analyse.setDataDialog" >
         <v-form v-model='analyse.valid' fast-fail ref="form">
           <v-card>
+            <v-card-title>
+              <v-row>
+                <v-col cols="8">
+                  <span>Analyse</span>
+                </v-col>
+                <v-col cols="4">
+                  <v-file-input
+                  label="upload json file"
+                  accept=".json"
+                  prepend-icon="mdi-upload"
+                  v-model="selectedFileAnalyse"
+                  @change="onFileSelected"
+                ></v-file-input>
+                </v-col>
+              </v-row>
+            </v-card-title>
             <v-card-text>
               <v-row>
                 <v-col cols="9">
@@ -131,6 +147,22 @@
       <v-dialog width="1000" v-model="generate.setDataDialog" >
         <v-form v-model='generate.valid' fast-fail ref="form">
           <v-card>
+            <v-card-title>
+              <v-row>
+                <v-col cols="8">
+                  <span>Generate</span>
+                </v-col>
+                <v-col cols="4">
+                  <v-file-input
+                  label="upload json file"
+                  accept=".json"
+                  prepend-icon="mdi-upload"
+                  v-model="selectedFileGenerate"
+                  @change="onFileSelected"
+                ></v-file-input>
+                </v-col>
+              </v-row>
+            </v-card-title>
             <v-card-text>
               <v-row>
                 <v-col>
@@ -157,7 +189,7 @@
                 </v-col>
               </v-row>
               <v-row>
-                <v-col cols="4">
+                <v-col cols="8">
                   <v-card>
                     <v-card-title>
                       generate linear integers
@@ -180,8 +212,6 @@
                           :max="timeseriesMax"
                         ></v-text-field>
                         </v-col>
-                      </v-row>
-                      <v-row>
                         <v-col>
                           <v-text-field
                             label="length"
@@ -193,6 +223,8 @@
                         </v-col>
                         <v-col>
                           <v-btn :disabled='!generate.linear.start || !generate.linear.end || !generate.linear.length' @click="setLinearIntegers('overwrite')">overwrite</v-btn>
+                        </v-col>
+                        <v-col>
                           <v-btn :disabled='!generate.linear.start || !generate.linear.end || !generate.linear.length' @click="setLinearIntegers('add')">add</v-btn>
                         </v-col>
                       </v-row>
@@ -227,19 +259,23 @@
                     </v-card-text>
                   </v-card>
                 </v-col>
-                <v-col cols="2">
-                  <v-text-field
-                    label="merge threshold ratio"
-                    type="number"
-                    v-model="generate.mergeThresholdRatio"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                  ></v-text-field>
-                </v-col>
-                <v-col cols="2">
-                  <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>
-                  <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
+                <v-col cols="4">
+                  <v-row>
+                    <v-col>
+                      <v-text-field
+                        label="merge threshold ratio"
+                        type="number"
+                        v-model="generate.mergeThresholdRatio"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                      ></v-text-field>
+                    </v-col>
+                    <v-col>
+                      <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>
+                      <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
+                    </v-col>
+                  </v-row>
                 </v-col>
               </v-row>
             </v-card-text>
@@ -293,6 +329,12 @@
                   </v-card-text>
                 </v-card>
               </v-col>
+              <v-col cols="2">
+                <v-btn @click="saveToFile" class="d-flex align-center fill-height">
+                  <v-icon>mdi-download</v-icon>
+                  <span>Download</span>
+                </v-btn>
+              </v-col>
             </v-row>
           </div>
           <div id='timeseries' styls='height: 20vh;'></div>
@@ -311,9 +353,6 @@
           <template v-if='showTimeline'>
             <div class='text-h6 ml-3 mb-2'>Clusters</div>
             <div id='timeline' styls='height: 70vh;'></div>
-          </template>
-          <template v-else>
-            <span>no similar clusters</span>
           </template>
         </v-col>
       </v-row>
@@ -410,6 +449,9 @@ const jobId = ref('')
 onMounted(() => {
   google.charts.load("current", {packages:["timeline", "corechart"]})
 })
+let methodType = ref<"analyse" | "generate" | null>(null)
+let selectedFileAnalyse = ref<File | null>(null)
+let selectedFileGenerate = ref<File | null>(null)
 
 const setRandoms = () => {
   analyse.value.timeSeries = [...Array(parseInt(analyse.value.random.length))].map(() => Math.floor(Math.random() * (parseInt(analyse.value.random.max) - parseInt(analyse.value.random.min)+ 1)) + parseInt(analyse.value.random.min)).join(',')
@@ -539,6 +581,7 @@ const subscribeToProgress = () =>{
 }
 
 const analyseTimeseries = () => {
+  methodType.value = 'analyse'
   subscribeToProgress()
   analyse.value.loading = true
   let data = {
@@ -564,6 +607,7 @@ const analyseTimeseries = () => {
   })
 }
 const generateTimeseries = () => {
+  methodType.value = 'generate'
   subscribeToProgress()
   generate.value.loading = true
   let data = { generate:
@@ -757,6 +801,62 @@ const stopPlayingNotes = () => {
   Tone.Transport.cancel()
 }
 
+const saveToFile = () => {
+  const data = {
+    methodType: methodType.value,
+    downloadDatetime: new Date().toISOString()
+  }
+  if(methodType.value === 'analyse'){
+    data['analyse'] = analyse.value
+  }else if(methodType.value === 'generate'){
+    data['analyse'] = analyse.value
+    data['generate'] = generate.value
+  }
+  const jsonStr = JSON.stringify(data, null, 2)
+  const blob = new Blob([jsonStr], { type: "application/json" })
+  const url = URL.createObjectURL(blob)
+
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `time-series-data-${methodType.value}-${data.downloadDatetime}.json`
+  a.click()
+
+  URL.revokeObjectURL(url)
+}
+
+const onFileSelected = (file) => {
+  const reader = new FileReader()
+
+  reader.onload = (e) => {
+    if (!e.target) {
+      console.error("FileReader event target is null.");
+      return;
+    }
+    const text = e.target.result;
+    if (typeof text === 'string') {
+      const json = JSON.parse(text);
+      if(json.methodType === 'analyse'){
+        analyse.value = json.analyse
+        drawTimeline()
+        drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
+      }else if(json.methodType === 'generate'){
+        analyse.value = json.analyse
+        generate.value = json.generate
+        drawTimeline()
+        drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
+        drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
+        showTimeseriesComplexityChart.value = true
+
+      }
+      showTimeseriesChart.value = true
+      showTimeline.value = true
+    } else {
+      console.error("FileReader result is not a string.");
+    }
+  };
+
+  reader.readAsText(file.target.files[0]);
+}
 </script>
 
 <style scoped>
