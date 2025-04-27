@@ -383,7 +383,7 @@ const analyse = ref({
     max: null,
     length: null
   },
-  mergeThresholdRatio: 0.05,
+  mergeThresholdRatio: 0.02,
 })
 const complexityTransitionRules = computed(() => [
     v => !!v || 'required',
@@ -409,7 +409,7 @@ const generate = ref({
     v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
   ],
   valid: false,
-  mergeThresholdRatio: 0.05,
+  mergeThresholdRatio: 0.02,
   complexityTransitionChart: null,
   linear: {
     start: null,
