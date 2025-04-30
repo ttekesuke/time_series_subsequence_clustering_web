@@ -71,7 +71,6 @@ class Api::Web::TimeSeriesController < ApplicationController
     complexity_transition.each_with_index do |rank, rank_index|
       candidate_max = candidate_max_master
       candidate_min = candidate_min_master
-
       candidates = (candidate_min..candidate_max).to_a
 
       # 実データの候補からベストマッチを得るために評価値を得る
@@ -84,7 +83,7 @@ class Api::Web::TimeSeriesController < ApplicationController
           clusters,
           cluster_id_counter,
           tasks,
-          rank_index,
+          rank,
         )
       # 距離の小さい順に並び替え
       indexed_average_distances_between_clusters = sum_average_distances_all_window_candidates.map.with_index { |distance, index| [distance, index] }
@@ -124,7 +123,7 @@ class Api::Web::TimeSeriesController < ApplicationController
   end
 
   private
-    def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank_index)
+    def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank)
       temporary_results = results.dup
       temporary_results << candidate
       temporary_clusters = Marshal.load(Marshal.dump(clusters))
@@ -142,8 +141,9 @@ class Api::Web::TimeSeriesController < ApplicationController
       )
 
       clusters_each_window_size = transform_clusters(temporary_clusters, min_window_size)
-      sum_distances_in_all_window = []
+      sum_distances_in_all_window = 0
       sum_similar_subsequences_quantities = 0
+      quadratic_integer_array = create_quadratic_integer_array(0, 11 - rank, temporary_results.length)
 
       clusters_each_window_size.each do |window_size, same_window_size_clusters|
         sum_distances = 0
@@ -157,24 +157,23 @@ class Api::Web::TimeSeriesController < ApplicationController
           sum_distances += distance
         end
         # 長い部分列同士の距離は少なく見積もる
-        sum_distances_in_all_window << sum_distances / window_size
+        sum_distances_in_all_window += (sum_distances / window_size)
 
-        # 類似部分列の数は、偏りがあり密集しているほど・窓幅が大きいものほど類似していると見なす。
-        # また類似部分列が2個以上のものだけ対象とする
         sum_similar_subsequences_quantities += same_window_size_clusters
         .values
         .filter{|subsequence_indexes|subsequence_indexes.length > 1}
-        .map {|subsequence_indexes|subsequence_indexes.length**2 * window_size}.sum
+        .map {|subsequence_indexes|
+          subsequence_indexes.map{|start_and_end|
+            (quadratic_integer_array[start_and_end[0]]).to_d
+          }.inject(1) { |product, n| product * n }
+        }.sum
       end
 
-      # クラスタ間の距離は平均を取る
-      average_distances_in_all_window = mean(sum_distances_in_all_window)
-
-      [average_distances_in_all_window, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks]
+      [sum_distances_in_all_window, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks]
     end
 
 
-    def find_best_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank_index)
+    def find_best_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank)
       average_distances_all_window_candidates = []
       sum_similar_subsequences_quantities_all_window_candidates = []
       clusters_candidates = []
@@ -190,7 +189,7 @@ class Api::Web::TimeSeriesController < ApplicationController
           clusters,
           cluster_id_counter,
           tasks,
-          rank_index,
+          rank,
         )
 
         average_distances_all_window_candidates << average_distances
@@ -298,6 +297,26 @@ class Api::Web::TimeSeriesController < ApplicationController
       keys = dominance_hash.keys
       keys.zip(normalized_data.transpose).to_h
     end
+
+    def create_quadratic_integer_array(start_val, end_val, count)
+      result = []
+
+      count.times do |i|
+        t = i.to_f / (count - 1)  # 0.0〜1.0の間
+        curve = t ** 10
+
+        value = start_val + (end_val - start_val) * curve
+
+        if start_val < end_val
+          result << value.ceil
+        else
+          result << value.floor
+        end
+      end
+
+      result
+    end
+
 
     def analyse_params
       params.require(:analyse).permit(
