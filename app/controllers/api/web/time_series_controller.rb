@@ -85,6 +85,8 @@ class Api::Web::TimeSeriesController < ApplicationController
           cluster_id_counter,
           tasks,
           rank,
+          candidate_min_master,
+          candidate_max_master
         )
       # 距離の小さい順に並び替え
       indexed_average_distances_between_clusters = sum_average_distances_all_window_candidates.map.with_index { |distance, index| [distance, index] }
@@ -125,7 +127,7 @@ class Api::Web::TimeSeriesController < ApplicationController
   end
 
   private
-    def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank)
+    def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank, candidate_min_master, candidate_max_master)
       temporary_results = results.dup
       temporary_results << candidate
       temporary_clusters = Marshal.load(Marshal.dump(clusters))
@@ -145,7 +147,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       clusters_each_window_size = transform_clusters(temporary_clusters, min_window_size)
       sum_distances_in_all_window = 0
       sum_similar_subsequences_quantities = 0
-      quadratic_integer_array = create_quadratic_integer_array(0, 11 - rank, temporary_results.length)
+      quadratic_integer_array = create_quadratic_integer_array(0, (candidate_max_master - candidate_min_master - rank) * temporary_results.length, temporary_results.length)
 
       clusters_each_window_size.each do |window_size, same_window_size_clusters|
         sum_distances = 0
@@ -175,7 +177,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     end
 
 
-    def find_best_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank)
+    def find_best_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank, candidate_min_master, candidate_max_master)
       average_distances_all_window_candidates = []
       sum_similar_subsequences_quantities_all_window_candidates = []
       clusters_candidates = []
@@ -192,6 +194,8 @@ class Api::Web::TimeSeriesController < ApplicationController
           cluster_id_counter,
           tasks,
           rank,
+          candidate_min_master,
+          candidate_max_master
         )
 
         average_distances_all_window_candidates << average_distances
