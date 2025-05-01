@@ -35,6 +35,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     render json: {
       clusteredSubsequences: timeline,
       timeSeriesChart: [] + data.map.with_index{|elm, index|[index.to_s, elm, nil, nil]},
+      clusters: clusters,
     }
   end
 
@@ -119,6 +120,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       timeSeriesChart: [] + results.map.with_index{|elm, index|[index.to_s, elm, nil, nil,]},
       timeSeries: results,
       timeSeriesComplexityChart: [] + chart_elements_for_complexity + complexity_transition.map.with_index{|elm, index|[(user_set_results.length + index).to_s, elm, nil, nil]},
+      clusters: clusters,
     }
   end
 

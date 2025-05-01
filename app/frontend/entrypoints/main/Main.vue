@@ -384,6 +384,7 @@ const analyse = ref({
     length: null
   },
   mergeThresholdRatio: 0.02,
+  clusters: {}
 })
 const complexityTransitionRules = computed(() => [
     v => !!v || 'required',
@@ -416,6 +417,7 @@ const generate = ref({
     end: null,
     length: null
   },
+  clusters: {}
 })
 let showTimeseriesChart = ref(false)
 let showTimeseriesComplexityChart = ref(false)
@@ -589,6 +591,7 @@ const analyseTimeseries = () => {
       console.log(response)
       analyse.value.clusteredSubsequences = response.data.clusteredSubsequences
       analyse.value.timeSeriesChart = response.data.timeSeriesChart
+      analyse.value.clusters = response.data.clusters
       analyse.value.loading = false
       analyse.value.setDataDialog = false
       showTimeseriesComplexityChart.value = false
@@ -620,6 +623,7 @@ const generateTimeseries = () => {
       analyse.value.timeSeries = String(response.data.timeSeries)
       analyse.value.timeSeriesChart = response.data.timeSeriesChart
       generate.value.complexityTransitionChart = response.data.timeSeriesComplexityChart
+      generate.value.clusters = response.data.clusters
       drawTimeline()
       drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
       drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
