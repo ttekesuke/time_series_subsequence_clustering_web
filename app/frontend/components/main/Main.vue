@@ -19,7 +19,7 @@
               <li>If you find it bothersome to input data, you can also set random numbers by entering values into the three input fields under "generate randoms" and pressing "SET RANDOMS".</li>
               <li>Click "SUBMIT" to display the results.</li>
             </ul>
-            <h5>Generate(experimental)</h5>
+            <h5>Generate</h5>
             <ul class="custom-list">
               <li>under construction.</li>
             </ul>
@@ -136,7 +136,7 @@
           </v-card>
         </v-form>
       </v-dialog>
-      <v-btn @click="generate.setDataDialog = true">generate(experimental)</v-btn>
+      <v-btn @click="generate.setDataDialog = true">generate</v-btn>
       <v-dialog width="1000" v-model="generate.setDataDialog" >
         <v-form v-model='generate.valid' fast-fail ref="form">
           <v-card>
@@ -277,6 +277,12 @@
       </v-dialog>
     </v-app-bar>
     <v-main>
+      <v-row no-gutters>
+        <v-col>
+          <Music></Music>
+
+        </v-col>
+      </v-row>
       <v-row no-gutters v-if='showTimeseriesChart'>
         <v-col>
           <div class='text-h6 ml-3 mb-2'>
@@ -361,6 +367,7 @@ import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
 import { ScoreEntry } from '../../types/types';
 import { useJobChannel } from '../../composables/useJobChannel'
+import Music from '../../components/music/Music.vue';
 
 const timeseriesMax = ref(100)
 const analyse = ref({
