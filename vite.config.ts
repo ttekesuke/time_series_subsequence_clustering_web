@@ -24,11 +24,6 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
     cssCodeSplit: true,
     sourcemap: false,
-    terserOptions: {
-      compress: {
-        passes: 2 // 最適化回数を増やす（時間はかかるが、メモリ節約）
-      }
-    }
   }
 
 })

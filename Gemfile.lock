@@ -101,6 +101,7 @@ GEM
     dry-cli (1.2.0)
     erubi (1.13.1)
     ffi (1.17.1-x86_64-linux-gnu)
+    foreman (0.88.1)
     globalid (1.2.1)
       activesupport (>= 6.1)
     gon (6.4.0)
@@ -285,6 +286,7 @@ DEPENDENCIES
   bootsnap
   capybara
   debug
+  foreman (~> 0.88.1)
   gon (~> 6.4)
   importmap-rails
   jbuilder

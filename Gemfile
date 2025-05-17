@@ -64,6 +64,8 @@ gem 'redis', '~> 5.4'
 
 gem 'pycall', '~> 1.5', '>= 1.5.2'
 
+gem 'foreman', '~> 0.88.1'
+
 # Use Active Storage variants [https://guides.rubyonrails.org/active_storage_overview.html#transforming-images]
 # gem "image_processing", "~> 1.2"
 
