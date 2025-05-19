@@ -15,8 +15,8 @@
     "@types/google.visualization": "^0.0.74",
     "vite": "^5.0.0",
     "@rails/actioncable": "^8.0.200",
-    "uuid": "^11.1.0"
-
+    "uuid": "^11.1.0",
+    "@tonejs/midi": "^2.0.28"
   },
   "devDependencies": {
     "vite-plugin-ruby": "^5.1.0"
