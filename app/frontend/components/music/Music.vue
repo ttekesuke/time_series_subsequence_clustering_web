@@ -9,6 +9,12 @@ const midiData = ref(null)
 const isPlaying = ref(false)
 const startTime = ref(0)
 const scrollOffset = ref(0)
+const ticksPerBeatDefault = 480
+const ticksPerBeat = ref(ticksPerBeatDefault)
+const bpmDefault = 120
+const bpm = ref(bpmDefault)
+const secondsPerTick = ref(0)
+
 
 const canvasWidth = 3000  // 長めに確保
 const canvasHeight = 600
@@ -24,9 +30,18 @@ const onMidiSelected = async () => {
   const file = midi.value
   const arrayBuffer = await file.arrayBuffer()
   midiData.value = new Midi(arrayBuffer)
+  await analyseMidi()
+  drawPianoRoll(0)
+}
+
+const analyseMidi = async () => {
+  if (!midiData.value) return
+
+  ticksPerBeat.value = midiData.value.header.tempos?.[0]?.ppq ?? ticksPerBeatDefault
+  bpm.value = midiData.value.header.tempos?.[0]?.bpm || bpmDefault
+  secondsPerTick.value = (60 / bpm.value) / ticksPerBeat.value
 
   await nextTick()
-  drawPianoRoll(0)
 }
 
 const drawPianoRoll = (scrollTime) => {
@@ -38,13 +53,10 @@ const drawPianoRoll = (scrollTime) => {
   midiData.value.tracks.forEach((track, trackIndex) => {
     const color = ['#f44336', '#2196f3', '#4caf50', '#ff9800'][trackIndex % 4]
 
-    const ticksPerBeat = midiData.value.ppq ?? 480 // ここ修正
-    const bpm = midiData.value.header.tempos?.[0]?.bpm || 120
-    const secondsPerTick = (60 / bpm) / ticksPerBeat
 
     track.notes.forEach(note => {
-      const startTime = note.ticks * secondsPerTick
-      const duration = note.durationTicks * secondsPerTick
+      const startTime = note.ticks * secondsPerTick.value
+      const duration = note.durationTicks * secondsPerTick.value
 
       const x = startTime * pixelsPerSecond - visibleOffsetX + barOffsetX
       const y = (127 - note.midi) * noteHeight
@@ -78,16 +90,13 @@ const playMidi = async () => {
 
   midiData.value.tracks.forEach(track => {
     track.notes.forEach(note => {
-      const ticksPerBeat = midiData.value.ppq ?? 480
-      const bpm = midiData.value.header.tempos?.[0]?.bpm ?? 120
-      const secondsPerTick = (60 / bpm) / ticksPerBeat
 
-      const duration = note.durationTicks * secondsPerTick
+      const duration = note.durationTicks * secondsPerTick.value
 
       synth.triggerAttackRelease(
         note.name,      // 例: 'C4'
         duration,       // 秒に変換した長さ
-        now + note.ticks * secondsPerTick // 開始時間
+        now + note.ticks * secondsPerTick.value // 開始時間
       )
 
     })
@@ -105,13 +114,9 @@ const animate = () => {
   drawPianoRoll(elapsedSec)
 
   // duration を計算
-  const ticksPerBeat = midiData.value.header.tempos?.[0]?.ppq ?? 480
-  const bpm = midiData.value.header.tempos?.[0]?.bpm ?? 120
-  const secondsPerTick = (60 / bpm) / ticksPerBeat
-
   const allNotes = midiData.value.tracks.flatMap(track => track.notes)
   const maxTick = Math.max(...allNotes.map(note => note.ticks + note.durationTicks))
-  const midiDurationSec = maxTick * secondsPerTick
+  const midiDurationSec = maxTick * secondsPerTick.value
 
   if (elapsedSec < midiDurationSec) {
     animationFrameId = requestAnimationFrame(animate)
@@ -119,6 +124,41 @@ const animate = () => {
     isPlaying.value = false
     cancelAnimationFrame(animationFrameId)
   }
+}
+
+// 例: 手動でMIDIを作る
+const createMidi = () => {
+  const midi = new Midi()
+
+  // テンポを指定（例: 120BPM）
+  midi.header.setTempo(120)
+
+  // トラックを追加
+  const track = midi.addTrack()
+
+  // ノートを追加（MIDIノート番号、開始時間 [秒]、長さ [秒]）
+  track.addNote({
+    midi: 60,          // C4
+    time: 0,           // 秒
+    duration: 0.5,     // 秒
+    velocity: 0.8,
+  })
+
+  track.addNote({
+    midi: 64,          // E4
+    time: 1,           // 秒
+    duration: 0.3,
+    velocity: 0.8,
+  })
+
+  track.addNote({
+    midi: 67,          // G4
+    time: 1.5,
+    duration: 0.7,
+    velocity: 0.8,
+  })
+
+  return midi
 }
 
 </script>
@@ -162,9 +202,3 @@ canvas {
   background-color: #fafafa;
 }
 </style>
-
-<!--
-必要な依存:
-- tonejs/midi: `yarn add @tonejs/midi`
-- Vuetify 3 (既に導入済みと仮定)
--->
