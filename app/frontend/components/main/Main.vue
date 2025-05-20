@@ -1,367 +1,387 @@
 <template>
   <v-app>
     <v-app-bar app>
-      <v-toolbar-title>Time series subsequence-clustering</v-toolbar-title>
-      <v-btn @click="infoDialog = true">
-        <v-icon icon="$info"></v-icon>
-        Info
-      </v-btn>
-      <v-dialog width="1000" v-model="infoDialog" >
-        <v-card>
-          <v-card-text>
-            <h3>What is this site?</h3>
-            <div>The site can cluster and display substrings of various lengths that are similar to each other in the time series data entered by the user.</div>
-            <h3>How to use</h3>
-            <h5>Analye</h5>
-            <ul class="custom-list">
-              <li>Click "ANALYSE".</li>
-              <li>Enter your time series data into the large input field. For example, 1,3,5,1,3,5.</li>
-              <li>If you find it bothersome to input data, you can also set random numbers by entering values into the three input fields under "generate randoms" and pressing "SET RANDOMS".</li>
-              <li>Click "SUBMIT" to display the results.</li>
-            </ul>
-            <h5>Generate</h5>
-            <ul class="custom-list">
-              <li>under construction.</li>
-            </ul>
-            <h3>Attention</h3>
-            <ul class="custom-list">
-              <li>All of them are free of charge.</li>
-              <li>Input values and results are not saved.</li>
-              <li>The system may change without notice.</li>
-              <li>We do not guarantee the correctness of the results.</li>
-              <li>Due to the circumstances of being operated for free, it may take about 50 seconds to re-access the site if there is no access for a while. Please wait.</li>
-            </ul>
-            <h3>Developer</h3>
-            <div>
-              <a href='https://tekesuke1986.tumblr.com' target='_blank'>Takuya SHIMIZU</a>
-            </div>
-          </v-card-text>
-        </v-card>
-      </v-dialog>
-      <v-btn @click="analyse.setDataDialog = true">analyse</v-btn>
-      <v-dialog width="1000" v-model="analyse.setDataDialog" >
-        <v-form v-model='analyse.valid' fast-fail ref="form">
-          <v-card>
-            <v-card-title>
-              <v-row>
-                <v-col cols="5">
-                  <div class="text-h4 d-flex align-center fill-height">Analyse</div>
-                </v-col>
-                <v-col cols="7">
-                  <v-file-input
-                  label="upload json file"
-                  accept=".json"
-                  prepend-icon="mdi-upload"
-                  v-model="selectedFileAnalyse"
-                  @change="onFileSelected"
-                ></v-file-input>
-                </v-col>
-              </v-row>
-            </v-card-title>
-            <v-card-text>
-              <v-row>
-                <v-col cols="12">
-                  <v-textarea
-                  placeholder="please set timeseries (like 1,2,3,4,5)"
-                  required
-                  v-model='analyse.timeSeries'
-                  label="timeseries"
-                  rows="1"
-                  :rules="analyse.timeSeriesRules"
-                ></v-textarea>
-                </v-col>
-              </v-row>
-              <v-row>
-                <v-col cols="6">
-                  <v-card>
-                    <v-card-title>
-                      generate randoms
-                    </v-card-title>
-                    <v-card-text>
-                      <v-row>
-                        <v-col cols="3">
-                          <v-text-field
-                            label="min"
-                            type="number"
-                            v-model="analyse.random.min"
-                            min="1"
-                          ></v-text-field>
-                        </v-col>
-                        <v-col cols="3">
-                          <v-text-field
-                            label="max"
-                            type="number"
-                            v-model="analyse.random.max"
-                            :min="analyse.random.min"
-                            :max="timeseriesMax"
-                          ></v-text-field>
-                        </v-col>
-                        <v-col cols="3">
-                          <v-text-field
-                            label="length"
-                            type="number"
-                            v-model="analyse.random.length"
-                            min="3"
-                            max="2000"
-                          ></v-text-field>
-                        </v-col>
-                        <v-col cols="3">
-                          <v-btn :disabled='!analyse.random.max || !analyse.random.min || !analyse.random.length' @click="setRandoms">set</v-btn>
-                        </v-col>
-                      </v-row>
-                    </v-card-text>
-                  </v-card>
-                </v-col>
-                <v-col>
+      <v-row class="align-center ">
+        <v-col class="v-col-auto ml-3">
+          <v-toolbar-title>Time series subsequence-clustering</v-toolbar-title>
+        </v-col>
+        <v-col class="v-col-auto ml-auto">
+          <v-select
+            label="mode"
+            :items="modes"
+            v-model="selectedMode"
+            class="hide-details"
+          ></v-select>
+        </v-col>
+        <v-col class="v-col-auto" v-if="selectedMode === 'Clustering'">
+          <v-btn @click="analyse.setDataDialog = true">analyse</v-btn>
+          <v-dialog width="1000" v-model="analyse.setDataDialog" >
+            <v-form v-model='analyse.valid' fast-fail ref="form">
+              <v-card>
+                <v-card-title>
                   <v-row>
-                    <v-col cols="4">
-                      <v-text-field
-                        label="merge threshold ratio"
-                        type="number"
-                        v-model="analyse.mergeThresholdRatio"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                      ></v-text-field>
+                    <v-col cols="5">
+                      <div class="text-h4 d-flex align-center fill-height">Analyse</div>
                     </v-col>
-                    <v-col cols="4">
-                      <v-btn :disabled='!analyse.valid' @click="analyseTimeseries" :loading="analyse.loading">Submit</v-btn>
-                      <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
+                    <v-col cols="7">
+                      <v-file-input
+                      label="upload json file"
+                      accept=".json"
+                      prepend-icon="mdi-upload"
+                      v-model="selectedFileAnalyse"
+                      @change="onFileSelected"
+                    ></v-file-input>
                     </v-col>
+                  </v-row>
+                </v-card-title>
+                <v-card-text>
+                  <v-row>
+                    <v-col cols="12">
+                      <v-textarea
+                      placeholder="please set timeseries (like 1,2,3,4,5)"
+                      required
+                      v-model='analyse.timeSeries'
+                      label="timeseries"
+                      rows="1"
+                      :rules="analyse.timeSeriesRules"
+                    ></v-textarea>
+                    </v-col>
+                  </v-row>
+                  <v-row>
+                    <v-col cols="6">
+                      <v-card>
+                        <v-card-title>
+                          generate randoms
+                        </v-card-title>
+                        <v-card-text>
+                          <v-row>
+                            <v-col cols="3">
+                              <v-text-field
+                                label="min"
+                                type="number"
+                                v-model="analyse.random.min"
+                                min="1"
+                              ></v-text-field>
+                            </v-col>
+                            <v-col cols="3">
+                              <v-text-field
+                                label="max"
+                                type="number"
+                                v-model="analyse.random.max"
+                                :min="analyse.random.min"
+                                :max="timeseriesMax"
+                              ></v-text-field>
+                            </v-col>
+                            <v-col cols="3">
+                              <v-text-field
+                                label="length"
+                                type="number"
+                                v-model="analyse.random.length"
+                                min="3"
+                                max="2000"
+                              ></v-text-field>
+                            </v-col>
+                            <v-col cols="3">
+                              <v-btn :disabled='!analyse.random.max || !analyse.random.min || !analyse.random.length' @click="setRandoms">set</v-btn>
+                            </v-col>
+                          </v-row>
+                        </v-card-text>
+                      </v-card>
+                    </v-col>
+                    <v-col>
+                      <v-row>
+                        <v-col cols="4">
+                          <v-text-field
+                            label="merge threshold ratio"
+                            type="number"
+                            v-model="analyse.mergeThresholdRatio"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                          ></v-text-field>
+                        </v-col>
+                        <v-col cols="4">
+                          <v-btn :disabled='!analyse.valid' @click="analyseTimeseries" :loading="analyse.loading">Submit</v-btn>
+                          <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
+                        </v-col>
 
+                      </v-row>
+                    </v-col>
                   </v-row>
-                </v-col>
-              </v-row>
-            </v-card-text>
-          </v-card>
-        </v-form>
-      </v-dialog>
-      <v-btn @click="generate.setDataDialog = true">generate</v-btn>
-      <v-dialog width="1000" v-model="generate.setDataDialog" >
-        <v-form v-model='generate.valid' fast-fail ref="form">
-          <v-card>
-            <v-card-title>
-              <v-row>
-                <v-col cols="5">
-                  <div class="text-h4 d-flex align-center fill-height">Generate</div>
-                </v-col>
-                <v-col cols="7">
-                  <v-file-input
-                  label="upload json file"
-                  accept=".json"
-                  prepend-icon="mdi-upload"
-                  v-model="selectedFileGenerate"
-                  @change="onFileSelected"
-                ></v-file-input>
-                </v-col>
-              </v-row>
-            </v-card-title>
-            <v-card-text>
-              <v-row>
-                <v-col>
-                  <v-textarea
-                    placeholder="please set the first elements of the time series. (like 0,1,2,3,4,5)"
-                    required
-                    v-model='generate.firstElements'
-                    label="first elements"
-                    rows="1"
-                    :rules="generate.firstElementsRules"
-                  ></v-textarea>
-                </v-col>
-              </v-row>
-              <v-row>
-                <v-col>
-                  <v-textarea
-                    placeholder="please set the complexity transition. (like 1,2,3,4,5)"
-                    required
-                    v-model='generate.complexityTransition'
-                    label="complexity transition"
-                    rows="1"
-                    :rules="complexityTransitionRules"
-                  ></v-textarea>
-                </v-col>
-              </v-row>
-              <v-row>
-                <v-col cols="8">
-                  <v-card>
-                    <v-card-title>
-                      generate linear integers
-                    </v-card-title>
-                    <v-card-text>
-                      <v-row>
-                        <v-col>
-                          <v-text-field
-                            label="min"
-                            type="number"
-                            v-model="generate.linear.start"
-                            min="1"
-                          ></v-text-field>
-                        </v-col>
-                        <v-col>
-                          <v-text-field
-                          label="max"
-                          type="number"
-                          v-model="generate.linear.end"
-                          :max="timeseriesMax"
-                        ></v-text-field>
-                        </v-col>
-                        <v-col>
-                          <v-text-field
-                            label="length"
-                            type="number"
-                            v-model="generate.linear.length"
-                            min="3"
-                            max="2000"
-                          ></v-text-field>
-                        </v-col>
-                        <v-col>
-                          <v-btn :disabled='!generate.linear.start || !generate.linear.end || !generate.linear.length' @click="setLinearIntegers('overwrite')">overwrite</v-btn>
-                        </v-col>
-                        <v-col>
-                          <v-btn :disabled='!generate.linear.start || !generate.linear.end || !generate.linear.length' @click="setLinearIntegers('add')">add</v-btn>
-                        </v-col>
-                      </v-row>
-                    </v-card-text>
-                  </v-card>
-                </v-col>
-                <v-col cols="4">
-                  <v-card>
-                    <v-card-title>
-                      available range
-                    </v-card-title>
-                    <v-card-text>
-                      <v-row>
-                        <v-col>
-                          <v-text-field
-                          label="min"
-                          type="number"
-                          v-model="generate.rangeMin"
-                          min="1"
-                        ></v-text-field>
-                        </v-col>
-                        <v-col>
-                          <v-text-field
-                          label="max"
-                          type="number"
-                          v-model="generate.rangeMax"
-                          :min="generate.rangeMin"
-                          :max="timeseriesMax"
-                        ></v-text-field>
-                        </v-col>
-                      </v-row>
-                    </v-card-text>
-                  </v-card>
-                </v-col>
-                <v-col cols="4">
+                </v-card-text>
+              </v-card>
+            </v-form>
+          </v-dialog>
+          <v-btn @click="generate.setDataDialog = true">generate</v-btn>
+          <v-dialog width="1000" v-model="generate.setDataDialog" >
+            <v-form v-model='generate.valid' fast-fail ref="form">
+              <v-card>
+                <v-card-title>
+                  <v-row>
+                    <v-col cols="5">
+                      <div class="text-h4 d-flex align-center fill-height">Generate</div>
+                    </v-col>
+                    <v-col cols="7">
+                      <v-file-input
+                      label="upload json file"
+                      accept=".json"
+                      prepend-icon="mdi-upload"
+                      v-model="selectedFileGenerate"
+                      @change="onFileSelected"
+                    ></v-file-input>
+                    </v-col>
+                  </v-row>
+                </v-card-title>
+                <v-card-text>
                   <v-row>
                     <v-col>
-                      <v-text-field
-                        label="merge threshold ratio"
-                        type="number"
-                        v-model="generate.mergeThresholdRatio"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                      ></v-text-field>
-                    </v-col>
-                    <v-col>
-                      <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>
-                      <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
+                      <v-textarea
+                        placeholder="please set the first elements of the time series. (like 0,1,2,3,4,5)"
+                        required
+                        v-model='generate.firstElements'
+                        label="first elements"
+                        rows="1"
+                        :rules="generate.firstElementsRules"
+                      ></v-textarea>
                     </v-col>
                   </v-row>
-                </v-col>
-              </v-row>
-            </v-card-text>
-          </v-card>
-        </v-form>
-      </v-dialog>
+                  <v-row>
+                    <v-col>
+                      <v-textarea
+                        placeholder="please set the complexity transition. (like 1,2,3,4,5)"
+                        required
+                        v-model='generate.complexityTransition'
+                        label="complexity transition"
+                        rows="1"
+                        :rules="complexityTransitionRules"
+                      ></v-textarea>
+                    </v-col>
+                  </v-row>
+                  <v-row>
+                    <v-col cols="8">
+                      <v-card>
+                        <v-card-title>
+                          generate linear integers
+                        </v-card-title>
+                        <v-card-text>
+                          <v-row>
+                            <v-col>
+                              <v-text-field
+                                label="min"
+                                type="number"
+                                v-model="generate.linear.start"
+                                min="1"
+                              ></v-text-field>
+                            </v-col>
+                            <v-col>
+                              <v-text-field
+                              label="max"
+                              type="number"
+                              v-model="generate.linear.end"
+                              :max="timeseriesMax"
+                            ></v-text-field>
+                            </v-col>
+                            <v-col>
+                              <v-text-field
+                                label="length"
+                                type="number"
+                                v-model="generate.linear.length"
+                                min="3"
+                                max="2000"
+                              ></v-text-field>
+                            </v-col>
+                            <v-col>
+                              <v-btn :disabled='!generate.linear.start || !generate.linear.end || !generate.linear.length' @click="setLinearIntegers('overwrite')">overwrite</v-btn>
+                            </v-col>
+                            <v-col>
+                              <v-btn :disabled='!generate.linear.start || !generate.linear.end || !generate.linear.length' @click="setLinearIntegers('add')">add</v-btn>
+                            </v-col>
+                          </v-row>
+                        </v-card-text>
+                      </v-card>
+                    </v-col>
+                    <v-col cols="4">
+                      <v-card>
+                        <v-card-title>
+                          available range
+                        </v-card-title>
+                        <v-card-text>
+                          <v-row>
+                            <v-col>
+                              <v-text-field
+                              label="min"
+                              type="number"
+                              v-model="generate.rangeMin"
+                              min="1"
+                            ></v-text-field>
+                            </v-col>
+                            <v-col>
+                              <v-text-field
+                              label="max"
+                              type="number"
+                              v-model="generate.rangeMax"
+                              :min="generate.rangeMin"
+                              :max="timeseriesMax"
+                            ></v-text-field>
+                            </v-col>
+                          </v-row>
+                        </v-card-text>
+                      </v-card>
+                    </v-col>
+                    <v-col cols="4">
+                      <v-row>
+                        <v-col>
+                          <v-text-field
+                            label="merge threshold ratio"
+                            type="number"
+                            v-model="generate.mergeThresholdRatio"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                          ></v-text-field>
+                        </v-col>
+                        <v-col>
+                          <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>
+                          <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
+                        </v-col>
+                      </v-row>
+                    </v-col>
+                  </v-row>
+                </v-card-text>
+              </v-card>
+            </v-form>
+          </v-dialog>
+        </v-col>
+        <v-col class="v-col-auto">
+          <v-btn @click="infoDialog = true">
+            <v-icon icon="$info"></v-icon>
+            Info
+          </v-btn>
+          <v-dialog width="1000" v-model="infoDialog" >
+            <v-card>
+              <v-card-text>
+                <h3>What is this site?</h3>
+                <div>The site can cluster and display substrings of various lengths that are similar to each other in the time series data entered by the user.</div>
+                <h3>How to use</h3>
+                <h5>Analye</h5>
+                <ul class="custom-list">
+                  <li>Click "ANALYSE".</li>
+                  <li>Enter your time series data into the large input field. For example, 1,3,5,1,3,5.</li>
+                  <li>If you find it bothersome to input data, you can also set random numbers by entering values into the three input fields under "generate randoms" and pressing "SET RANDOMS".</li>
+                  <li>Click "SUBMIT" to display the results.</li>
+                </ul>
+                <h5>Generate</h5>
+                <ul class="custom-list">
+                  <li>under construction.</li>
+                </ul>
+                <h3>Attention</h3>
+                <ul class="custom-list">
+                  <li>All of them are free of charge.</li>
+                  <li>Input values and results are not saved.</li>
+                  <li>The system may change without notice.</li>
+                  <li>We do not guarantee the correctness of the results.</li>
+                  <li>Due to the circumstances of being operated for free, it may take about 50 seconds to re-access the site if there is no access for a while. Please wait.</li>
+                </ul>
+                <h3>Developer</h3>
+                <div>
+                  <a href='https://tekesuke1986.tumblr.com' target='_blank'>Takuya SHIMIZU</a>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-dialog>
+        </v-col>
+      </v-row>
+
+
+
     </v-app-bar>
     <v-main>
-      <v-row no-gutters>
+      <div v-if="selectedMode === 'Clustering'">
+        <v-row no-gutters v-if='showTimeseriesChart'>
+          <v-col>
+            <div class='text-h6 ml-3 mb-2'>
+              <v-row>
+                <v-col cols="1">
+                  <span>Timeseries</span>
+                </v-col>
+                <v-col cols="3">
+                  <v-card>
+                    <v-card-text class='py-1'>
+                      <v-row>
+                        <v-col cols="3" class='text-h6 '>
+                          <span class="d-flex align-center fill-height">playback</span>
+                        </v-col>
+                        <v-col cols="3">
+                          <v-text-field
+                            label="tempo"
+                            type="number"
+                            v-model="tempo"
+                            min="30"
+                            max="180"
+                            hide-details="auto"
+                          ></v-text-field>
+                        </v-col>
+                        <v-col cols="3">
+                          <v-text-field
+                            label="velocity"
+                            type="number"
+                            v-model="velocity"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            hide-details="auto"
+                          ></v-text-field>
+                        </v-col>
+                        <v-col cols="3">
+                          <v-btn @click='playNotes' class="d-flex align-center fill-height">
+                            <v-icon v-if='nowPlaying'>mdi-stop</v-icon>
+                            <v-icon v-else>mdi-music</v-icon>
+                          </v-btn>
+                        </v-col>
+                      </v-row>
+                    </v-card-text>
+                  </v-card>
+                </v-col>
+                <v-col cols="2">
+                  <v-btn @click="saveToFile" class="d-flex align-center fill-height">
+                    <v-icon>mdi-download</v-icon>
+                    <span>Download</span>
+                  </v-btn>
+                </v-col>
+              </v-row>
+            </div>
+            <div id='timeseries' style='height: 20vh;'></div>
+          </v-col>
+        </v-row>
+        <v-row no-gutters>
+          <v-col>
+            <template v-if='showTimeseriesComplexityChart'>
+              <div class='text-h6 ml-3 mb-2'>Complexity</div>
+              <div id='timeseries-complexity' style='height: 20vh;'></div>
+            </template>
+          </v-col>
+        </v-row>
+        <v-row no-gutters >
+          <v-col>
+            <template v-if='showTimeline'>
+              <div class='text-h6 ml-3 mb-2'>Clusters</div>
+              <div id='timeline' style='height: 70vh;'></div>
+            </template>
+          </v-col>
+        </v-row>
+      </div>
+      <div v-if="selectedMode === 'Music'">
         <v-col>
           <Music></Music>
-
         </v-col>
-      </v-row>
-      <v-row no-gutters v-if='showTimeseriesChart'>
-        <v-col>
-          <div class='text-h6 ml-3 mb-2'>
-            <v-row>
-              <v-col cols="1">
-                <span>Timeseries</span>
-              </v-col>
-              <v-col cols="3">
-                <v-card>
-                  <v-card-text class='py-1'>
-                    <v-row>
-                      <v-col cols="3" class='text-h6 '>
-                        <span class="d-flex align-center fill-height">playback</span>
-                      </v-col>
-                      <v-col cols="3">
-                        <v-text-field
-                          label="tempo"
-                          type="number"
-                          v-model="tempo"
-                          min="30"
-                          max="180"
-                          hide-details="auto"
-                        ></v-text-field>
-                      </v-col>
-                      <v-col cols="3">
-                        <v-text-field
-                          label="velocity"
-                          type="number"
-                          v-model="velocity"
-                          min="0"
-                          max="1"
-                          step="0.01"
-                          hide-details="auto"
-                        ></v-text-field>
-                      </v-col>
-                      <v-col cols="3">
-                        <v-btn @click='playNotes' class="d-flex align-center fill-height">
-                          <v-icon v-if='nowPlaying'>mdi-stop</v-icon>
-                          <v-icon v-else>mdi-music</v-icon>
-                        </v-btn>
-                      </v-col>
-                    </v-row>
-                  </v-card-text>
-                </v-card>
-              </v-col>
-              <v-col cols="2">
-                <v-btn @click="saveToFile" class="d-flex align-center fill-height">
-                  <v-icon>mdi-download</v-icon>
-                  <span>Download</span>
-                </v-btn>
-              </v-col>
-            </v-row>
-          </div>
-          <div id='timeseries' styls='height: 20vh;'></div>
-        </v-col>
-      </v-row>
-      <v-row no-gutters>
-        <v-col>
-          <template v-if='showTimeseriesComplexityChart'>
-            <div class='text-h6 ml-3 mb-2'>Complexity</div>
-            <div id='timeseries-complexity' styls='height: 20vh;'></div>
-          </template>
-        </v-col>
-      </v-row>
-      <v-row no-gutters >
-        <v-col>
-          <template v-if='showTimeline'>
-            <div class='text-h6 ml-3 mb-2'>Clusters</div>
-            <div id='timeline' styls='height: 70vh;'></div>
-          </template>
-        </v-col>
-      </v-row>
+      </div>
     </v-main>
   </v-app>
 </template>
 
 <script setup lang="ts">
 
-import { onMounted, computed, nextTick, ref } from 'vue'
+import { onMounted, computed, nextTick, ref, watch } from 'vue'
 import * as Tone from 'tone'
 import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
@@ -370,6 +390,8 @@ import { useJobChannel } from '../../composables/useJobChannel'
 import Music from '../../components/music/Music.vue';
 
 const timeseriesMax = ref(100)
+const modes = ref(['Clustering', 'Music'])
+const selectedMode = ref('Clustering')
 type Cluster = {
   si: number[]; // subsequence indexes
   cc: { [childId: string]: Cluster }; // child clusters
@@ -381,10 +403,10 @@ const analyse = ref<{
   timeSeries: string;
   clusteredSubsequences: [string, string, number, number][];
   timeSeriesChart: (number | null | string)[][];
-  setDataDialog: Boolean;
-  loading: Boolean;
+  setDataDialog: boolean;
+  loading: boolean;
   timeSeriesRules: ((v: any) => true | string)[];
-  valid: Boolean;
+  valid: boolean;
   random: {
     min: number | null;
     max: number | null;
@@ -894,6 +916,23 @@ const onFileSelected = (file) => {
 
   reader.readAsText(file.target.files[0]);
 }
+
+watch(selectedMode, async (newVal) => {
+  if (newVal === 'Clustering') {
+    await nextTick()
+    if(showTimeseriesChart.value){
+      drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
+    }
+    if(showTimeline.value){
+      drawTimeline()
+    }
+    if(showTimeseriesComplexityChart.value){
+      drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
+    }
+  }
+})
+
+
 </script>
 
 <style scoped>
@@ -911,5 +950,8 @@ const onFileSelected = (file) => {
     white-space: pre !important;
     overflow-x: auto !important;
     height: 68px;
+  }
+  ::v-deep(.v-select .v-input__details) {
+    display: none !important;
   }
 </style>
