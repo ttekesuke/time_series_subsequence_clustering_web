@@ -370,9 +370,32 @@ import { useJobChannel } from '../../composables/useJobChannel'
 import Music from '../../components/music/Music.vue';
 
 const timeseriesMax = ref(100)
-const analyse = ref({
+type Cluster = {
+  si: number[]; // subsequence indexes
+  cc: { [childId: string]: Cluster }; // child clusters
+};
+type Clusters = {
+  [clusterId: string]: Cluster;
+};
+const analyse = ref<{
+  timeSeries: string;
+  clusteredSubsequences: [string, string, number, number][];
+  timeSeriesChart: (number | null | string)[][];
+  setDataDialog: Boolean;
+  loading: Boolean;
+  timeSeriesRules: ((v: any) => true | string)[];
+  valid: Boolean;
+  random: {
+    min: number | null;
+    max: number | null;
+    length: number | null;
+  };
+  mergeThresholdRatio: number;
+  clusters: Clusters;
+
+}>({
   timeSeries: '',
-  clusteredSubsequences: null,
+  clusteredSubsequences: [],
   timeSeriesChart: [],
   setDataDialog: false,
   loading: false,
@@ -456,7 +479,17 @@ let selectedFileAnalyse = ref<File | null>(null)
 let selectedFileGenerate = ref<File | null>(null)
 
 const setRandoms = () => {
-  analyse.value.timeSeries = [...Array(parseInt(analyse.value.random.length))].map(() => Math.floor(Math.random() * (parseInt(analyse.value.random.max) - parseInt(analyse.value.random.min)+ 1)) + parseInt(analyse.value.random.min)).join(',')
+  const { min, max, length } = analyse.value.random;
+
+  if (min !== null && max !== null && length !== null) {
+    const minParsed = parseInt(String(min));
+    const maxParsed = parseInt(String(max));
+    const len = parseInt(String(length));
+
+    analyse.value.timeSeries = [...Array(len)]
+      .map(() => Math.floor(Math.random() * (maxParsed - minParsed + 1)) + minParsed)
+      .join(',');
+  }
 }
 
 const setLinearIntegers = (setType) => {
@@ -681,7 +714,7 @@ const onSelectedSubsequence = (selected) => {
     subsequencesIndexes.push(indexes)
   })
   let flattenSubsequencesIndexes: number[] = subsequencesIndexes.flat()
-  let subsequencesInSameCluster: number[] = []
+  let subsequencesInSameCluster: (number | null | string)[] = []
   analyse.value.timeSeriesChart.forEach((elm, index) => {
     subsequencesInSameCluster.push(flattenSubsequencesIndexes.includes(index) ? elm[1] : null)
   })
