@@ -24,3 +24,9 @@ export type TimeSignature = {
   numerator: number;
   denominator: number;
 };
+export interface MidiNote {
+  midi: number
+  time: number
+  duration: number
+  velocity: number
+}

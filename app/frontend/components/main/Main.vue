@@ -21,7 +21,7 @@
                 <v-card-title>
                   <v-row>
                     <v-col cols="5">
-                      <div class="text-h4 d-flex align-center fill-height">Analyse</div>
+                      <div class="text-h4 d-flex align-center fill-height">Clustering Analyse</div>
                     </v-col>
                     <v-col cols="7">
                       <v-file-input
@@ -119,7 +119,7 @@
                 <v-card-title>
                   <v-row>
                     <v-col cols="5">
-                      <div class="text-h4 d-flex align-center fill-height">Generate</div>
+                      <div class="text-h4 d-flex align-center fill-height">Clustering Generate</div>
                     </v-col>
                     <v-col cols="7">
                       <v-file-input
@@ -252,6 +252,70 @@
             </v-form>
           </v-dialog>
         </v-col>
+        <v-col class="v-col-auto" v-if="selectedMode === 'Music'">
+          <v-btn @click="music.setDataDialog = true">generate</v-btn>
+          <v-dialog width="1000" v-model="music.setDataDialog" >
+            <v-form v-model='music.valid' fast-fail ref="form">
+              <v-card>
+                <v-card-title>
+                  <v-row>
+                    <v-col cols="5">
+                      <div class="text-h4 d-flex align-center fill-height">Music Generate</div>
+                    </v-col>
+                    <!-- <v-col cols="7">
+                      <v-file-input
+                      label="upload json file"
+                      accept=".json"
+                      prepend-icon="mdi-upload"
+                      v-model="selectedFileAnalyse"
+                      @change="onFileSelected"
+                    ></v-file-input>
+                    </v-col> -->
+                  </v-row>
+                </v-card-title>
+                <v-card-text>
+                  <v-row>
+                    <v-col cols="12">
+                      <v-textarea
+                      placeholder="please set midi note numbers (like 60,62,64)"
+                      required
+                      v-model='music.midiNoteNumbers'
+                      label="midiNoteNumbers"
+                      rows="1"
+                      :rules="music.midiNoteNumbersRules"
+                    ></v-textarea>
+                    </v-col>
+                  </v-row>
+                  <v-row>
+                    <v-col cols="12">
+                      <v-textarea
+                      placeholder="please set durations (like 8,4,4)"
+                      required
+                      v-model='music.durations'
+                      label="durations"
+                      rows="1"
+                      :rules="music.durationsRules"
+                    ></v-textarea>
+                    </v-col>
+                  </v-row>
+                  <v-row>
+                    <v-col cols="12">
+                      <v-file-input
+                        label="Set MIDI file"
+                        accept=".midi,.mid"
+                        prepend-icon="mdi-upload"
+                        v-model="music.midi"
+                        @change="onMidiSelected"
+                      />
+
+                    </v-col>
+
+                  </v-row>
+                </v-card-text>
+              </v-card>
+            </v-form>
+          </v-dialog>
+        </v-col>
         <v-col class="v-col-auto">
           <v-btn @click="infoDialog = true">
             <v-icon icon="$info"></v-icon>
@@ -371,9 +435,11 @@
         </v-row>
       </div>
       <div v-if="selectedMode === 'Music'">
-        <v-col>
-          <Music></Music>
-        </v-col>
+        <v-row no-gutters>
+          <v-col>
+            <Music refs="music" :midiData='music.midiData' :secondsPerTick="music.secondsPerTick"></Music>
+          </v-col>
+        </v-row>
       </div>
     </v-main>
   </v-app>
@@ -381,14 +447,15 @@
 
 <script setup lang="ts">
 
-import { onMounted, computed, nextTick, ref, watch } from 'vue'
+import { onMounted, computed, nextTick, ref, watch, useTemplateRef } from 'vue'
 import * as Tone from 'tone'
 import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
 import { ScoreEntry } from '../../types/types';
+import { MidiNote } from '../../types/types';
 import { useJobChannel } from '../../composables/useJobChannel'
 import Music from '../../components/music/Music.vue';
-
+import { Midi } from '@tonejs/midi'
 const timeseriesMax = ref(100)
 const modes = ref(['Clustering', 'Music'])
 const selectedMode = ref('Clustering')
@@ -471,6 +538,56 @@ const generate = ref({
   },
   clusters: {}
 })
+const music = ref<{
+  notes: (MidiNote | null)[];
+  midiNoteNumbers: number[];
+  durations: number[];
+  setDataDialog: boolean;
+  valid: boolean;
+  midiNoteNumbersRules: ((v: any) => true | string)[];
+  durationsRules: ((v: any) => true | string)[];
+  midi: File[] | null;
+  midiData: any;
+  ticksPerBeat: number;
+  ticksPerBeatDefault: number;
+  fileLoaded: boolean;
+  bpmDefault: number;
+  bpm: number;
+  secondsPerTick: number;
+}>({
+  notes: [],
+  midiNoteNumbers: [],
+  durations: [],
+  setDataDialog: false,
+  valid: false,
+  midiNoteNumbersRules: [
+    v => !!v || 'required',
+    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
+    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
+    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
+    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
+    v => (v && String(v).split(',').every(n => Number(n) >= 0)) || 'numbers must be 0 or more',
+    v => (v && String(v).split(',').every(n => Number(n) <= 127)) || 'numbers must be 127 or less'
+  ],
+  durationsRules: [
+    v => !!v || 'required',
+    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
+    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
+    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
+    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
+    v => (v && String(v).split(',').every(n => Number(n) >= 1)) || 'numbers must be 1 or more',
+    v => (v && String(v).split(',').every(n => Number(n) <= 32)) || 'numbers must be 32 or less'
+  ],
+  midi: null,
+  midiData: null,
+  ticksPerBeat: 480,
+  ticksPerBeatDefault: 480,
+  fileLoaded: false,
+  bpmDefault: 120,
+  bpm: 120,
+  secondsPerTick: 0,
+})
+
 let showTimeseriesChart = ref(false)
 let showTimeseriesComplexityChart = ref(false)
 let showTimeline = ref(false)
@@ -917,6 +1034,55 @@ const onFileSelected = (file) => {
   reader.readAsText(file.target.files[0]);
 }
 
+const onMidiSelected = async () => {
+  if (!music.value.midi) return
+
+  const file = music.value.midi
+  const arrayBuffer = await file.arrayBuffer()
+  music.value.midiData = new Midi(arrayBuffer)
+
+  music.value.ticksPerBeat = music.value.midiData.header.tempos?.[0]?.ppq ?? music.value.ticksPerBeatDefault
+  music.value.bpm = music.value.midiData.header.tempos?.[0]?.bpm || music.value.bpmDefault
+  music.value.secondsPerTick = (60 / music.value.bpm) / music.value.ticksPerBeat
+
+  await nextTick()
+  music.value.fileLoaded = true
+}
+
+// 例: 手動でMIDIを作る
+const createMidi = () => {
+  const midi = new Midi()
+
+  // テンポを指定（例: 120BPM）
+  midi.header.setTempo(120)
+
+  // トラックを追加
+  const track = midi.addTrack()
+
+  // ノートを追加（MIDIノート番号、開始時間 [秒]、長さ [秒]）
+  track.addNote({
+    midi: 60,          // C4
+    time: 0,           // 秒
+    duration: 0.5,     // 秒
+    velocity: 0.8,
+  })
+
+  track.addNote({
+    midi: 64,          // E4
+    time: 1,           // 秒
+    duration: 0.3,
+    velocity: 0.8,
+  })
+
+  track.addNote({
+    midi: 67,          // G4
+    time: 1.5,
+    duration: 0.7,
+    velocity: 0.8,
+  })
+
+  return midi
+}
 watch(selectedMode, async (newVal) => {
   if (newVal === 'Clustering') {
     await nextTick()
@@ -936,11 +1102,6 @@ watch(selectedMode, async (newVal) => {
 </script>
 
 <style scoped>
-  .custom-list {
-    padding-left: 0;
-    list-style-position: inside;
-  }
-
   h3 + h3,
   h5 + h5 {
     margin-top: 1.5rem;
