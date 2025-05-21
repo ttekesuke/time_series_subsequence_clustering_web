@@ -1,11 +1,11 @@
 # app/services/processor.rb
-require 'pycall/import'
+# require 'pycall/import'
 
 module Processor
-  extend PyCall::Import
+  # extend PyCall::Import
 
-  def self.run
-    PyCall.sys.path.append('lib/python')
-    # 以下 Python処理
-  end
+  # def self.run
+  #   PyCall.sys.path.append('lib/python')
+  #   # 以下 Python処理
+  # end
 end
