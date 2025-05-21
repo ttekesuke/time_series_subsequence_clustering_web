@@ -5,7 +5,7 @@
         <v-col class="v-col-auto ml-3">
           <v-toolbar-title>Time series subsequence-clustering</v-toolbar-title>
         </v-col>
-        <v-col class="v-col-auto ml-auto">
+        <v-col class="v-col-auto">
           <v-select
             label="mode"
             :items="modes"
@@ -104,9 +104,26 @@
                           <v-btn :disabled='!analyse.valid' @click="analyseTimeseries" :loading="analyse.loading">Submit</v-btn>
                           <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
                         </v-col>
-
                       </v-row>
                     </v-col>
+                  </v-row>
+                  <v-row>
+                    <v-col cols="12">
+                      <div class="text-h4 d-flex align-center fill-height">Timeseries to music-element</div>
+                    </v-col>
+                  </v-row>
+                  <v-row>
+                    <v-col cols="3">
+                      <v-select
+                        label="music-elements"
+                        :items="analyse.musicElements"
+                        v-model="analyse.selectedMusicElement"
+                      ></v-select>
+                    </v-col>
+                    <v-col cols="1">
+                      <v-btn @click="setTimeSeriesToMusicElement">set</v-btn>
+                    </v-col>
+
                   </v-row>
                 </v-card-text>
               </v-card>
@@ -264,28 +281,16 @@
                     </v-col>
                     <!-- <v-col cols="7">
                       <v-file-input
-                      label="upload json file"
-                      accept=".json"
-                      prepend-icon="mdi-upload"
-                      v-model="selectedFileAnalyse"
-                      @change="onFileSelected"
-                    ></v-file-input>
+                        label="Set MIDI file"
+                        accept=".midi,.mid"
+                        prepend-icon="mdi-upload"
+                        v-model="music.midi"
+                        @change="onMidiSelected"
+                      />
                     </v-col> -->
                   </v-row>
                 </v-card-title>
                 <v-card-text>
-                  <v-row>
-                    <v-col cols="12">
-                      <v-textarea
-                      placeholder="please set midi note numbers (like 60,62,64)"
-                      required
-                      v-model='music.midiNoteNumbers'
-                      label="midiNoteNumbers"
-                      rows="1"
-                      :rules="music.midiNoteNumbersRules"
-                    ></v-textarea>
-                    </v-col>
-                  </v-row>
                   <v-row>
                     <v-col cols="12">
                       <v-textarea
@@ -300,21 +305,48 @@
                   </v-row>
                   <v-row>
                     <v-col cols="12">
-                      <v-file-input
-                        label="Set MIDI file"
-                        accept=".midi,.mid"
-                        prepend-icon="mdi-upload"
-                        v-model="music.midi"
-                        @change="onMidiSelected"
-                      />
-
+                      <v-textarea
+                      placeholder="please set midi note numbers (like 60,62,64)"
+                      required
+                      v-model='music.midiNoteNumbers'
+                      label="midiNoteNumbers"
+                      rows="1"
+                      :rules="music.midiNoteNumbersRules"
+                    ></v-textarea>
                     </v-col>
-
+                  </v-row>
+                  <v-row>
+                    <v-col cols="2">
+                      <v-text-field
+                        label="bpm"
+                        type="number"
+                        v-model="music.bpm"
+                        min="30"
+                        max="180"
+                      ></v-text-field>
+                    </v-col>
+                    <v-col cols="2">
+                      <v-text-field
+                        label="velocity"
+                        type="number"
+                        v-model="music.velocity"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                      ></v-text-field>
+                    </v-col>
+                    <v-col cols="2">
+                      <v-btn @click="generateMidi">generate</v-btn>
+                    </v-col>
                   </v-row>
                 </v-card-text>
               </v-card>
             </v-form>
           </v-dialog>
+          <v-btn @click='playNotes'>
+            <v-icon v-if='nowPlaying'>mdi-stop</v-icon>
+            <v-icon v-else>mdi-music</v-icon>
+          </v-btn>
         </v-col>
         <v-col class="v-col-auto">
           <v-btn @click="infoDialog = true">
@@ -355,9 +387,6 @@
           </v-dialog>
         </v-col>
       </v-row>
-
-
-
     </v-app-bar>
     <v-main>
       <div v-if="selectedMode === 'Clustering'">
@@ -367,44 +396,6 @@
               <v-row>
                 <v-col cols="1">
                   <span>Timeseries</span>
-                </v-col>
-                <v-col cols="3">
-                  <v-card>
-                    <v-card-text class='py-1'>
-                      <v-row>
-                        <v-col cols="3" class='text-h6 '>
-                          <span class="d-flex align-center fill-height">playback</span>
-                        </v-col>
-                        <v-col cols="3">
-                          <v-text-field
-                            label="tempo"
-                            type="number"
-                            v-model="tempo"
-                            min="30"
-                            max="180"
-                            hide-details="auto"
-                          ></v-text-field>
-                        </v-col>
-                        <v-col cols="3">
-                          <v-text-field
-                            label="velocity"
-                            type="number"
-                            v-model="velocity"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            hide-details="auto"
-                          ></v-text-field>
-                        </v-col>
-                        <v-col cols="3">
-                          <v-btn @click='playNotes' class="d-flex align-center fill-height">
-                            <v-icon v-if='nowPlaying'>mdi-stop</v-icon>
-                            <v-icon v-else>mdi-music</v-icon>
-                          </v-btn>
-                        </v-col>
-                      </v-row>
-                    </v-card-text>
-                  </v-card>
                 </v-col>
                 <v-col cols="2">
                   <v-btn @click="saveToFile" class="d-flex align-center fill-height">
@@ -437,7 +428,7 @@
       <div v-if="selectedMode === 'Music'">
         <v-row no-gutters>
           <v-col>
-            <Music refs="music" :midiData='music.midiData' :secondsPerTick="music.secondsPerTick"></Music>
+            <Music ref="musicComponent" :midiData='music.midiData' :secondsPerTick="music.secondsPerTick"></Music>
           </v-col>
         </v-row>
       </div>
@@ -466,6 +457,9 @@ type Cluster = {
 type Clusters = {
   [clusterId: string]: Cluster;
 };
+
+import type { ComponentPublicInstance } from 'vue'
+const musicComponent = ref<ComponentPublicInstance<{ start: () => void; stop: () => void }> | null>(null)
 const analyse = ref<{
   timeSeries: string;
   clusteredSubsequences: [string, string, number, number][];
@@ -481,7 +475,8 @@ const analyse = ref<{
   };
   mergeThresholdRatio: number;
   clusters: Clusters;
-
+  musicElements: string[];
+  selectedMusicElement: string;
 }>({
   timeSeries: '',
   clusteredSubsequences: [],
@@ -503,7 +498,9 @@ const analyse = ref<{
     length: null
   },
   mergeThresholdRatio: 0.02,
-  clusters: {}
+  clusters: {},
+  musicElements: ['durations', 'midiNoteNumbers'],
+  selectedMusicElement: 'durations'
 })
 const complexityTransitionRules = computed(() => [
     v => !!v || 'required',
@@ -540,35 +537,26 @@ const generate = ref({
 })
 const music = ref<{
   notes: (MidiNote | null)[];
-  midiNoteNumbers: number[];
-  durations: number[];
+  midiNoteNumbers: string;
+  durations: string;
   setDataDialog: boolean;
   valid: boolean;
-  midiNoteNumbersRules: ((v: any) => true | string)[];
   durationsRules: ((v: any) => true | string)[];
+  midiNoteNumbersRules: ((v: any) => true | string)[];
   midi: File[] | null;
   midiData: any;
   ticksPerBeat: number;
   ticksPerBeatDefault: number;
-  fileLoaded: boolean;
   bpmDefault: number;
   bpm: number;
   secondsPerTick: number;
+  velocity: number;
 }>({
   notes: [],
-  midiNoteNumbers: [],
-  durations: [],
+  midiNoteNumbers: '',
+  durations: '',
   setDataDialog: false,
   valid: false,
-  midiNoteNumbersRules: [
-    v => !!v || 'required',
-    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
-    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
-    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
-    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-    v => (v && String(v).split(',').every(n => Number(n) >= 0)) || 'numbers must be 0 or more',
-    v => (v && String(v).split(',').every(n => Number(n) <= 127)) || 'numbers must be 127 or less'
-  ],
   durationsRules: [
     v => !!v || 'required',
     v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
@@ -578,33 +566,40 @@ const music = ref<{
     v => (v && String(v).split(',').every(n => Number(n) >= 1)) || 'numbers must be 1 or more',
     v => (v && String(v).split(',').every(n => Number(n) <= 32)) || 'numbers must be 32 or less'
   ],
+  midiNoteNumbersRules: [
+    v => !!v || 'required',
+    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
+    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
+    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
+    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
+    v => (v && String(v).split(',').every(n => Number(n) >= 12)) || 'numbers must be 12 or more',
+    v => (v && String(v).split(',').every(n => Number(n) <= 127)) || 'numbers must be 127 or less',
+  ],
   midi: null,
   midiData: null,
   ticksPerBeat: 480,
   ticksPerBeatDefault: 480,
-  fileLoaded: false,
-  bpmDefault: 120,
-  bpm: 120,
+  bpmDefault: 60,
+  bpm: 60,
   secondsPerTick: 0,
+  velocity: 1
 })
 
 let showTimeseriesChart = ref(false)
 let showTimeseriesComplexityChart = ref(false)
 let showTimeline = ref(false)
 let infoDialog = ref(false)
-let pitchMap = ref([
-  'C1','C#1','D1','D#1','E1','F1','F#1','G1','G#1','A1','A#1','B1',
-  'C2','C#2','D2','D#2','E2','F2','F#2','G2','G#2','A2','A#2','B2',
-  'C3','C#3','D3','D#3','E3','F3','F#3','G3','G#3','A3','A#3','B3',
-  'C4','C#4','D4','D#4','E4','F4','F#4','G4','G#4','A4','A#4','B4',
-  'C5','C#5','D5','D#5','E5','F5','F#5','G5','G#5','A5','A#5','B5',
-  'C6','C#6','D6','D#6','E6','F6','F#6','G6','G#6','A6','A#6','B6',
-  'C7','C#7','D7','D#7','E7','F7','F#7','G7','G#7','A7','A#7','B7',
-])
+let pitchMap = ref({
+  12:'C0',13:'C#0',14:'D0',15:'D#0',16:'E0',17:'F0',18:'F#0',19:'G0',20:'G#0',21:'A0',22:'A#0',23:'B0',
+  24:'C1',25:'C#1',26:'D1',27:'D#1',28:'E1',29:'F1',30:'F#1',31:'G1',32:'G#1',33:'A1',34:'A#1',35:'B1',
+  36:'C2',37:'C#2',38:'D2',39:'D#2',40:'E2',41:'F2',42:'F#2',43:'G2',44:'G#2',45:'A2',46:'A#2',47:'B2',
+  48:'C3',49:'C#3',50:'D3',51:'D#3',52:'E3',53:'F3',54:'F#3',55:'G3',56:'G#3',57:'A3',58:'A#3',59:'B3',
+  60:'C4',61:'C#4',62:'D4',63:'D#4',64:'E4',65:'F4',66:'F#4',67:'G4',68:'G#4',69:'A4',70:'A#4',71:'B4',
+  72:'C5',73:'C#5',74:'D5',75:'D#5',76:'E5',77:'F5',78:'F#5',79:'G5',80:'G#5',81:'A5',82:'A#5',83:'B5',
+  84:'C6',85:'C#6',86:'D6',87:'D#6',88:'E6',89:'F6',90:'F#6',91:'G6',92:'G#6',93:'A6',94:'A#6',95:'B6',
+  96:'C7',97:'C#7',98:'D7',99:'D#7',100:'E7',101:'F7',102:'F#7',103:'G7',104:'G#7',105:'A7',106:'A#7',107:'B7',
+})
 let nowPlaying = ref(false)
-let tempo = ref(60)
-let velocity = ref(1)
-let sequenceCounter = ref(0)
 const progress = ref({
   percent: 0,
   status: 'beforeStart'
@@ -663,24 +658,6 @@ const createLinearIntegerArray = (start, end, count) => {
   return result
 }
 
-const drawPlayingNote = (drawIndex, finish) => {
-  analyse.value.timeSeriesChart.forEach((elm, index) => {
-    const value = !finish && index === drawIndex ? analyse.value.timeSeriesChart[index][1] : null
-    if(elm.length === 4){
-      elm[3] = value
-    }else if (elm.length === 3){
-      elm.push(value)
-    }else if (elm.length === 2){
-      if(index === 0){
-        elm.push(value)
-      }else{
-        elm.push(null)
-        elm.push(value)
-      }
-    }
-  })
-  drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
-}
 const drawTimeSeries = (elementId, drawData) => {
   showTimeseriesChart.value = true
   nextTick(() => {
@@ -875,33 +852,39 @@ const playNotes = () =>{
 }
 const startPlayingNotes = () => {
   nowPlaying.value = true
-  sequenceCounter.value = 0
-  const timeSeriesArray = analyse.value.timeSeries.split(',').map(Number)
   const score : ScoreEntry[] = []
-  const groupedTimeSeries = groupArray(timeSeriesArray, [4,4])
-  groupedTimeSeries.forEach((measure, measureIndex) => {
-    measure.forEach((quater, quaterIndex) => {
-      quater.forEach((sixteenth, sixteenthIndex) => {
-        let setPitch: string
-        let setVelocity: number
-        const outOfRange = pitchMap.value[sixteenth] === undefined
 
-        if(outOfRange){
-          setPitch = 'C1'
-          setVelocity = 0
-        }else{
-          setPitch = pitchMap.value[sixteenth]
-          setVelocity = velocity.value
-        }
-        score.push({
-          "time": `${measureIndex}:${quaterIndex}:${sixteenthIndex}`,
-          "note": `${setPitch}`,
-          "duration": "16n",
-          "velocity": setVelocity
-        })
-      })
+  const durations = music.value.durations.split(',').map(Number)
+  const midiNoteNumbers = music.value.midiNoteNumbers.split(',').map(Number)
+
+  let currentTimeInBeats = 0  // 小節単位じゃなく、拍数で加算（ex: 4.25など）
+
+  for (let i = 0; i < midiNoteNumbers.length; i++) {
+    const midiNoteNumber = midiNoteNumbers[i]
+    const pitch = pitchMap.value[midiNoteNumber]
+
+    let setPitch: string
+    let setVelocity: number
+    if (pitch === undefined) {
+      setPitch = 'C1'
+      setVelocity = 0
+    } else {
+      setPitch = pitch
+      setVelocity = music.value.velocity
+    }
+
+    const dur = durations[i] || 1
+    const durationInBeats = dur / 8  // 8分音符ベース（1〜32）
+
+    score.push({
+      time: `${currentTimeInBeats}`,         // 例: "0", "1.5", "4.25"
+      note: `${setPitch}`,
+      duration: `${durationInBeats}`,        // Tone.jsは小数で解釈できる
+      velocity: setVelocity
     })
-  })
+
+    currentTimeInBeats += durationInBeats  // 次のノートの時間
+  }
 
   const sampler = new Tone.Sampler({
     urls: {
@@ -940,39 +923,20 @@ const startPlayingNotes = () => {
     onload: () => {
       const part = new Tone.Part((time, note) => {
         sampler.triggerAttackRelease(note.note, note.duration, time, note.velocity)
-        const noteLengthInSeconds = Tone.Time(note.duration).toSeconds()
-        setTimeout( () => {
-        }, noteLengthInSeconds * 1000)
-        drawPlayingNote(sequenceCounter.value, false)
-        sequenceCounter.value += 1
+        if (musicComponent.value?.start) {
+          musicComponent.value.start()
+        }
+
       }, score).start(0)
-      Tone.Transport.bpm.value = tempo.value
+      Tone.Transport.bpm.value = music.value.bpm
       Tone.Transport.start()
     }
   }).toDestination()
 }
-const groupArray = <T>(arr: T[], sizes: number[]): T[] | T[][] => {
-  // 再帰的にグループ化する関数
-  function group(array: T[], size: number): T[][] {
-    const grouped: T[][] = [];
-    for (let i = 0; i < array.length; i += size) {
-      grouped.push(array.slice(i, i + size));
-    }
-    return grouped;
-  }
-
-  // sizes配列に従って順次グループ化
-  let result: T[] | T[][] = arr;
-  for (let size of sizes) {
-    result = group(result as T[], size);
-  }
-
-  return result;
-};
 
 const stopPlayingNotes = () => {
   nowPlaying.value = false
-  drawPlayingNote(null, true)
+  musicComponent.value?.stop()
   Tone.Transport.stop()
   Tone.Transport.cancel()
 }
@@ -1034,6 +998,14 @@ const onFileSelected = (file) => {
   reader.readAsText(file.target.files[0]);
 }
 
+const setTimeSeriesToMusicElement = () => {
+  if(analyse.value.selectedMusicElement === 'midiNoteNumbers'){
+    music.value.midiNoteNumbers = analyse.value.timeSeries
+  }else if(analyse.value.selectedMusicElement === 'durations'){
+    music.value.durations = analyse.value.timeSeries
+  }
+}
+
 const onMidiSelected = async () => {
   if (!music.value.midi) return
 
@@ -1046,43 +1018,48 @@ const onMidiSelected = async () => {
   music.value.secondsPerTick = (60 / music.value.bpm) / music.value.ticksPerBeat
 
   await nextTick()
-  music.value.fileLoaded = true
+  music.value.setDataDialog = false
 }
 
-// 例: 手動でMIDIを作る
-const createMidi = () => {
+const generateMidi = () => {
   const midi = new Midi()
 
-  // テンポを指定（例: 120BPM）
-  midi.header.setTempo(120)
+  // テンポを指定
+  midi.header.setTempo(music.value.bpm)
 
   // トラックを追加
   const track = midi.addTrack()
+  music.value.ticksPerBeat = music.value.ticksPerBeatDefault
+  music.value.secondsPerTick = (60 / music.value.bpm) / music.value.ticksPerBeat
+  const ticksPer16th = music.value.ticksPerBeat / 8 // 32分音符 = 60 ticks
+  let currentTick = 0
+  const durations = music.value.durations.split(',')
+  const midiNoteNumbers = music.value.midiNoteNumbers.split(',')
+  // ノートの数だけループ
+  for (let i = 0; i < durations.length; i++) {
+    const lengthIn16ths = parseInt(durations[i])         // 1〜32 の整数
+    const noteNumber = parseInt(midiNoteNumbers[i])      // MIDI ノート番号
 
-  // ノートを追加（MIDIノート番号、開始時間 [秒]、長さ [秒]）
-  track.addNote({
-    midi: 60,          // C4
-    time: 0,           // 秒
-    duration: 0.5,     // 秒
-    velocity: 0.8,
-  })
+    const durationTicks = lengthIn16ths * ticksPer16th     // 実際のティック長さ
 
-  track.addNote({
-    midi: 64,          // E4
-    time: 1,           // 秒
-    duration: 0.3,
-    velocity: 0.8,
-  })
+    track.addNote({
+      midi: noteNumber,
+      time: currentTick / music.value.ticksPerBeat,  // 秒ではなく「拍」で指定（Tone.js互換）
+      duration: durationTicks / music.value.ticksPerBeat, // 同上
+      velocity: 0.8 // 任意の音量（0〜1）
+    })
 
-  track.addNote({
-    midi: 67,          // G4
-    time: 1.5,
-    duration: 0.7,
-    velocity: 0.8,
-  })
+    currentTick += durationTicks
+  }
+  music.value.midiData = midi
 
-  return midi
+
+  music.value.setDataDialog = false
+
 }
+// sample data
+// 1,1,1,1,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,1,1,1,1,1,1,2,2,1,1,1,1,1,2,3,3,1,3,2,2,3,1,1,1,1,1,3,3,2,1,2,2,3,3,2,2,1,3,1,2,3,1,1,3,2,1,1,4,4,1,4,3,4,2,4,4,4,3,1,4,1,1,4,2,1,4,4,2,3,4,4,4,4,1,3,4,1,2,4,1,4,1,2,3,3,2,1,1,2,2,2,1,3,2,3,1,3,3,1,1,2,2,3,4,2,1,3,4,4,2,2,1,2,3,1,1,3,2,3,4,4,2,2,1,2,1,1,1,1,1,1,1,1,2,2,1,1,1,1,1,2,3,3,4,4,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+// 60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,62,62,60,61,62,61,60,60,60,63,63,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,65,65,64,65,60,64,60,60,61,66,66,60,66,65,66,61,65,61,61,64,66,64,61,63,66,62,66,68,68,67,68,60,68,61,68,66,67,60,60,60,60,60,67,63,69,69,65,69,63,63,62,61,67,61,71,71,69,71,60,70,70,61,69,70,68,64,71,63,70,66,71,66,69,60,71,60,60,71,62,60,71,69,60,60,69,71,71,60,62,70,71,71,62,62,67,64,66,61,61,70,63,61,63,64,68,68,69,63,62,60,64,67,67,66,67,63,66,64,60,62,63,60,62,64,65,60,63,61,66,61,62,60,60,63,61,65,60,62,61,65,60,62,61
 watch(selectedMode, async (newVal) => {
   if (newVal === 'Clustering') {
     await nextTick()
