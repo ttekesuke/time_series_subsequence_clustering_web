@@ -118,4 +118,47 @@ module StatisticsCalculator
 
     average_series
   end
+
+  # 指定された平均・分散に最も近い整数列の組み合わせを探索します。
+  #
+  # 利用可能な整数は 0 から max_value までの一意な整数です。
+  # n が指定されていない場合、0〜(max_value+1) のすべての要素数の部分集合を総当たりします。
+  #
+  # @param target_mean [Float] 目標とする平均値
+  # @param target_variance [Float] 目標とする分散値（母分散）
+  # @param max_value [Integer] 使用する整数の最大値（使用可能な整数は 0〜max_value）
+  # @param n [Integer, nil] 組み合わせの要素数（nil の場合は全サイズを総当たり）
+  # @return [Array<(Array<Array<Integer>>, Float)>] 最良スコアの組み合わせ配列と誤差スコア
+  #
+  # @example
+  #   find_best_subsets(3, 4, 7)
+  #   #=> [[[1, 2, 3, 4, 5]], 0.0]（例）
+  def find_best_subsets(target_mean, target_variance, max_value, n = nil)
+    numbers = (0..max_value).to_a
+    best_score = Float::INFINITY
+    best_subsets = []
+
+    max_n = numbers.size
+    n_values = n.nil? ? (0..max_n).to_a : [n]
+
+    n_values.each do |current_n|
+      numbers.combination(current_n).each do |subset|
+        next if subset.empty?
+
+        mean = subset.sum.to_f / subset.size
+        variance = subset.map { |x| (x - mean) ** 2 }.sum.to_f / subset.size
+        score = (mean - target_mean) ** 2 + (variance - target_variance) ** 2
+
+        if score < best_score
+          best_score = score
+          best_subsets = [subset]
+        elsif score == best_score
+          best_subsets << subset
+        end
+      end
+    end
+
+    return best_subsets, best_score
+  end
+
 end
