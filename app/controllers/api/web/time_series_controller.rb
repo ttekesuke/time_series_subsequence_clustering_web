@@ -1,6 +1,7 @@
 class Api::Web::TimeSeriesController < ApplicationController
   include TimeSeriesAnalyser
   include MusicAnalyser
+  include DissonanceMemory
 
   def analyse
     job_id = analyse_params[:job_id]
@@ -48,6 +49,17 @@ class Api::Web::TimeSeriesController < ApplicationController
     candidate_min_master = generate_params[:range_min].to_i
     candidate_max_master = generate_params[:range_max].to_i
     min_window_size = 2
+    dissonance_mode = false
+    dissonance_results = []
+    dissonance_current_time = 0.to_d
+    dissonance_short_term_memory = []
+    time_unit = 0.125
+    # 不協和度の指定があれば現状の不協和度を算出
+    if generate_params[:dissonance_transition].present? && generate_params[:duration_transition].present?
+      dissonance_transition = generate_params[:dissonance_transition].split(',').map(&:to_i)
+      duration_transition = generate_params[:duration_transition].split(',').map(&:to_i)
+      dissonance_mode = true
+    end
     # ユーザ指定の冒頭の時系列データを解析しクラスタを作成する
     cluster_id_counter, clusters, tasks = initialize_clusters(min_window_size)
     user_set_results.each_with_index do |elm, data_index|
@@ -63,16 +75,44 @@ class Api::Web::TimeSeriesController < ApplicationController
           tasks,
         )
       end
+      if dissonance_mode
+        duration = duration_transition[data_index]
+        dissonance_current_time += duration * time_unit.to_d
+        dissonance, dissonance_short_term_memory = STMStateless.process([elm], dissonance_current_time, dissonance_short_term_memory)
+        dissonance_results << dissonance
+      end
     end
 
     # 移行
     results = user_set_results.dup
 
+    best_notes_in_dissonance = []
     # ユーザ指定の順位のループ
     complexity_transition.each_with_index do |rank, rank_index|
       candidate_max = candidate_max_master
       candidate_min = candidate_min_master
       candidates = (candidate_min..candidate_max).to_a
+      current_dissonance_short_term_memory = dissonance_short_term_memory.dup
+
+      if dissonance_mode
+        dissonance_current_time += duration_transition[rank_index] * time_unit.to_d
+
+        dissonance_rank = dissonance_transition[rank_index]
+        results_in_candidates = candidates.map do |note|
+          # 単音候補を和音化
+          notes = [note]
+
+          dissonance, memory = STMStateless.process(notes, dissonance_current_time, current_dissonance_short_term_memory)
+          { dissonance: dissonance, memory: memory, note: note }
+        end
+        # 最も協和的な候補を選ぶ
+        best = results_in_candidates.sort_by { |r| r[:dissonance] }[dissonance_rank]
+        # 選ばれた候補の memory を次ステップへ
+        dissonance_short_term_memory = best[:memory]
+        dissonance_results << best[:dissonance]
+        best_notes_in_dissonance << best[:note]
+      end
+
 
       # 実データの候補からベストマッチを得るために評価値を得る
       sum_average_distances_all_window_candidates, sum_similar_subsequences_quantities, clusters_candidates, cluster_id_counter_candidates, tasks_candidates =
@@ -339,7 +379,9 @@ class Api::Web::TimeSeriesController < ApplicationController
         :range_max,
         :first_elements,
         :merge_threshold_ratio,
-        :job_id
+        :job_id,
+        :dissonance_transition,
+        :duration_transition
       )
     end
 

@@ -165,7 +165,29 @@
                   <v-row>
                     <v-col>
                       <v-textarea
-                        placeholder="please set the complexity transition. (like 1,2,3,4,5)"
+                        placeholder="please set the dissonance transition. (like 1,2,3,4,5)"
+                        v-model='generate.dissonanceTransition'
+                        label="dissonance transition(optional)"
+                        rows="1"
+                        :rules="generate.dissonanceTransitionRules"
+                      ></v-textarea>
+                    </v-col>
+                  </v-row>
+                  <v-row>
+                    <v-col>
+                      <v-textarea
+                        placeholder="please set the duration transition. (like 1,1,2,1,1,2)"
+                        v-model='generate.durationTransition'
+                        label="duration transition"
+                        rows="1"
+                        :rules="durationTransitionRules"
+                      ></v-textarea>
+                    </v-col>
+                  </v-row>
+                  <v-row>
+                    <v-col>
+                      <v-textarea
+                        placeholder="please set the complexity-ranking transition. (like 1,2,3,4,5)"
                         required
                         v-model='generate.complexityTransition'
                         label="complexity transition"
@@ -510,13 +532,22 @@ const complexityTransitionRules = computed(() => [
     v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
     v => (v && String(v).split(',').every(n => Number(n) <= generate.value.rangeMax)) || 'numbers must be availange-range-max or less'
   ]);
+const durationTransitionRules = computed(() =>  [
+    v => !!v || 'required',
+    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
+    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
+    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
+    v => (v && String(v).split(',').length == generate.value.complexityTransition.split(',').length + generate.value.firstElements.split(',').length) || 'must have same length as complexity transition + first elements',
+    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
+    v => (v && String(v).split(',').every(n => Number(n) >= 1)) || 'numbers must be 1 or more',
+    v => (v && String(v).split(',').every(n => Number(n) <= 32)) || 'numbers must be 32 or less',
+]);
 const generate = ref({
   setDataDialog: false,
   rangeMin: 0,
   rangeMax: 11,
   complexityTransition: '',
   firstElements: '',
-  loading: false,
   firstElementsRules: [
     v => !!v || 'required',
     v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
@@ -525,6 +556,16 @@ const generate = ref({
     v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
     v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
   ],
+  dissonanceTransition: '',
+  dissonanceTransitionRules: [
+    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
+    v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers',
+    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
+    v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
+  ],
+  durationTransition: '',
+
+  loading: false,
   valid: false,
   mergeThresholdRatio: 0.02,
   complexityTransitionChart: null,
@@ -769,7 +810,9 @@ const generateTimeseries = () => {
       range_max: generate.value.rangeMax,
       first_elements: generate.value.firstElements,
       merge_threshold_ratio: generate.value.mergeThresholdRatio,
-      job_id: jobId.value
+      job_id: jobId.value,
+      dissonance_transition: generate.value.dissonanceTransition,
+      duration_transition: generate.value.durationTransition,
     }
   }
   axios.post('/api/web/time_series/generate', data)
