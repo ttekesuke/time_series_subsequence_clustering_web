@@ -16,7 +16,8 @@
     "vite": "^5.0.0",
     "@rails/actioncable": "^8.0.200",
     "uuid": "^11.1.0",
-    "@tonejs/midi": "^2.0.28"
+    "@tonejs/midi": "^2.0.28",
+    "decimal.js": "^10.4.0"
   },
   "devDependencies": {
     "vite-plugin-ruby": "^5.1.0"
