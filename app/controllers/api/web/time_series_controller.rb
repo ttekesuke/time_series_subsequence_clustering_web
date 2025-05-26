@@ -48,8 +48,9 @@ class Api::Web::TimeSeriesController < ApplicationController
     merge_threshold_ratio = generate_params[:merge_threshold_ratio].to_d
     candidate_min_master = generate_params[:range_min].to_i
     candidate_max_master = generate_params[:range_max].to_i
+    dissonance_range = generate_params[:dissonance_range].to_i
     min_window_size = 2
-    dissonance_mode = false
+    use_dissonance = generate_params[:use_dissonance].present? && generate_params[:use_dissonance] == true
     dissonance_results = []
     dissonance_current_time = 0.to_d
     dissonance_short_term_memory = []
@@ -58,7 +59,6 @@ class Api::Web::TimeSeriesController < ApplicationController
     if generate_params[:dissonance_transition].present? && generate_params[:duration_transition].present?
       dissonance_transition = generate_params[:dissonance_transition].split(',').map(&:to_i)
       duration_transition = generate_params[:duration_transition].split(',').map(&:to_i)
-      dissonance_mode = true
     end
     # ユーザ指定の冒頭の時系列データを解析しクラスタを作成する
     cluster_id_counter, clusters, tasks = initialize_clusters(min_window_size)
@@ -75,7 +75,7 @@ class Api::Web::TimeSeriesController < ApplicationController
           tasks,
         )
       end
-      if dissonance_mode
+      if use_dissonance
         duration = duration_transition[data_index]
         dissonance_current_time += duration * time_unit.to_d
         dissonance, dissonance_short_term_memory = STMStateless.process([elm], dissonance_current_time, dissonance_short_term_memory)
@@ -86,15 +86,15 @@ class Api::Web::TimeSeriesController < ApplicationController
     # 移行
     results = user_set_results.dup
 
-    best_notes_in_dissonance = []
     # ユーザ指定の順位のループ
     complexity_transition.each_with_index do |rank, rank_index|
       candidate_max = candidate_max_master
       candidate_min = candidate_min_master
       candidates = (candidate_min..candidate_max).to_a
       current_dissonance_short_term_memory = dissonance_short_term_memory.dup
+      in_range = []
 
-      if dissonance_mode
+      if use_dissonance
         dissonance_current_time += duration_transition[rank_index] * time_unit.to_d
 
         dissonance_rank = dissonance_transition[rank_index]
@@ -105,14 +105,15 @@ class Api::Web::TimeSeriesController < ApplicationController
           dissonance, memory = STMStateless.process(notes, dissonance_current_time, current_dissonance_short_term_memory)
           { dissonance: dissonance, memory: memory, note: note }
         end
-        # 最も協和的な候補を選ぶ
-        best = results_in_candidates.sort_by { |r| r[:dissonance] }[dissonance_rank]
-        # 選ばれた候補の memory を次ステップへ
-        dissonance_short_term_memory = best[:memory]
-        dissonance_results << best[:dissonance]
-        best_notes_in_dissonance << best[:note]
-      end
 
+        # 候補を選ぶ
+        from = [dissonance_rank - dissonance_range, 0].max
+        to = [dissonance_rank + dissonance_range, results_in_candidates.size - 1].min
+        sorted_results_in_candidates = results_in_candidates.sort_by { |r| r[:dissonance] }
+        in_range = sorted_results_in_candidates[from..to]
+        # 候補を減らす
+        candidates = in_range.map { |r| r[:note] }
+      end
 
       # 実データの候補からベストマッチを得るために評価値を得る
       sum_average_distances_all_window_candidates, sum_similar_subsequences_quantities, clusters_candidates, cluster_id_counter_candidates, tasks_candidates =
@@ -133,7 +134,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       # 類似数の大きい順に並び替え
       indexed_subsequences_quantities = sum_similar_subsequences_quantities.map.with_index { |quantity, index| [quantity, index] }
       # 指定ランクを割合に変換
-      converted_rank = rank / (candidate_min_master..candidate_max_master).to_a.length.to_d
+      converted_rank = rank / candidates.length.to_d
 
       metrics_with_direction = [
         { is_complex_when_larger: true, data: indexed_average_distances_between_clusters},
@@ -147,8 +148,14 @@ class Api::Web::TimeSeriesController < ApplicationController
       clusters = clusters_candidates[result_index_in_candidates]
       cluster_id_counter = cluster_id_counter_candidates[result_index_in_candidates]
       tasks = tasks_candidates[result_index_in_candidates]
-      broadcast_progress(job_id, rank_index + 1, complexity_transition.length)
+      # 選択されたデータを使って不協和度を残す
 
+      if use_dissonance
+        best = in_range.find{ |r| r[:note] == result }
+        dissonance_short_term_memory = best[:memory]
+        dissonance_results << best[:dissonance]
+      end
+      broadcast_progress(job_id, rank_index + 1, complexity_transition.length)
     end
 
     chart_elements_for_complexity = Array.new(user_set_results.length) { |index| [index.to_s, nil, nil, nil] }
@@ -363,6 +370,12 @@ class Api::Web::TimeSeriesController < ApplicationController
       result
     end
 
+    def convert_rank(rank, candidate_count, max_rank = 11)
+      return 0 if candidate_count <= 0
+      scaled = (rank.to_f / max_rank * (candidate_count - 1)).round
+      scaled.clamp(0, candidate_count - 1)
+    end
+
 
     def analyse_params
       params.require(:analyse).permit(
@@ -381,7 +394,9 @@ class Api::Web::TimeSeriesController < ApplicationController
         :merge_threshold_ratio,
         :job_id,
         :dissonance_transition,
-        :duration_transition
+        :duration_transition,
+        :dissonance_range,
+        :use_dissonance
       )
     end
 

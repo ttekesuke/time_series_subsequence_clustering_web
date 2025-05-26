@@ -164,6 +164,14 @@
                   </v-row>
                   <v-row>
                     <v-col>
+                      <v-checkbox
+                        v-model="generate.useDissonance"
+                        label="use dissonance-feature(for midi-note)"
+                      ></v-checkbox>
+                    </v-col>
+                  </v-row>
+                  <v-row v-if="generate.useDissonance">
+                    <v-col cols="10">
                       <v-textarea
                         placeholder="please set the dissonance transition. (like 1,2,3,4,5)"
                         v-model='generate.dissonanceTransition'
@@ -172,8 +180,16 @@
                         :rules="generate.dissonanceTransitionRules"
                       ></v-textarea>
                     </v-col>
+                    <v-col cols="2">
+                      <v-text-field
+                        label="dissonance range"
+                        type="number"
+                        v-model="generate.dissonanceRange"
+                        min="1"
+                      ></v-text-field>
+                    </v-col>
                   </v-row>
-                  <v-row>
+                  <v-row v-if="generate.useDissonance">
                     <v-col>
                       <v-textarea
                         placeholder="please set the duration transition. (like 1,1,2,1,1,2)"
@@ -469,6 +485,7 @@ import { MidiNote } from '../../types/types';
 import { useJobChannel } from '../../composables/useJobChannel'
 import Music from '../../components/music/Music.vue';
 import { Midi } from '@tonejs/midi'
+import Decimal from 'decimal.js'
 const timeseriesMax = ref(100)
 const modes = ref(['Clustering', 'Music'])
 const selectedMode = ref('Clustering')
@@ -533,7 +550,6 @@ const complexityTransitionRules = computed(() => [
     v => (v && String(v).split(',').every(n => Number(n) <= generate.value.rangeMax)) || 'numbers must be availange-range-max or less'
   ]);
 const durationTransitionRules = computed(() =>  [
-    v => !!v || 'required',
     v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
     v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
     v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
@@ -556,6 +572,7 @@ const generate = ref({
     v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
     v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
   ],
+  useDissonance: false,
   dissonanceTransition: '',
   dissonanceTransitionRules: [
     v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
@@ -564,7 +581,7 @@ const generate = ref({
     v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
   ],
   durationTransition: '',
-
+  dissonanceRange: 2,
   loading: false,
   valid: false,
   mergeThresholdRatio: 0.02,
@@ -813,6 +830,7 @@ const generateTimeseries = () => {
       job_id: jobId.value,
       dissonance_transition: generate.value.dissonanceTransition,
       duration_transition: generate.value.durationTransition,
+      use_dissonance: generate.value.useDissonance,
     }
   }
   axios.post('/api/web/time_series/generate', data)
@@ -900,7 +918,7 @@ const startPlayingNotes = () => {
   const durations = music.value.durations.split(',').map(Number)
   const midiNoteNumbers = music.value.midiNoteNumbers.split(',').map(Number)
 
-  let currentTimeInBeats = 0  // 小節単位じゃなく、拍数で加算（ex: 4.25など）
+  let currentTimeInBeats = 0
 
   for (let i = 0; i < midiNoteNumbers.length; i++) {
     const midiNoteNumber = midiNoteNumbers[i]
@@ -917,18 +935,16 @@ const startPlayingNotes = () => {
     }
 
     const dur = durations[i] || 1
-    const durationInBeats = dur / 8  // 8分音符ベース（1〜32）
-
+    const durationInBeats = Decimal.div(dur, 8)
     score.push({
-      time: `${currentTimeInBeats}`,         // 例: "0", "1.5", "4.25"
+      time: `${currentTimeInBeats}`,
       note: `${setPitch}`,
-      duration: `${durationInBeats}`,        // Tone.jsは小数で解釈できる
+      duration: `${durationInBeats.toNumber()}`,
       velocity: setVelocity
     })
 
-    currentTimeInBeats += durationInBeats  // 次のノートの時間
+    currentTimeInBeats = Decimal.add(currentTimeInBeats, durationInBeats).toNumber()  // 次のノートの時間
   }
-
   const sampler = new Tone.Sampler({
     urls: {
       A0: "A0.mp3",
@@ -970,8 +986,8 @@ const startPlayingNotes = () => {
           musicComponent.value.start()
         }
 
-      }, score).start(0)
-      Tone.Transport.bpm.value = music.value.bpm
+      }, score)
+      part.start(0)
       Tone.Transport.start()
     }
   }).toDestination()
