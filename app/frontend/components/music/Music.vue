@@ -47,8 +47,7 @@ const drawPianoRoll = (scrollTime) => {
   const visibleOffsetX = scrollTime * pixelsPerSecond
 
   props.midiData.tracks.forEach((track, trackIndex) => {
-    const color = ['#f44336', '#2196f3', '#4caf50', '#ff9800'][trackIndex % 4]
-
+    const color = track.color
     track.notes.forEach(note => {
       const startTime = note.ticks * props.secondsPerTick
       const duration = note.durationTicks * props.secondsPerTick

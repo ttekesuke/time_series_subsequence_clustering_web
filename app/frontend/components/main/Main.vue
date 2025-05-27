@@ -113,6 +113,20 @@
                     </v-col>
                   </v-row>
                   <v-row>
+                    <v-col cols="2">
+                      <v-select
+                        label="tracks"
+                        :items="music.tracks.map(t => t.name)"
+                        v-model="analyse.selectedTrackName"
+                      ></v-select>
+                    </v-col>
+                    <v-col cols="2">
+                      <v-btn
+                        @click="onClickAddTrack()"
+                      >
+                        Add Track
+                      </v-btn>
+                    </v-col>
                     <v-col cols="3">
                       <v-select
                         label="music-elements"
@@ -330,30 +344,13 @@
                 </v-card-title>
                 <v-card-text>
                   <v-row>
-                    <v-col cols="12">
-                      <v-textarea
-                      placeholder="please set durations (like 8,4,4)"
-                      required
-                      v-model='music.durations'
-                      label="durations"
-                      rows="1"
-                      :rules="music.durationsRules"
-                    ></v-textarea>
+                    <v-col cols="2">
+                      <v-btn
+                        @click="onClickAddTrack()"
+                      >
+                        Add Track
+                      </v-btn>
                     </v-col>
-                  </v-row>
-                  <v-row>
-                    <v-col cols="12">
-                      <v-textarea
-                      placeholder="please set midi note numbers (like 60,62,64)"
-                      required
-                      v-model='music.midiNoteNumbers'
-                      label="midiNoteNumbers"
-                      rows="1"
-                      :rules="music.midiNoteNumbersRules"
-                    ></v-textarea>
-                    </v-col>
-                  </v-row>
-                  <v-row>
                     <v-col cols="2">
                       <v-text-field
                         label="bpm"
@@ -376,7 +373,40 @@
                     <v-col cols="2">
                       <v-btn @click="generateMidi">generate</v-btn>
                     </v-col>
+
                   </v-row>
+                  <template v-for='track in music.tracks'>
+                    <v-row>
+                      <v-col cols="2">
+                        <v-text-field
+                        placeholder="name"
+                        required
+                        v-model='track.name'
+                        label="name"
+                      ></v-text-field>
+                      </v-col>
+                      <v-col cols="5">
+                        <v-textarea
+                        placeholder="please set durations (like 8,4,4)"
+                        required
+                        v-model='track.durations'
+                        label="durations"
+                        rows="1"
+                        :rules="track.durationRules"
+                      ></v-textarea>
+                      </v-col>
+                      <v-col cols="5">
+                        <v-textarea
+                        placeholder="please set midi note numbers (like 60,62,64)"
+                        required
+                        v-model='track.midiNoteNumbers'
+                        label="midiNoteNumbers"
+                        rows="1"
+                        :rules="track.midiNoteNumbersRules"
+                      ></v-textarea>
+                      </v-col>
+                    </v-row>
+                  </template>
                 </v-card-text>
               </v-card>
             </v-form>
@@ -516,6 +546,7 @@ const analyse = ref<{
   clusters: Clusters;
   musicElements: string[];
   selectedMusicElement: string;
+  selectedTrackName: string | null;
 }>({
   timeSeries: '',
   clusteredSubsequences: [],
@@ -539,7 +570,8 @@ const analyse = ref<{
   mergeThresholdRatio: 0.02,
   clusters: {},
   musicElements: ['durations', 'midiNoteNumbers'],
-  selectedMusicElement: 'durations'
+  selectedMusicElement: 'durations',
+  selectedTrackName: null
 })
 const complexityTransitionRules = computed(() => [
     v => !!v || 'required',
@@ -593,14 +625,24 @@ const generate = ref({
   },
   clusters: {}
 })
+type Track = {
+  name: string;
+  durations: string;
+  durationRules: ((v: any) => true | string)[];
+  midiNoteNumbers: string;
+  midiNoteNumbersRules: ((v: any) => true | string)[];
+  color: string;
+};
+
 const music = ref<{
   notes: (MidiNote | null)[];
-  midiNoteNumbers: string;
+  tracks: Track[];
   durations: string;
+  durationsRules: ((v: any) => true | string)[];
+  midiNoteNumbers: string;
+  midiNoteNumbersRules: ((v: any) => true | string)[];
   setDataDialog: boolean;
   valid: boolean;
-  durationsRules: ((v: any) => true | string)[];
-  midiNoteNumbersRules: ((v: any) => true | string)[];
   midi: File[] | null;
   midiData: any;
   ticksPerBeat: number;
@@ -611,19 +653,8 @@ const music = ref<{
   velocity: number;
 }>({
   notes: [],
+  tracks: [],
   midiNoteNumbers: '',
-  durations: '',
-  setDataDialog: false,
-  valid: false,
-  durationsRules: [
-    v => !!v || 'required',
-    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
-    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
-    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
-    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-    v => (v && String(v).split(',').every(n => Number(n) >= 1)) || 'numbers must be 1 or more',
-    v => (v && String(v).split(',').every(n => Number(n) <= 32)) || 'numbers must be 32 or less'
-  ],
   midiNoteNumbersRules: [
     v => !!v || 'required',
     v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
@@ -633,6 +664,18 @@ const music = ref<{
     v => (v && String(v).split(',').every(n => Number(n) >= 12)) || 'numbers must be 12 or more',
     v => (v && String(v).split(',').every(n => Number(n) <= 127)) || 'numbers must be 127 or less',
   ],
+  durations: '',
+  durationsRules: [
+    v => !!v || 'required',
+    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
+    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
+    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
+    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
+    v => (v && String(v).split(',').every(n => Number(n) >= 1)) || 'numbers must be 1 or more',
+    v => (v && String(v).split(',').every(n => Number(n) <= 32)) || 'numbers must be 32 or less'
+  ],
+  setDataDialog: false,
+  valid: false,
   midi: null,
   midiData: null,
   ticksPerBeat: 480,
@@ -913,70 +956,52 @@ const playNotes = () =>{
 }
 const startPlayingNotes = () => {
   nowPlaying.value = true
-  const score : ScoreEntry[] = []
+  const score: ScoreEntry[] = []
 
-  const durations = music.value.durations.split(',').map(Number)
-  const midiNoteNumbers = music.value.midiNoteNumbers.split(',').map(Number)
+  // 各トラックごとに音符列を追加する
+  for (const track of music.value.tracks) {
+    const durations = track.durations.split(',').map(Number)
+    const midiNoteNumbers = track.midiNoteNumbers.split(',').map(Number)
+    let currentTimeInBeats = 0
 
-  let currentTimeInBeats = 0
+    for (let i = 0; i < midiNoteNumbers.length; i++) {
+      const midiNoteNumber = midiNoteNumbers[i]
+      const pitch = pitchMap.value[midiNoteNumber]
 
-  for (let i = 0; i < midiNoteNumbers.length; i++) {
-    const midiNoteNumber = midiNoteNumbers[i]
-    const pitch = pitchMap.value[midiNoteNumber]
+      let setPitch: string
+      let setVelocity: number
+      if (pitch === undefined) {
+        setPitch = 'C1'
+        setVelocity = 0
+      } else {
+        setPitch = pitch
+        setVelocity = music.value.velocity ?? 0.8 // トラックごとにvelocityを持たせたければここで分ける
+      }
 
-    let setPitch: string
-    let setVelocity: number
-    if (pitch === undefined) {
-      setPitch = 'C1'
-      setVelocity = 0
-    } else {
-      setPitch = pitch
-      setVelocity = music.value.velocity
+      const dur = durations[i] || 1
+      const durationInBeats = Decimal.div(dur, 8)
+      score.push({
+        time: `${currentTimeInBeats}`,
+        note: `${setPitch}`,
+        duration: `${durationInBeats.toNumber()}`,
+        velocity: setVelocity
+      })
+
+      currentTimeInBeats = Decimal.add(currentTimeInBeats, durationInBeats).toNumber()
     }
-
-    const dur = durations[i] || 1
-    const durationInBeats = Decimal.div(dur, 8)
-    score.push({
-      time: `${currentTimeInBeats}`,
-      note: `${setPitch}`,
-      duration: `${durationInBeats.toNumber()}`,
-      velocity: setVelocity
-    })
-
-    currentTimeInBeats = Decimal.add(currentTimeInBeats, durationInBeats).toNumber()  // 次のノートの時間
   }
+
+  // Sampler は1つでよい（全トラック分鳴らす）
   const sampler = new Tone.Sampler({
     urls: {
-      A0: "A0.mp3",
-      C1: "C1.mp3",
-      "D#1": "Ds1.mp3",
-      "F#1": "Fs1.mp3",
-      A1: "A1.mp3",
-      C2: "C2.mp3",
-      "D#2": "Ds2.mp3",
-      "F#2": "Fs2.mp3",
-      A2: "A2.mp3",
-      C3: "C3.mp3",
-      "D#3": "Ds3.mp3",
-      "F#3": "Fs3.mp3",
-      A3: "A3.mp3",
-      C4: "C4.mp3",
-      "D#4": "Ds4.mp3",
-      "F#4": "Fs4.mp3",
-      A4: "A4.mp3",
-      C5: "C5.mp3",
-      "D#5": "Ds5.mp3",
-      "F#5": "Fs5.mp3",
-      A5: "A5.mp3",
-      C6: "C6.mp3",
-      "D#6": "Ds6.mp3",
-      "F#6": "Fs6.mp3",
-      A6: "A6.mp3",
-      C7: "C7.mp3",
-      "D#7": "Ds7.mp3",
-      "F#7": "Fs7.mp3",
-      A7: "A7.mp3",
-      C8: "C8.mp3",
+      A0: "A0.mp3", C1: "C1.mp3", "D#1": "Ds1.mp3", "F#1": "Fs1.mp3",
+      A1: "A1.mp3", C2: "C2.mp3", "D#2": "Ds2.mp3", "F#2": "Fs2.mp3",
+      A2: "A2.mp3", C3: "C3.mp3", "D#3": "Ds3.mp3", "F#3": "Fs3.mp3",
+      A3: "A3.mp3", C4: "C4.mp3", "D#4": "Ds4.mp3", "F#4": "Fs4.mp3",
+      A4: "A4.mp3", C5: "C5.mp3", "D#5": "Ds5.mp3", "F#5": "Fs5.mp3",
+      A5: "A5.mp3", C6: "C6.mp3", "D#6": "Ds6.mp3", "F#6": "Fs6.mp3",
+      A6: "A6.mp3", C7: "C7.mp3", "D#7": "Ds7.mp3", "F#7": "Fs7.mp3",
+      A7: "A7.mp3", C8: "C8.mp3"
     },
     baseUrl: "https://tonejs.github.io/audio/salamander/",
     onload: () => {
@@ -985,7 +1010,6 @@ const startPlayingNotes = () => {
         if (musicComponent.value?.start) {
           musicComponent.value.start()
         }
-
       }, score)
       part.start(0)
       Tone.Transport.start()
@@ -993,11 +1017,36 @@ const startPlayingNotes = () => {
   }).toDestination()
 }
 
+
 const stopPlayingNotes = () => {
   nowPlaying.value = false
   musicComponent.value?.stop()
   Tone.Transport.stop()
   Tone.Transport.cancel()
+}
+
+const onClickAddTrack = () => {
+  music.value.tracks.push({
+    name: generateRandomLetters(8),
+    durations: '',
+    durationRules: music.value.durationsRules,
+    midiNoteNumbers: '',
+    midiNoteNumbersRules: music.value.midiNoteNumbersRules,
+    color: getRandomHexColor()
+  })
+}
+
+const getRandomHexColor = () =>{
+  return '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
+}
+
+const generateRandomLetters = (length) => {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  let result = ''
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return result
 }
 
 const saveToFile = () => {
@@ -1058,10 +1107,13 @@ const onFileSelected = (file) => {
 }
 
 const setTimeSeriesToMusicElement = () => {
-  if(analyse.value.selectedMusicElement === 'midiNoteNumbers'){
-    music.value.midiNoteNumbers = analyse.value.timeSeries
+  const track = music.value.tracks.find(t => t.name === analyse.value.selectedTrackName)
+  if (!track) return
+
+  if (analyse.value.selectedMusicElement === 'midiNoteNumbers') {
+    track.midiNoteNumbers = analyse.value.timeSeries
   }else if(analyse.value.selectedMusicElement === 'durations'){
-    music.value.durations = analyse.value.timeSeries
+    track.durations = analyse.value.timeSeries
   }
 }
 
@@ -1087,29 +1139,33 @@ const generateMidi = () => {
   midi.header.setTempo(music.value.bpm)
 
   // トラックを追加
-  const track = midi.addTrack()
-  music.value.ticksPerBeat = music.value.ticksPerBeatDefault
-  music.value.secondsPerTick = (60 / music.value.bpm) / music.value.ticksPerBeat
-  const ticksPer16th = music.value.ticksPerBeat / 8 // 32分音符 = 60 ticks
-  let currentTick = 0
-  const durations = music.value.durations.split(',')
-  const midiNoteNumbers = music.value.midiNoteNumbers.split(',')
-  // ノートの数だけループ
-  for (let i = 0; i < durations.length; i++) {
-    const lengthIn16ths = parseInt(durations[i])         // 1〜32 の整数
-    const noteNumber = parseInt(midiNoteNumbers[i])      // MIDI ノート番号
+  music.value.tracks.forEach(track => {
+    const midiTrack = midi.addTrack()
+    music.value.ticksPerBeat = music.value.ticksPerBeatDefault
+    music.value.secondsPerTick = (60 / music.value.bpm) / music.value.ticksPerBeat
+    const ticksPer16th = music.value.ticksPerBeat / 8 // 32分音符 = 60 ticks
+    let currentTick = 0
+    const durations = track.durations.split(',')
+    const midiNoteNumbers = track.midiNoteNumbers.split(',')
+    // ノートの数だけループ
+    for (let i = 0; i < durations.length; i++) {
+      const lengthIn16ths = parseInt(durations[i])         // 1〜32 の整数
+      const noteNumber = parseInt(midiNoteNumbers[i])      // MIDI ノート番号
 
-    const durationTicks = lengthIn16ths * ticksPer16th     // 実際のティック長さ
+      const durationTicks = lengthIn16ths * ticksPer16th     // 実際のティック長さ
 
-    track.addNote({
-      midi: noteNumber,
-      time: currentTick / music.value.ticksPerBeat,  // 秒ではなく「拍」で指定（Tone.js互換）
-      duration: durationTicks / music.value.ticksPerBeat, // 同上
-      velocity: 0.8 // 任意の音量（0〜1）
-    })
+      midiTrack.addNote({
+        midi: noteNumber,
+        time: currentTick / music.value.ticksPerBeat,  // 秒ではなく「拍」で指定（Tone.js互換）
+        duration: durationTicks / music.value.ticksPerBeat, // 同上
+        velocity: 0.8 // 任意の音量（0〜1）
+      })
+      midiTrack['color'] = track.color // トラックの色を設定
 
-    currentTick += durationTicks
-  }
+      currentTick += durationTicks
+    }
+  })
+
   music.value.midiData = midi
 
 
