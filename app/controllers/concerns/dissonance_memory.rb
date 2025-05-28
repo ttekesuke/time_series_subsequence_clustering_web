@@ -1,23 +1,10 @@
 module DissonanceMemory
-  module Loader
-    def self.load_once!
-      return if defined?(@@loaded) && @@loaded
-
-      require 'pycall/import'
-      PyCall.sys.path.append('lib/python')
-      @@loaded = true
-    rescue => e
-      Rails.logger.error "[PyCall Loader] Failed: #{e.class} - #{e.message}"
-      raise e
-    end
-  end
+  require_relative '../../../lib/dissonance/dissonance'
+  include Dissonance
+  include DissonanceTuning
   module STMStateless
-    ::DissonanceMemory::Loader.load_once!
-    extend PyCall::Import
-    pyimport :dissonance_bridge
-
     def self.process(notes, onset, memory, memory_span: 1.5, memory_weight: 1.0, n_partials: 10)
-      d_current = dissonance_bridge.compute_dissonance(notes, n_partials).to_f
+      d_current = DissonanceMemory.calculate_dissonance(notes, n_partials).to_f
 
       d_memory = 0.0
       new_memory = []
@@ -29,7 +16,7 @@ module DissonanceMemory
 
         d_past = event[:dissonance]
         merged = notes + event[:notes]
-        d_merged = dissonance_bridge.compute_dissonance(merged, n_partials).to_f
+        d_merged = DissonanceMemory.calculate_dissonance(merged, n_partials).to_f
 
         interference = d_merged - d_current - d_past
         d_memory += w * memory_weight * interference
@@ -46,5 +33,16 @@ module DissonanceMemory
       new_memory << current_event
       return d_current + d_memory, new_memory
     end
+  end
+
+  def self.calculate_dissonance(notes, n_partials = 10)
+    # 1. ピッチ（MIDI番号）の配列を周波数に変換（例: C4, E4, G4）
+    freqs = DissonanceTuning.pitch_to_freq(notes)  # => [261.63, 329.63, 391.99] など
+
+    # 2. 各周波数に対して倍音をつける（10個の部分音）
+    freqs_with_partials, amps = DissonanceTuning.harmonic_tone(freqs, n_partials: n_partials)
+
+    # 3. 不協和度を計算
+    Dissonance.dissonance(freqs_with_partials, amps)
   end
 end

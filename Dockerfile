@@ -2,21 +2,11 @@ FROM ruby:3.2.2
 
 # 必要なパッケージをインストール（不要なキャッシュを削除）
 RUN apt-get update -qq && \
-    apt-get install -y --no-install-recommends build-essential libpq-dev nodejs vim curl python3 python3-pip python3-venv  libpython3-dev && \
+    apt-get install -y --no-install-recommends build-essential libpq-dev nodejs vim curl && \
     curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \
     echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list && \
     apt-get update && apt-get install -y --no-install-recommends yarn && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# 仮想環境を作って dissonant を安全にインストール
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install --upgrade pip setuptools
-RUN pip install dissonant numpy
-
-
-# PyCallにPythonパスを明示（pycallはこの環境変数を見る）
-ENV PYTHON=/usr/bin/python3
 
 WORKDIR /app
 
