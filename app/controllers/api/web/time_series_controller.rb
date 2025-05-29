@@ -48,17 +48,23 @@ class Api::Web::TimeSeriesController < ApplicationController
     merge_threshold_ratio = generate_params[:merge_threshold_ratio].to_d
     candidate_min_master = generate_params[:range_min].to_i
     candidate_max_master = generate_params[:range_max].to_i
-    dissonance_range = generate_params[:dissonance_range].to_i
     min_window_size = 2
-    use_dissonance = generate_params[:use_dissonance].present? && generate_params[:use_dissonance] == true
+    selected_use_musical_feature = generate_params[:selected_use_musical_feature]
     dissonance_results = []
     dissonance_current_time = 0.to_d
     dissonance_short_term_memory = []
     time_unit = 0.125
     # 不協和度の指定があれば現状の不協和度を算出
-    if generate_params[:dissonance_transition].present? && generate_params[:duration_transition].present?
-      dissonance_transition = generate_params[:dissonance_transition].split(',').map(&:to_i)
-      duration_transition = generate_params[:duration_transition].split(',').map(&:to_i)
+    if generate_params[:selected_use_musical_feature].present? && generate_params[:selected_use_musical_feature] === 'dissonancesOutline'
+      dissonance_transition = generate_params[:dissonance][:transition].split(',').map(&:to_i)
+      dissonance_duration_transition = generate_params[:dissonance][:duration_transition].split(',').map(&:to_i)
+      dissonance_range = generate_params[:dissonance][:range].to_i
+
+    end
+    # 音価の概形の指定があればで選択肢の候補の限定に使う
+    if generate_params[:selected_use_musical_feature].present? && generate_params[:selected_use_musical_feature] === 'durationsOutline'
+      duration_outline_transition = generate_params[:duration][:outline_transition].split(',').map(&:to_i)
+      duration_outline_range = generate_params[:duration][:outline_range].to_i
     end
     # ユーザ指定の冒頭の時系列データを解析しクラスタを作成する
     cluster_id_counter, clusters, tasks = initialize_clusters(min_window_size)
@@ -75,8 +81,8 @@ class Api::Web::TimeSeriesController < ApplicationController
           tasks,
         )
       end
-      if use_dissonance
-        duration = duration_transition[data_index]
+      if selected_use_musical_feature === 'dissonancesOutline'
+        duration = dissonance_duration_transition[data_index]
         dissonance_current_time += duration * time_unit.to_d
         dissonance, dissonance_short_term_memory = STMStateless.process([elm], dissonance_current_time, dissonance_short_term_memory)
         dissonance_results << dissonance
@@ -94,8 +100,8 @@ class Api::Web::TimeSeriesController < ApplicationController
       current_dissonance_short_term_memory = dissonance_short_term_memory.dup
       in_range = []
 
-      if use_dissonance
-        dissonance_current_time += duration_transition[rank_index] * time_unit.to_d
+      if selected_use_musical_feature === 'dissonancesOutline'
+        dissonance_current_time += dissonance_duration_transition[rank_index] * time_unit.to_d
 
         dissonance_rank = dissonance_transition[rank_index]
         results_in_candidates = candidates.map do |note|
@@ -113,6 +119,12 @@ class Api::Web::TimeSeriesController < ApplicationController
         in_range = sorted_results_in_candidates[from..to]
         # 候補を減らす
         candidates = in_range.map { |r| r[:note] }
+      elsif selected_use_musical_feature === 'durationsOutline'
+        duration_outline_rank = duration_outline_transition[rank_index]
+        # 候補を選ぶ
+        from = [duration_outline_rank - duration_outline_range, 0].max
+        to = [duration_outline_rank + duration_outline_range, candidates.size - 1].min
+        candidates = candidates[from..to]
       end
 
       # 実データの候補からベストマッチを得るために評価値を得る
@@ -150,7 +162,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       tasks = tasks_candidates[result_index_in_candidates]
       # 選択されたデータを使って不協和度を残す
 
-      if use_dissonance
+      if selected_use_musical_feature === 'dissonancesOutline'
         best = in_range.find{ |r| r[:note] == result }
         dissonance_short_term_memory = best[:memory]
         dissonance_results << best[:dissonance]
@@ -393,10 +405,16 @@ class Api::Web::TimeSeriesController < ApplicationController
         :first_elements,
         :merge_threshold_ratio,
         :job_id,
-        :dissonance_transition,
-        :duration_transition,
-        :dissonance_range,
-        :use_dissonance
+        :selected_use_musical_feature,
+        dissonance: [
+          :transition,
+          :duration_transition,
+          :range
+        ],
+        duration: [
+          :outline_transition,
+          :outline_range
+        ],
       )
     end
 

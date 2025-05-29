@@ -165,6 +165,15 @@
                 </v-card-title>
                 <v-card-text>
                   <v-row>
+                    <v-col cols="3">
+                      <v-select
+                        label="use musical-feature"
+                        :items="generate.useMusicalFeatures"
+                        v-model="generate.selectedUseMusicalFeature"
+                      ></v-select>
+                    </v-col>
+                  </v-row>
+                  <v-row>
                     <v-col>
                       <v-textarea
                         placeholder="please set the first elements of the time series. (like 0,1,2,3,4,5)"
@@ -176,44 +185,59 @@
                       ></v-textarea>
                     </v-col>
                   </v-row>
-                  <v-row>
-                    <v-col>
-                      <v-checkbox
-                        v-model="generate.useDissonance"
-                        label="use dissonance-feature(for midi-note)"
-                      ></v-checkbox>
-                    </v-col>
-                  </v-row>
-                  <v-row v-if="generate.useDissonance">
-                    <v-col cols="10">
-                      <v-textarea
-                        placeholder="please set the dissonance transition. (like 1,2,3,4,5)"
-                        v-model='generate.dissonanceTransition'
-                        label="dissonance transition(optional)"
-                        rows="1"
-                        :rules="generate.dissonanceTransitionRules"
-                      ></v-textarea>
-                    </v-col>
-                    <v-col cols="2">
-                      <v-text-field
-                        label="dissonance range"
-                        type="number"
-                        v-model="generate.dissonanceRange"
-                        min="1"
-                      ></v-text-field>
-                    </v-col>
-                  </v-row>
-                  <v-row v-if="generate.useDissonance">
-                    <v-col>
-                      <v-textarea
-                        placeholder="please set the duration transition. (like 1,1,2,1,1,2)"
-                        v-model='generate.durationTransition'
-                        label="duration transition"
-                        rows="1"
-                        :rules="durationTransitionRules"
-                      ></v-textarea>
-                    </v-col>
-                  </v-row>
+                  <template v-if="generate.selectedUseMusicalFeature === 'dissonancesOutline'">
+                    <v-row>
+                      <v-col cols="10">
+                        <v-textarea
+                          placeholder="please set the dissonance transition. (like 1,2,3,4,5)"
+                          v-model='generate.dissonance.transition'
+                          label="dissonance transition(optional)"
+                          rows="1"
+                          :rules="generate.dissonance.transitionRules"
+                        ></v-textarea>
+                      </v-col>
+                      <v-col cols="2">
+                        <v-text-field
+                          label="dissonance range"
+                          type="number"
+                          v-model="generate.dissonance.range"
+                          min="1"
+                        ></v-text-field>
+                      </v-col>
+                    </v-row>
+                    <v-row>
+                      <v-col>
+                        <v-textarea
+                          placeholder="please set the duration transition. (like 1,1,2,1,1,2)"
+                          v-model='generate.dissonance.durationTransition'
+                          label="duration transition"
+                          rows="1"
+                          :rules="durationTransitionRules"
+                        ></v-textarea>
+                      </v-col>
+                    </v-row>
+                  </template>
+                  <template v-if="generate.selectedUseMusicalFeature === 'durationsOutline'">
+                    <v-row>
+                      <v-col cols="10">
+                        <v-textarea
+                          placeholder="please set the duration outline-transition. (like 11,11,11,0,0,0,0,0)"
+                          v-model='generate.duration.outlineTransition'
+                          label="duration outline-transition(optional)"
+                          rows="1"
+                          :rules="generate.duration.outlineRules"
+                        ></v-textarea>
+                      </v-col>
+                      <v-col cols="2">
+                        <v-text-field
+                          label="duration range"
+                          type="number"
+                          v-model="generate.duration.outlineRange"
+                          min="1"
+                        ></v-text-field>
+                      </v-col>
+                    </v-row>
+                  </template>
                   <v-row>
                     <v-col>
                       <v-textarea
@@ -604,16 +628,29 @@ const generate = ref({
     v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
     v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
   ],
-  useDissonance: false,
-  dissonanceTransition: '',
-  dissonanceTransitionRules: [
-    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
-    v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers',
-    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-    v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
-  ],
-  durationTransition: '',
-  dissonanceRange: 2,
+  useMusicalFeatures: ['', 'durationsOutline', 'dissonancesOutline'],
+  selectedUseMusicalFeature: '',
+  dissonance: {
+    transition: '',
+    transitionRules: [
+      v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
+      v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers',
+      v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
+      v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
+    ],
+    range: 2,
+    durationTransition: '',
+  },
+  duration: {
+    outlineTransition: '',
+    outlineRange: 2,
+    outlineRules: [
+      v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
+      v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers',
+      v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
+      v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
+    ],
+  },
   loading: false,
   valid: false,
   mergeThresholdRatio: 0.02,
@@ -871,9 +908,16 @@ const generateTimeseries = () => {
       first_elements: generate.value.firstElements,
       merge_threshold_ratio: generate.value.mergeThresholdRatio,
       job_id: jobId.value,
-      dissonance_transition: generate.value.dissonanceTransition,
-      duration_transition: generate.value.durationTransition,
-      use_dissonance: generate.value.useDissonance,
+      dissonance: {
+        transition: generate.value.dissonance.transition,
+        duration_transition: generate.value.dissonance.durationTransition,
+        range: generate.value.dissonance.range,
+      },
+      duration: {
+        outline_transition: generate.value.duration.outlineTransition,
+        outline_range: generate.value.duration.outlineRange,
+      },
+      selected_use_musical_feature: generate.value.selectedUseMusicalFeature,
     }
   }
   axios.post('/api/web/time_series/generate', data)

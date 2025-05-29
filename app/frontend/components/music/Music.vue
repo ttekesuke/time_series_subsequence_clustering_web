@@ -9,10 +9,6 @@ const props = defineProps<{
 const canvas = ref<HTMLCanvasElement | null>(null)
 const isPlaying = ref(false)
 const startTime = ref(0)
-const scrollOffset = ref(0)
-
-
-
 const canvasWidth = 3000  // 長めに確保
 const canvasHeight = 800
 const noteHeight = 8
@@ -75,8 +71,6 @@ const drawPianoRoll = (scrollTime) => {
   ctx.lineTo(barOffsetX, canvasHeight)
   ctx.stroke()
 }
-
-
 
 const animate = () => {
   if (!isPlaying.value) return
