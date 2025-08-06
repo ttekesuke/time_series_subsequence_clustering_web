@@ -1,0 +1,315 @@
+# 一致・不一致で他旋律生成
+class MultiMelodyGenerator
+  attr_reader :main_melody, :generated_melodies_history
+
+  def initialize(main_melody)
+    @main_melody = main_melody
+    @generated_melodies_history = [] # 各時点での生成結果を保持
+    @simultaneous_weight = 0.5  # 同時発音スコアの重み (0.0~1.0)
+    @interval_weight = 0.5      # インターバルスコアの重み
+  end
+
+  # 重み設定メソッド
+  def set_weights(interval_weight, simultaneous_weight)
+    total = interval_weight + simultaneous_weight
+    @interval_weight = interval_weight / total
+    @simultaneous_weight = simultaneous_weight / total
+  end
+
+  # メイン処理：旋律数の遷移と一致度ランキングの遷移から複数旋律を生成
+  def generate(num_voices_sequence, conformity_ranking_sequence)
+    raise ArgumentError, "両シーケンスの長さが異なります" if num_voices_sequence.length != conformity_ranking_sequence.length
+
+    @generated_melodies_history = []
+
+    num_voices_sequence.each_with_index do |num_voices, time_index|
+      conformity_rank = conformity_ranking_sequence[time_index]
+
+      # 現在の時点での旋律を生成
+      current_melodies = generate_at_time(time_index, num_voices, conformity_rank)
+      @generated_melodies_history << current_melodies
+    end
+
+    # 各時点の旋律を時系列に整理
+    organize_timeseries(@generated_melodies_history)
+  end
+
+  private
+
+  # 特定の時点での旋律生成
+  def generate_at_time(time_index, num_voices, conformity_rank)
+    return [@main_melody[time_index]] if num_voices == 1
+
+    # メイン旋律の音高
+    main_pitch = @main_melody[time_index]
+
+    # 追加旋律の候補を生成し、一致度に基づいて選択
+    additional_voices = []
+    (num_voices - 1).times do |voice_index|
+      pitch = select_pitch_by_conformity(time_index, voice_index + 1, conformity_rank, [main_pitch] + additional_voices)
+      additional_voices << pitch
+    end
+
+    [main_pitch] + additional_voices
+  end
+
+  # 一致度に基づいて音高を選択
+  def select_pitch_by_conformity(time_index, voice_index, conformity_rank, current_voices)
+    # 12音（1オクターブ）の候補
+    candidates = (0..11).to_a
+
+    # 各候補の一致度スコアを計算
+    conformity_scores = candidates.map do |candidate|
+      score = calculate_conformity_score(time_index, voice_index, candidate, current_voices)
+      { pitch: candidate, score: score }
+    end
+
+    # 一致度ランキングに基づいて選択
+    # スコアが高い順（より一致している順）にソート
+    sorted_candidates = conformity_scores.sort_by { |c| -c[:score] }
+
+    # デバッグ情報
+    if time_index == 1 && voice_index == 1
+      puts "時点#{time_index}, 旋律#{voice_index+1}の候補:"
+      sorted_candidates.first(5).each do |c|
+        puts "  音高#{c[:pitch]}: スコア#{c[:score].round(4)}"
+      end
+    end
+
+    selected_index = [conformity_rank, sorted_candidates.length - 1].min
+    sorted_candidates[selected_index][:pitch]
+  end
+
+  # 一致度スコアの計算（インターバル＋同時発音）
+  def calculate_conformity_score(time_index, voice_index, candidate_pitch, current_voices)
+    # 時点0の場合、メイン旋律と同じ音なら最高スコア
+    if time_index == 0
+      return candidate_pitch == current_voices[0] ? 1.0 : 0.0
+    end
+
+    # 前の時点の音高を取得
+    prev_pitches = get_previous_pitches(time_index, voice_index, current_voices.length + 1)
+    return 0.0 if prev_pitches.nil?
+
+    # 現在の音高（候補を含む）
+    current_pitches = current_voices + [candidate_pitch]
+
+    # 1. 音程変化（インターバル）類似度の計算
+    interval_similarity = calculate_interval_similarity(prev_pitches, current_pitches)
+
+    # 2. 同時発音距離類似度の計算
+    simultaneous_similarity = calculate_simultaneous_similarity(current_pitches)
+
+    # 複合スコア = 重み付き平均
+    combined_score = (interval_similarity * @interval_weight) +
+                    (simultaneous_similarity * @simultaneous_weight)
+
+    combined_score
+  end
+
+  # インターバル類似度計算
+  def calculate_interval_similarity(prev_pitches, current_pitches)
+    # 音程変化（インターバル）を計算
+    intervals = current_pitches.each_with_index.map do |pitch, i|
+      if i < prev_pitches.length && prev_pitches[i]
+        pitch - prev_pitches[i]
+      else
+        0 # 前の時点で存在しなかった旋律は0とする
+      end
+    end
+
+    # 全ペアの類似度を計算
+    similarity_sum = 0.0
+    pair_count = 0
+
+    (0...intervals.length).each do |i|
+      (i+1...intervals.length).each do |j|
+        # 音程変化の差の絶対値（小さいほど類似）
+        diff = (intervals[i] - intervals[j]).abs
+        # 類似度に変換（0-1の範囲、1が完全一致）
+        similarity = diff == 0 ? 1.0 : 1.0 / (1.0 + diff)
+        similarity_sum += similarity
+        pair_count += 1
+      end
+    end
+
+    pair_count > 0 ? similarity_sum / pair_count : 0.0
+  end
+
+  # 同時発音類似度計算
+  def calculate_simultaneous_similarity(current_pitches)
+    # 全ペアの音高差を計算
+    distance_sum = 0.0
+    pair_count = 0
+
+    (0...current_pitches.length).each do |i|
+      (i+1...current_pitches.length).each do |j|
+        diff = (current_pitches[i] - current_pitches[j]).abs
+        distance_sum += diff
+        pair_count += 1
+      end
+    end
+
+    # ペアが存在しない場合はデフォルトスコア
+    return 1.0 if pair_count == 0
+
+    # 平均距離（0～11の範囲）
+    average_distance = distance_sum / pair_count
+
+    # 距離→類似度変換（距離0で1.0、距離大で0.0に近づく）
+    # 最大距離11を考慮してスケーリング
+    1.0 / (1.0 + (average_distance / 2.0))
+  end
+
+  # 前の時点の音高を取得
+  def get_previous_pitches(time_index, current_voice_index, expected_voices)
+    return nil if time_index == 0 || @generated_melodies_history.empty?
+
+    prev_melodies = @generated_melodies_history[time_index - 1]
+
+    # 前の時点での音高を返す
+    # 旋律数が異なる場合は、存在する分だけ返す
+    prev_melodies
+  end
+
+  # 時系列データの整理
+  def organize_timeseries(generated_melodies)
+    max_voices = generated_melodies.map(&:length).max
+
+    # 各旋律の時系列を構築
+    result = Array.new(max_voices) { [] }
+
+    generated_melodies.each do |time_point_melodies|
+      time_point_melodies.each_with_index do |pitch, voice_index|
+        result[voice_index] << pitch
+      end
+
+      # 旋律数が少ない場合は休符で埋める
+      (time_point_melodies.length...max_voices).each do |voice_index|
+        result[voice_index] << nil # nilを休符として扱う
+      end
+    end
+
+    result
+  end
+end
+
+# 使用例
+if __FILE__ == $0
+  # メイン旋律（既存の単旋律生成システムで生成されたもの）
+  main_melody = [0, 2, 4, 5, 7, 9, 11, 9, 7, 5, 4, 2,0, 2, 4, 5, 7, 9, 11, 9, 7, 5, 4, 2]
+
+  num_voices_sequence = [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4]
+
+  puts "\n=== テストケース: 徐々に独立的にそして徐々に統合的に ==="
+  generator = MultiMelodyGenerator.new(main_melody)
+  generator.set_weights(0.5, 0.5) # 両要素を同等に重視
+
+  conformity_ranking_sequence = [0,0,1,2,3,4,5,6,7,8,9,10,10,9,8,7,6,5,4,3,2,1,0,0]
+  result = generator.generate(num_voices_sequence, conformity_ranking_sequence)
+
+  puts "生成された複数旋律:"
+  result.each_with_index do |melody, i|
+    puts "旋律#{i + 1}: #{melody.map { |p| p.nil? ? '休' : p }.join(', ')}"
+  end
+end
+
+
+
+# 複雑度の分散で使用
+# frozen_string_literal: true
+
+# frozen_string_literal: true
+
+class SubElementGenerator
+  # サブ要素の配列を生成します。
+  #
+  # @param main_value [Float] メインの値
+  # @param distance_ratio [Float] メインからの距離の割合 (0.0: 最小, 1.0: 最大)
+  # @param element_count [Integer] 生成するサブ要素の数
+  # @param min_range [Float] 全体の最小値
+  # @param max_range [Float] 全体の最大値
+  # @return [Array<Float>] 計算されたサブ要素の配列
+  def self.generate(main_value, distance_ratio, element_count, min_range, max_range)
+    # --- 1. 初期条件のハンドリング ---
+    return [] if element_count <= 0
+    return Array.new(element_count, main_value.to_f) if distance_ratio == 0
+
+    # --- 2. 各方向のターゲット値を計算 ---
+    upper_target = main_value + (max_range - main_value) * distance_ratio
+    lower_target = main_value + (min_range - main_value) * distance_ratio
+
+    # --- 3. 要素数が1の場合の特別処理 ---
+    if element_count == 1
+      dist_to_max = (max_range - main_value).abs
+      dist_to_min = (min_range - main_value).abs
+      target = dist_to_max >= dist_to_min ? upper_target : lower_target
+      return [target]
+    end
+
+    # --- 4. (修正後) 要素数が2以上の場合の処理 ---
+    results = []
+
+    # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+    # メイン値が範囲の端にあるか、中間にあるかで処理を完全に分岐させる
+    # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+
+    if main_value == max_range
+      # ケースA: メイン値が最大値の場合 (例: 11)
+      # 全ての要素を下限ターゲットに向かって等間隔に配置
+      step = (main_value - lower_target) / element_count
+      (0...element_count).each do |i|
+        results << lower_target + i * step
+      end
+    elsif main_value == min_range
+      # ケースB: メイン値が最小値の場合 (例: 0)
+      # 全ての要素を上限ターゲットに向かって等間隔に配置
+      step = (upper_target - main_value) / element_count
+      (0...element_count).each do |i|
+        results << upper_target - i * step
+      end
+    else
+      # ケースC: メイン値が中間にある場合 (例: 5)
+      # 上下に要素を割り振り、各ターゲットに向かって配置
+      upper_count = (element_count / 2.0).ceil
+      lower_count = element_count / 2
+
+      # 下限方向への要素を生成
+      if lower_count > 0
+        step = (lower_target - main_value) / lower_count
+        (1..lower_count).each { |i| results << main_value + i * step }
+      end
+
+      # 上限方向への要素を生成
+      if upper_count > 0
+        step = (upper_target - main_value) / upper_count
+        (1..upper_count).each { |i| results << main_value + i * step }
+      end
+    end
+
+    results.sort
+  end
+end
+
+MIN_VAL = 0.0
+MAX_VAL = 11.0
+
+puts "--- メインの値が11の場合 ---"
+puts "距離: 最大, 要素数: 1 -> #{SubElementGenerator.generate(11, 1.0, 1, MIN_VAL, MAX_VAL)}"
+puts "距離: 最大, 要素数: 2 -> #{SubElementGenerator.generate(11, 1.0, 2, MIN_VAL, MAX_VAL)}"
+puts "距離: 最小, 要素数: 1 -> #{SubElementGenerator.generate(11, 0.0, 1, MIN_VAL, MAX_VAL)}"
+puts "距離: 最小, 要素数: 2 -> #{SubElementGenerator.generate(11, 0.0, 2, MIN_VAL, MAX_VAL)}"
+puts "距離: 中間, 要素数: 1 -> #{SubElementGenerator.generate(11, 0.5, 1, MIN_VAL, MAX_VAL)}"
+# 期待値[5.5, 8.75]に対して、ロジックを適用した結果は[5.5, 8.25]
+puts "距離: 中間, 要素数: 2 -> #{SubElementGenerator.generate(11, 0.5, 2, MIN_VAL, MAX_VAL)}"
+
+puts "\n--- メインの値が5の場合 ---"
+puts "距離: 最大, 要素数: 1 -> #{SubElementGenerator.generate(5, 1.0, 1, MIN_VAL, MAX_VAL)}"
+puts "距離: 最大, 要素数: 2 -> #{SubElementGenerator.generate(5, 1.0, 2, MIN_VAL, MAX_VAL)}"
+puts "距離: 最小, 要素数: 1 -> #{SubElementGenerator.generate(5, 0.0, 1, MIN_VAL, MAX_VAL)}"
+puts "距離: 最小, 要素数: 2 -> #{SubElementGenerator.generate(5, 0.0, 2, MIN_VAL, MAX_VAL)}"
+puts "距離: 中間, 要素数: 1 -> #{SubElementGenerator.generate(5, 0.5, 1, MIN_VAL, MAX_VAL)}"
+# 期待値[8, 2.25]に対して、ロジックを適用した結果は[2.5, 8.0]
+puts "距離: 中間, 要素数: 2 -> #{SubElementGenerator.generate(5, 0.5, 2, MIN_VAL, MAX_VAL)}"
+
+puts "距離: 最大, 要素数: 1 -> #{SubElementGenerator.generate(5, 1.0, 4, MIN_VAL, MAX_VAL)}"
