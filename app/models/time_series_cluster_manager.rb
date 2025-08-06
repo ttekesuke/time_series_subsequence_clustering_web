@@ -150,7 +150,7 @@ class TimeSeriesClusterManager
 
     ratio_in_max_distance = max_distance.zero? ? 0 : min_distance / max_distance
 
-    if ratio_in_max_distance <= @merge_threshold_ratio
+    if best_cluster && ratio_in_max_distance <= @merge_threshold_ratio
       best_cluster[:si] << latest_start unless best_cluster[:si].include?(latest_start)
       @tasks << [[best_cluster_id], @min_window_size]
     else
@@ -165,6 +165,7 @@ class TimeSeriesClusterManager
     (0...length).map { |i| sequences.sum { |s| s[i] } / sequences.size.to_f }
   end
 
+  public
   def clusters_to_timeline(clusters, min_window_size)
     # 完成した木構造のクラスタを、表示用にフラットな構造に変換する。
     stack = clusters.map { |cluster_id, cluster| [min_window_size, cluster_id, cluster] }

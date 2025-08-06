@@ -1,7 +1,7 @@
 class Api::Web::TimeSeriesController < ApplicationController
-  include TimeSeriesAnalyser
   include MusicAnalyser
   include DissonanceMemory
+  include StatisticsCalculator
 
   def analyse
     job_id = analyse_params[:job_id]
@@ -18,7 +18,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     manager = TimeSeriesClusterManager.new(data, merge_threshold_ratio, min_window_size)
     manager.process_data
 
-    timeline = clusters_to_timeline(manager.clusters, min_window_size)
+    timeline = manager.clusters_to_timeline(manager.clusters, min_window_size)
 
     broadcast_done(job_id)
     render json: {
@@ -149,7 +149,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     chart_elements_for_complexity = Array.new(user_set_results.length) { |index| [index.to_s, nil, nil, nil] }
 
-    timeline = clusters_to_timeline(manager.clusters, min_window_size)
+    timeline = manager.clusters_to_timeline(manager.clusters, min_window_size)
 
     broadcast_done(job_id)
 
@@ -166,21 +166,14 @@ class Api::Web::TimeSeriesController < ApplicationController
   def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank, candidate_min_master, candidate_max_master)
     temporary_results = results.dup
     temporary_results << candidate
-    temporary_clusters = Marshal.load(Marshal.dump(clusters))
+    manager = TimeSeriesClusterManager.new(temporary_results, merge_threshold_ratio, min_window_size)
+    manager.clusters = Marshal.load(Marshal.dump(clusters))
+    manager.cluster_id_counter = cluster_id_counter
+    manager.tasks = tasks.dup
+    # Only cluster the last data point, not the whole series
+    manager.send(:clustering_subsequences_incremental, temporary_results.length - 1)
 
-    temporary_cluster_id_counter = cluster_id_counter
-    temporary_tasks = tasks.dup
-    temporary_clusters, temporary_tasks, temporary_cluster_id_counter = clustering_subsequences_incremental(
-      temporary_results,
-      merge_threshold_ratio,
-      temporary_results.length - 1,
-      min_window_size,
-      temporary_clusters,
-      temporary_cluster_id_counter,
-      temporary_tasks,
-    )
-
-    clusters_each_window_size = transform_clusters(temporary_clusters, min_window_size)
+    clusters_each_window_size = transform_clusters(manager.clusters, min_window_size)
     sum_distances_in_all_window = 0
     sum_similar_subsequences_quantities = 0
     quadratic_integer_array = create_quadratic_integer_array(0, (candidate_max_master - candidate_min_master - rank) * temporary_results.length, temporary_results.length)
@@ -209,7 +202,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         }.sum
     end
 
-    [sum_distances_in_all_window, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks]
+    [sum_distances_in_all_window, sum_similar_subsequences_quantities, manager.clusters, manager.cluster_id_counter, manager.tasks]
   end
 
 
