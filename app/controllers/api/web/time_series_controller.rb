@@ -106,7 +106,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
       # 実データの候補からベストマッチを得るために評価値を得る
       sum_average_distances_all_window_candidates, sum_similar_subsequences_quantities, clusters_candidates, cluster_id_counter_candidates, tasks_candidates =
-        find_best_candidate(
+        get_calculated_value_each_candidate(
           results,
           candidates,
           merge_threshold_ratio,
@@ -206,7 +206,7 @@ class Api::Web::TimeSeriesController < ApplicationController
   end
 
 
-  def find_best_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank, candidate_min_master, candidate_max_master)
+  def get_calculated_value_each_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank, candidate_min_master, candidate_max_master)
     average_distances_all_window_candidates = []
     sum_similar_subsequences_quantities_all_window_candidates = []
     clusters_candidates = []
