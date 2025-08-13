@@ -259,15 +259,6 @@ class Api::Web::TimeSeriesController < ApplicationController
     [average_distances_all_window_candidates, sum_similar_subsequences_quantities_all_window_candidates, clusters_candidates, cluster_id_counter_candidates, tasks_candidates]
   end
 
-  def initialize_clusters(min_window_size)
-    cluster_id_counter = 0
-    clusters = { cluster_id_counter => { si: [0], cc: {} } }
-    cluster_id_counter += 1
-    tasks = []
-
-    [cluster_id_counter, clusters, tasks]
-  end
-
   # クラスタを、階層（窓幅）ごとにまとめたデータにして返却
   def transform_clusters(clusters, min_window_size)
     clusters_each_window_size = {}
@@ -287,17 +278,6 @@ class Api::Web::TimeSeriesController < ApplicationController
     end
 
     clusters_each_window_size
-  end
-
-  def find_group_index(array_size, split_count, value)
-    group_boundaries = (0..split_count).map { |i| (i * array_size.to_f / split_count).round }
-
-    group_boundaries.each_cons(2).with_index do |(start_bound, end_bound), index|
-      return index if value >= start_bound && value < end_bound
-    end
-
-    # valueが最後のグループに属する場合
-    split_count - 1
   end
 
   def find_complex_candidate(criteria, converted_rank)
@@ -335,26 +315,6 @@ class Api::Web::TimeSeriesController < ApplicationController
     sorted_candidates[rank_index]&.first
   end
 
-
-  def windowing_dominance_hash(dominance_hash, window_size = 100)
-    # 各キー（0〜11）ごとの時系列データを取得
-    time_series = dominance_hash.values.transpose
-    smoothed_values = []
-    normalized_data = time_series.map.with_index do |values, i|
-      # 直近 `window_size` 個の平均を計算（スムージング）
-      smoothed_values = values.map.with_index do |_, idx|
-        start_idx = [0, i - window_size + 1].max
-        history = time_series[start_idx..i].map { |row| row[idx] }
-        history.sum.to_f / history.size
-      end
-      smoothed_values
-    end
-
-    # 元の dominance_hash のキーにマッピング
-    keys = dominance_hash.keys
-    keys.zip(normalized_data.transpose).to_h
-  end
-
   def create_quadratic_integer_array(start_val, end_val, count)
     result = []
 
@@ -373,13 +333,6 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     result
   end
-
-  def convert_rank(rank, candidate_count, max_rank = 11)
-    return 0 if candidate_count <= 0
-    scaled = (rank.to_f / max_rank * (candidate_count - 1)).round
-    scaled.clamp(0, candidate_count - 1)
-  end
-
 
   def analyse_params
     params.require(:analyse).permit(
