@@ -397,7 +397,6 @@
                     <v-col cols="2">
                       <v-btn @click="generateMidi">generate</v-btn>
                     </v-col>
-
                   </v-row>
                   <template v-for='track in music.tracks'>
                     <v-row>
@@ -486,8 +485,9 @@
           <v-col>
             <div class='text-h6 ml-3 mb-2'>
               <v-row>
-                <v-col cols="1">
-                  <span>Timeseries</span>
+                <v-col cols="3">
+                  <span class="mr-2">Timeseries</span>
+                  <small v-if="analyse.processingTime !== null">Processing Time: {{ analyse.processingTime }} ms </small>
                 </v-col>
                 <v-col cols="2">
                   <v-btn @click="saveToFile" class="d-flex align-center fill-height">
@@ -571,6 +571,7 @@ const analyse = ref<{
   musicElements: string[];
   selectedMusicElement: string;
   selectedTrackName: string | null;
+  processingTime: null | number;
 }>({
   timeSeries: '',
   clusteredSubsequences: [],
@@ -595,7 +596,8 @@ const analyse = ref<{
   clusters: {},
   musicElements: ['durations', 'midiNoteNumbers'],
   selectedMusicElement: 'durations',
-  selectedTrackName: null
+  selectedTrackName: null,
+  processingTime: null
 })
 const complexityTransitionRules = computed(() => [
     v => !!v || 'required',
@@ -889,6 +891,7 @@ const analyseTimeseries = () => {
       analyse.value.loading = false
       analyse.value.setDataDialog = false
       showTimeseriesComplexityChart.value = false
+      analyse.value.processingTime = response.data.processingTime
       drawTimeline()
       drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
   })
@@ -928,6 +931,7 @@ const generateTimeseries = () => {
       analyse.value.timeSeriesChart = response.data.timeSeriesChart
       generate.value.complexityTransitionChart = response.data.timeSeriesComplexityChart
       generate.value.clusters = response.data.clusters
+      analyse.value.processingTime = response.data.processingTime
       drawTimeline()
       drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
       drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)

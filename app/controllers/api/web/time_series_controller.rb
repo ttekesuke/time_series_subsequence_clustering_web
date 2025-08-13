@@ -4,6 +4,7 @@ class Api::Web::TimeSeriesController < ApplicationController
   include StatisticsCalculator
 
   def analyse
+    start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     job_id = analyse_params[:job_id]
     broadcast_start(job_id)
     data = analyse_params[:time_series].split(',').map{|elm|elm.to_i}
@@ -19,16 +20,20 @@ class Api::Web::TimeSeriesController < ApplicationController
     manager.process_data
 
     timeline = manager.clusters_to_timeline(manager.clusters, min_window_size)
+    end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    processing_time_s = ((end_time - start_time)).round(2)
 
     broadcast_done(job_id)
     render json: {
       clusteredSubsequences: timeline,
       timeSeriesChart: [] + data.map.with_index{|elm, index|[index.to_s, elm, nil, nil]},
       clusters: manager.clusters,
+      processingTime: processing_time_s
     }
   end
 
   def generate
+    start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     job_id = generate_params[:job_id]
     broadcast_start(job_id)
     user_set_results = generate_params[:first_elements].split(',').map { |elm| elm.to_i }
@@ -150,6 +155,8 @@ class Api::Web::TimeSeriesController < ApplicationController
     chart_elements_for_complexity = Array.new(user_set_results.length) { |index| [index.to_s, nil, nil, nil] }
 
     timeline = manager.clusters_to_timeline(manager.clusters, min_window_size)
+    end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    processing_time_s = ((end_time - start_time)).round(2)
 
     broadcast_done(job_id)
 
@@ -159,6 +166,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       timeSeries: results,
       timeSeriesComplexityChart: [] + chart_elements_for_complexity + complexity_transition.map.with_index { |elm, index| [(user_set_results.length + index).to_s, elm, nil, nil] },
       clusters: manager.clusters,
+      processingTime: processing_time_s
     }
   end
 
