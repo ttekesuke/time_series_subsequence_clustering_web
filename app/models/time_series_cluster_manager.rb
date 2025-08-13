@@ -5,6 +5,11 @@ class TimeSeriesClusterManager
   attr_accessor :cluster_id_counter
   attr_accessor :tasks
 
+  # 追加: クラスタ更新/新規作成window_size,cluster_idペア記録用
+  attr_accessor :updated_clusters_per_window
+  # 追加: クラスタ間距離キャッシュ
+  attr_accessor :cluster_distance_cache
+
   def initialize(data, merge_threshold_ratio, min_window_size)
     @data = data
     @merge_threshold_ratio = merge_threshold_ratio
@@ -26,9 +31,13 @@ class TimeSeriesClusterManager
     #     }
     #   }
     # }
-    @clusters = { @cluster_id_counter => { si: [0], cc: {} } }
-    @cluster_id_counter += 1
-    @tasks = []
+  @clusters = { @cluster_id_counter => { si: [0], cc: {} } }
+  # 初期クラスタIDをupdated_clusters_per_windowにも追加
+  @updated_clusters_per_window = Hash.new { |h, k| h[k] = Set.new }
+  @updated_clusters_per_window[@min_window_size] << @cluster_id_counter
+  @cluster_id_counter += 1
+  @tasks = []
+  @cluster_distance_cache = Hash.new { |h, k| h[k] = {} }
   end
 
   def process_data
@@ -94,9 +103,15 @@ class TimeSeriesClusterManager
     ratio_in_max_distance = max_distance.zero? ? 0 : min_distance / max_distance
     if ratio_in_max_distance <= @merge_threshold_ratio
       best_clusters.first[:si] << latest_start
+      # as(平均部分列)を更新
+      best_clusters.first[:as] = average_sequences(best_clusters.first[:si].map { |s| @data[s, new_length] })
+      # 更新記録
+      @updated_clusters_per_window[new_length] << best_cluster_id
       @tasks << [keys_to_parent.dup << best_cluster_id, new_length]
     else
-      parent[:cc][@cluster_id_counter] = { si: [latest_start], cc: {} }
+      parent[:cc][@cluster_id_counter] = { si: [latest_start], cc: {}, as: latest_seq.dup }
+      # 新規作成記録
+      @updated_clusters_per_window[new_length] << @cluster_id_counter
       @cluster_id_counter += 1
     end
   end
@@ -116,16 +131,19 @@ class TimeSeriesClusterManager
     end
 
     if valid_group.any?
-      parent[:cc][@cluster_id_counter] = { si: valid_group + [latest_start], cc: {} }
+      parent[:cc][@cluster_id_counter] = { si: valid_group + [latest_start], cc: {}, as: average_sequences((valid_group + [latest_start]).map { |s| @data[s, new_length] }) }
+      @updated_clusters_per_window[new_length] << @cluster_id_counter
       @tasks << [keys_to_parent.dup << @cluster_id_counter, new_length]
       @cluster_id_counter += 1
     else
-      parent[:cc][@cluster_id_counter] = { si: [latest_start], cc: {} }
+      parent[:cc][@cluster_id_counter] = { si: [latest_start], cc: {}, as: latest_seq.dup }
+      @updated_clusters_per_window[new_length] << @cluster_id_counter
       @cluster_id_counter += 1
     end
 
     invalid_group.each do |s|
-      parent[:cc][@cluster_id_counter] = { si: [s], cc: {} }
+      parent[:cc][@cluster_id_counter] = { si: [s], cc: {}, as: @data[s, new_length] }
+      @updated_clusters_per_window[new_length] << @cluster_id_counter
       @cluster_id_counter += 1
     end
   end
@@ -151,10 +169,15 @@ class TimeSeriesClusterManager
     ratio_in_max_distance = max_distance.zero? ? 0 : min_distance / max_distance
 
     if best_cluster && ratio_in_max_distance <= @merge_threshold_ratio
-      best_cluster[:si] << latest_start unless best_cluster[:si].include?(latest_start)
+      unless best_cluster[:si].include?(latest_start)
+        best_cluster[:si] << latest_start
+        best_cluster[:as] = average_sequences(best_cluster[:si].map { |s| @data[s, @min_window_size] })
+        @updated_clusters_per_window[@min_window_size] << best_cluster_id
+      end
       @tasks << [[best_cluster_id], @min_window_size]
     else
-      @clusters[@cluster_id_counter] = { si: [latest_start], cc: {} }
+      @clusters[@cluster_id_counter] = { si: [latest_start], cc: {}, as: @data[latest_start, @min_window_size] }
+      @updated_clusters_per_window[@min_window_size] << @cluster_id_counter
       @cluster_id_counter += 1
     end
   end

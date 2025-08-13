@@ -178,25 +178,39 @@ class Api::Web::TimeSeriesController < ApplicationController
     sum_similar_subsequences_quantities = 0
     quadratic_integer_array = create_quadratic_integer_array(0, (candidate_max_master - candidate_min_master - rank) * temporary_results.length, temporary_results.length)
 
+
     clusters_each_window_size.each do |window_size, same_window_size_clusters|
       sum_distances = 0
-
-      same_window_size_clusters.values.combination(2).each do |subsequence_indexes1, subsequence_indexes2|
-        subsequences1 = subsequence_indexes1.map { |subsequence| temporary_results[subsequence[0]..subsequence[1]] }
-        subsequences2 = subsequence_indexes2.map { |subsequence| temporary_results[subsequence[0]..subsequence[1]] }
-        c1_average = calculate_average_time_series(subsequences1)
-        c2_average = calculate_average_time_series(subsequences2)
-        distance = euclidean_distance(c1_average, c2_average)
-        sum_distances += distance
+      all_ids = same_window_size_clusters.keys
+      updated_ids = manager.updated_clusters_per_window[window_size].to_a
+      cache = manager.cluster_distance_cache[window_size]
+      # 更新クラスタと他クラスタのペアのみ再計算
+      all_ids.each do |cid1|
+        all_ids.each do |cid2|
+          next if cid1 == cid2
+          key = [cid1, cid2].sort
+          as1 = same_window_size_clusters.dig(cid1, :as) || nil
+          as2 = same_window_size_clusters.dig(cid2, :as) || nil
+          if as1 && as2
+            # updated_idが含まれるペアは必ず再計算
+            if updated_ids.include?(cid1) || updated_ids.include?(cid2)
+              cache[key] = euclidean_distance(as1, as2)
+            else
+              # cacheが未計算なら計算して埋める
+              cache[key] ||= euclidean_distance(as1, as2)
+            end
+          end
+        end
       end
-      # 長い部分列同士の距離は少なく見積もる
+      # sum_distancesはキャッシュの全値合計
+      sum_distances = cache.values.sum
       sum_distances_in_all_window += (sum_distances / window_size)
 
       sum_similar_subsequences_quantities += same_window_size_clusters
         .values
-        .filter { |subsequence_indexes| subsequence_indexes.length > 1 }
-        .map { |subsequence_indexes|
-          subsequence_indexes.map { |start_and_end|
+        .filter { |cluster| cluster[:si].length > 1 }
+        .map { |cluster|
+          cluster[:si].map { |start_and_end|
             (quadratic_integer_array[start_and_end[0]]).to_d
           }.inject(1) { |product, n| product * n }
         }.sum
@@ -256,7 +270,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       sequences = current_cluster[:si].map { |start_index| [start_index, start_index + depth - 1] }
 
       clusters_each_window_size[depth] ||= {}
-      clusters_each_window_size[depth][cluster_id] = sequences
+      clusters_each_window_size[depth][cluster_id] = {si: sequences, as: current_cluster[:as]}
 
       # 子クラスタがあればスタックに追加
       current_cluster[:cc].each do |sub_cluster_id, sub_cluster|
