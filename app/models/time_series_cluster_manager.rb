@@ -31,13 +31,15 @@ class TimeSeriesClusterManager
     #     }
     #   }
     # }
-  @clusters = { @cluster_id_counter => { si: [0], cc: {} } }
+  @clusters = { @cluster_id_counter => { si: [0], cc: {}, as: [0, min_window_size] } }
   # 初期クラスタIDをupdated_clusters_per_windowにも追加
-  @updated_clusters_per_window = Hash.new { |h, k| h[k] = Set.new }
+  @updated_clusters_per_window = {}
+  @updated_clusters_per_window[@min_window_size] ||= Set.new
   @updated_clusters_per_window[@min_window_size] << @cluster_id_counter
   @cluster_id_counter += 1
   @tasks = []
-  @cluster_distance_cache = Hash.new { |h, k| h[k] = {} }
+  @cluster_distance_cache = {}
+  @cluster_distance_cache[@min_window_size] ||= {}
   end
 
   def process_data
@@ -106,11 +108,13 @@ class TimeSeriesClusterManager
       # as(平均部分列)を更新
       best_clusters.first[:as] = average_sequences(best_clusters.first[:si].map { |s| @data[s, new_length] })
       # 更新記録
+      @updated_clusters_per_window[new_length] ||= Set.new
       @updated_clusters_per_window[new_length] << best_cluster_id
       @tasks << [keys_to_parent.dup << best_cluster_id, new_length]
     else
       parent[:cc][@cluster_id_counter] = { si: [latest_start], cc: {}, as: latest_seq.dup }
       # 新規作成記録
+      @updated_clusters_per_window[new_length] ||= Set.new
       @updated_clusters_per_window[new_length] << @cluster_id_counter
       @cluster_id_counter += 1
     end
@@ -132,17 +136,20 @@ class TimeSeriesClusterManager
 
     if valid_group.any?
       parent[:cc][@cluster_id_counter] = { si: valid_group + [latest_start], cc: {}, as: average_sequences((valid_group + [latest_start]).map { |s| @data[s, new_length] }) }
+      @updated_clusters_per_window[new_length] ||= Set.new
       @updated_clusters_per_window[new_length] << @cluster_id_counter
       @tasks << [keys_to_parent.dup << @cluster_id_counter, new_length]
       @cluster_id_counter += 1
     else
       parent[:cc][@cluster_id_counter] = { si: [latest_start], cc: {}, as: latest_seq.dup }
+      @updated_clusters_per_window[new_length] ||= Set.new
       @updated_clusters_per_window[new_length] << @cluster_id_counter
       @cluster_id_counter += 1
     end
 
     invalid_group.each do |s|
       parent[:cc][@cluster_id_counter] = { si: [s], cc: {}, as: @data[s, new_length] }
+      @updated_clusters_per_window[new_length] ||= Set.new
       @updated_clusters_per_window[new_length] << @cluster_id_counter
       @cluster_id_counter += 1
     end
@@ -172,11 +179,13 @@ class TimeSeriesClusterManager
       unless best_cluster[:si].include?(latest_start)
         best_cluster[:si] << latest_start
         best_cluster[:as] = average_sequences(best_cluster[:si].map { |s| @data[s, @min_window_size] })
+        @updated_clusters_per_window[@min_window_size] ||= Set.new
         @updated_clusters_per_window[@min_window_size] << best_cluster_id
       end
       @tasks << [[best_cluster_id], @min_window_size]
     else
       @clusters[@cluster_id_counter] = { si: [latest_start], cc: {}, as: @data[latest_start, @min_window_size] }
+      @updated_clusters_per_window[@min_window_size] ||= Set.new
       @updated_clusters_per_window[@min_window_size] << @cluster_id_counter
       @cluster_id_counter += 1
     end

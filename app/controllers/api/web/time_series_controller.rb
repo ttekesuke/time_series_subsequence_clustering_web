@@ -70,6 +70,30 @@ class Api::Web::TimeSeriesController < ApplicationController
       end
     end
     manager.process_data
+    # ユーザ指定の冒頭の時系列データクラスタリング結果のうち距離キャッシュを作成する
+    clusters_each_window_size = transform_clusters(manager.clusters, min_window_size)
+    clusters_each_window_size.each do |window_size, same_window_size_clusters|
+      all_ids = same_window_size_clusters.keys
+      updated_ids = manager.updated_clusters_per_window[window_size].to_a
+      cache = manager.cluster_distance_cache[window_size]
+      if cache.nil?
+        cache = {}
+        manager.cluster_distance_cache[window_size] = cache
+      end
+      updated_ids.each do |cid1|
+        all_ids.each do |cid2|
+          next if cid1 == cid2
+          key = [cid1, cid2].sort
+          as1 = same_window_size_clusters.dig(cid1, :as)
+          as2 = same_window_size_clusters.dig(cid2, :as)
+          if as1 && as2
+            cache[key] = euclidean_distance(as1, as2)
+          end
+        end
+      end
+    end
+    # 初期化
+    manager.updated_clusters_per_window = {}
 
     # 移行
     results = user_set_results.dup
@@ -110,8 +134,8 @@ class Api::Web::TimeSeriesController < ApplicationController
       end
 
       # 実データの候補からベストマッチを得るために評価値を得る
-      sum_average_distances_all_window_candidates, sum_similar_subsequences_quantities, clusters_candidates, cluster_id_counter_candidates, tasks_candidates =
-        get_calculated_value_each_candidate(
+      sum_average_distances_all_window_candidates, sum_similar_subsequences_quantities, clusters_candidates, cluster_id_counter_candidates, tasks_candidates, cluster_distance_cache_candidates =
+        get_calculated_values_each_candidate(
           results,
           candidates,
           merge_threshold_ratio,
@@ -119,6 +143,7 @@ class Api::Web::TimeSeriesController < ApplicationController
           manager.clusters,
           manager.cluster_id_counter,
           manager.tasks,
+          manager.cluster_distance_cache,
           rank,
           candidate_min_master,
           candidate_max_master
@@ -142,6 +167,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       manager.clusters = clusters_candidates[result_index_in_candidates]
       manager.cluster_id_counter = cluster_id_counter_candidates[result_index_in_candidates]
       manager.tasks = tasks_candidates[result_index_in_candidates]
+      manager.cluster_distance_cache = cluster_distance_cache_candidates[result_index_in_candidates]
       # 選択されたデータを使って不協和度を残す
 
       if selected_use_musical_feature === 'dissonancesOutline'
@@ -171,42 +197,75 @@ class Api::Web::TimeSeriesController < ApplicationController
   end
 
   private
-  def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank, candidate_min_master, candidate_max_master)
+
+  def get_calculated_values_each_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, cluster_distance_cache, rank, candidate_min_master, candidate_max_master)
+    average_distances_all_window_candidates = []
+    sum_similar_subsequences_quantities_all_window_candidates = []
+    clusters_candidates = []
+    cluster_id_counter_candidates = []
+    tasks_candidates = []
+    cluster_distance_cache_candidates = []
+
+    candidates.each do |candidate|
+      average_distances, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks, temporary_cluster_distance_cache =
+      calculate_cluster_details(
+        results,
+        candidate,
+        merge_threshold_ratio,
+        min_window_size,
+        clusters,
+        cluster_id_counter,
+        tasks,
+        cluster_distance_cache,
+        rank,
+        candidate_min_master,
+        candidate_max_master
+      )
+
+      average_distances_all_window_candidates << average_distances
+      sum_similar_subsequences_quantities_all_window_candidates << sum_similar_subsequences_quantities
+      clusters_candidates << temporary_clusters
+      cluster_id_counter_candidates << temporary_cluster_id_counter
+      tasks_candidates << temporary_tasks
+      cluster_distance_cache_candidates << temporary_cluster_distance_cache
+    end
+
+    [average_distances_all_window_candidates, sum_similar_subsequences_quantities_all_window_candidates, clusters_candidates, cluster_id_counter_candidates, tasks_candidates, cluster_distance_cache_candidates]
+  end
+
+  def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, cluster_distance_cache, rank, candidate_min_master, candidate_max_master)
     temporary_results = results.dup
     temporary_results << candidate
     manager = TimeSeriesClusterManager.new(temporary_results, merge_threshold_ratio, min_window_size)
     manager.clusters = Marshal.load(Marshal.dump(clusters))
     manager.cluster_id_counter = cluster_id_counter
     manager.tasks = tasks.dup
+    manager.cluster_distance_cache = Marshal.load(Marshal.dump(cluster_distance_cache))
     # Only cluster the last data point, not the whole series
     manager.send(:clustering_subsequences_incremental, temporary_results.length - 1)
-
     clusters_each_window_size = transform_clusters(manager.clusters, min_window_size)
     sum_distances_in_all_window = 0
     sum_similar_subsequences_quantities = 0
     quadratic_integer_array = create_quadratic_integer_array(0, (candidate_max_master - candidate_min_master - rank) * temporary_results.length, temporary_results.length)
 
-
     clusters_each_window_size.each do |window_size, same_window_size_clusters|
       sum_distances = 0
       all_ids = same_window_size_clusters.keys
       updated_ids = manager.updated_clusters_per_window[window_size].to_a
-      cache = manager.cluster_distance_cache[window_size]
       # 更新クラスタと他クラスタのペアのみ再計算
-      all_ids.each do |cid1|
+      cache = manager.cluster_distance_cache[window_size]
+      if cache.nil?
+        cache = {}
+        manager.cluster_distance_cache[window_size] = cache
+      end
+      updated_ids.each do |cid1|
         all_ids.each do |cid2|
           next if cid1 == cid2
           key = [cid1, cid2].sort
-          as1 = same_window_size_clusters.dig(cid1, :as) || nil
-          as2 = same_window_size_clusters.dig(cid2, :as) || nil
+          as1 = same_window_size_clusters.dig(cid1, :as)
+          as2 = same_window_size_clusters.dig(cid2, :as)
           if as1 && as2
-            # updated_idが含まれるペアは必ず再計算
-            if updated_ids.include?(cid1) || updated_ids.include?(cid2)
-              cache[key] = euclidean_distance(as1, as2)
-            else
-              # cacheが未計算なら計算して埋める
-              cache[key] ||= euclidean_distance(as1, as2)
-            end
+            cache[key] = euclidean_distance(as1, as2)
           end
         end
       end
@@ -224,39 +283,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         }.sum
     end
 
-    [sum_distances_in_all_window, sum_similar_subsequences_quantities, manager.clusters, manager.cluster_id_counter, manager.tasks]
-  end
-
-
-  def get_calculated_value_each_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, rank, candidate_min_master, candidate_max_master)
-    average_distances_all_window_candidates = []
-    sum_similar_subsequences_quantities_all_window_candidates = []
-    clusters_candidates = []
-    cluster_id_counter_candidates = []
-    tasks_candidates = []
-
-    candidates.each do |candidate|
-      average_distances, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks = calculate_cluster_details(
-        results,
-        candidate,
-        merge_threshold_ratio,
-        min_window_size,
-        clusters,
-        cluster_id_counter,
-        tasks,
-        rank,
-        candidate_min_master,
-        candidate_max_master
-      )
-
-      average_distances_all_window_candidates << average_distances
-      sum_similar_subsequences_quantities_all_window_candidates << sum_similar_subsequences_quantities
-      clusters_candidates << temporary_clusters
-      cluster_id_counter_candidates << temporary_cluster_id_counter
-      tasks_candidates << temporary_tasks
-    end
-
-    [average_distances_all_window_candidates, sum_similar_subsequences_quantities_all_window_candidates, clusters_candidates, cluster_id_counter_candidates, tasks_candidates]
+    [sum_distances_in_all_window, sum_similar_subsequences_quantities, manager.clusters, manager.cluster_id_counter, manager.tasks, manager.cluster_distance_cache]
   end
 
   # クラスタを、階層（窓幅）ごとにまとめたデータにして返却
