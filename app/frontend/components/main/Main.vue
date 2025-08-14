@@ -487,7 +487,7 @@
               <v-row>
                 <v-col cols="3">
                   <span class="mr-2">Timeseries</span>
-                  <small v-if="analyse.processingTime !== null">Processing Time: {{ analyse.processingTime }} ms </small>
+                  <small v-if="analyse.processingTime !== null">Processing Time: {{ analyse.processingTime }} sec. </small>
                 </v-col>
                 <v-col cols="2">
                   <v-btn @click="saveToFile" class="d-flex align-center fill-height">
