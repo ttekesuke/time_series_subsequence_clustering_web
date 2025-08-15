@@ -9,6 +9,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     broadcast_start(job_id)
     data = analyse_params[:time_series].split(',').map{|elm|elm.to_i}
     merge_threshold_ratio = analyse_params[:merge_threshold_ratio].to_d
+    calculate_distance_when_added_subsequence_to_cluster = true
 
     min_window_size = 2
     cluster_id_counter = 0
@@ -16,7 +17,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     cluster_id_counter += 1
     tasks = []
 
-    manager = TimeSeriesClusterManager.new(data, merge_threshold_ratio, min_window_size)
+    manager = TimeSeriesClusterManager.new(data, merge_threshold_ratio, min_window_size, calculate_distance_when_added_subsequence_to_cluster)
     manager.process_data
 
     timeline = manager.clusters_to_timeline(manager.clusters, min_window_size)
@@ -47,6 +48,8 @@ class Api::Web::TimeSeriesController < ApplicationController
     dissonance_current_time = 0.to_d
     dissonance_short_term_memory = []
     time_unit = 0.125
+    calculate_distance_when_added_subsequence_to_cluster = false
+
     # 不協和度の指定があれば現状の不協和度を算出
     if generate_params[:selected_use_musical_feature].present? && generate_params[:selected_use_musical_feature] === 'dissonancesOutline'
       dissonance_transition = generate_params[:dissonance][:transition].split(',').map(&:to_i)
@@ -60,7 +63,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       duration_outline_range = generate_params[:duration][:outline_range].to_i
     end
     # ユーザ指定の冒頭の時系列データを解析しクラスタを作成する
-    manager = TimeSeriesClusterManager.new(user_set_results, merge_threshold_ratio, min_window_size)
+    manager = TimeSeriesClusterManager.new(user_set_results, merge_threshold_ratio, min_window_size, calculate_distance_when_added_subsequence_to_cluster)
     user_set_results.each_with_index do |elm, data_index|
       if selected_use_musical_feature === 'dissonancesOutline'
         duration = dissonance_duration_transition[data_index]
@@ -74,26 +77,44 @@ class Api::Web::TimeSeriesController < ApplicationController
     clusters_each_window_size = transform_clusters(manager.clusters, min_window_size)
     clusters_each_window_size.each do |window_size, same_window_size_clusters|
       all_ids = same_window_size_clusters.keys
-      updated_ids = manager.updated_clusters_per_window[window_size].to_a
-      cache = manager.cluster_distance_cache[window_size]
-      if cache.nil?
-        cache = {}
-        manager.cluster_distance_cache[window_size] = cache
+      updated_cluster_ids_per_window_for_calculate_distance = manager.updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
+      cluster_distance_cache = manager.cluster_distance_cache[window_size]
+      if cluster_distance_cache.nil?
+        cluster_distance_cache = {}
+        manager.cluster_distance_cache[window_size] = cluster_distance_cache
       end
-      updated_ids.each do |cid1|
+      updated_cluster_ids_per_window_for_calculate_distance.each do |cid1|
         all_ids.each do |cid2|
           next if cid1 == cid2
           key = [cid1, cid2].sort
           as1 = same_window_size_clusters.dig(cid1, :as)
           as2 = same_window_size_clusters.dig(cid2, :as)
           if as1 && as2
-            cache[key] = euclidean_distance(as1, as2)
+            cluster_distance_cache[key] = euclidean_distance(as1, as2)
           end
         end
       end
+      quadratic_integer_array = create_quadratic_integer_array(0, (candidate_max_master - candidate_min_master ) * user_set_results.length, user_set_results.length)
+      # 数量キャッシュの更新
+      updated_cluster_ids_per_window_for_calculate_quantities = manager.updated_cluster_ids_per_window_for_calculate_quantities[window_size].to_a rescue []
+      cluster_quantity_cache = manager.cluster_quantity_cache[window_size]
+      if cluster_quantity_cache.nil?
+        cluster_quantity_cache = {}
+        manager.cluster_quantity_cache[window_size] = cluster_quantity_cache
+      end
+      updated_cluster_ids_per_window_for_calculate_quantities.each do |cid|
+        cluster = same_window_size_clusters[cid]
+        if cluster && cluster[:si].length > 1
+          quantity = cluster[:si].map { |start_and_end|
+            (quadratic_integer_array[start_and_end[0]]).to_d
+          }.inject(1) { |product, n| product * n }
+          cluster_quantity_cache[cid] = quantity
+        end
+      end
     end
+
     # 初期化
-    manager.updated_clusters_per_window = {}
+    manager.updated_cluster_ids_per_window_for_calculate_distance = {}
 
     # 移行
     results = user_set_results.dup
@@ -144,9 +165,11 @@ class Api::Web::TimeSeriesController < ApplicationController
           manager.cluster_id_counter,
           manager.tasks,
           manager.cluster_distance_cache,
+          manager.cluster_quantity_cache,
           rank,
           candidate_min_master,
-          candidate_max_master
+          candidate_max_master,
+          calculate_distance_when_added_subsequence_to_cluster
         )
       # 距離の小さい順に並び替え
       indexed_average_distances_between_clusters = sum_average_distances_all_window_candidates.map.with_index { |distance, index| [distance, index] }
@@ -198,16 +221,17 @@ class Api::Web::TimeSeriesController < ApplicationController
 
   private
 
-  def get_calculated_values_each_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, cluster_distance_cache, rank, candidate_min_master, candidate_max_master)
+  def get_calculated_values_each_candidate(results, candidates, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, cluster_distance_cache, cluster_quantity_cache, rank, candidate_min_master, candidate_max_master, calculate_distance_when_added_subsequence_to_cluster)
     average_distances_all_window_candidates = []
     sum_similar_subsequences_quantities_all_window_candidates = []
     clusters_candidates = []
     cluster_id_counter_candidates = []
     tasks_candidates = []
     cluster_distance_cache_candidates = []
+    cluster_quantity_cache_candidates = []
 
     candidates.each do |candidate|
-      average_distances, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks, temporary_cluster_distance_cache =
+      average_distances, sum_similar_subsequences_quantities, temporary_clusters, temporary_cluster_id_counter, temporary_tasks, temporary_cluster_distance_cache, temporary_cluster_quantity_cache =
       calculate_cluster_details(
         results,
         candidate,
@@ -217,9 +241,11 @@ class Api::Web::TimeSeriesController < ApplicationController
         cluster_id_counter,
         tasks,
         cluster_distance_cache,
+        cluster_quantity_cache,
         rank,
         candidate_min_master,
-        candidate_max_master
+        candidate_max_master,
+        calculate_distance_when_added_subsequence_to_cluster
       )
 
       average_distances_all_window_candidates << average_distances
@@ -228,19 +254,21 @@ class Api::Web::TimeSeriesController < ApplicationController
       cluster_id_counter_candidates << temporary_cluster_id_counter
       tasks_candidates << temporary_tasks
       cluster_distance_cache_candidates << temporary_cluster_distance_cache
+      cluster_quantity_cache_candidates << temporary_cluster_quantity_cache
     end
 
     [average_distances_all_window_candidates, sum_similar_subsequences_quantities_all_window_candidates, clusters_candidates, cluster_id_counter_candidates, tasks_candidates, cluster_distance_cache_candidates]
   end
 
-  def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, cluster_distance_cache, rank, candidate_min_master, candidate_max_master)
+  def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, cluster_distance_cache, cluster_quantity_cache, rank, candidate_min_master, candidate_max_master, calculate_distance_when_added_subsequence_to_cluster)
     temporary_results = results.dup
     temporary_results << candidate
-    manager = TimeSeriesClusterManager.new(temporary_results, merge_threshold_ratio, min_window_size)
+    manager = TimeSeriesClusterManager.new(temporary_results, merge_threshold_ratio, min_window_size, calculate_distance_when_added_subsequence_to_cluster)
     manager.clusters = Marshal.load(Marshal.dump(clusters))
     manager.cluster_id_counter = cluster_id_counter
     manager.tasks = tasks.dup
     manager.cluster_distance_cache = Marshal.load(Marshal.dump(cluster_distance_cache))
+    manager.cluster_quantity_cache = Marshal.load(Marshal.dump(cluster_quantity_cache))
     # Only cluster the last data point, not the whole series
     manager.send(:clustering_subsequences_incremental, temporary_results.length - 1)
     clusters_each_window_size = transform_clusters(manager.clusters, min_window_size)
@@ -251,39 +279,49 @@ class Api::Web::TimeSeriesController < ApplicationController
     clusters_each_window_size.each do |window_size, same_window_size_clusters|
       sum_distances = 0
       all_ids = same_window_size_clusters.keys
-      updated_ids = manager.updated_clusters_per_window[window_size].to_a
+      updated_cluster_ids_per_window_for_calculate_distance = manager.updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
       # 更新クラスタと他クラスタのペアのみ再計算
-      cache = manager.cluster_distance_cache[window_size]
-      if cache.nil?
-        cache = {}
-        manager.cluster_distance_cache[window_size] = cache
+      cluster_distance_cache = manager.cluster_distance_cache[window_size]
+      if cluster_distance_cache.nil?
+        cluster_distance_cache = {}
+        manager.cluster_distance_cache[window_size] = cluster_distance_cache
       end
-      updated_ids.each do |cid1|
+      updated_cluster_ids_per_window_for_calculate_distance.each do |cid1|
         all_ids.each do |cid2|
           next if cid1 == cid2
           key = [cid1, cid2].sort
           as1 = same_window_size_clusters.dig(cid1, :as)
           as2 = same_window_size_clusters.dig(cid2, :as)
           if as1 && as2
-            cache[key] = euclidean_distance(as1, as2)
+            cluster_distance_cache[key] = euclidean_distance(as1, as2)
           end
         end
       end
       # sum_distancesはキャッシュの全値合計
-      sum_distances = cache.values.sum
+      sum_distances = cluster_distance_cache.values.sum
       sum_distances_in_all_window += (sum_distances / window_size)
 
-      sum_similar_subsequences_quantities += same_window_size_clusters
-        .values
-        .filter { |cluster| cluster[:si].length > 1 }
-        .map { |cluster|
-          cluster[:si].map { |start_and_end|
+      # 数量キャッシュの更新
+      updated_cluster_ids_per_window_for_calculate_quantities = manager.updated_cluster_ids_per_window_for_calculate_quantities[window_size].to_a rescue []
+      cluster_quantity_cache = manager.cluster_quantity_cache[window_size]
+      if cluster_quantity_cache.nil?
+        cluster_quantity_cache = {}
+        manager.cluster_quantity_cache[window_size] = cluster_quantity_cache
+      end
+      updated_cluster_ids_per_window_for_calculate_quantities.each do |cid|
+        cluster = same_window_size_clusters[cid]
+        if cluster && cluster[:si].length > 1
+          quantity = cluster[:si].map { |start_and_end|
             (quadratic_integer_array[start_and_end[0]]).to_d
           }.inject(1) { |product, n| product * n }
-        }.sum
+          cluster_quantity_cache[cid] = quantity
+        end
+      end
+      # sum_similar_subsequences_quantitiesはキャッシュ合計
+      sum_similar_subsequences_quantities += cluster_quantity_cache.values.sum
     end
 
-    [sum_distances_in_all_window, sum_similar_subsequences_quantities, manager.clusters, manager.cluster_id_counter, manager.tasks, manager.cluster_distance_cache]
+    [sum_distances_in_all_window, sum_similar_subsequences_quantities, manager.clusters, manager.cluster_id_counter, manager.tasks, manager.cluster_distance_cache, manager.cluster_quantity_cache]
   end
 
   # クラスタを、階層（窓幅）ごとにまとめたデータにして返却

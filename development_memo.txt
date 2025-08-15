@@ -313,3 +313,9 @@ puts "距離: 中間, 要素数: 1 -> #{SubElementGenerator.generate(5, 0.5, 1, 
 puts "距離: 中間, 要素数: 2 -> #{SubElementGenerator.generate(5, 0.5, 2, MIN_VAL, MAX_VAL)}"
 
 puts "距離: 最大, 要素数: 1 -> #{SubElementGenerator.generate(5, 1.0, 4, MIN_VAL, MAX_VAL)}"
+
+
+・高速化
+transform_clustersをやめる
+all_idsの中から除外するものを決める
+
