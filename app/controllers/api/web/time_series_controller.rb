@@ -1,5 +1,4 @@
 class Api::Web::TimeSeriesController < ApplicationController
-  include MusicAnalyser
   include DissonanceMemory
   include StatisticsCalculator
 
