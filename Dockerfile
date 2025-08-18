@@ -1,4 +1,4 @@
-FROM ruby:3.2.2
+FROM ruby:3.3.0
 
 # 必要なパッケージをインストール（不要なキャッシュを削除）
 RUN apt-get update -qq && \
