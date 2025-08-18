@@ -372,7 +372,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     # converted_rank に対応するインデックスを取得
     n = sorted_candidates.size
-    rank_index = (converted_rank * n).floor
+    rank_index = (converted_rank.to_f * n).floor
     rank_index = [rank_index, n - 1].min
 
     # 指定されたランクの候補インデックスを返す
