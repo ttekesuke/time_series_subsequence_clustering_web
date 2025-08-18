@@ -249,6 +249,17 @@ class TimeSeriesClusterManager
     end
   end
 
+  def prune_clusters(clusters, threshold)
+    clusters.delete_if do |cluster_id, cluster_data|
+      # まず子クラスタを処理（再帰）
+      prune_clusters(cluster_data[:cc], threshold) unless cluster_data[:cc].empty?
+
+      # 削除条件を満たすか確認
+      si = cluster_data[:si]
+      si.length == 1 && si.first < threshold
+    end
+  end
+
   def dig_clusters_by_keys(clusters, keys)
     current = clusters
     keys.each_with_index do |key, index|

@@ -198,6 +198,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         dissonance_results << best[:dissonance]
       end
       broadcast_progress(job_id, rank_index + 1, complexity_transition.length)
+      # manager.prune_clusters(manager.clusters, rank_index - 50)
     end
 
     chart_elements_for_complexity = Array.new(user_set_results.length) { |index| [index.to_s, nil, nil, nil] }
