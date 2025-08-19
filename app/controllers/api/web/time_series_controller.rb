@@ -105,7 +105,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         cluster = same_window_size_clusters[cid]
         if cluster && cluster[:si].length > 1
           quantity = cluster[:si].map { |start_and_end|
-            (quadratic_integer_array[start_and_end[0]]).to_d
+            (quadratic_integer_array[start_and_end[0]])
           }.inject(1) { |product, n| product * n }
           cluster_quantity_cache[cid] = quantity
         end
@@ -154,7 +154,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       end
 
       # 実データの候補からベストマッチを得るために評価値を得る
-      sum_average_distances_all_window_candidates, sum_similar_subsequences_quantities, clusters_candidates, cluster_id_counter_candidates, tasks_candidates, cluster_distance_cache_candidates =
+      sum_average_distances_all_window_candidates, sum_similar_subsequences_quantities, clusters_candidates, cluster_id_counter_candidates, tasks_candidates, cluster_distance_cache_candidates, cluster_quantity_cache_candidates =
         get_calculated_values_each_candidate(
           results,
           candidates,
@@ -190,6 +190,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       manager.cluster_id_counter = cluster_id_counter_candidates[result_index_in_candidates]
       manager.tasks = tasks_candidates[result_index_in_candidates]
       manager.cluster_distance_cache = cluster_distance_cache_candidates[result_index_in_candidates]
+      manager.cluster_quantity_cache = cluster_quantity_cache_candidates[result_index_in_candidates]
       # 選択されたデータを使って不協和度を残す
 
       if selected_use_musical_feature === 'dissonancesOutline'
@@ -257,7 +258,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       cluster_quantity_cache_candidates << temporary_cluster_quantity_cache
     end
 
-    [average_distances_all_window_candidates, sum_similar_subsequences_quantities_all_window_candidates, clusters_candidates, cluster_id_counter_candidates, tasks_candidates, cluster_distance_cache_candidates]
+    [average_distances_all_window_candidates, sum_similar_subsequences_quantities_all_window_candidates, clusters_candidates, cluster_id_counter_candidates, tasks_candidates, cluster_distance_cache_candidates, cluster_quantity_cache_candidates]
   end
 
   def calculate_cluster_details(results, candidate, merge_threshold_ratio, min_window_size, clusters, cluster_id_counter, tasks, cluster_distance_cache, cluster_quantity_cache, rank, candidate_min_master, candidate_max_master, calculate_distance_when_added_subsequence_to_cluster)
@@ -312,7 +313,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         cluster = same_window_size_clusters[cid]
         if cluster && cluster[:si].length > 1
           quantity = cluster[:si].map { |start_and_end|
-            (quadratic_integer_array[start_and_end[0]]).to_d
+            (quadratic_integer_array[start_and_end[0]])
           }.inject(1) { |product, n| product * n }
           cluster_quantity_cache[cid] = quantity
         end
@@ -390,9 +391,9 @@ class Api::Web::TimeSeriesController < ApplicationController
       value = start_val + (end_val - start_val) * curve
 
       if start_val < end_val
-        result << value.ceil
+        result << value.ceil + 1
       else
-        result << value.floor
+        result << value.floor + 1
       end
     end
 
