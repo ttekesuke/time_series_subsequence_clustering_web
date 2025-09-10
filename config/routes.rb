@@ -10,6 +10,9 @@ Rails.application.routes.draw do
         post 'analyse'
         post 'generate'
       end
+      namespace :supercolliders do
+        post 'generate'
+      end
     end
   end
 end

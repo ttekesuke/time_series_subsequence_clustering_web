@@ -1,0 +1,63 @@
+var server = Server(\nrt,
+    options: ServerOptions.new
+    .numOutputBusChannels_(2)
+    .numInputBusChannels_(2)
+);
+
+<%
+node_id = 1000
+events = []
+
+tracks.each do |track|
+  time = 0.0
+  track[:durations].each_with_index do |dur, idx|
+    freq = midi_to_freq.call(track[:midiNoteNumbers][idx])
+    dur  = dur * 0.125
+    events << [time, node_id, freq, dur]
+    time += dur
+    node_id += 1
+  end
+end
+
+
+groups = events.group_by { |t, _nid, _f, _d| t }
+p groups
+%>
+
+
+a = Score([
+  [0.0, ['/d_recv',
+    SynthDef(\NRTsine, { |out, freq = 440, dur = 0.125|
+      var env = EnvGen.kr(
+        Env([0, 1, 1, 0], [0.01, dur - 0.02, 0.02]),
+        doneAction: Done.freeSelf
+      );
+      var sig = PMOsc.ar(freq, freq, 1, 0, 0.2) * env;
+      Out.ar(out, sig.dup);
+    }).asBytes;
+  ]],
+<% groups.each do |time, evs| %>
+  [
+    <%= time %>,
+    <% evs.each do |(_t, nid, freq, dur)| %>
+      (x = Synth.basicNew(\NRTsine, server, <%= nid %>))
+        .newMsg(args: [freq: <%= freq %>, dur: <%= dur %>]),
+    <% end %>
+  ],
+<% end %>
+
+]);
+
+a.postln;
+
+
+a.recordNRT(
+    outputFilePath: "<%= filepath %>",
+    headerFormat: "wav",
+    sampleFormat: "int16",
+    options: server.options,
+    duration: <%= total_duration %>,
+    action: { "done".postln }
+);
+
+server.remove;
