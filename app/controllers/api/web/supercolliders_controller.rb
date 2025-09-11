@@ -68,11 +68,7 @@ class Api::Web::SupercollidersController < ApplicationController
   end
 
   def cleanup
-    p 'delete_params'
-    p delete_params
     sound_file_path = delete_params[:sound_file_path]
-    p 'sound_file_path'
-    p sound_file_path
     if sound_file_path && File.exist?(sound_file_path)
       File.delete(sound_file_path) rescue nil
     else
@@ -89,7 +85,7 @@ class Api::Web::SupercollidersController < ApplicationController
     render json: { message: "File deleted" }
   end
 
-  def wait_for_complete_file(filepath, timeout: 10)
+  def wait_for_complete_file(filepath, timeout: 30)
     start = Time.now
     last_size = -1
 
@@ -97,7 +93,7 @@ class Api::Web::SupercollidersController < ApplicationController
       # ファイルが存在しない場合
       unless File.exist?(filepath)
         break if Time.now - start > timeout
-        sleep 0.1
+        sleep 1.0
         next
       end
 
@@ -109,11 +105,10 @@ class Api::Web::SupercollidersController < ApplicationController
       end
 
       last_size = current_size
-      if Time.now - start > timeout
-        break
-      end
-      sleep 0.2
+      break if Time.now - start > timeout
+      sleep 1.0
     end
+
     false
   end
 
