@@ -34,6 +34,7 @@ RUN node node_modules/.bin/vite build --no-minify
 
 # scuser ユーザーで起動　sc実行のため必要
 RUN useradd -ms /bin/bash scuser
+RUN mkdir -p /app/tmp/cache && chown -R scuser:scuser /app/tmp
 USER scuser
 
 CMD ["rails", "server", "-b", "0.0.0.0"]
