@@ -319,3 +319,4 @@ puts "距離: 最大, 要素数: 1 -> #{SubElementGenerator.generate(5, 1.0, 4, 
 transform_clustersをやめる
 all_idsの中から除外するものを決める
 
+export QT_QPA_PLATFORM=offscreen

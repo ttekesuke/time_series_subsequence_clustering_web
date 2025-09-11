@@ -1,8 +1,9 @@
 FROM ruby:3.3.0
 
-# 必要なパッケージをインストール（不要なキャッシュを削除）
+# 必要なパッケージをインストール
 RUN apt-get update -qq && \
-    apt-get install -y --no-install-recommends build-essential libpq-dev nodejs vim curl && \
+    apt-get install -y --no-install-recommends \
+      build-essential libpq-dev nodejs vim curl supercollider && \
     curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \
     echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list && \
     apt-get update && apt-get install -y --no-install-recommends yarn && \
@@ -31,4 +32,8 @@ EXPOSE 3000
 # vite build をメモリ制限付きで実行
 RUN node node_modules/.bin/vite build --no-minify
 
-CMD [ "rails","server","-b","0.0.0.0" ]
+# scuser ユーザーで起動　sc実行のため必要
+RUN useradd -ms /bin/bash scuser
+USER scuser
+
+CMD ["rails", "server", "-b", "0.0.0.0"]

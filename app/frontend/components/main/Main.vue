@@ -347,7 +347,7 @@
         </v-col>
         <v-col class="v-col-auto" v-if="selectedMode === 'Music'">
           <v-btn @click="music.setDataDialog = true">generate</v-btn>
-          <v-dialog width="1000" v-model="music.setDataDialog" >
+          <v-dialog width="1200" v-model="music.setDataDialog" >
             <v-form v-model='music.valid' fast-fail ref="form">
               <v-card>
                 <v-card-title>
@@ -395,18 +395,28 @@
                       ></v-text-field>
                     </v-col>
                     <v-col cols="2">
-                      <v-btn @click="generateMidi">generate</v-btn>
+                      <v-btn @click="generateMidi" :loading="music.loading">generate</v-btn>
                     </v-col>
                   </v-row>
                   <template v-for='track in music.tracks'>
                     <v-row>
-                      <v-col cols="2">
+                      <v-col cols="1">
                         <v-text-field
                         placeholder="name"
                         required
                         v-model='track.name'
                         label="name"
-                      ></v-text-field>
+                        ></v-text-field>
+                      </v-col>
+                      <v-col cols="1">
+                        <v-text-field
+                          label="tone"
+                          type="number"
+                          v-model="track.tone"
+                          min="0"
+                          max="11"
+                          step="1"
+                        ></v-text-field>
                       </v-col>
                       <v-col cols="5">
                         <v-textarea
@@ -434,10 +444,15 @@
               </v-card>
             </v-form>
           </v-dialog>
-          <v-btn @click='playNotes'>
+          <!-- <v-btn @click='playNotes'>
+            <v-icon v-if='nowPlaying'>mdi-stop</v-icon>
+            <v-icon v-else>mdi-music</v-icon>
+          </v-btn> -->
+          <v-btn @click='switchStartOrStopSound()'>
             <v-icon v-if='nowPlaying'>mdi-stop</v-icon>
             <v-icon v-else>mdi-music</v-icon>
           </v-btn>
+
         </v-col>
         <v-col class="v-col-auto">
           <v-btn @click="infoDialog = true">
@@ -671,6 +686,7 @@ type Track = {
   midiNoteNumbers: string;
   midiNoteNumbersRules: ((v: any) => true | string)[];
   color: string;
+  tone: number;
 };
 
 const music = ref<{
@@ -690,6 +706,9 @@ const music = ref<{
   bpm: number;
   secondsPerTick: number;
   velocity: number;
+  loading: boolean;
+  soundFilePath: string | null;
+  scdFilePath: string | null;
 }>({
   notes: [],
   tracks: [],
@@ -710,8 +729,8 @@ const music = ref<{
     v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
     v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
     v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-    v => (v && String(v).split(',').every(n => Number(n) >= 1)) || 'numbers must be 1 or more',
-    v => (v && String(v).split(',').every(n => Number(n) <= 32)) || 'numbers must be 32 or less'
+    v => (v && String(v).split(',').every(n => Number(n) >= 1)) || 'numbers must be 1 or more(sorry, currently available duration length is just 1)',
+    v => (v && String(v).split(',').every(n => Number(n) <= 1)) || 'numbers must be 1 or less(sorry, currently available duration length is just 1)'
   ],
   setDataDialog: false,
   valid: false,
@@ -722,9 +741,13 @@ const music = ref<{
   bpmDefault: 60,
   bpm: 60,
   secondsPerTick: 0,
-  velocity: 1
+  velocity: 1,
+  loading: false,
+  soundFilePath: null,
+  scdFilePath: null
 })
 
+let audio: HTMLAudioElement | null = null
 let showTimeseriesChart = ref(false)
 let showTimeseriesComplexityChart = ref(false)
 let showTimeline = ref(false)
@@ -745,13 +768,33 @@ const progress = ref({
   status: 'beforeStart'
 })
 const jobId = ref('')
-onMounted(() => {
-  google.charts.load("current", {packages:["timeline", "corechart"]})
-})
+
 let methodType = ref<"analyse" | "generate" | null>(null)
 let selectedFileAnalyse = ref<File | null>(null)
 let selectedFileGenerate = ref<File | null>(null)
 
+// life cycle hook------------------------------------------------------------------------------
+
+onMounted(() => {
+  google.charts.load("current", {packages:["timeline", "corechart"]})
+})
+
+watch(selectedMode, async (newVal) => {
+  if (newVal === 'Clustering') {
+    await nextTick()
+    if(showTimeseriesChart.value){
+      drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
+    }
+    if(showTimeline.value){
+      drawTimeline()
+    }
+    if(showTimeseriesComplexityChart.value){
+      drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
+    }
+  }
+})
+
+// life cycle hook------------------------------------------------------------------------------
 const setRandoms = () => {
   const { min, max, length } = analyse.value.random;
 
@@ -796,64 +839,6 @@ const createLinearIntegerArray = (start, end, count) => {
       }
   }
   return result
-}
-
-const drawTimeSeries = (elementId, drawData) => {
-  showTimeseriesChart.value = true
-  nextTick(() => {
-    drawScatterChart(elementId, drawData, 200)
-  })
-}
-const drawTimeSeriesComplexity = (elementId, drawData) => {
-  showTimeseriesComplexityChart.value = true
-  nextTick(() => {
-    drawScatterChart(elementId, drawData, 100)
-  })
-}
-
-const drawScatterChart = (elementId, drawData, height) => {
-  const onlyData = drawData.map(data => data[1]).slice(1, drawData.length)
-  const dataMin = Math.min(...onlyData)
-  const dataMax = Math.max(...onlyData)
-  const options = {
-    pointSize: 20,
-    'height': height,
-    'width': window.innerWidth,
-    isStacked: false,
-    legend: 'none' as 'none' | google.visualization.ChartLegend,
-    series: [
-      {pointShape: 'square'},
-      {pointShape: 'square'},
-      {pointShape: 'square'},
-    ],
-    interpolateNulls:false,
-    chartArea:{
-      left:30,
-      top:0,
-      width:'100%',
-      height:'100%',
-      backgroundColor:{
-        fill: 'white',
-        fillOpacity: 100,
-        strokeWidth: 10
-      }
-    },
-    vAxis: {
-      viewWindow: {
-        min: dataMin,
-        max: dataMax
-      },
-      ticks: [...Array(dataMax + 1)].map((_, i) => i + dataMin)
-    }
-  }
-  const dataTable = new google.visualization.DataTable()
-  dataTable.addColumn('string', 'index')
-  dataTable.addColumn('number', 'value')
-  dataTable.addColumn('number', 'selectedValue')
-  dataTable.addColumn('number', 'playingValue')
-  dataTable.addRows(drawData)
-  const chart = new google.visualization.ScatterChart(document.getElementById(elementId) as HTMLElement)
-  chart.draw(dataTable, options)
 }
 
 const subscribeToProgress = () =>{
@@ -943,6 +928,64 @@ const generateTimeseries = () => {
   })
 }
 
+const drawTimeSeries = (elementId, drawData) => {
+  showTimeseriesChart.value = true
+  nextTick(() => {
+    drawScatterChart(elementId, drawData, 200)
+  })
+}
+const drawTimeSeriesComplexity = (elementId, drawData) => {
+  showTimeseriesComplexityChart.value = true
+  nextTick(() => {
+    drawScatterChart(elementId, drawData, 100)
+  })
+}
+
+const drawScatterChart = (elementId, drawData, height) => {
+  const onlyData = drawData.map(data => data[1]).slice(1, drawData.length)
+  const dataMin = Math.min(...onlyData)
+  const dataMax = Math.max(...onlyData)
+  const options = {
+    pointSize: 20,
+    'height': height,
+    'width': window.innerWidth,
+    isStacked: false,
+    legend: 'none' as 'none' | google.visualization.ChartLegend,
+    series: [
+      {pointShape: 'square'},
+      {pointShape: 'square'},
+      {pointShape: 'square'},
+    ],
+    interpolateNulls:false,
+    chartArea:{
+      left:30,
+      top:0,
+      width:'100%',
+      height:'100%',
+      backgroundColor:{
+        fill: 'white',
+        fillOpacity: 100,
+        strokeWidth: 10
+      }
+    },
+    vAxis: {
+      viewWindow: {
+        min: dataMin,
+        max: dataMax
+      },
+      ticks: [...Array(dataMax + 1)].map((_, i) => i + dataMin)
+    }
+  }
+  const dataTable = new google.visualization.DataTable()
+  dataTable.addColumn('string', 'index')
+  dataTable.addColumn('number', 'value')
+  dataTable.addColumn('number', 'selectedValue')
+  dataTable.addColumn('number', 'playingValue')
+  dataTable.addRows(drawData)
+  const chart = new google.visualization.ScatterChart(document.getElementById(elementId) as HTMLElement)
+  chart.draw(dataTable, options)
+}
+
 const drawTimeline = () => {
   if(analyse.value.clusteredSubsequences.length === 0){
     showTimeline.value = false
@@ -962,12 +1005,12 @@ const drawTimeline = () => {
 
     chart.draw(dataTable, options)
     google.visualization.events.addListener(chart, 'onmouseover', (e) => {
-      onSelectedSubsequence(e)
+      onMouseoverCluster(e)
     })
   })
 }
 
-const onSelectedSubsequence = (selected) => {
+const onMouseoverCluster = (selected) => {
   let subsequencesIndexes: number[][] = []
 
   analyse.value.clusteredSubsequences.filter(subsequence =>
@@ -999,80 +1042,6 @@ const onSelectedSubsequence = (selected) => {
   drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
 }
 
-const playNotes = () =>{
-  nowPlaying.value ? stopPlayingNotes() : startPlayingNotes()
-}
-const startPlayingNotes = () => {
-  nowPlaying.value = true
-  const score: ScoreEntry[] = []
-
-  // 各トラックごとに音符列を追加する
-  for (const track of music.value.tracks) {
-    const durations = track.durations.split(',').map(Number)
-    const midiNoteNumbers = track.midiNoteNumbers.split(',').map(Number)
-    let currentTimeInBeats = 0
-
-    for (let i = 0; i < midiNoteNumbers.length; i++) {
-      const midiNoteNumber = midiNoteNumbers[i]
-      const pitch = pitchMap.value[midiNoteNumber]
-
-      let setPitch: string
-      let setVelocity: number
-      if (pitch === undefined) {
-        setPitch = 'C1'
-        setVelocity = 0
-      } else {
-        setPitch = pitch
-        setVelocity = music.value.velocity ?? 0.8 // トラックごとにvelocityを持たせたければここで分ける
-      }
-
-      const dur = durations[i] || 1
-      const durationInBeats = Decimal.div(dur, 8)
-      score.push({
-        time: `${currentTimeInBeats}`,
-        note: `${setPitch}`,
-        duration: `${durationInBeats.toNumber()}`,
-        velocity: setVelocity
-      })
-
-      currentTimeInBeats = Decimal.add(currentTimeInBeats, durationInBeats).toNumber()
-    }
-  }
-
-  // Sampler は1つでよい（全トラック分鳴らす）
-  const sampler = new Tone.Sampler({
-    urls: {
-      A0: "A0.mp3", C1: "C1.mp3", "D#1": "Ds1.mp3", "F#1": "Fs1.mp3",
-      A1: "A1.mp3", C2: "C2.mp3", "D#2": "Ds2.mp3", "F#2": "Fs2.mp3",
-      A2: "A2.mp3", C3: "C3.mp3", "D#3": "Ds3.mp3", "F#3": "Fs3.mp3",
-      A3: "A3.mp3", C4: "C4.mp3", "D#4": "Ds4.mp3", "F#4": "Fs4.mp3",
-      A4: "A4.mp3", C5: "C5.mp3", "D#5": "Ds5.mp3", "F#5": "Fs5.mp3",
-      A5: "A5.mp3", C6: "C6.mp3", "D#6": "Ds6.mp3", "F#6": "Fs6.mp3",
-      A6: "A6.mp3", C7: "C7.mp3", "D#7": "Ds7.mp3", "F#7": "Fs7.mp3",
-      A7: "A7.mp3", C8: "C8.mp3"
-    },
-    baseUrl: "https://tonejs.github.io/audio/salamander/",
-    onload: () => {
-      const part = new Tone.Part((time, note) => {
-        sampler.triggerAttackRelease(note.note, note.duration, time, note.velocity)
-        if (musicComponent.value?.start) {
-          musicComponent.value.start()
-        }
-      }, score)
-      part.start(0)
-      Tone.Transport.start()
-    }
-  }).toDestination()
-}
-
-
-const stopPlayingNotes = () => {
-  nowPlaying.value = false
-  musicComponent.value?.stop()
-  Tone.Transport.stop()
-  Tone.Transport.cancel()
-}
-
 const onClickAddTrack = () => {
   music.value.tracks.push({
     name: generateRandomLetters(8),
@@ -1080,8 +1049,20 @@ const onClickAddTrack = () => {
     durationRules: music.value.durationsRules,
     midiNoteNumbers: '',
     midiNoteNumbersRules: music.value.midiNoteNumbersRules,
-    color: getRandomHexColor()
+    color: getRandomHexColor(),
+    tone: 0
   })
+}
+
+const setTimeSeriesToMusicElement = () => {
+  const track = music.value.tracks.find(t => t.name === analyse.value.selectedTrackName)
+  if (!track) return
+
+  if (analyse.value.selectedMusicElement === 'midiNoteNumbers') {
+    track.midiNoteNumbers = analyse.value.timeSeries
+  }else if(analyse.value.selectedMusicElement === 'durations'){
+    track.durations = analyse.value.timeSeries
+  }
 }
 
 const getRandomHexColor = () =>{
@@ -1154,33 +1135,26 @@ const onFileSelected = (file) => {
   reader.readAsText(file.target.files[0]);
 }
 
-const setTimeSeriesToMusicElement = () => {
-  const track = music.value.tracks.find(t => t.name === analyse.value.selectedTrackName)
-  if (!track) return
+const switchStartOrStopSound = () =>{
+  nowPlaying.value ? stopPlayingSound() : startPlayingSound()
+}
 
-  if (analyse.value.selectedMusicElement === 'midiNoteNumbers') {
-    track.midiNoteNumbers = analyse.value.timeSeries
-  }else if(analyse.value.selectedMusicElement === 'durations'){
-    track.durations = analyse.value.timeSeries
+const stopPlayingSound = () => {
+  nowPlaying.value = false
+  musicComponent.value?.stop()
+  audio.pause()
+}
+
+const startPlayingSound = () => {
+  nowPlaying.value = true
+  audio.play();
+  if (musicComponent.value?.start) {
+    musicComponent.value.start()
   }
 }
 
-const onMidiSelected = async () => {
-  if (!music.value.midi) return
-
-  const file = music.value.midi
-  const arrayBuffer = await file.arrayBuffer()
-  music.value.midiData = new Midi(arrayBuffer)
-
-  music.value.ticksPerBeat = music.value.midiData.header.tempos?.[0]?.ppq ?? music.value.ticksPerBeatDefault
-  music.value.bpm = music.value.midiData.header.tempos?.[0]?.bpm || music.value.bpmDefault
-  music.value.secondsPerTick = (60 / music.value.bpm) / music.value.ticksPerBeat
-
-  await nextTick()
-  music.value.setDataDialog = false
-}
-
 const generateMidi = () => {
+  music.value.loading = true
   const midi = new Midi()
 
   // テンポを指定
@@ -1214,29 +1188,139 @@ const generateMidi = () => {
     }
   })
 
-  music.value.midiData = midi
+  let data = {
+    tracks: music.value.tracks
+  }
+  axios.post("/api/web/supercolliders/generate", data)
+  .then(response => {
+    const { sound_file_path, scd_file_path, audio_data } = response.data;
 
+    // Base64データをデコードしてArrayBufferに変換
+    console.log(audio_data)
+    const binary = atob(audio_data);
+    music.value.soundFilePath = sound_file_path
+    music.value.scdFilePath = scd_file_path
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
 
-  music.value.setDataDialog = false
+    const audioBlob = new Blob([bytes.buffer], { type: "audio/wav" });
+    const url = URL.createObjectURL(audioBlob);
 
+    audio = new Audio(url);
+    music.value.midiData = midi
+    music.value.loading = false
+    music.value.setDataDialog = false
+    cleanup()
+  })
+  .catch(error => console.error("音声生成エラー", error));
 }
-// sample data
-// 1,1,1,1,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,1,1,1,1,1,1,2,2,1,1,1,1,1,2,3,3,1,3,2,2,3,1,1,1,1,1,3,3,2,1,2,2,3,3,2,2,1,3,1,2,3,1,1,3,2,1,1,4,4,1,4,3,4,2,4,4,4,3,1,4,1,1,4,2,1,4,4,2,3,4,4,4,4,1,3,4,1,2,4,1,4,1,2,3,3,2,1,1,2,2,2,1,3,2,3,1,3,3,1,1,2,2,3,4,2,1,3,4,4,2,2,1,2,3,1,1,3,2,3,4,4,2,2,1,2,1,1,1,1,1,1,1,1,2,2,1,1,1,1,1,2,3,3,4,4,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
-// 60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,62,62,60,61,62,61,60,60,60,63,63,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60,65,65,64,65,60,64,60,60,61,66,66,60,66,65,66,61,65,61,61,64,66,64,61,63,66,62,66,68,68,67,68,60,68,61,68,66,67,60,60,60,60,60,67,63,69,69,65,69,63,63,62,61,67,61,71,71,69,71,60,70,70,61,69,70,68,64,71,63,70,66,71,66,69,60,71,60,60,71,62,60,71,69,60,60,69,71,71,60,62,70,71,71,62,62,67,64,66,61,61,70,63,61,63,64,68,68,69,63,62,60,64,67,67,66,67,63,66,64,60,62,63,60,62,64,65,60,63,61,66,61,62,60,60,63,61,65,60,62,61,65,60,62,61
-watch(selectedMode, async (newVal) => {
-  if (newVal === 'Clustering') {
-    await nextTick()
-    if(showTimeseriesChart.value){
-      drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
-    }
-    if(showTimeline.value){
-      drawTimeline()
-    }
-    if(showTimeseriesComplexityChart.value){
-      drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
+
+const cleanup = () => {
+  let data = {
+    cleanup: {
+      sound_file_path: music.value.soundFilePath,
+      scd_file_path: music.value.scdFilePath
     }
   }
-})
+  axios.delete("/api/web/supercolliders/cleanup", { data })
+  .then(response => {
+    console.log('deleted temporary files')
+  })
+  .catch(error => console.error("音声削除エラー", error));
+}
+
+// deprecated------------------------------------------------------------------------------
+// tone.js
+const onMidiSelected = async () => {
+  if (!music.value.midi) return
+
+  const file = music.value.midi
+  const arrayBuffer = await file.arrayBuffer()
+  music.value.midiData = new Midi(arrayBuffer)
+
+  music.value.ticksPerBeat = music.value.midiData.header.tempos?.[0]?.ppq ?? music.value.ticksPerBeatDefault
+  music.value.bpm = music.value.midiData.header.tempos?.[0]?.bpm || music.value.bpmDefault
+  music.value.secondsPerTick = (60 / music.value.bpm) / music.value.ticksPerBeat
+
+  await nextTick()
+  music.value.setDataDialog = false
+}
+
+const playNotes = () =>{
+  nowPlaying.value ? stopPlayingNotes() : startPlayingNotes()
+}
+const stopPlayingNotes = () => {
+  nowPlaying.value = false
+  musicComponent.value?.stop()
+  Tone.Transport.stop()
+  Tone.Transport.cancel()
+}
+
+const startPlayingNotes = () => {
+  nowPlaying.value = true
+  const score: ScoreEntry[] = []
+
+  // 各トラックごとに音符列を追加する
+  for (const track of music.value.tracks) {
+    const durations = track.durations.split(',').map(Number)
+    const midiNoteNumbers = track.midiNoteNumbers.split(',').map(Number)
+    let currentTimeInBeats = 0
+
+    for (let i = 0; i < midiNoteNumbers.length; i++) {
+      const midiNoteNumber = midiNoteNumbers[i]
+      const pitch = pitchMap.value[midiNoteNumber]
+
+      let setPitch: string
+      let setVelocity: number
+      if (pitch === undefined) {
+        setPitch = 'C1'
+        setVelocity = 0
+      } else {
+        setPitch = pitch
+        setVelocity = music.value.velocity ?? 0.8 // トラックごとにvelocityを持たせたければここで分ける
+      }
+
+      const dur = durations[i] || 1
+      const durationInBeats = Decimal.div(dur, 8)
+      score.push({
+        time: `${currentTimeInBeats}`,
+        note: `${setPitch}`,
+        duration: `${durationInBeats.toNumber()}`,
+        velocity: setVelocity
+      })
+
+      currentTimeInBeats = Decimal.add(currentTimeInBeats, durationInBeats).toNumber()
+    }
+  }
+
+  // Sampler は1つでよい（全トラック分鳴らす）
+  const sampler = new Tone.Sampler({
+    urls: {
+      A0: "A0.mp3", C1: "C1.mp3", "D#1": "Ds1.mp3", "F#1": "Fs1.mp3",
+      A1: "A1.mp3", C2: "C2.mp3", "D#2": "Ds2.mp3", "F#2": "Fs2.mp3",
+      A2: "A2.mp3", C3: "C3.mp3", "D#3": "Ds3.mp3", "F#3": "Fs3.mp3",
+      A3: "A3.mp3", C4: "C4.mp3", "D#4": "Ds4.mp3", "F#4": "Fs4.mp3",
+      A4: "A4.mp3", C5: "C5.mp3", "D#5": "Ds5.mp3", "F#5": "Fs5.mp3",
+      A5: "A5.mp3", C6: "C6.mp3", "D#6": "Ds6.mp3", "F#6": "Fs6.mp3",
+      A6: "A6.mp3", C7: "C7.mp3", "D#7": "Ds7.mp3", "F#7": "Fs7.mp3",
+      A7: "A7.mp3", C8: "C8.mp3"
+    },
+    baseUrl: "https://tonejs.github.io/audio/salamander/",
+    onload: () => {
+      const part = new Tone.Part((time, note) => {
+        sampler.triggerAttackRelease(note.note, note.duration, time, note.velocity)
+        if (musicComponent.value?.start) {
+          musicComponent.value.start()
+        }
+      }, score)
+      part.start(0)
+      Tone.Transport.start()
+    }
+  }).toDestination()
+}
 
 
 </script>
