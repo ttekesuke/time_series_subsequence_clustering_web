@@ -9,7 +9,8 @@ class Api::Web::SupercollidersController < ApplicationController
     tracks = (raw_tracks || []).map do |track|
       {
         durations: track[:durations].is_a?(String) ? track[:durations].split(',').map(&:to_i) : Array(track[:durations]).map(&:to_i),
-        midiNoteNumbers: track[:midiNoteNumbers].is_a?(String) ? track[:midiNoteNumbers].split(',').map(&:to_i) : Array(track[:midiNoteNumbers]).map(&:to_i)
+        midiNoteNumbers: track[:midiNoteNumbers].is_a?(String) ? track[:midiNoteNumbers].split(',').map(&:to_i) : Array(track[:midiNoteNumbers]).map(&:to_i),
+        tone: track[:tone].to_i
       }
     end
     node_id = 1000
@@ -20,54 +21,109 @@ class Api::Web::SupercollidersController < ApplicationController
       track[:durations].each_with_index do |dur, idx|
         freq = midi_to_freq(track[:midiNoteNumbers][idx])
         dur  = dur * 0.125
-        events << [time, node_id, freq, dur]
+        tone = track[:tone] || 0
+        events << [time, node_id, freq, dur, tone]
         time += dur
         node_id += 1
       end
     end
 
-
     groups = events.group_by { |t, _nid, _f, _d| t }
-    p groups
     filename = "rendered_#{SecureRandom.hex}.wav"
-    @filepath = Rails.root.join("tmp", filename).to_s
+    @sound_file_path = Rails.root.join("tmp", filename).to_s
     total_duration = tracks.map { |track| track[:durations].sum }.max.to_f * 0.125 rescue 1.0
 
     # ERBテンプレート展開
     erb_path = Rails.root.join('supercollider', 'render.scd.erb')
-    scd_path = Rails.root.join('tmp', "render_#{SecureRandom.hex}.scd")
+    @scd_file_path = Rails.root.join('tmp', "render_#{SecureRandom.hex}.scd")
     template = File.read(erb_path)
     renderer = ERB.new(template)
     scd_code = renderer.result_with_hash(
       tracks: tracks,
-      filepath: @filepath,
+      filepath: @sound_file_path,
       total_duration: total_duration,
       midi_to_freq: method(:midi_to_freq)
     )
-    File.write(scd_path, scd_code)
+    File.write(@scd_file_path, scd_code)
 
     pid = Process.spawn(
       { "QT_QPA_PLATFORM" => "offscreen" },
-      "sclang", scd_path.to_s,
+      "sclang", @scd_file_path.to_s,
       out: "log/sclang_out.log",
       err: "log/sclang_err.log"
     )
     Process.detach(pid)
-    timeout = 5
-    start = Time.now
-    until File.size?(@filepath) || (Time.now - start > timeout)
-      sleep 0.1
-    end
 
-    if File.size?(@filepath)
-      send_file @filepath, type: "audio/wav", disposition: "inline"
-      File.delete(scd_path) if File.exist?(scd_path)
+    if wait_for_complete_file(@sound_file_path, timeout: 30)
+      # ファイルを読み込んでBase64に変換
+      base64_data = Base64.strict_encode64(File.binread(@sound_file_path))
+
+      render json: {
+        sound_file_path: @sound_file_path,
+        scd_file_path: @scd_file_path,
+        audio_data: base64_data
+      }
     else
-      File.delete(scd_path) if File.exist?(scd_path)
       render plain: "Failed to generate audio", status: 500
     end
+
   end
 
+  def cleanup
+    p 'delete_params'
+    p delete_params
+    sound_file_path = delete_params[:sound_file_path]
+    p 'sound_file_path'
+    p sound_file_path
+    if sound_file_path && File.exist?(sound_file_path)
+      File.delete(sound_file_path) rescue nil
+    else
+      render json: { message: "Sound File not found" }, status: 404
+    end
 
+    scd_file_path = delete_params[:scd_file_path]
+    if scd_file_path && File.exist?(scd_file_path)
+      File.delete(scd_file_path) rescue nil
+    else
+      render json: { message: "SCD File not found" }, status: 404
+    end
 
+    render json: { message: "File deleted" }
+  end
+
+  def wait_for_complete_file(filepath, timeout: 10)
+    start = Time.now
+    last_size = -1
+
+    loop do
+      # ファイルが存在しない場合
+      unless File.exist?(filepath)
+        break if Time.now - start > timeout
+        sleep 0.1
+        next
+      end
+
+      current_size = File.size(filepath)
+
+      # ファイルサイズが前回と同じなら「生成完了」とみなす
+      if current_size > 0 && current_size == last_size
+        return true
+      end
+
+      last_size = current_size
+      if Time.now - start > timeout
+        break
+      end
+      sleep 0.2
+    end
+    false
+  end
+
+  private
+    def delete_params
+      params.require(:cleanup).permit(
+        :sound_file_path,
+        :scd_file_path
+      )
+    end
 end

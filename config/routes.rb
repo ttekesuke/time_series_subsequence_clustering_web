@@ -12,6 +12,7 @@ Rails.application.routes.draw do
       end
       namespace :supercolliders do
         post 'generate'
+        delete 'cleanup'
       end
     end
   end

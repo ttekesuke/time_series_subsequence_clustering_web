@@ -10,10 +10,11 @@ events = []
 
 tracks.each do |track|
   time = 0.0
+  tone = track[:tone] || 0
   track[:durations].each_with_index do |dur, idx|
     freq = midi_to_freq.call(track[:midiNoteNumbers][idx])
     dur  = dur * 0.125
-    events << [time, node_id, freq, dur]
+    events << [time, node_id, freq, dur, tone]
     time += dur
     node_id += 1
   end
@@ -21,34 +22,77 @@ end
 
 
 groups = events.group_by { |t, _nid, _f, _d| t }
-p groups
 %>
 
 
 a = Score([
   [0.0, ['/d_recv',
-    SynthDef(\NRTsine, { |out, freq = 440, dur = 0.125|
-      var env = EnvGen.kr(
+    SynthDef(\sinToNoise, { |out=0, step=0, freq=440, dur=0.125|
+    var env = EnvGen.kr(
         Env([0, 1, 1, 0], [0.01, dur - 0.02, 0.02]),
         doneAction: Done.freeSelf
-      );
-      var sig = PMOsc.ar(freq, freq, 1, 0, 0.2) * env;
-      Out.ar(out, sig.dup);
+    );
+    var sig;
+
+    sig = Select.ar(step, [
+        // 0: 基音のみ
+        SinOsc.ar(freq, 0, 0.3),
+
+        // 1: 第2倍音追加
+        (SinOsc.ar(freq, 0, 0.3) + SinOsc.ar(freq*2, 0, 0.2)) * 0.7,
+
+        // 2: 第3倍音追加
+        (SinOsc.ar(freq, 0, 0.3) + SinOsc.ar(freq*2, 0, 0.2) + SinOsc.ar(freq*3, 0, 0.2)) * 0.6,
+
+        // 3: 第4倍音追加
+        Mix.new([SinOsc.ar(freq, 0, 0.3),
+                 SinOsc.ar(freq*2, 0, 0.2),
+                 SinOsc.ar(freq*3, 0, 0.2),
+                 SinOsc.ar(freq*4, 0, 0.2)]) * 0.5,
+
+        // 4: 第5倍音追加（1〜5倍音）
+        Mix.fill(5, { |i| SinOsc.ar(freq*(i+1), 0, 0.2) }) * 0.4,
+
+        // 5: ノコギリ波
+        Saw.ar(freq, 0.3),
+
+        // 6: ノコギリ＋非整数倍音
+        (Saw.ar(freq, 0.25) + SinOsc.ar(freq*1.37, 0, 0.15)) * 0.7,
+
+        // 7: ノコギリ＋FM的クラスタ
+        (Saw.ar(freq, 0.2)
+         + SinOsc.ar(freq*2.51, 0, 0.15)
+         + SinOsc.ar(freq*3.73, 0, 0.15)) * 0.7,
+
+        // 8: ノコギリ＋細かいクラスタ
+        (Saw.ar(freq, 0.2)
+         + Mix.fill(5, { |i| SinOsc.ar(freq*(1.1+i*0.37), 0, 0.1) })) * 0.7,
+
+        // 9: クラスタ増加
+        (Saw.ar(freq, 0.2)
+         + Mix.fill(10, { |i| SinOsc.ar(freq*(1.05+i*0.22), 0, 0.05) })) * 0.7,
+
+        // 10: 高域倍音強調
+        (Saw.ar(freq, 0.15)
+         + Mix.fill(20, { |i| SinOsc.ar(freq*(1.1+i*0.31), 0, 0.03) })) * 0.7,
+
+        // 11: ホワイトノイズ
+        WhiteNoise.ar(0.3)
+    ]);
+
+    Out.ar(out, sig * env ! 2); // ステレオ出力
     }).asBytes;
-  ]],
-<% groups.each do |time, evs| %>
-  [
-    <%= time %>,
-    <% evs.each do |(_t, nid, freq, dur)| %>
-      (x = Synth.basicNew(\NRTsine, server, <%= nid %>))
-        .newMsg(args: [freq: <%= freq %>, dur: <%= dur %>]),
-    <% end %>
-  ],
-<% end %>
-
+]],
+  <% groups.each do |time, evs| %>
+    [
+      <%= time %>,
+      <% evs.each do |(_t, nid, freq, dur, tone)| %>
+        (x = Synth.basicNew(\sinToNoise, server, <%= nid %>))
+          .newMsg(args: [step: <%= tone %>, freq: <%= freq %>, dur: <%= dur %>]),
+      <% end %>
+    ],
+  <% end %>
 ]);
-
-a.postln;
 
 
 a.recordNRT(
