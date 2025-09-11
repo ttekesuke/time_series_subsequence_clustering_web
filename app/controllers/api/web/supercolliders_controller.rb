@@ -48,9 +48,7 @@ class Api::Web::SupercollidersController < ApplicationController
 
     pid = Process.spawn(
       { "QT_QPA_PLATFORM" => "offscreen" },
-      "sclang", @scd_file_path.to_s,
-      out: "log/sclang_out.log",
-      err: "log/sclang_err.log"
+      "sclang", @scd_file_path.to_s
     )
     Process.detach(pid)
 
