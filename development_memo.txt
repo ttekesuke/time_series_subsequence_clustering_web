@@ -320,3 +320,6 @@ transform_clustersをやめる
 all_idsの中から除外するものを決める
 
 export QT_QPA_PLATFORM=offscreen
+
+
+midi range 24-127

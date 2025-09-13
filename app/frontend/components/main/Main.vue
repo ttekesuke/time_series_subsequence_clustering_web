@@ -538,6 +538,12 @@
             <Music ref="musicComponent" :midiData='music.midiData' :secondsPerTick="music.secondsPerTick"></Music>
           </v-col>
         </v-row>
+        <v-row no-gutters class="mt-5">
+          <v-col>
+            <Fft ref="FftComponent" :audioEl='audio'></Fft>
+          </v-col>
+        </v-row>
+
       </div>
     </v-main>
   </v-app>
@@ -553,6 +559,7 @@ import { ScoreEntry } from '../../types/types';
 import { MidiNote } from '../../types/types';
 import { useJobChannel } from '../../composables/useJobChannel'
 import Music from '../../components/music/Music.vue';
+import Fft from '../../components/audio/Fft.vue';
 import { Midi } from '@tonejs/midi'
 import Decimal from 'decimal.js'
 const timeseriesMax = ref(100)
@@ -747,7 +754,7 @@ const music = ref<{
   scdFilePath: null
 })
 
-let audio: HTMLAudioElement | null = null
+const audio = ref<HTMLAudioElement | null>(null)
 let showTimeseriesChart = ref(false)
 let showTimeseriesComplexityChart = ref(false)
 let showTimeline = ref(false)
@@ -1142,12 +1149,13 @@ const switchStartOrStopSound = () =>{
 const stopPlayingSound = () => {
   nowPlaying.value = false
   musicComponent.value?.stop()
-  audio.pause()
+  audio.value?.pause()
+  audio.value.currentTime = 0;
 }
 
 const startPlayingSound = () => {
   nowPlaying.value = true
-  audio.play();
+  audio.value?.play();
   if (musicComponent.value?.start) {
     musicComponent.value.start()
   }
@@ -1209,7 +1217,7 @@ const generateMidi = () => {
     const audioBlob = new Blob([bytes.buffer], { type: "audio/wav" });
     const url = URL.createObjectURL(audioBlob);
 
-    audio = new Audio(url);
+    audio.value = new Audio(url);
     music.value.midiData = midi
     music.value.loading = false
     music.value.setDataDialog = false
