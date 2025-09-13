@@ -736,8 +736,8 @@ const music = ref<{
     v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
     v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
     v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-    v => (v && String(v).split(',').every(n => Number(n) >= 1)) || 'numbers must be 1 or more(sorry, currently available duration length is just 1)',
-    v => (v && String(v).split(',').every(n => Number(n) <= 1)) || 'numbers must be 1 or less(sorry, currently available duration length is just 1)'
+    v => (v && String(v).split(',').every(n => Number(n) >= 1)) || 'numbers must be 1 or more',
+    v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
   ],
   setDataDialog: false,
   valid: false,
