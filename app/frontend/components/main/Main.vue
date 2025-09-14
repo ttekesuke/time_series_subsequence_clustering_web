@@ -415,6 +415,9 @@
                               label="harmRichness"
                               type="number"
                               v-model="track.harmRichness"
+                              min="0"
+                              max="1"
+                              step="0.01"
                             ></v-text-field>
                           </v-col>
                           <v-col cols="2">
@@ -422,6 +425,9 @@
                               label="brightness"
                               type="number"
                               v-model="track.brightness"
+                              min="0"
+                              max="1"
+                              step="0.01"
                             ></v-text-field>
                           </v-col>
                           <v-col cols="2">
@@ -429,6 +435,9 @@
                               label="noiseContent"
                               type="number"
                               v-model="track.noiseContent"
+                              min="0"
+                              max="1"
+                              step="0.01"
                             ></v-text-field>
                           </v-col>
                           <v-col cols="2">
@@ -436,6 +445,9 @@
                               label="formantChar"
                               type="number"
                               v-model="track.formantChar"
+                              min="0"
+                              max="1"
+                              step="0.01"
                             ></v-text-field>
                           </v-col>
                           <v-col cols="2">
@@ -443,6 +455,9 @@
                               label="inharmonicity"
                               type="number"
                               v-model="track.inharmonicity"
+                              min="0"
+                              max="1"
+                              step="0.01"
                             ></v-text-field>
                           </v-col>
                           <v-col cols="2">
@@ -450,6 +465,9 @@
                               label="resonance"
                               type="number"
                               v-model="track.resonance"
+                              min="0"
+                              max="1"
+                              step="0.01"
                             ></v-text-field>
                           </v-col>
                         </v-row>
