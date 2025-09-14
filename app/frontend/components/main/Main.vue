@@ -114,18 +114,19 @@
                   </v-row>
                   <v-row>
                     <v-col cols="2">
-                      <v-select
-                        label="tracks"
-                        :items="music.tracks.map(t => t.name)"
-                        v-model="analyse.selectedTrackName"
-                      ></v-select>
-                    </v-col>
-                    <v-col cols="2">
                       <v-btn
                         @click="onClickAddTrack()"
                       >
                         Add Track
                       </v-btn>
+                    </v-col>
+
+                    <v-col cols="2">
+                      <v-select
+                        label="tracks"
+                        :items="music.tracks.map(t => t.name)"
+                        v-model="analyse.selectedTrackName"
+                      ></v-select>
                     </v-col>
                     <v-col cols="3">
                       <v-select
@@ -137,7 +138,10 @@
                     <v-col cols="1">
                       <v-btn @click="setTimeSeriesToMusicElement">set</v-btn>
                     </v-col>
+                    <v-col cols="4">
+                      <v-btn @click="closeAnalyseAndOpenMusicGenerate">open music-generate dialog</v-btn>
 
+                    </v-col>
                   </v-row>
                 </v-card-text>
               </v-card>
@@ -758,6 +762,7 @@ type Track = {
 const music = ref<{
   notes: (MidiNote | null)[];
   tracks: Track[];
+  trackIdCounter: number;
   durations: string;
   durationsRules: ((v: any) => true | string)[];
   midiNoteNumbers: string;
@@ -778,6 +783,7 @@ const music = ref<{
 }>({
   notes: [],
   tracks: [],
+  trackIdCounter: -1,
   midiNoteNumbers: '',
   midiNoteNumbersRules: [
     v => !!v || 'required',
@@ -1110,7 +1116,7 @@ const onMouseoverCluster = (selected) => {
 
 const onClickAddTrack = () => {
   music.value.tracks.push({
-    name: generateRandomLetters(8),
+    name: getTrackId(),
     durations: '',
     durationRules: music.value.durationsRules,
     midiNoteNumbers: '',
@@ -1140,15 +1146,18 @@ const getRandomHexColor = () =>{
   return '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
 }
 
-const generateRandomLetters = (length) => {
-  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-  let result = ''
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length))
-  }
-  return result
+const getTrackId = () => {
+
+  return (music.value.trackIdCounter += 1).toString()
 }
 
+const closeAnalyseAndOpenMusicGenerate = () => {
+  analyse.value.setDataDialog = false
+  selectedMode.value = 'Music'
+  music.value.setDataDialog = true
+
+
+}
 const saveToFile = () => {
   const data = {
     methodType: methodType.value,
