@@ -35,7 +35,6 @@ groups = events.group_by { |t, _nid, _f, _d| t }
 a = Score([
   [0.0, ['/d_recv',
     // 6つの音色尺度を制御するSynthDef
-    // 6つの音色尺度を制御するSynthDef
     SynthDef(\multiTimbre, { |out=0, freq=440, dur=0.125,
         harmRichness=0.0,    // 尺度1: 倍音の豊かさ (0.0: 正弦波 → 1.0: 豊かな倍音)
         brightness=0.0,      // 尺度2: 高周波成分 (0.0: 暗い → 1.0: 明るい)
@@ -45,52 +44,71 @@ a = Score([
         resonance=0.0        // 尺度6: 共鳴特性 (0.0: なし → 1.0: 強い共鳴)
     |
         var env, sig, base, formantFilter, inharmonics, resonanceSig;
+        var nyquist, safeFreq, brightnessMult, hpfFreq, bpfFreq;
+
+        // 定数として定義（サンプリング周波数44100Hzを想定）
+        nyquist = 22050;
+
+        // 安全な周波数範囲に制限
+        safeFreq = freq.clip(20, 6600); // 約6.6kHz以下に制限
 
         // エンベロープ
         env = EnvGen.kr(Env([0, 1, 0.8, 0], [0.01, dur * 0.7, dur * 0.29]), doneAction: 2);
 
-        // 基本波形の生成（倍音の豊かさに基づいてブレンド）
-        base = Select.ar(
+        // 基本波形の生成
+        base = SelectX.ar(
             (harmRichness * 5).clip(0, 5),
             [
-                SinOsc.ar(freq) * 0.5,                                     // 純粋な正弦波
-                Pulse.ar(freq, 0.3 + (harmRichness * 0.4)) * 0.5,          // パルス波
-                Saw.ar(freq) * 0.5,                                        // ノコギリ波
-                Mix.fill(8, { |i| VarSaw.ar(freq * (i+1), 0, 0.5, 1/(i+2)) }) * 0.5, // 倍音合成
-                Mix.fill(16, { |i| VarSaw.ar(freq * (i+1), 0, 0.5, 1/(i+2)) }) * 0.5, // より豊かな倍音
-                Blip.ar(freq, 24) * 0.5                                    // 多数の倍音
+                SinOsc.ar(safeFreq) * 0.5,                                     // 純粋な正弦波
+                Pulse.ar(safeFreq, 0.3 + (harmRichness * 0.4)) * 0.5,         // パルス波
+                Saw.ar(safeFreq) * 0.5,                                        // ノコギリ波
+                Mix.fill(4, { |i|
+                    VarSaw.ar(safeFreq * (i+1), 0, 0.5, 1/(i+2))
+                }) * 0.5,
+                Mix.fill(6, { |i|
+                    VarSaw.ar(safeFreq * (i+1), 0, 0.5, 1/(i+2))
+                }) * 0.5,
+                Blip.ar(safeFreq, 8) * 0.5
             ]
         );
 
-        // 高周波成分の追加（明るさ）
-        sig = base + (HPF.ar(base, freq * 3) * brightness * 0.7);
-        sig = sig + (BPF.ar(WhiteNoise.ar(0.1), freq * 12, 0.2) * brightness * 0.5);
+        // 高周波成分の追加（条件文を避けてLinExpで調整）
+        brightnessMult = brightness * freq.linexp(440, 7040, 1.0, 0.1); // 高音域ほど明るさを抑制
+        hpfFreq = (safeFreq * 2).min(15000);
+        bpfFreq = (safeFreq * 3).min(15000);
+
+        sig = base + (HPF.ar(base, hpfFreq) * brightnessMult * 0.2);
+        sig = sig + (BPF.ar(WhiteNoise.ar(0.03), bpfFreq, 0.8) * brightnessMult * 0.15);
 
         // ノイズの追加
-        sig = (sig * (1 - noiseContent)) + (PinkNoise.ar(0.4) * noiseContent);
+        sig = (sig * (1 - noiseContent)) + (PinkNoise.ar(0.25) * noiseContent);
 
-        // フォルマント特性の適用
+        // フォルマント特性の適用（条件文を使わずXFadeで）
         formantFilter = Formant.ar(
-            freq * [1, 2, 3], // 基本フォルマント周波数
-            freq * [2, 3, 4] * (1 + formantChar), // フォルマント周波数
-            freq * 0.5 * (1 - (formantChar * 0.3)) // 帯域幅
-        ).sum * 0.3;
-        sig = (sig * (1 - formantChar)) + (formantFilter * formantChar);
+            safeFreq * 1.2,
+            safeFreq * 2.2,
+            safeFreq * 0.4
+        ) * 0.15;
+        sig = XFade2.ar(sig, formantFilter, formantChar * 2 - 1);
 
         // 非整数倍音の追加
-        inharmonics = Mix.fill(6, { |i|
-            var detune = 1.0 + (i * 0.13) + (LFNoise1.kr(0.2).range(-0.1, 0.1) * inharmonicity);
-            var amp = 0.15 / (i + 1) * inharmonicity;
-            SinOsc.ar(freq * detune, 0, amp)
+        inharmonics = Mix.fill(3, { |i|
+            var detune = 1.0 + (i * 0.06) + (LFNoise1.kr(0.3).range(-0.03, 0.03) * inharmonicity);
+            var amp = 0.08 / (i + 1) * inharmonicity;
+            SinOsc.ar(safeFreq * detune, 0, amp)
         });
         sig = sig + inharmonics;
 
         // 共鳴特性の適用
-        resonanceSig = MoogFF.ar(sig, freq * (1 + (resonance * 12)), resonance * 3.5);
-        sig = (sig * (1 - resonance)) + (resonanceSig * resonance);
+        resonanceSig = MoogFF.ar(sig, (safeFreq * (1 + (resonance * 4))).min(15000), resonance * 2.0);
+        sig = XFade2.ar(sig, resonanceSig, resonance * 2 - 1);
+
+        // 最終的な音量調整とソフトクリッピング
+        sig = sig * 0.4;
+        sig = sig.tanh;
 
         // 出力
-        Out.ar(out, sig * env * 0.7 ! 2);
+        Out.ar(out, sig * env ! 2);
     }).asBytes;
   ]],
   <% groups.each do |time, evs| %>

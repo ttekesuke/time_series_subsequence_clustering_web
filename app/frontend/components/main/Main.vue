@@ -399,18 +399,25 @@
                       ></v-text-field>
                     </v-col>
                     <v-col cols="2">
-                      <v-btn @click="generateMidi" :loading="music.loading">generate</v-btn>
+                      <v-btn @click="generateMidi" :loading="music.loading" :disabled="music.tracks.length == 0">generate</v-btn>
                     </v-col>
                   </v-row>
-                  <template v-for='track in music.tracks'>
+                  <template v-for='(track, trackIndex) in music.tracks'>
                     <v-row>
                       <v-col cols="1">
-                        <v-text-field
-                        placeholder="name"
-                        required
-                        v-model='track.name'
-                        label="name"
-                        ></v-text-field>
+                        <v-row>
+                          <v-col>
+                            <v-btn @click="onClickDeleteTrack(trackIndex)" style="min-width: 0rem;">×</v-btn>
+                          </v-col>
+                          <v-col>
+                            <v-text-field
+                            placeholder="name"
+                            required
+                            v-model='track.name'
+                            label="name"
+                            ></v-text-field>
+                          </v-col>
+                        </v-row>
                       </v-col>
                       <v-col cols="5">
                         <v-row>
@@ -1131,6 +1138,10 @@ const onClickAddTrack = () => {
   })
 }
 
+const onClickDeleteTrack = (trackIndex: number) => {
+  music.value.tracks.splice(trackIndex, 1)
+}
+
 const setTimeSeriesToMusicElement = () => {
   const track = music.value.tracks.find(t => t.name === analyse.value.selectedTrackName)
   if (!track) return
@@ -1291,6 +1302,7 @@ const generateMidi = () => {
     const url = URL.createObjectURL(audioBlob);
 
     audio.value = new Audio(url);
+    audio.value.addEventListener('ended', () => nowPlaying.value = false)
     music.value.midiData = midi
     music.value.loading = false
     music.value.setDataDialog = false
