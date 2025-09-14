@@ -10,25 +10,15 @@ class Api::Web::SupercollidersController < ApplicationController
       {
         durations: track[:durations].is_a?(String) ? track[:durations].split(',').map(&:to_i) : Array(track[:durations]).map(&:to_i),
         midiNoteNumbers: track[:midiNoteNumbers].is_a?(String) ? track[:midiNoteNumbers].split(',').map(&:to_i) : Array(track[:midiNoteNumbers]).map(&:to_i),
-        tone: track[:tone].to_i
+        tone: track[:tone].to_i,
+        harmRichness: track[:harmRichness].to_f,
+        brightness: track[:brightness].to_f,
+        noiseContent: track[:noiseContent].to_f,
+        formantChar: track[:formantChar].to_f,
+        inharmonicity: track[:inharmonicity].to_f,
+        resonance: track[:resonance].to_f,
       }
     end
-    node_id = 1000
-    events = []
-
-    tracks.each do |track|
-      time = 0.0
-      track[:durations].each_with_index do |dur, idx|
-        freq = midi_to_freq(track[:midiNoteNumbers][idx])
-        dur  = dur * 0.125
-        tone = track[:tone] || 0
-        events << [time, node_id, freq, dur, tone]
-        time += dur
-        node_id += 1
-      end
-    end
-
-    groups = events.group_by { |t, _nid, _f, _d| t }
     filename = "rendered_#{SecureRandom.hex}.wav"
     @sound_file_path = Rails.root.join("tmp", filename).to_s
     total_duration = tracks.map { |track| track[:durations].sum }.max.to_f * 0.125 rescue 1.0

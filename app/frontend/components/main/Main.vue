@@ -347,7 +347,7 @@
         </v-col>
         <v-col class="v-col-auto" v-if="selectedMode === 'Music'">
           <v-btn @click="music.setDataDialog = true">generate</v-btn>
-          <v-dialog width="1200" v-model="music.setDataDialog" >
+          <v-dialog width="1900" v-model="music.setDataDialog" >
             <v-form v-model='music.valid' fast-fail ref="form">
               <v-card>
                 <v-card-title>
@@ -408,17 +408,53 @@
                         label="name"
                         ></v-text-field>
                       </v-col>
-                      <v-col cols="1">
-                        <v-text-field
-                          label="tone"
-                          type="number"
-                          v-model="track.tone"
-                          min="0"
-                          max="11"
-                          step="1"
-                        ></v-text-field>
-                      </v-col>
                       <v-col cols="5">
+                        <v-row>
+                          <v-col cols="2">
+                            <v-text-field
+                              label="harmRichness"
+                              type="number"
+                              v-model="track.harmRichness"
+                            ></v-text-field>
+                          </v-col>
+                          <v-col cols="2">
+                            <v-text-field
+                              label="brightness"
+                              type="number"
+                              v-model="track.brightness"
+                            ></v-text-field>
+                          </v-col>
+                          <v-col cols="2">
+                            <v-text-field
+                              label="noiseContent"
+                              type="number"
+                              v-model="track.noiseContent"
+                            ></v-text-field>
+                          </v-col>
+                          <v-col cols="2">
+                            <v-text-field
+                              label="formantChar"
+                              type="number"
+                              v-model="track.formantChar"
+                            ></v-text-field>
+                          </v-col>
+                          <v-col cols="2">
+                            <v-text-field
+                              label="inharmonicity"
+                              type="number"
+                              v-model="track.inharmonicity"
+                            ></v-text-field>
+                          </v-col>
+                          <v-col cols="2">
+                            <v-text-field
+                              label="resonance"
+                              type="number"
+                              v-model="track.resonance"
+                            ></v-text-field>
+                          </v-col>
+                        </v-row>
+                      </v-col>
+                      <v-col cols="3">
                         <v-textarea
                         placeholder="please set durations (like 8,4,4)"
                         required
@@ -428,7 +464,7 @@
                         :rules="track.durationRules"
                       ></v-textarea>
                       </v-col>
-                      <v-col cols="5">
+                      <v-col cols="3">
                         <v-textarea
                         placeholder="please set midi note numbers (like 60,62,64)"
                         required
@@ -693,7 +729,12 @@ type Track = {
   midiNoteNumbers: string;
   midiNoteNumbersRules: ((v: any) => true | string)[];
   color: string;
-  tone: number;
+  harmRichness: number;
+  brightness: number;
+  noiseContent: number;
+  formantChar: number;
+  inharmonicity: number;
+  resonance: number;
 };
 
 const music = ref<{
@@ -1057,7 +1098,12 @@ const onClickAddTrack = () => {
     midiNoteNumbers: '',
     midiNoteNumbersRules: music.value.midiNoteNumbersRules,
     color: getRandomHexColor(),
-    tone: 0
+    harmRichness: 0.0,
+    brightness: 0.0,
+    noiseContent: 0.0,
+    formantChar: 0.0,
+    inharmonicity: 0.0,
+    resonance: 0.0
   })
 }
 
