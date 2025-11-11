@@ -323,3 +323,95 @@ export QT_QPA_PLATFORM=offscreen
 
 
 midi range 24-127
+
+
+
+以下はストリームに関する処理
+
+class OctaveStreamsDeterministic
+  OCT_RANGE = (0..7).to_a
+
+  def initialize(target_continuations, stream_counts, initial_octaves)
+    @target_continuations = target_continuations
+    @stream_counts = [initial_octaves.length, *stream_counts]
+    @initial_octaves = initial_octaves
+    validate_inputs
+  end
+
+  def generate
+    seq = [@initial_octaves]
+    puts "t=0: #{fmt(@initial_octaves)} (streams=#{@initial_octaves.length})"
+
+    (0...@target_continuations.length).each do |i|
+      prev = seq[i]
+      target_continuations = @target_continuations[i]
+      stream_count = @stream_counts[i + 1]
+      next_config, actual_continuation = best_next(prev, target_continuations, stream_count)
+      seq << next_config
+
+      puts format(
+        "t=%d: %s (target_continuations=%.2f, actual_continuation=%.2f, streams=%d)",
+        i + 1, fmt(next_config), target_continuations, actual_continuation, stream_count
+      )
+    end
+    seq
+  end
+
+  private
+
+  def validate_inputs
+    unless @stream_counts.length == @target_continuations.length + 1
+      raise "stream_countsの長さは target_continuations.length と一致している必要があります（初期分は自動追加されます）"
+    end
+  end
+
+  def best_next(prev, target_continuations, stream_count)
+    best_cfg = nil
+    best_diff = Float::INFINITY
+    best_actual_continuation = nil
+
+    candidates(stream_count).each do |cand|
+      actual_continuation = calc_continuation_degree(prev, cand)
+      diff = (actual_continuation - target_continuations).abs
+      if diff < best_diff
+        best_diff = diff
+        best_cfg = cand
+        best_actual_continuation = actual_continuation
+      end
+    end
+    [best_cfg, best_actual_continuation]
+  end
+
+  def candidates(stream_count)
+    OCT_RANGE.repeated_permutation(stream_count)
+  end
+
+  # 距離ベースの継続度（特例なし）
+  def calc_continuation_degree(prev, cand)
+    dist = min_avg_distance(prev, cand)
+    norm_dist = dist / 7.0
+    1.0 - norm_dist
+  end
+
+  # 最近傍距離平均（双方向）
+  def min_avg_distance(a, b)
+    a_avg = a.map { |x| b.map { |y| (x - y).abs }.min }.sum.to_f / a.length
+    b_avg = b.map { |y| a.map { |x| (y - x).abs }.min }.sum.to_f / b.length
+    (a_avg + b_avg) / 2.0
+  end
+
+  def fmt(arr)
+    "[#{arr.join(',')}]"
+  end
+end
+
+# ---- 動作確認 ----
+if __FILE__ == $0
+  target_continuations = [1.0, 1,1,0]
+  stream_counts = [2,2,2,2]
+  initial_octaves  = [0, 7]
+
+  gen = OctaveStreamsDeterministic.new(target_continuations, stream_counts, initial_octaves)
+  gen.generate
+end
+
