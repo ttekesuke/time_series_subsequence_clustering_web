@@ -19,25 +19,7 @@ class TimeSeriesClusterManager
     @cluster_id_counter = 0
     @calculate_distance_when_added_subsequence_to_cluster = calculate_distance_when_added_subsequence_to_cluster
 
-    @clusters = { @cluster_id_counter => { si: [0], cc: {}, as: [0, min_window_size] } }
-    # clustersの構成
-    # clusters = {
-    #   cluster_id1 => {
-    #     si: [start_index1,start_index2..],
-    #     cc: {
-    #       cluster_id2 => {
-    #         si: [start_index3,start_index4..],
-    #         cc: {},
-    #         as: [average_of_sequences_in_same_cluster]
-    #       },
-    #       cluster_id3 => {
-    #         si: [start_index5,start_index6..],
-    #         cc: {},
-    #         as: [average_of_sequences_in_same_cluster]
-    #       }
-    #     }
-    #   }
-    # }
+    @clusters = { @cluster_id_counter => { si: [0], cc: {}, as: [0, min_window_size], life_energy: 100.0 } }
 
     @updated_cluster_ids_per_window_for_calculate_distance = {}
     @updated_cluster_ids_per_window_for_calculate_distance[@min_window_size] ||= Set.new
@@ -70,7 +52,94 @@ class TimeSeriesClusterManager
     clustering_subsequences_incremental(@data.length - 1)
   end
 
-  # --- シミュレーション & ロールバック機能 (Lv.3) ---
+  # --- 記憶強化メソッド (規則性ボーナス) ---
+  def reinforce_cluster(cluster)
+    old_energy = cluster[:life_energy]
+
+    # 1. 出現回数が少ない場合は初期ブースト
+    if cluster[:si].length < 3
+      cluster[:life_energy] += 30.0
+      cluster[:life_energy] = [cluster[:life_energy], 200.0].min
+      record_action(:cluster_prop_update, cluster, :life_energy, old_energy)
+      return
+    end
+
+    # 2. 規則性の計算 (変動係数)
+    intervals = []
+    (0...(cluster[:si].length - 1)).each do |i|
+      intervals << (cluster[:si][i+1] - cluster[:si][i])
+    end
+
+    mean_interval = intervals.sum.to_f / intervals.size
+
+    variance = intervals.inject(0.0) { |sum, val| sum + (val - mean_interval) ** 2 } / intervals.size
+    std_dev = Math.sqrt(variance)
+
+    cv = mean_interval.zero? ? 0 : std_dev / mean_interval
+    regularity_score = 1.0 / (1.0 + cv)
+
+    # 3. 回復量の決定
+    base_recovery = 20.0
+    recovery = base_recovery * (1.0 + regularity_score * 2.0)
+
+    cluster[:life_energy] += recovery
+    cluster[:life_energy] = [cluster[:life_energy], 300.0].min
+
+    record_action(:cluster_prop_update, cluster, :life_energy, old_energy)
+  end
+
+  # --- 忘却メソッド (競合的顕著性モデル) ---
+  def prune_clusters
+    root_ids = @clusters.keys
+    return if root_ids.empty?
+
+    # 1. 全体重心 (Global Mean)
+    first_as = @clusters[root_ids.first][:as]
+    dim = first_as.size
+    global_sum = Array.new(dim, 0.0)
+
+    @clusters.each_value do |cluster|
+      cluster[:as].each_with_index { |val, i| global_sum[i] += val }
+    end
+
+    count = root_ids.size.to_f
+    global_mean = global_sum.map { |v| v / count }
+
+    # 2. 多様性 (Diversity) = 平均距離
+    total_deviation = 0.0
+    @clusters.each_value do |cluster|
+      d2 = squared_euclidean_distance(cluster[:as], global_mean)
+      total_deviation += Math.sqrt(d2)
+    end
+    diversity_score = total_deviation / count
+
+    # 3. 減衰率 (多様性に依存)
+    base_decay = 1.0
+    decay_rate = base_decay + (diversity_score * 0.05)
+
+    ids_to_delete = []
+
+    @clusters.each do |id, cluster|
+      # 4. 特異性 (Salience) による保護
+      d2 = squared_euclidean_distance(cluster[:as], global_mean)
+      dist_to_global = Math.sqrt(d2)
+
+      damage = [decay_rate - (dist_to_global * 0.05), 0.1].max
+
+      cluster[:life_energy] -= damage
+
+      if cluster[:life_energy] <= 0
+        ids_to_delete << id
+      end
+    end
+
+    ids_to_delete.each do |id|
+      @clusters.delete(id)
+      # キャッシュにはあえて触らない(高速化)
+    end
+  end
+
+  # --- Simulation & Rollback ---
 
   def simulate_add_and_calculate(candidate, quadratic_integer_array, controller_context)
     start_transaction!
@@ -170,6 +239,15 @@ class TimeSeriesClusterManager
     hash[window] << id
   end
 
+  def squared_euclidean_distance(a, b)
+    sum = 0.0
+    a.each_with_index do |val, i|
+      d = val - b[i]
+      sum += d * d
+    end
+    sum
+  end
+
   private
 
   def start_transaction!
@@ -207,6 +285,8 @@ class TimeSeriesClusterManager
         else
           entry[:target][entry[:key]] = entry[:old_value]
         end
+      when :cluster_prop_update
+        entry[:target][entry[:key]] = entry[:old_value]
       end
     end
 
@@ -294,6 +374,8 @@ class TimeSeriesClusterManager
       target_cluster[:as] = new_as
       record_action(:as_update, target_cluster, nil, old_as)
 
+      reinforce_cluster(target_cluster)
+
       add_updated_id(@updated_cluster_ids_per_window_for_calculate_quantities, new_length, best_cluster_id)
 
       if @calculate_distance_when_added_subsequence_to_cluster
@@ -301,7 +383,7 @@ class TimeSeriesClusterManager
       end
       @tasks << [keys_to_parent.dup << best_cluster_id, new_length]
     else
-      new_cluster = { si: [latest_start], cc: {}, as: latest_seq.dup }
+      new_cluster = { si: [latest_start], cc: {}, as: latest_seq.dup, life_energy: 100.0 }
       parent[:cc][@cluster_id_counter] = new_cluster
       record_action(:cc_add, parent[:cc], @cluster_id_counter)
 
@@ -325,7 +407,7 @@ class TimeSeriesClusterManager
     end
 
     if valid_group.any?
-      new_cluster = { si: valid_group + [latest_start], cc: {}, as: average_sequences((valid_group + [latest_start]).map { |s| @data[s, new_length] }) }
+      new_cluster = { si: valid_group + [latest_start], cc: {}, as: average_sequences((valid_group + [latest_start]).map { |s| @data[s, new_length] }), life_energy: 100.0 }
       parent[:cc][@cluster_id_counter] = new_cluster
       record_action(:cc_add, parent[:cc], @cluster_id_counter)
 
@@ -333,7 +415,7 @@ class TimeSeriesClusterManager
       @tasks << [keys_to_parent.dup << @cluster_id_counter, new_length]
       @cluster_id_counter += 1
     else
-      new_cluster = { si: [latest_start], cc: {}, as: latest_seq.dup }
+      new_cluster = { si: [latest_start], cc: {}, as: latest_seq.dup, life_energy: 100.0 }
       parent[:cc][@cluster_id_counter] = new_cluster
       record_action(:cc_add, parent[:cc], @cluster_id_counter)
 
@@ -342,7 +424,7 @@ class TimeSeriesClusterManager
     end
 
     invalid_group.each do |s|
-      new_cluster = { si: [s], cc: {}, as: @data[s, new_length] }
+      new_cluster = { si: [s], cc: {}, as: @data[s, new_length], life_energy: 100.0 }
       parent[:cc][@cluster_id_counter] = new_cluster
       record_action(:cc_add, parent[:cc], @cluster_id_counter)
 
@@ -380,6 +462,8 @@ class TimeSeriesClusterManager
         best_cluster[:as] = average_sequences(best_cluster[:si].map { |s| @data[s, @min_window_size] })
         record_action(:as_update, best_cluster, nil, old_as)
 
+        reinforce_cluster(best_cluster)
+
         add_updated_id(@updated_cluster_ids_per_window_for_calculate_quantities, @min_window_size, best_cluster_id)
         if @calculate_distance_when_added_subsequence_to_cluster
           add_updated_id(@updated_cluster_ids_per_window_for_calculate_distance, @min_window_size, best_cluster_id)
@@ -387,7 +471,7 @@ class TimeSeriesClusterManager
       end
       @tasks << [[best_cluster_id], @min_window_size]
     else
-      new_cluster = { si: [latest_start], cc: {}, as: @data[latest_start, @min_window_size] }
+      new_cluster = { si: [latest_start], cc: {}, as: @data[latest_start, @min_window_size], life_energy: 100.0 }
       @clusters[@cluster_id_counter] = new_cluster
       record_action(:root_add, nil, @cluster_id_counter)
 
