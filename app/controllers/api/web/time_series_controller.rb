@@ -115,7 +115,6 @@ class Api::Web::TimeSeriesController < ApplicationController
 
       candidates.each_with_index do |candidate, idx|
         # シミュレーション実行
-        # Manager側でもID:0の強制更新を行わない
         avg_dist, quantity = manager.simulate_add_and_calculate(
           candidate,
           quadratic_integer_array,
@@ -140,7 +139,6 @@ class Api::Web::TimeSeriesController < ApplicationController
       manager.add_data_point_permanently(result)
 
       # 決定後のキャッシュ更新
-      # ここでも ID:0 の強制更新は行わない
       update_caches_permanently(manager, min_window_size, quadratic_integer_array)
 
       if selected_use_musical_feature === 'dissonancesOutline'
