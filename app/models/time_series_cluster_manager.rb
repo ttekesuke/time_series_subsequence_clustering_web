@@ -5,20 +5,21 @@ class TimeSeriesClusterManager
   attr_accessor :cluster_id_counter
   attr_accessor :tasks
 
-  # クラスタ間距離計算用の更新済window_size,cluster_idペア記録用
   attr_accessor :updated_cluster_ids_per_window_for_calculate_distance
-  # クラスタ間距離キャッシュ
   attr_accessor :cluster_distance_cache
-  # クラスタ内数量計算用の更新済window_size,cluster_idペア記録用
   attr_accessor :updated_cluster_ids_per_window_for_calculate_quantities
-  # クラスタ内数量キャッシュ
   attr_accessor :cluster_quantity_cache
+
+  attr_reader :recording_mode
+
   def initialize(data, merge_threshold_ratio, min_window_size, calculate_distance_when_added_subsequence_to_cluster)
     @data = data
     @merge_threshold_ratio = merge_threshold_ratio
     @min_window_size = min_window_size
     @cluster_id_counter = 0
     @calculate_distance_when_added_subsequence_to_cluster = calculate_distance_when_added_subsequence_to_cluster
+
+    @clusters = { @cluster_id_counter => { si: [0], cc: {}, as: [0, min_window_size] } }
     # clustersの構成
     # clusters = {
     #   cluster_id1 => {
@@ -37,36 +38,202 @@ class TimeSeriesClusterManager
     #     }
     #   }
     # }
-  @clusters = { @cluster_id_counter => { si: [0], cc: {}, as: [0, min_window_size] } }
 
-  @updated_cluster_ids_per_window_for_calculate_distance = {}
-  @updated_cluster_ids_per_window_for_calculate_distance[@min_window_size] ||= Set.new
-  @updated_cluster_ids_per_window_for_calculate_distance[@min_window_size] << @cluster_id_counter
+    @updated_cluster_ids_per_window_for_calculate_distance = {}
+    @updated_cluster_ids_per_window_for_calculate_distance[@min_window_size] ||= Set.new
+    @updated_cluster_ids_per_window_for_calculate_distance[@min_window_size] << @cluster_id_counter
 
-  @updated_cluster_ids_per_window_for_calculate_quantities = {}
-  @updated_cluster_ids_per_window_for_calculate_quantities[@min_window_size] ||= Set.new
-  @updated_cluster_ids_per_window_for_calculate_quantities[@min_window_size] << @cluster_id_counter
+    @updated_cluster_ids_per_window_for_calculate_quantities = {}
+    @updated_cluster_ids_per_window_for_calculate_quantities[@min_window_size] ||= Set.new
+    @updated_cluster_ids_per_window_for_calculate_quantities[@min_window_size] << @cluster_id_counter
 
-  @cluster_distance_cache = {}
-  @cluster_distance_cache[@min_window_size] ||= {}
-  @cluster_quantity_cache = {}
-  @cluster_quantity_cache[@min_window_size] ||= {}
-  @cluster_id_counter += 1
-  @tasks = []
+    @cluster_distance_cache = {}
+    @cluster_distance_cache[@min_window_size] ||= {}
+    @cluster_quantity_cache = {}
+    @cluster_quantity_cache[@min_window_size] ||= {}
+    @cluster_id_counter += 1
+    @tasks = []
+
+    @recording_mode = false
+    @journal = []
   end
 
   def process_data
     @data.each_with_index do |_, data_index|
       next if data_index <= @min_window_size - 1
-
       clustering_subsequences_incremental(data_index)
     end
   end
 
+  def add_data_point_permanently(val)
+    @data << val
+    clustering_subsequences_incremental(@data.length - 1)
+  end
+
+  # --- シミュレーション & ロールバック機能 (Lv.3) ---
+
+  def simulate_add_and_calculate(candidate, quadratic_integer_array, controller_context)
+    start_transaction!
+    reset_updated_ids_for_simulation!
+
+    begin
+      @data << candidate
+      record_action(:data_push)
+
+      clustering_subsequences_incremental(@data.length - 1)
+
+      clusters_each_window_size = controller_context.send(:transform_clusters, @clusters, @min_window_size)
+
+      sum_distances_in_all_window = 0
+      sum_similar_subsequences_quantities = 0
+
+      clusters_each_window_size.each do |window_size, same_window_size_clusters|
+        sum_distances = 0
+        all_ids = same_window_size_clusters.keys
+        updated_ids = @updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
+
+        cache = @cluster_distance_cache[window_size]
+        if cache.nil?
+          cache = {}
+          @cluster_distance_cache[window_size] = cache
+          record_action(:hash_set_key, @cluster_distance_cache, window_size, nil)
+        end
+
+        updated_ids.each do |cid1|
+          all_ids.each do |cid2|
+            next if cid1 == cid2
+            key = [cid1, cid2].sort
+            as1 = same_window_size_clusters.dig(cid1, :as)
+            as2 = same_window_size_clusters.dig(cid2, :as)
+            if as1 && as2
+              dist = controller_context.send(:euclidean_distance, as1, as2)
+              old_val = cache[key]
+              cache[key] = dist
+              record_action(:cache_write, cache, key, old_val)
+            end
+          end
+        end
+        sum_distances = cache.values.sum
+        sum_distances_in_all_window += (sum_distances / window_size)
+
+        updated_quant_ids = @updated_cluster_ids_per_window_for_calculate_quantities[window_size].to_a rescue []
+        q_cache = @cluster_quantity_cache[window_size]
+        if q_cache.nil?
+          q_cache = {}
+          @cluster_quantity_cache[window_size] = q_cache
+          record_action(:hash_set_key, @cluster_quantity_cache, window_size, nil)
+        end
+
+        updated_quant_ids.each do |cid|
+          cluster = same_window_size_clusters[cid]
+          if cluster && cluster[:si].length > 1
+            quantity = cluster[:si].map { |start_and_end|
+              (quadratic_integer_array[start_and_end[0]])
+            }.inject(1) { |product, n| product * n }
+
+            old_val = q_cache[cid]
+            q_cache[cid] = quantity
+            record_action(:cache_write, q_cache, cid, old_val)
+          end
+        end
+        sum_similar_subsequences_quantities += q_cache.values.sum
+      end
+
+      return sum_distances_in_all_window, sum_similar_subsequences_quantities
+
+    ensure
+      rollback!
+    end
+  end
+
+  def clusters_to_timeline(clusters, min_window_size)
+    stack = clusters.map { |id, cluster| [min_window_size, id, cluster] }
+    result = []
+
+    until stack.empty?
+      window_size, cluster_id, current = stack.pop
+      current[:si].each do |start_index|
+        result << [window_size.to_s, cluster_id.to_s(26).tr("0-9a-p", "a-z"), start_index * 1000, (start_index + window_size) * 1000]
+      end
+
+      if current[:cc]
+        current[:cc].each do |child_id, child_cluster|
+          stack.push([window_size + 1, child_id, child_cluster])
+        end
+      end
+    end
+    return result
+  end
+
+  def add_updated_id(hash, window, id)
+    hash[window] ||= Set.new
+    hash[window] << id
+  end
+
   private
 
+  def start_transaction!
+    @recording_mode = true
+    @journal = []
+    @snapshot_state = {
+      tasks: @tasks.dup,
+      cluster_id_counter: @cluster_id_counter,
+      updated_dist_ids: deep_dup_sets(@updated_cluster_ids_per_window_for_calculate_distance),
+      updated_quant_ids: deep_dup_sets(@updated_cluster_ids_per_window_for_calculate_quantities)
+    }
+  end
+
+  def reset_updated_ids_for_simulation!
+    @updated_cluster_ids_per_window_for_calculate_distance.clear
+    @updated_cluster_ids_per_window_for_calculate_quantities.clear
+  end
+
+  def rollback!
+    @journal.reverse_each do |entry|
+      case entry[:type]
+      when :data_push
+        @data.pop
+      when :si_push
+        entry[:target][:si].pop
+      when :as_update
+        entry[:target][:as] = entry[:old_value]
+      when :cc_add
+        entry[:target].delete(entry[:key])
+      when :root_add
+        @clusters.delete(entry[:key])
+      when :cache_write, :hash_set_key
+        if entry[:old_value].nil?
+          entry[:target].delete(entry[:key])
+        else
+          entry[:target][entry[:key]] = entry[:old_value]
+        end
+      end
+    end
+
+    @tasks = @snapshot_state[:tasks]
+    @cluster_id_counter = @snapshot_state[:cluster_id_counter]
+    @updated_cluster_ids_per_window_for_calculate_distance = @snapshot_state[:updated_dist_ids]
+    @updated_cluster_ids_per_window_for_calculate_quantities = @snapshot_state[:updated_quant_ids]
+
+    @recording_mode = false
+    @journal = []
+    @snapshot_state = nil
+  end
+
+  def record_action(type, target = nil, key = nil, old_value = nil)
+    return unless @recording_mode
+    @journal << { type: type, target: target, key: key, old_value: old_value }
+  end
+
+  def deep_dup_sets(hash_of_sets)
+    new_h = {}
+    hash_of_sets.each do |k, v|
+      new_h[k] = v.dup
+    end
+    new_h
+  end
+
   def clustering_subsequences_incremental(data_index)
-    # 現時点までの時系列データの平均値を得る
     data_mean = mean(@data[0..data_index])
     lower_half_average = mean(@data.select { |x| x <= data_mean })
     upper_half_average = mean(@data.select { |x| x >= data_mean })
@@ -117,22 +284,28 @@ class TimeSeriesClusterManager
 
     ratio_in_max_distance = max_distance.zero? ? 0 : min_distance / max_distance
     if ratio_in_max_distance <= @merge_threshold_ratio
-      best_clusters.first[:si] << latest_start
-      # as(平均部分列)を更新
-      best_clusters.first[:as] = average_sequences(best_clusters.first[:si].map { |s| @data[s, new_length] })
-      # 部分列追加記録
-      @updated_cluster_ids_per_window_for_calculate_quantities[new_length] ||= Set.new
-      @updated_cluster_ids_per_window_for_calculate_quantities[new_length] << best_cluster_id
+      target_cluster = best_clusters.first
+
+      target_cluster[:si] << latest_start
+      record_action(:si_push, target_cluster)
+
+      old_as = target_cluster[:as]
+      new_as = average_sequences(target_cluster[:si].map { |s| @data[s, new_length] })
+      target_cluster[:as] = new_as
+      record_action(:as_update, target_cluster, nil, old_as)
+
+      add_updated_id(@updated_cluster_ids_per_window_for_calculate_quantities, new_length, best_cluster_id)
+
       if @calculate_distance_when_added_subsequence_to_cluster
-        @updated_cluster_ids_per_window_for_calculate_distance[new_length] ||= Set.new
-        @updated_cluster_ids_per_window_for_calculate_distance[new_length] << best_cluster_id
+        add_updated_id(@updated_cluster_ids_per_window_for_calculate_distance, new_length, best_cluster_id)
       end
       @tasks << [keys_to_parent.dup << best_cluster_id, new_length]
     else
-      parent[:cc][@cluster_id_counter] = { si: [latest_start], cc: {}, as: latest_seq.dup }
-      # クラスタ追加記録
-      @updated_cluster_ids_per_window_for_calculate_distance[new_length] ||= Set.new
-      @updated_cluster_ids_per_window_for_calculate_distance[new_length] << @cluster_id_counter
+      new_cluster = { si: [latest_start], cc: {}, as: latest_seq.dup }
+      parent[:cc][@cluster_id_counter] = new_cluster
+      record_action(:cc_add, parent[:cc], @cluster_id_counter)
+
+      add_updated_id(@updated_cluster_ids_per_window_for_calculate_distance, new_length, @cluster_id_counter)
       @cluster_id_counter += 1
     end
   end
@@ -152,24 +325,28 @@ class TimeSeriesClusterManager
     end
 
     if valid_group.any?
-      parent[:cc][@cluster_id_counter] = { si: valid_group + [latest_start], cc: {}, as: average_sequences((valid_group + [latest_start]).map { |s| @data[s, new_length] }) }
-      # クラスタ追加記録
-      @updated_cluster_ids_per_window_for_calculate_distance[new_length] ||= Set.new
-      @updated_cluster_ids_per_window_for_calculate_distance[new_length] << @cluster_id_counter
+      new_cluster = { si: valid_group + [latest_start], cc: {}, as: average_sequences((valid_group + [latest_start]).map { |s| @data[s, new_length] }) }
+      parent[:cc][@cluster_id_counter] = new_cluster
+      record_action(:cc_add, parent[:cc], @cluster_id_counter)
+
+      add_updated_id(@updated_cluster_ids_per_window_for_calculate_distance, new_length, @cluster_id_counter)
       @tasks << [keys_to_parent.dup << @cluster_id_counter, new_length]
       @cluster_id_counter += 1
     else
-      parent[:cc][@cluster_id_counter] = { si: [latest_start], cc: {}, as: latest_seq.dup }
-      # クラスタ追加記録
-      @updated_cluster_ids_per_window_for_calculate_distance[new_length] ||= Set.new
-      @updated_cluster_ids_per_window_for_calculate_distance[new_length] << @cluster_id_counter
+      new_cluster = { si: [latest_start], cc: {}, as: latest_seq.dup }
+      parent[:cc][@cluster_id_counter] = new_cluster
+      record_action(:cc_add, parent[:cc], @cluster_id_counter)
+
+      add_updated_id(@updated_cluster_ids_per_window_for_calculate_distance, new_length, @cluster_id_counter)
       @cluster_id_counter += 1
     end
 
     invalid_group.each do |s|
-      parent[:cc][@cluster_id_counter] = { si: [s], cc: {}, as: @data[s, new_length] }
-      @updated_cluster_ids_per_window_for_calculate_distance[new_length] ||= Set.new
-      @updated_cluster_ids_per_window_for_calculate_distance[new_length] << @cluster_id_counter
+      new_cluster = { si: [s], cc: {}, as: @data[s, new_length] }
+      parent[:cc][@cluster_id_counter] = new_cluster
+      record_action(:cc_add, parent[:cc], @cluster_id_counter)
+
+      add_updated_id(@updated_cluster_ids_per_window_for_calculate_distance, new_length, @cluster_id_counter)
       @cluster_id_counter += 1
     end
   end
@@ -197,22 +374,28 @@ class TimeSeriesClusterManager
     if best_cluster && ratio_in_max_distance <= @merge_threshold_ratio
       unless best_cluster[:si].include?(latest_start)
         best_cluster[:si] << latest_start
+        record_action(:si_push, best_cluster)
+
+        old_as = best_cluster[:as]
         best_cluster[:as] = average_sequences(best_cluster[:si].map { |s| @data[s, @min_window_size] })
-        @updated_cluster_ids_per_window_for_calculate_quantities[@min_window_size] ||= Set.new
-        @updated_cluster_ids_per_window_for_calculate_quantities[@min_window_size] << best_cluster_id
+        record_action(:as_update, best_cluster, nil, old_as)
+
+        add_updated_id(@updated_cluster_ids_per_window_for_calculate_quantities, @min_window_size, best_cluster_id)
         if @calculate_distance_when_added_subsequence_to_cluster
-          @updated_cluster_ids_per_window_for_calculate_distance[@min_window_size] ||= Set.new
-          @updated_cluster_ids_per_window_for_calculate_distance[@min_window_size] << best_cluster_id
+          add_updated_id(@updated_cluster_ids_per_window_for_calculate_distance, @min_window_size, best_cluster_id)
         end
       end
       @tasks << [[best_cluster_id], @min_window_size]
     else
-      @clusters[@cluster_id_counter] = { si: [latest_start], cc: {}, as: @data[latest_start, @min_window_size] }
-      @updated_cluster_ids_per_window_for_calculate_distance[@min_window_size] ||= Set.new
-      @updated_cluster_ids_per_window_for_calculate_distance[@min_window_size] << @cluster_id_counter
+      new_cluster = { si: [latest_start], cc: {}, as: @data[latest_start, @min_window_size] }
+      @clusters[@cluster_id_counter] = new_cluster
+      record_action(:root_add, nil, @cluster_id_counter)
+
+      add_updated_id(@updated_cluster_ids_per_window_for_calculate_distance, @min_window_size, @cluster_id_counter)
       @cluster_id_counter += 1
     end
   end
+
   def average_sequences(sequences)
     return sequences.first if sequences.size == 1
     length = sequences.first.size
@@ -220,50 +403,9 @@ class TimeSeriesClusterManager
     (0...length).map { |i| sequences.sum { |s| s[i] } / sequences.size.to_f }
   end
 
-  public
-  def clusters_to_timeline(clusters, min_window_size)
-    # 完成した木構造のクラスタを、表示用にフラットな構造に変換する。
-    stack = clusters.map { |cluster_id, cluster| [min_window_size, cluster_id, cluster] }
-    result = []
-
-    until stack.empty?
-      window_size, cluster_id, current = stack.pop
-      current[:si].each do |start_index|
-        result << [window_size.to_s, cluster_id.to_s(26).tr("0-9a-p", "a-z"), start_index * 1000, (start_index + window_size) * 1000]
-      end
-      # 子クラスタがあればスタックに追加
-      current[:cc].each do |child_id, child_cluster|
-        stack.push([window_size + 1, child_id, child_cluster])
-      end
-    end
-    return result
-  end
-
-  def clean_clusters(clusters)
-    clusters.delete_if do |key, cluster|
-      # まず子クラスタを再帰的に処理
-      clean_clusters(cluster[:cc])
-
-      # si の要素が1つしかなければ削除
-      cluster[:si].size == 1
-    end
-  end
-
-  def prune_clusters(clusters, threshold)
-    clusters.delete_if do |cluster_id, cluster_data|
-      # まず子クラスタを処理（再帰）
-      prune_clusters(cluster_data[:cc], threshold) unless cluster_data[:cc].empty?
-
-      # 削除条件を満たすか確認
-      si = cluster_data[:si]
-      si.length == 1 && si.first < threshold
-    end
-  end
-
   def dig_clusters_by_keys(clusters, keys)
     current = clusters
     keys.each_with_index do |key, index|
-      # 最後のキーの場合は:cを介さずにアクセス
       if index == keys.length - 1
         current = current[key]
       else
@@ -274,6 +416,4 @@ class TimeSeriesClusterManager
     end
     current
   end
-  # Utility methods (mean, euclidean_distance, dig_clusters_by_keys, etc.)
-  # These can be moved here from TimeSeriesAnalyser or kept as module methods.
 end
