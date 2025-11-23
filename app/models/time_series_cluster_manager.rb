@@ -1,24 +1,21 @@
 class TimeSeriesClusterManager
   include StatisticsCalculator
   include Utility
-  attr_accessor :clusters
-  attr_accessor :cluster_id_counter
-  attr_accessor :tasks
-
+  attr_accessor :clusters, :cluster_id_counter, :tasks
   attr_accessor :updated_cluster_ids_per_window_for_calculate_distance
   attr_accessor :cluster_distance_cache
   attr_accessor :updated_cluster_ids_per_window_for_calculate_quantities
   attr_accessor :cluster_quantity_cache
-
   attr_reader :recording_mode
 
   def initialize(data, merge_threshold_ratio, min_window_size, calculate_distance_when_added_subsequence_to_cluster)
     @data = data
     @merge_threshold_ratio = merge_threshold_ratio
     @min_window_size = min_window_size
-    @cluster_id_counter = 0
     @calculate_distance_when_added_subsequence_to_cluster = calculate_distance_when_added_subsequence_to_cluster
+    @cluster_id_counter = 0
 
+    # 初期化 (ID:0 の強制更新ロジックは削除済み)
     @clusters = { @cluster_id_counter => { si: [0], cc: {}, as: [0, min_window_size] } }
     # clustersの構成
     # clusters = {
@@ -53,11 +50,11 @@ class TimeSeriesClusterManager
     @cluster_quantity_cache[@min_window_size] ||= {}
     @cluster_id_counter += 1
     @tasks = []
-
     @recording_mode = false
     @journal = []
   end
 
+  # ... (process_data, add_data_point_permanently 等は変更なし) ...
   def process_data
     @data.each_with_index do |_, data_index|
       next if data_index <= @min_window_size - 1
@@ -70,8 +67,7 @@ class TimeSeriesClusterManager
     clustering_subsequences_incremental(@data.length - 1)
   end
 
-  # --- シミュレーション & ロールバック機能 (Lv.3) ---
-
+  # --- Lv.3 シミュレーション (ControllerContext対応) ---
   def simulate_add_and_calculate(candidate, quadratic_integer_array, controller_context)
     start_transaction!
     reset_updated_ids_for_simulation!
@@ -82,7 +78,8 @@ class TimeSeriesClusterManager
 
       clustering_subsequences_incremental(@data.length - 1)
 
-      clusters_each_window_size = controller_context.send(:transform_clusters, @clusters, @min_window_size)
+      # 修正: self.transform_clusters を呼ぶ (コントローラではなく自身に定義)
+      clusters_each_window_size = transform_clusters(@clusters, @min_window_size)
 
       sum_distances_in_all_window = 0
       sum_similar_subsequences_quantities = 0
@@ -106,6 +103,7 @@ class TimeSeriesClusterManager
             as1 = same_window_size_clusters.dig(cid1, :as)
             as2 = same_window_size_clusters.dig(cid2, :as)
             if as1 && as2
+              # 距離計算は controller_context を介する
               dist = controller_context.send(:euclidean_distance, as1, as2)
               old_val = cache[key]
               cache[key] = dist
@@ -127,10 +125,8 @@ class TimeSeriesClusterManager
         updated_quant_ids.each do |cid|
           cluster = same_window_size_clusters[cid]
           if cluster && cluster[:si].length > 1
-            quantity = cluster[:si].map { |start_and_end|
-              (quadratic_integer_array[start_and_end[0]])
-            }.inject(1) { |product, n| product * n }
-
+            # transform_clusters経由なので s[0]
+            quantity = cluster[:si].map { |s| quadratic_integer_array[s[0]] }.inject(1) { |product, n| product * n }
             old_val = q_cache[cid]
             q_cache[cid] = quantity
             record_action(:cache_write, q_cache, cid, old_val)
@@ -145,7 +141,6 @@ class TimeSeriesClusterManager
       rollback!
     end
   end
-
   def clusters_to_timeline(clusters, min_window_size)
     stack = clusters.map { |id, cluster| [min_window_size, id, cluster] }
     result = []
@@ -165,6 +160,27 @@ class TimeSeriesClusterManager
     return result
   end
 
+
+  def transform_clusters(clusters, min_window_size)
+    clusters_each_window_size = {}
+    stack = clusters.map { |id, cluster| [id, cluster, min_window_size] }
+
+    until stack.empty?
+      cluster_id, current_cluster, depth = stack.pop
+      sequences = current_cluster[:si].map { |start_index| [start_index, start_index + depth - 1] }
+
+      clusters_each_window_size[depth] ||= {}
+      clusters_each_window_size[depth][cluster_id] = {si: sequences, as: current_cluster[:as]}
+
+      current_cluster[:cc].each do |sub_cluster_id, sub_cluster|
+        stack.push([sub_cluster_id, sub_cluster, depth + 1])
+      end
+    end
+
+    clusters_each_window_size
+  end
+
+  # ... (以下、privateメソッド: start_transaction, rollback, record_action, reset_updated_ids, clustering_subsequences_incremental 等は前回と同じ) ...
   def add_updated_id(hash, window, id)
     hash[window] ||= Set.new
     hash[window] << id

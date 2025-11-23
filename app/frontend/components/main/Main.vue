@@ -692,7 +692,6 @@ const complexityTransitionRules = computed(() => [
     v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
     v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
     v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-    v => (v && String(v).split(',').every(n => Number(n) <= generate.value.rangeMax)) || 'numbers must be availange-range-max or less'
   ]);
 const durationTransitionRules = computed(() =>  [
     v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
@@ -993,6 +992,7 @@ const generateTimeseries = () => {
       analyse.value.clusteredSubsequences = response.data.clusteredSubsequences
       analyse.value.timeSeries = String(response.data.timeSeries)
       analyse.value.timeSeriesChart = response.data.timeSeriesChart
+      console.log(response.data.timeSeriesComplexityChart)
       generate.value.complexityTransitionChart = response.data.timeSeriesComplexityChart
       generate.value.clusters = response.data.clusters
       analyse.value.processingTime = response.data.processingTime
@@ -1052,7 +1052,6 @@ const drawScatterChart = (elementId, drawData, height) => {
         min: dataMin,
         max: dataMax
       },
-      ticks: [...Array(dataMax + 1)].map((_, i) => i + dataMin)
     }
   }
   const dataTable = new google.visualization.DataTable()
