@@ -36,7 +36,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     user_set_results = generate_params[:first_elements].split(',').map { |elm| elm.to_i }
 
-    # 整数(0-100)を受け取り、Float(0.0-1.0)に変換
+    # UIからの入力(0~100)を保持しつつ、計算用(0.0~1.0)に変換
     complexity_transition_int = generate_params[:complexity_transition].split(',').map { |elm| elm.to_i }
     complexity_targets = complexity_transition_int.map { |val| val / 100.0 }
 
@@ -76,7 +76,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     manager.process_data
 
     # 初期キャッシュ構築
-    clusters_each_window_size = transform_clusters(manager.clusters, min_window_size)
+    clusters_each_window_size = manager.transform_clusters(manager.clusters, min_window_size)
     initial_calc_values(manager, clusters_each_window_size, candidate_max_master, candidate_min_master, user_set_results.length)
 
     # 初期化
@@ -84,8 +84,8 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     results = user_set_results.dup
 
-    # ターゲット値(0.0-1.0)のループに変更
-    complexity_targets.each_with_index do |target_complexity, rank_index|
+    # 生成ループ
+    complexity_targets.each_with_index do |target_val, rank_index|
       candidate_max = candidate_max_master
       candidate_min = candidate_min_master
       candidates = (candidate_min..candidate_max).to_a
@@ -114,13 +114,13 @@ class Api::Web::TimeSeriesController < ApplicationController
 
       indexed_metrics = []
 
+      # 重み配列 (rank非依存)
       current_len = results.length + 1
       quadratic_integer_array = create_quadratic_integer_array(0, (candidate_max_master - candidate_min_master) * current_len, current_len)
 
       candidates.each_with_index do |candidate, idx|
-        # シミュレーション実行 (Lv.3 トランザクション)
-        # controller_context として self を渡す
-        avg_dist, quantity = manager.simulate_add_and_calculate(
+        # シミュレーション実行 (戻り値にcomplexityを追加)
+        avg_dist, quantity, complexity = manager.simulate_add_and_calculate(
           candidate,
           quadratic_integer_array,
           self
@@ -128,18 +128,21 @@ class Api::Web::TimeSeriesController < ApplicationController
 
         indexed_metrics << {
           index: idx,
-          candidate: candidate,
           dist: avg_dist,
-          quantity: quantity
+          quantity: quantity,
+          complexity: complexity
         }
       end
 
-      metrics_with_direction = [
-        { is_complex_when_larger: true, data: indexed_metrics.map { |m| [m[:dist], m[:index]] } },
-        { is_complex_when_larger: false, data: indexed_metrics.map { |m| [m[:quantity], m[:index]] } }
+      # 評価基準の構築
+      criteria = [
+        { is_complex_when_larger: true,  data: indexed_metrics.map { |m| [m[:dist], m[:index]] } },
+        { is_complex_when_larger: false, data: indexed_metrics.map { |m| [m[:quantity], m[:index]] } },
+        { is_complex_when_larger: true,  data: indexed_metrics.map { |m| [m[:complexity], m[:index]] } } # 新規: 内部複雑度
       ]
 
-      result_index = find_complex_candidate_by_value(metrics_with_direction, target_complexity)
+      # ベスト候補の選択
+      result_index = find_complex_candidate_by_value(criteria, target_val)
       result = candidates[result_index]
 
       results << result
@@ -168,6 +171,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       clusteredSubsequences: timeline,
       timeSeriesChart: [] + results.map.with_index { |elm, index| [index.to_s, elm, nil, nil] },
       timeSeries: results,
+      # UI用には整数の配列(0-100)を返す
       timeSeriesComplexityChart: [] + chart_elements_for_complexity + complexity_transition_int.map.with_index { |elm, index| [(user_set_results.length + index).to_s, elm, nil, nil] },
       clusters: manager.clusters,
       processingTime: processing_time_s
@@ -181,9 +185,10 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     clusters_each_window_size.each do |window_size, same_window_size_clusters|
       all_ids = same_window_size_clusters.keys
+
+      # 距離
       updated_ids = manager.updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
       cache = manager.cluster_distance_cache[window_size] ||= {}
-
       updated_ids.each do |cid1|
         all_ids.each do |cid2|
           next if cid1 == cid2
@@ -196,28 +201,35 @@ class Api::Web::TimeSeriesController < ApplicationController
         end
       end
 
+      # 数量 & 内部複雑度
       updated_quant_ids = manager.updated_cluster_ids_per_window_for_calculate_quantities[window_size].to_a rescue []
       q_cache = manager.cluster_quantity_cache[window_size] ||= {}
+      c_cache = manager.cluster_complexity_cache[window_size] ||= {} # 新規
 
       updated_quant_ids.each do |cid|
         cluster = same_window_size_clusters[cid]
         if cluster && cluster[:si].length > 1
-          # transform_clustersを通しているので s[0] でアクセス
+          # 数量
           quantity = cluster[:si].map { |s| quadratic_integer_array[s[0]] }.inject(1) { |product, n| product * n }
           q_cache[cid] = quantity
+
+          # 内部複雑度
+          complexity = manager.calculate_cluster_complexity(cluster)
+          c_cache[cid] = complexity
         end
       end
     end
   end
 
   def update_caches_permanently(manager, min_window_size, quadratic_integer_array)
-    clusters_each_window_size = transform_clusters(manager.clusters, min_window_size)
+    clusters_each_window_size = manager.transform_clusters(manager.clusters, min_window_size)
 
     clusters_each_window_size.each do |window_size, same_window_size_clusters|
       all_ids = same_window_size_clusters.keys
+
+      # 距離
       updated_ids = manager.updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
       cache = manager.cluster_distance_cache[window_size] ||= {}
-
       updated_ids.each do |cid1|
         all_ids.each do |cid2|
           next if cid1 == cid2
@@ -230,14 +242,19 @@ class Api::Web::TimeSeriesController < ApplicationController
         end
       end
 
+      # 数量 & 内部複雑度
       updated_quant_ids = manager.updated_cluster_ids_per_window_for_calculate_quantities[window_size].to_a rescue []
       q_cache = manager.cluster_quantity_cache[window_size] ||= {}
+      c_cache = manager.cluster_complexity_cache[window_size] ||= {}
 
       updated_quant_ids.each do |cid|
         cluster = same_window_size_clusters[cid]
         if cluster && cluster[:si].length > 1
           quantity = cluster[:si].map { |s| quadratic_integer_array[s[0]] }.inject(1) { |product, n| product * n }
           q_cache[cid] = quantity
+
+          complexity = manager.calculate_cluster_complexity(cluster)
+          c_cache[cid] = complexity
         end
       end
     end
@@ -246,86 +263,57 @@ class Api::Web::TimeSeriesController < ApplicationController
     manager.updated_cluster_ids_per_window_for_calculate_quantities = {}
   end
 
-  def transform_clusters(clusters, min_window_size)
-    clusters_each_window_size = {}
-    stack = clusters.map { |id, cluster| [id, cluster, min_window_size] }
+  # 共通部品: スコア正規化と重み付け
+  def normalize_scores(raw_values, is_complex_when_larger)
+    min_val = raw_values.min
+    max_val = raw_values.max
 
-    until stack.empty?
-      cluster_id, current_cluster, depth = stack.pop
-      sequences = current_cluster[:si].map { |start_index| [start_index, start_index + depth - 1] }
+    unique_count = raw_values.uniq.size
+    weight = if unique_count <= 1
+               0.0
+             elsif unique_count == 2
+               0.2
+             else
+               1.0
+             end
 
-      clusters_each_window_size[depth] ||= {}
-      clusters_each_window_size[depth][cluster_id] = {si: sequences, as: current_cluster[:as]}
+    normalized = if min_val == max_val
+                   Array.new(raw_values.size, 0.5)
+                 else
+                   raw_values.map { |v| (v - min_val).to_f / (max_val - min_val) }
+                 end
 
-      current_cluster[:cc].each do |sub_cluster_id, sub_cluster|
-        stack.push([sub_cluster_id, sub_cluster, depth + 1])
-      end
+    normalized.map! do |v|
+      val = is_complex_when_larger ? v : 1.0 - v
+      val * weight
     end
 
-    clusters_each_window_size
+    return normalized, weight
   end
 
+  # 値ベースの選択ロジック
   def find_complex_candidate_by_value(criteria, target_val)
-    candidates_score = Hash.new { |h, k| h[k] = 0.0 }
-
-    # 重みの合計を計算するための変数
+    candidates_score = Hash.new(0.0)
     total_weight = 0.0
 
     criteria.each do |criterion|
-      is_complex_when_larger = criterion[:is_complex_when_larger]
-      data = criterion[:data]
+      raw_values = criterion[:data].map { |v| v[0] }
+      scores, weight = normalize_scores(raw_values, criterion[:is_complex_when_larger])
 
-      values = data.map { |v| v[0] }
-      min_value, max_value = values.min, values.max
-
-      # ユニークな値の数を数える
-      unique_count = values.uniq.size
-
-      # 重みの決定ロジック
-      # ユニーク数が 1 (全員同じ値) -> 重み 0.0 (差がつかないので無視)
-      # ユニーク数が 2 (2択) -> 重み 0.2 (極端なので信頼度低め)
-      # ユニーク数が 3以上 -> 重み 1.0 (通常通り評価)
-      weight = if unique_count <= 1
-                 0.0
-               elsif unique_count == 2
-                 0.2 # ここを 0.0 にすれば「2択なら完全に無視」になります
-               else
-                 1.0
-               end
-
-      # 距離(Distance)は基本的に解像度が高いので、このロジックでも自然と重み 1.0 になります。
-      # 数量(Quantity)は初期はユニーク数2とかなので、重みが下がります。
-
-      normalized_values = if min_value == max_value
-                            Array.new(values.size, 0.5)
-                          else
-                            values.map { |v| (v - min_value).to_f / (max_value - min_value) }
-                          end
-
-      normalized_values.map! { |v| is_complex_when_larger ? v : 1.0 - v }
-
-      data.each_with_index do |(_, index), i|
-        candidates_score[index] += normalized_values[i] * weight
+      criterion[:data].each_with_index do |(_, index), i|
+        candidates_score[index] += scores[i]
       end
-
       total_weight += weight
     end
 
-    # 重みの合計で割って正規化 (0.0 ~ 1.0 に戻す)
     if total_weight > 0
-      candidates_score.each_key do |key|
-        candidates_score[key] /= total_weight
-      end
+      candidates_score.each_key { |k| candidates_score[k] /= total_weight }
     end
 
-    # ベストマッチの探索
     best_index = nil
     min_diff = Float::INFINITY
-
-
     candidates_score.each do |index, score|
       diff = (score - target_val).abs
-
       if diff < min_diff
         min_diff = diff
         best_index = index
@@ -341,17 +329,12 @@ class Api::Web::TimeSeriesController < ApplicationController
       t = i.to_f / (count - 1)
       curve = t ** 10
       value = start_val + (end_val - start_val) * curve
-
-      if start_val < end_val
-        result << value.ceil + 1
-      else
-        result << value.floor + 1
-      end
+      result << (start_val < end_val ? value.ceil + 1 : value.floor + 1)
     end
     result
   end
 
-  # ... params, broadcast メソッド等はそのまま維持 ...
+  # Strong Parameters 等
   def analyse_params
     params.require(:analyse).permit(:time_series, :merge_threshold_ratio, :job_id)
   end
