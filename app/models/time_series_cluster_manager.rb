@@ -1,15 +1,15 @@
 class TimeSeriesClusterManager
   include StatisticsCalculator
   include Utility
+
+  attr_accessor :data
   attr_accessor :clusters, :cluster_id_counter, :tasks
 
-  # キャッシュ類
   attr_accessor :updated_cluster_ids_per_window_for_calculate_distance
   attr_accessor :cluster_distance_cache
   attr_accessor :updated_cluster_ids_per_window_for_calculate_quantities
   attr_accessor :cluster_quantity_cache
   attr_accessor :cluster_complexity_cache
-
   attr_reader :recording_mode
 
   def initialize(data, merge_threshold_ratio, min_window_size, calculate_distance_when_added_subsequence_to_cluster)
@@ -20,24 +20,7 @@ class TimeSeriesClusterManager
     @cluster_id_counter = 0
 
     @clusters = { @cluster_id_counter => { si: [0], cc: {}, as: [0, min_window_size] } }
-    # clustersの構成
-    # clusters = {
-    #   cluster_id1 => {
-    #     si: [start_index1,start_index2..],
-    #     cc: {
-    #       cluster_id2 => {
-    #         si: [start_index3,start_index4..],
-    #         cc: {},
-    #         as: [average_of_sequences_in_same_cluster]
-    #       },
-    #       cluster_id3 => {
-    #         si: [start_index5,start_index6..],
-    #         cc: {},
-    #         as: [average_of_sequences_in_same_cluster]
-    #       }
-    #     }
-    #   }
-    # }
+
     @updated_cluster_ids_per_window_for_calculate_distance = {}
     @updated_cluster_ids_per_window_for_calculate_distance[@min_window_size] ||= Set.new
     @updated_cluster_ids_per_window_for_calculate_distance[@min_window_size] << @cluster_id_counter
@@ -71,6 +54,54 @@ class TimeSeriesClusterManager
     clustering_subsequences_incremental(@data.length - 1)
   end
 
+  # ★追加: これが不足していました。コントローラからロジックを移動。
+  def update_caches_permanently(quadratic_integer_array)
+    clusters_each_window_size = transform_clusters(@clusters, @min_window_size)
+
+    clusters_each_window_size.each do |window_size, same_window_size_clusters|
+      all_ids = same_window_size_clusters.keys
+
+      # --- 距離キャッシュ更新 ---
+      updated_ids = @updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
+      cache = @cluster_distance_cache[window_size] ||= {}
+
+      updated_ids.each do |cid1|
+        all_ids.each do |cid2|
+          next if cid1 == cid2
+          key = [cid1, cid2].sort
+          as1 = same_window_size_clusters.dig(cid1, :as)
+          as2 = same_window_size_clusters.dig(cid2, :as)
+          if as1 && as2
+            # self.euclidean_distance (Polyphonicならオーバーライドされたもの) が呼ばれる
+            cache[key] = euclidean_distance(as1, as2)
+          end
+        end
+      end
+
+      # --- 数量 & 複雑度キャッシュ更新 ---
+      updated_quant_ids = @updated_cluster_ids_per_window_for_calculate_quantities[window_size].to_a rescue []
+      q_cache = @cluster_quantity_cache[window_size] ||= {}
+      c_cache = @cluster_complexity_cache[window_size] ||= {}
+
+      updated_quant_ids.each do |cid|
+        cluster = same_window_size_clusters[cid]
+        if cluster && cluster[:si].length > 1
+          # 数量
+          quantity = cluster[:si].map { |s| quadratic_integer_array[s[0]] }.inject(1) { |product, n| product * n }
+          q_cache[cid] = quantity
+
+          # 複雑度
+          comp = calculate_cluster_complexity(cluster)
+          c_cache[cid] = comp
+        end
+      end
+    end
+
+    # フラグクリア
+    @updated_cluster_ids_per_window_for_calculate_distance = {}
+    @updated_cluster_ids_per_window_for_calculate_quantities = {}
+  end
+
   # --- Lv.3 シミュレーション ---
   def simulate_add_and_calculate(candidate, quadratic_integer_array, controller_context)
     start_transaction!
@@ -89,8 +120,7 @@ class TimeSeriesClusterManager
       sum_complexities = 0
 
       clusters_each_window_size.each do |window_size, same_window_size_clusters|
-        # --- 距離計算 ---
-        local_sum_dist = 0
+        # 距離計算
         all_ids = same_window_size_clusters.keys
         updated_ids = @updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
 
@@ -108,6 +138,7 @@ class TimeSeriesClusterManager
             as1 = same_window_size_clusters.dig(cid1, :as)
             as2 = same_window_size_clusters.dig(cid2, :as)
             if as1 && as2
+              # 距離計算
               dist = controller_context.send(:euclidean_distance, as1, as2)
               old_val = cache[key]
               cache[key] = dist
@@ -115,12 +146,10 @@ class TimeSeriesClusterManager
             end
           end
         end
-        local_sum_dist = cache.values.sum
-        sum_distances += (local_sum_dist / window_size)
+        sum_distances += cache.values.sum / window_size
 
-        # --- 数量 & 内部複雑度計算 ---
+        # 数量 & 内部複雑度
         updated_quant_ids = @updated_cluster_ids_per_window_for_calculate_quantities[window_size].to_a rescue []
-
         q_cache = @cluster_quantity_cache[window_size]
         if q_cache.nil?
           q_cache = {}
@@ -138,13 +167,11 @@ class TimeSeriesClusterManager
         updated_quant_ids.each do |cid|
           cluster = same_window_size_clusters[cid]
           if cluster && cluster[:si].length > 1
-            # 数量
             quantity = cluster[:si].map { |s| quadratic_integer_array[s[0]] }.inject(1) { |product, n| product * n }
             old_q = q_cache[cid]
             q_cache[cid] = quantity
             record_action(:cache_write, q_cache, cid, old_q)
 
-            # 内部複雑度
             complexity = calculate_cluster_complexity(cluster)
             old_c = c_cache[cid]
             c_cache[cid] = complexity
@@ -163,28 +190,21 @@ class TimeSeriesClusterManager
     end
   end
 
-  # クラスタ内部複雑度計算 ---
   def calculate_cluster_complexity(cluster)
     seq = cluster[:as]
     return 0.0 if seq.size < 2
-
     total_step_diff = 0.0
     (0...(seq.size - 1)).each do |i|
-      # step_distance: 単音(スカラー)なら差の絶対値
       diff = step_distance(seq[i], seq[i+1])
       total_step_diff += diff
     end
-
-    # 1ステップあたりの平均変化量
     total_step_diff / (seq.size - 1).to_f
   end
 
-  # 単音用のデフォルト距離 (ポリフォニックではオーバーライドされる)
   def step_distance(a, b)
     (a - b).abs
   end
 
-  # --- 既存: 変換メソッド ---
   def transform_clusters(clusters, min_window_size)
     clusters_each_window_size = {}
     stack = clusters.map { |id, cluster| [id, cluster, min_window_size] }
@@ -225,6 +245,18 @@ class TimeSeriesClusterManager
   def add_updated_id(hash, window, id)
     hash[window] ||= Set.new
     hash[window] << id
+  end
+
+  # StatisticsCalculator の include フォールバック用 (euclidean_distance が必要)
+  def euclidean_distance(a, b)
+    # StatisticsCalculator があればそれが使われるが、Polyphonicの場合はオーバーライドされる
+    # 単音用のデフォルト実装
+    sum = 0.0
+    a.each_with_index do |val, i|
+      d = val - b[i]
+      sum += d * d
+    end
+    Math.sqrt(sum)
   end
 
   private

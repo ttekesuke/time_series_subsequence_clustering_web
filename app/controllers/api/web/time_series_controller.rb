@@ -1,6 +1,7 @@
 class Api::Web::TimeSeriesController < ApplicationController
   include DissonanceMemory
   include StatisticsCalculator
+  require 'pp'
 
   def analyse
     start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -178,6 +179,139 @@ class Api::Web::TimeSeriesController < ApplicationController
     }
   end
 
+# ============================================================
+  #  多声生成アクション (Method A + B + C)
+  # ============================================================
+# ============================================================
+  #  多声生成アクション (Method A + B + C)
+  # ============================================================
+  def generate_polyphonic
+    start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    raw_params = params.require(:generate_polyphonic)
+    job_id = raw_params[:job_id]
+    broadcast_start(job_id)
+
+    # --- 1. パラメータの準備 ---
+
+    target_continuations = raw_params[:target_continuations].map(&:to_f)
+    stream_counts = raw_params[:stream_counts].map(&:to_i)
+    global_complexities = raw_params[:global_complexity].map(&:to_f)
+
+    stream_centers = raw_params[:stream_complexity_center].map(&:to_f)
+    group_counts   = raw_params[:complexity_group_count].map(&:to_i)
+    diversities    = raw_params[:complexity_diversity].map(&:to_f)
+    concordances   = raw_params[:group_concordance].map(&:to_f)
+
+    initial_octaves_history = raw_params[:initial_octaves]
+    initial_octaves_history = initial_octaves_history.map { |chord| chord.is_a?(Array) ? chord.map(&:to_i) : [] }
+
+    min_window_size = 2
+    if initial_octaves_history.length < min_window_size + 1
+      last_val = initial_octaves_history.last || [0]
+      (min_window_size + 1 - initial_octaves_history.length).times { initial_octaves_history << last_val.dup }
+    end
+
+    results = initial_octaves_history.dup
+    merge_threshold_ratio = 0.1
+
+    # --- 2. マネージャの初期化 ---
+
+    global_manager = PolyphonicClusterManager.new(results.dup, merge_threshold_ratio, min_window_size)
+    global_manager.process_data
+
+    initial_stream_count = results.last.size
+    stream_manager = MultiStreamManager.new(results, merge_threshold_ratio, min_window_size)
+
+    # キャッシュの初期構築
+    g_clusters = global_manager.transform_clusters(global_manager.clusters, min_window_size)
+    initial_calc_values(global_manager, g_clusters, 7, 0, results.length)
+    global_manager.updated_cluster_ids_per_window_for_calculate_distance = {}
+
+    stream_manager.initialize_caches
+
+    # --- 3. 生成ループ ---
+    candidate_range = (0..7).to_a
+
+    target_continuations.each_with_index do |target_cont, index|
+      n = stream_counts[index] || results.last.size
+
+      global_target = global_complexities[index] || global_complexities.last
+      center        = stream_centers[index]      || stream_centers.last
+      groups        = group_counts[index]        || group_counts.last
+      diversity     = diversities[index]         || diversities.last
+      concordance   = concordances[index]        || concordances.last
+
+      stream_targets = generate_stream_complexities(n, center, groups, diversity)
+
+      current_len = results.length + 1
+      quadratic_integer_array = create_quadratic_integer_array(0, 7 * current_len, current_len)
+      stream_costs = stream_manager.precalculate_costs(candidate_range, quadratic_integer_array)
+
+      # 候補生成: 組み合わせ (8Cn)
+      candidates_set = candidate_range.combination(n).to_a
+
+      indexed_metrics = []
+
+      candidates_set.each_with_index do |cand_set, idx|
+        # Step 1: マッピング解決
+        best_ordered_cand, stream_metric = stream_manager.resolve_mapping_and_score(cand_set, stream_costs)
+
+        # Step 2: Method A シミュレーション
+        # global_comp (内部複雑度) も受け取る
+        global_dist, global_qty, global_comp = global_manager.simulate_add_and_calculate(best_ordered_cand, quadratic_integer_array, global_manager)
+
+        # Step 3: Method C 評価
+        discordance = calculate_group_discordance(best_ordered_cand, n, groups)
+
+        indexed_metrics << {
+          index: idx,
+          ordered_cand: best_ordered_cand,
+          global_dist: global_dist,
+          global_qty: global_qty,
+          global_comp: global_comp,
+          stream_scores: stream_metric[:individual_scores],
+          discordance: discordance
+        }
+      end
+
+      # Step 4: ベスト候補の選択
+      best_candidate_index = select_best_polyphonic_candidate(
+        indexed_metrics,
+        global_target,
+        stream_targets,
+        concordance
+      )
+
+      final_chord = indexed_metrics[best_candidate_index][:ordered_cand]
+
+      # Step 5: 確定と更新
+      results << final_chord
+
+      # Global更新 (忘却処理は削除)
+      global_manager.add_data_point_permanently(final_chord)
+      update_caches_permanently(global_manager, min_window_size, quadratic_integer_array)
+
+      # Stream更新
+      stream_manager.commit_state(final_chord, quadratic_integer_array)
+      stream_manager.update_caches_permanently(quadratic_integer_array)
+
+      broadcast_progress(job_id, index + 1, target_continuations.length)
+    end
+
+    timeline = global_manager.clusters_to_timeline(global_manager.clusters, min_window_size)
+    end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    broadcast_done(job_id)
+
+    render json: {
+      clusteredSubsequences: timeline,
+      timeSeries: results,
+      clusters: global_manager.clusters,
+      processingTime: ((end_time - start_time)).round(2)
+    }
+  end
+
   private
 
   def initial_calc_values(manager, clusters_each_window_size, max_master, min_master, len)
@@ -185,10 +319,9 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     clusters_each_window_size.each do |window_size, same_window_size_clusters|
       all_ids = same_window_size_clusters.keys
-
-      # 距離
       updated_ids = manager.updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
       cache = manager.cluster_distance_cache[window_size] ||= {}
+
       updated_ids.each do |cid1|
         all_ids.each do |cid2|
           next if cid1 == cid2
@@ -196,7 +329,9 @@ class Api::Web::TimeSeriesController < ApplicationController
           as1 = same_window_size_clusters.dig(cid1, :as)
           as2 = same_window_size_clusters.dig(cid2, :as)
           if as1 && as2
-            cache[key] = euclidean_distance(as1, as2)
+            # ★修正: manager.euclidean_distance を呼ぶように変更
+            # (Polyphonicならベクトルの距離、Monophonicならスカラーの距離が自動で選ばれる)
+            cache[key] = manager.euclidean_distance(as1, as2)
           end
         end
       end
@@ -221,15 +356,14 @@ class Api::Web::TimeSeriesController < ApplicationController
     end
   end
 
-  def update_caches_permanently(manager, min_window_size, quadratic_integer_array)
+def update_caches_permanently(manager, min_window_size, quadratic_integer_array)
     clusters_each_window_size = manager.transform_clusters(manager.clusters, min_window_size)
 
     clusters_each_window_size.each do |window_size, same_window_size_clusters|
       all_ids = same_window_size_clusters.keys
-
-      # 距離
       updated_ids = manager.updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
       cache = manager.cluster_distance_cache[window_size] ||= {}
+
       updated_ids.each do |cid1|
         all_ids.each do |cid2|
           next if cid1 == cid2
@@ -237,7 +371,8 @@ class Api::Web::TimeSeriesController < ApplicationController
           as1 = same_window_size_clusters.dig(cid1, :as)
           as2 = same_window_size_clusters.dig(cid2, :as)
           if as1 && as2
-            cache[key] = euclidean_distance(as1, as2)
+            # ★修正: manager.euclidean_distance を呼ぶように変更
+            cache[key] = manager.euclidean_distance(as1, as2)
           end
         end
       end
@@ -345,6 +480,130 @@ class Api::Web::TimeSeriesController < ApplicationController
       :merge_threshold_ratio, :job_id, :selected_use_musical_feature,
       dissonance: [:transition, :duration_transition, :range],
       duration: [:outline_transition, :outline_range]
+    )
+  end
+# Method B: ターゲット生成
+  def generate_stream_complexities(n, center, groups, diversity)
+    poles = []
+    if groups <= 1
+      poles = [center]
+    else
+      half_width = diversity / 2.0
+      min_val = (center - half_width).clamp(0.0, 1.0)
+      max_val = (center + half_width).clamp(0.0, 1.0)
+      if min_val == max_val
+        poles = Array.new(groups, min_val)
+      else
+        step = (max_val - min_val) / (groups - 1).to_f
+        groups.times { |i| poles << min_val + (step * i) }
+      end
+    end
+
+    targets = []
+    n.times do |i|
+      group_index = (i * groups / n.to_f).floor
+      group_index = [group_index, groups - 1].min
+      targets << poles[group_index]
+    end
+    targets
+  end
+
+  # Method C: グループ内不一致度 (Discordance)
+  def calculate_group_discordance(chord, n, groups)
+    return 0.0 if groups == n
+    total_diff = 0.0
+
+    groups.times do |g_idx|
+      notes_in_group = []
+      n.times do |i|
+        my_group = (i * groups / n.to_f).floor
+        my_group = [my_group, groups - 1].min
+        notes_in_group << chord[i] if my_group == g_idx
+      end
+
+      if notes_in_group.size > 1
+        # 最大-最小 をオクターブ幅(7.0)で正規化
+        diff = (notes_in_group.max - notes_in_group.min).to_f / 7.0
+        total_diff += diff
+      end
+    end
+    total_diff / groups.to_f
+  end
+
+  # 統合コスト計算
+  def select_best_polyphonic_candidate(metrics, global_target, stream_targets, concordance_weight)
+    best_idx = nil
+    min_total_cost = Float::INFINITY
+
+    # Global指標の正規化 (Dist, Qty, Comp)
+    g_dists = normalize_values(metrics.map { |m| m[:global_dist] }, true)
+    g_qtys  = normalize_values(metrics.map { |m| m[:global_qty] }, false)
+    g_comps = normalize_values(metrics.map { |m| m[:global_comp] }, true)
+
+    # Stream指標の正規化 (Dist, Qty, Comp) - 全ストリーム分をフラットにして正規化範囲を決めるべきだが
+    # ここでは候補ごとの平均的なスコアを使う簡易実装とする
+    # より厳密には、各ストリームごとの生の値を正規化する必要がある
+
+    metrics.each_with_index do |m, i|
+      p 'loop'
+      pp m
+      # Cost A: Global
+      # 3つの指標の平均を Global Complexity とする
+      current_global = (g_dists[i] + g_qtys[i] + g_comps[i]) / 3.0
+      cost_a = (current_global - global_target).abs
+
+      # Cost B: Stream
+      cost_b = 0.0
+      m[:stream_scores].each_with_index do |score, s_idx|
+        # 個別のスコアを正規化 (簡易的に距離ベース 0~7 -> 0~1)
+        # ※本来はここも全体分布から正規化すべき
+        s_comp = (score[:dist] / 7.0).clamp(0.0, 1.0)
+        target = stream_targets[s_idx]
+        cost_b += (s_comp - target).abs
+      end
+      cost_b /= stream_targets.size.to_f
+
+      # Cost C: Concordance
+      # concordance_weightが高いほど、不一致(discordance)を許さない
+      cost_c = m[:discordance] * concordance_weight
+
+      p cost_a
+      p cost_b
+      p cost_c
+      total = cost_a + cost_b + cost_c
+
+      if total < min_total_cost
+        min_total_cost = total
+        best_idx = m[:index]
+      end
+    end
+
+    best_idx
+  end
+
+  # 簡易正規化ヘルパー
+  def normalize_values(values, is_complex_when_larger)
+    min_v = values.min
+    max_v = values.max
+    return Array.new(values.size, 0.5) if min_v == max_v
+
+    values.map do |v|
+      norm = (v - min_v).to_f / (max_v - min_v)
+      is_complex_when_larger ? norm : 1.0 - norm
+    end
+  end
+
+  def polyphonic_params
+    params.require(:generate_polyphonic).permit(
+      :job_id,
+      global_complexity: [],
+      stream_complexity_center: [],
+      complexity_group_count: [],
+      complexity_diversity: [],
+      group_concordance: [],
+      target_continuations: [], # 念のため
+      stream_counts: [],
+      initial_octaves: {} # 配列の配列
     )
   end
 

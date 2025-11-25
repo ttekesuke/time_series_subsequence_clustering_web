@@ -338,7 +338,7 @@
                           ></v-text-field>
                         </v-col>
                         <v-col>
-                          <v-btn :disabled='!generate.valid' @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>
+                          <v-btn  @click="generatePolyphonic" :loading="generate.loading">Submit</v-btn>
                           <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
                         </v-col>
                       </v-row>
@@ -961,6 +961,63 @@ const analyseTimeseries = () => {
   .catch(error => {
       console.log(error)
   })
+}
+const generatePolyphonic = () => {
+  // 進捗受信用（既存の仕組みがあれば）
+  subscribeToProgress()
+
+  const data = {
+    generate_polyphonic: {
+      // 必須: ジョブID
+      job_id: jobId.value,
+
+      // 1. 文脈 (Context): 過去の記憶
+      // 2声部で [0, 7] が3回続いている状態からスタート
+      initial_octaves: [
+        [0, 7],
+        [0, 7],
+        [0, 7]
+      ],
+
+      // --- 以下、生成する5ステップ分の指示 ---
+
+      // 2. 物理的制約
+      // 声部数: ずっと2声を維持
+      stream_counts:        [2, 2, 2, 2, 2],
+      // 文脈の持続度: 最初は持続(1.0)、最後は切断(0.0)
+      target_continuations: [1.0, 1.0, 1.0, 1.0, 0.0],
+
+      // 3. Method A (Global): 全体の緊張感
+      // 0.0(単純) -> 1.0(複雑) へ徐々に上げる
+      global_complexity:    [0.0, 0.0, 0.0, 0.0, 1.0],
+
+      // 4. Method B (Stream): 個別の役割分担
+
+      // (A) 動きの激しさの中心値 (0=静止, 1=跳躍)
+      stream_complexity_center: [0.1, 0.1, 0.5, 0.9, 0.9],
+
+      // (B) グループ数 (1=全員同じ動き, 2=二手に分かれる)
+      // 最初は1グループ、途中から2グループに分裂
+      complexity_group_count:   [2, 2, 2, 2, 2],
+
+      // (C) グループ間の対比 (0=差なし, 1=最大対比)
+      // 分裂後は、片方が静か・片方が激しいと極端に差をつける
+      complexity_diversity:     [0.0, 0.0, 0.0, 0.0, 1.0],
+
+      // (D) 結束度 (Method C: 1.0=物理的にユニゾン, 0.0=音高は自由)
+      // 最初はガチガチにユニゾン、後半は自由にバラけさせる
+      group_concordance:        [0.0, 0.0, 0.0, 0.0, 0.0]
+    }
+  }
+
+  axios.post('/api/web/time_series/generate_polyphonic', data)
+    .then(response => {
+      console.log('Generated Polyphonic Data:', response.data)
+      // response.data.timeSeries に結果が入っています
+    })
+    .catch(error => {
+      console.error('Generation failed:', error)
+    })
 }
 const generateTimeseries = () => {
   methodType.value = 'generate'

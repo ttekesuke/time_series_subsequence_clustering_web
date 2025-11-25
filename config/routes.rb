@@ -9,6 +9,7 @@ Rails.application.routes.draw do
       namespace :time_series do
         post 'analyse'
         post 'generate'
+        post 'generate_polyphonic'
       end
       namespace :supercolliders do
         post 'generate'
