@@ -107,42 +107,6 @@
                       </v-row>
                     </v-col>
                   </v-row>
-                  <v-row>
-                    <v-col cols="12">
-                      <div class="text-h4 d-flex align-center fill-height">Timeseries to music-element</div>
-                    </v-col>
-                  </v-row>
-                  <v-row>
-                    <v-col cols="2">
-                      <v-btn
-                        @click="onClickAddTrack()"
-                      >
-                        Add Track
-                      </v-btn>
-                    </v-col>
-
-                    <v-col cols="2">
-                      <v-select
-                        label="tracks"
-                        :items="music.tracks.map(t => t.name)"
-                        v-model="analyse.selectedTrackName"
-                      ></v-select>
-                    </v-col>
-                    <v-col cols="3">
-                      <v-select
-                        label="music-elements"
-                        :items="analyse.musicElements"
-                        v-model="analyse.selectedMusicElement"
-                      ></v-select>
-                    </v-col>
-                    <v-col cols="1">
-                      <v-btn @click="setTimeSeriesToMusicElement">set</v-btn>
-                    </v-col>
-                    <v-col cols="4">
-                      <v-btn @click="closeAnalyseAndOpenMusicGenerate">open music-generate dialog</v-btn>
-
-                    </v-col>
-                  </v-row>
                 </v-card-text>
               </v-card>
             </v-form>
@@ -338,7 +302,7 @@
                           ></v-text-field>
                         </v-col>
                         <v-col>
-                          <v-btn  @click="generatePolyphonic" :loading="generate.loading">Submit</v-btn>
+                          <v-btn  @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>
                           <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
                         </v-col>
                       </v-row>
@@ -349,173 +313,220 @@
             </v-form>
           </v-dialog>
         </v-col>
+
+        <!-- Music Mode (New Polyphonic) -->
         <v-col class="v-col-auto" v-if="selectedMode === 'Music'">
-          <v-btn @click="music.setDataDialog = true">generate</v-btn>
-          <v-dialog width="1900" v-model="music.setDataDialog" >
-            <v-form v-model='music.valid' fast-fail ref="form">
-              <v-card>
-                <v-card-title>
-                  <v-row>
-                    <v-col cols="5">
-                      <div class="text-h4 d-flex align-center fill-height">Music Generate</div>
-                    </v-col>
-                    <!-- <v-col cols="7">
-                      <v-file-input
-                        label="Set MIDI file"
-                        accept=".midi,.mid"
-                        prepend-icon="mdi-upload"
-                        v-model="music.midi"
-                        @change="onMidiSelected"
-                      />
-                    </v-col> -->
-                  </v-row>
-                </v-card-title>
-                <v-card-text>
-                  <v-row>
-                    <v-col cols="2">
-                      <v-btn
-                        @click="onClickAddTrack()"
-                      >
-                        Add Track
-                      </v-btn>
-                    </v-col>
-                    <v-col cols="2">
-                      <v-text-field
-                        label="bpm"
-                        type="number"
-                        v-model="music.bpm"
-                        min="30"
-                        max="180"
-                      ></v-text-field>
-                    </v-col>
-                    <v-col cols="2">
-                      <v-text-field
-                        label="velocity"
-                        type="number"
-                        v-model="music.velocity"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                      ></v-text-field>
-                    </v-col>
-                    <v-col cols="2">
-                      <v-btn @click="generateMidi" :loading="music.loading" :disabled="music.tracks.length == 0">generate</v-btn>
-                    </v-col>
-                  </v-row>
-                  <template v-for='(track, trackIndex) in music.tracks'>
-                    <v-row>
-                      <v-col cols="1">
-                        <v-row>
-                          <v-col>
-                            <v-btn @click="onClickDeleteTrack(trackIndex)" style="min-width: 0rem;">×</v-btn>
-                          </v-col>
-                          <v-col>
-                            <v-text-field
-                            placeholder="name"
-                            required
-                            v-model='track.name'
-                            label="name"
-                            ></v-text-field>
-                          </v-col>
-                        </v-row>
-                      </v-col>
-                      <v-col cols="5">
-                        <v-row>
-                          <v-col cols="2">
-                            <v-text-field
-                              label="harmRichness"
+          <v-btn @click="music.setDataDialog = true" color="primary">Polyphonic Generate</v-btn>
+
+          <v-dialog height="98%" width="98%" v-model="music.setDataDialog" scrollable>
+            <v-card>
+              <v-card-title class="text-h5 grey lighten-2 d-flex align-center justify-space-between py-2">
+                <span>Polyphonic Stream Generation Parameters</span>
+                <div class="d-flex align-center">
+                  <!-- Progress Status -->
+                  <div class="mr-4 text-caption" v-if="progress.status === 'progress' || progress.status === 'rendering'">
+                    <span v-if="progress.status === 'progress'">Generating: {{progress.percent}}%</span>
+                    <span v-if="progress.status === 'rendering'">Rendering Audio...</span>
+                  </div>
+
+                  <!-- GENERATE & RENDER Button -->
+                  <v-btn
+                    color="success"
+                    class="mr-2"
+                    :loading="music.loading"
+                    @click="generatePolyphonic"
+                  >
+                    GENERATE & RENDER
+                  </v-btn>
+
+                  <v-btn icon @click="music.setDataDialog = false"><v-icon>mdi-close</v-icon></v-btn>
+                </div>
+              </v-card-title>
+
+              <v-card-text class="pa-4" style="height: 80vh;">
+
+                <!-- 上段: Initial Context (初期値) -->
+                <v-card variant="outlined" class="mb-4 grid-card">
+                  <v-toolbar density="compact" color="grey-lighten-4" class="px-2">
+                    <v-toolbar-title class="text-subtitle-1 font-weight-bold">1. Initial Context (Past Context)</v-toolbar-title>
+                    <v-spacer></v-spacer>
+                    <!-- Context Controllers -->
+                    <div class="d-flex align-center mr-4" style="font-size: 0.9rem;">
+                       <span class="mr-2">Streams:</span>
+                       <input
+                         type="number"
+                         v-model.number="contextStreamCount"
+                         min="1" max="16"
+                         class="step-input mr-1"
+                         @change="updateContextStreams"
+                       >
+                    </div>
+                    <div class="d-flex align-center mr-2" style="font-size: 0.9rem;">
+                       <span class="mr-2">Steps:</span>
+                       <input
+                         type="number"
+                         v-model.number="contextStepCount"
+                         min="1" max="100"
+                         class="step-input mr-1"
+                         @change="updateContextSteps"
+                       >
+                    </div>
+                  </v-toolbar>
+
+                  <div class="grid-container">
+                    <table class="param-grid">
+                      <thead>
+                        <tr>
+                          <th class="sticky-col head-col" style="width: 100px;">Stream</th>
+                          <th class="sticky-col sub-col" style="width: 100px!important;">Param</th>
+                          <!-- Context Steps -->
+                          <th v-for="i in contextStepCount" :key="`ctx-h-${i}`" class="data-col">
+                            {{ i }}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template v-for="s in contextStreamCount" :key="`s-${s}`">
+                          <!-- Stream Header / First Dim -->
+                          <tr class="dim-start-row">
+                            <td class="sticky-col head-col row-label" rowspan="6">Stream {{ s }}</td>
+                            <td class="sticky-col sub-col label-dim">{{ dimensions[0].label }}</td>
+                            <td v-for="(step, i) in polyParams.initial_context" :key="`ctx-${s}-${dimensions[0].key}-${i}`">
+                              <input
+                                type="number"
+                                v-if="step[s-1]"
+                                v-model.number="step[s-1][0]"
+                                class="grid-input"
+                                min="0" max="10"
+                              >
+                            </td>
+                          </tr>
+                          <!-- Remaining Dims -->
+                          <tr v-for="(dim, dIdx) in dimensions.slice(1)" :key="`dim-${dim.key}-${s}`">
+                            <td class="sticky-col sub-col label-dim">{{ dim.label }}</td>
+                            <td v-for="(step, i) in polyParams.initial_context" :key="`ctx-${s}-${dim.key}-${i}`">
+                              <input
+                                type="number"
+                                v-if="step[s-1]"
+                                v-model.number="step[s-1][dIdx + 1]"
+                                class="grid-input"
+                                :step="dim.key === 'note' ? 1 : 0.1"
+                              >
+                            </td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </v-card>
+
+                <!-- 下段: Generation Parameters (生成パラメータ) -->
+                <v-card variant="outlined" class="fill-height grid-card">
+                  <v-toolbar density="compact" color="grey-lighten-4" class="px-2">
+                    <v-toolbar-title class="text-subtitle-1 font-weight-bold">2. Generation Parameters (Future Targets)</v-toolbar-title>
+                    <v-spacer></v-spacer>
+                    <div class="d-flex align-center mr-2" style="font-size: 0.9rem;">
+                       <span class="mr-2">Gen Steps:</span>
+                       <input
+                         type="number"
+                         v-model.number="newStepCount"
+                         min="1" max="100"
+                         class="step-input mr-1"
+                         @change="updateStepCount"
+                       >
+                    </div>
+                  </v-toolbar>
+
+                  <div class="grid-container">
+                    <table class="param-grid">
+                      <thead>
+                        <tr>
+                          <th class="sticky-col head-col" style="width: 100px;"></th>
+                          <th class="sticky-col sub-col" style="width: 60px;">Param</th>
+                          <th v-for="(count, i) in polyParams.stream_counts" :key="i" class="data-col">
+                            {{ i + 1 }}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <!-- Stream Counts Row -->
+                        <tr class="dim-start-row">
+                          <td class="sticky-col head-col row-label" rowspan="1">STREAM</td>
+                          <td class="sticky-col sub-col label-count">Count</td>
+                          <td v-for="(val, i) in polyParams.stream_counts" :key="`count-${i}`" class="data-col">
+                            <input
                               type="number"
-                              v-model="track.harmRichness"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                            ></v-text-field>
-                          </v-col>
-                          <v-col cols="2">
-                            <v-text-field
-                              label="brightness"
-                              type="number"
-                              v-model="track.brightness"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                            ></v-text-field>
-                          </v-col>
-                          <v-col cols="2">
-                            <v-text-field
-                              label="noiseContent"
-                              type="number"
-                              v-model="track.noiseContent"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                            ></v-text-field>
-                          </v-col>
-                          <v-col cols="2">
-                            <v-text-field
-                              label="formantChar"
-                              type="number"
-                              v-model="track.formantChar"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                            ></v-text-field>
-                          </v-col>
-                          <v-col cols="2">
-                            <v-text-field
-                              label="inharmonicity"
-                              type="number"
-                              v-model="track.inharmonicity"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                            ></v-text-field>
-                          </v-col>
-                          <v-col cols="2">
-                            <v-text-field
-                              label="resonance"
-                              type="number"
-                              v-model="track.resonance"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                            ></v-text-field>
-                          </v-col>
-                        </v-row>
-                      </v-col>
-                      <v-col cols="3">
-                        <v-textarea
-                        placeholder="please set durations (like 8,4,4)"
-                        required
-                        v-model='track.durations'
-                        label="durations"
-                        rows="1"
-                        :rules="track.durationRules"
-                      ></v-textarea>
-                      </v-col>
-                      <v-col cols="3">
-                        <v-textarea
-                        placeholder="please set midi note numbers (like 60,62,64)"
-                        required
-                        v-model='track.midiNoteNumbers'
-                        label="midiNoteNumbers"
-                        rows="1"
-                        :rules="track.midiNoteNumbersRules"
-                      ></v-textarea>
-                      </v-col>
-                    </v-row>
-                  </template>
-                </v-card-text>
-              </v-card>
-            </v-form>
+                              v-model.number="polyParams.stream_counts[i]"
+                              min="1"
+                              class="grid-input"
+                            >
+                          </td>
+                        </tr>
+
+                        <template v-for="dim in dimensions" :key="dim.key">
+                          <!-- Global -->
+                          <tr class="dim-start-row">
+                            <td class="sticky-col head-col row-label" rowspan="4">{{ dim.label }}</td>
+                            <td class="sticky-col sub-col label-global">Global</td>
+                            <td v-for="(val, i) in polyParams.stream_counts" :key="`g-${dim.key}-${i}`" class="data-col">
+                              <input
+                                type="number"
+                                v-model.number="polyParams[`${dim.key}_global`][i]"
+                                step="0.01" min="0" max="1"
+                                class="grid-input"
+                              >
+                            </td>
+                          </tr>
+                          <!-- Ratio -->
+                          <tr>
+                            <td class="sticky-col sub-col label-stream">Ratio</td>
+                            <td v-for="(val, i) in polyParams.stream_counts" :key="`r-${dim.key}-${i}`" class="data-col">
+                              <input
+                                type="number"
+                                v-model.number="polyParams[`${dim.key}_ratio`][i]"
+                                step="0.01" min="0" max="1"
+                                class="grid-input"
+                              >
+                            </td>
+                          </tr>
+                          <!-- Tightness -->
+                          <tr>
+                            <td class="sticky-col sub-col label-stream">Tight</td>
+                            <td v-for="(val, i) in polyParams.stream_counts" :key="`t-${dim.key}-${i}`" class="data-col">
+                              <input
+                                type="number"
+                                v-model.number="polyParams[`${dim.key}_tightness`][i]"
+                                step="0.01" min="0" max="1"
+                                class="grid-input"
+                              >
+                            </td>
+                          </tr>
+                          <!-- Concordance -->
+                          <tr>
+                            <td class="sticky-col sub-col label-conc">Conc</td>
+                            <td v-for="(val, i) in polyParams.stream_counts" :key="`c-${dim.key}-${i}`" class="data-col">
+                              <input
+                                type="number"
+                                v-model.number="polyParams[`${dim.key}_conc`][i]"
+                                step="0.01" min="-1" max="1"
+                                class="grid-input"
+                              >
+                            </td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </v-card>
+              </v-card-text>
+            </v-card>
           </v-dialog>
-          <!-- <v-btn @click='playNotes'>
+
+          <!-- Sound Player Control -->
+          <v-btn @click='switchStartOrStopSound()' class="ml-2" :disabled="!music.soundFilePath" :color="nowPlaying ? 'error' : 'primary'">
             <v-icon v-if='nowPlaying'>mdi-stop</v-icon>
-            <v-icon v-else>mdi-music</v-icon>
-          </v-btn> -->
-          <v-btn @click='switchStartOrStopSound()'>
-            <v-icon v-if='nowPlaying'>mdi-stop</v-icon>
-            <v-icon v-else>mdi-music</v-icon>
+            <v-icon v-else>mdi-play</v-icon>
+            <span class="ml-1">{{ nowPlaying ? 'STOP' : 'PLAY' }}</span>
           </v-btn>
 
         </v-col>
@@ -600,7 +611,11 @@
       <div v-if="selectedMode === 'Music'">
         <v-row no-gutters>
           <v-col>
-            <Music ref="musicComponent" :midiData='music.midiData' :secondsPerTick="music.secondsPerTick"></Music>
+            <Music
+              ref="musicComponent"
+              :midiData="music.midiData"
+              :secondsPerTick="music.secondsPerTick"
+            ></Music>
           </v-col>
         </v-row>
         <v-row no-gutters class="mt-5">
@@ -615,9 +630,7 @@
 </template>
 
 <script setup lang="ts">
-
-import { onMounted, computed, nextTick, ref, watch, useTemplateRef } from 'vue'
-import * as Tone from 'tone'
+import { onMounted, ref, watch, nextTick, computed } from 'vue'
 import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
 import { ScoreEntry } from '../../types/types';
@@ -629,7 +642,7 @@ import { Midi } from '@tonejs/midi'
 import Decimal from 'decimal.js'
 const timeseriesMax = ref(100)
 const modes = ref(['Clustering', 'Music'])
-const selectedMode = ref('Clustering')
+const selectedMode = ref('Music')
 type Cluster = {
   si: number[]; // subsequence indexes
   cc: { [childId: string]: Cluster }; // child clusters
@@ -830,28 +843,86 @@ let showTimeseriesChart = ref(false)
 let showTimeseriesComplexityChart = ref(false)
 let showTimeline = ref(false)
 let infoDialog = ref(false)
-let pitchMap = ref({
-  12:'C0',13:'C#0',14:'D0',15:'D#0',16:'E0',17:'F0',18:'F#0',19:'G0',20:'G#0',21:'A0',22:'A#0',23:'B0',
-  24:'C1',25:'C#1',26:'D1',27:'D#1',28:'E1',29:'F1',30:'F#1',31:'G1',32:'G#1',33:'A1',34:'A#1',35:'B1',
-  36:'C2',37:'C#2',38:'D2',39:'D#2',40:'E2',41:'F2',42:'F#2',43:'G2',44:'G#2',45:'A2',46:'A#2',47:'B2',
-  48:'C3',49:'C#3',50:'D3',51:'D#3',52:'E3',53:'F3',54:'F#3',55:'G3',56:'G#3',57:'A3',58:'A#3',59:'B3',
-  60:'C4',61:'C#4',62:'D4',63:'D#4',64:'E4',65:'F4',66:'F#4',67:'G4',68:'G#4',69:'A4',70:'A#4',71:'B4',
-  72:'C5',73:'C#5',74:'D5',75:'D#5',76:'E5',77:'F5',78:'F#5',79:'G5',80:'G#5',81:'A5',82:'A#5',83:'B5',
-  84:'C6',85:'C#6',86:'D6',87:'D#6',88:'E6',89:'F6',90:'F#6',91:'G6',92:'G#6',93:'A6',94:'A#6',95:'B6',
-  96:'C7',97:'C#7',98:'D7',99:'D#7',100:'E7',101:'F7',102:'F#7',103:'G7',104:'G#7',105:'A7',106:'A#7',107:'B7',
-})
-let nowPlaying = ref(false)
+const nowPlaying = ref(false)
 const progress = ref({
   percent: 0,
-  status: 'beforeStart'
+  status: 'idle'
 })
-const jobId = ref('')
+const jobId = ref(uuidv4())
 
 let methodType = ref<"analyse" | "generate" | null>(null)
 let selectedFileAnalyse = ref<File | null>(null)
 let selectedFileGenerate = ref<File | null>(null)
 
-// life cycle hook------------------------------------------------------------------------------
+const dimensions = [
+  { key: 'octave', label: 'OCTAVE' },
+  { key: 'note',   label: 'NOTE' },
+  { key: 'vol',    label: 'VOLUME' },
+  { key: 'bri',    label: 'BRIGHTNESS' },
+  { key: 'hrd',    label: 'HARDNESS' },
+  { key: 'tex',    label: 'TEXTURE' }
+]
+
+const steps = 10
+const fill = (start, mid, end, len=steps) => {
+  const arr = [];
+  const pivot = Math.floor(len / 2);
+  for (let i = 0; i < len; i++) {
+    if (i < pivot) arr.push(Number((start + (mid - start) * (i / pivot)).toFixed(2)));
+    else arr.push(Number((mid + (end - mid) * ((i - pivot) / (len - pivot - 1))).toFixed(2)));
+  }
+  return arr;
+};
+const constant = (val) => Array(steps).fill(val);
+
+const polyParams = ref<any>({
+  stream_counts: constant(2),
+  initial_context: [
+    [[4,0,0.8,0.2,0.2,0.0], [4,7,0.8,0.2,0.2,0.0]],
+    [[4,0,0.8,0.2,0.2,0.0], [4,7,0.8,0.2,0.2,0.0]],
+    [[4,0,0.8,0.2,0.2,0.0], [4,7,0.8,0.2,0.2,0.0]]
+  ],
+
+  octave_global:    fill(0.0, 0.1, 1.0),
+  octave_ratio:     fill(0.0, 0.5, 1.0),
+  octave_tightness: constant(1.0),
+  octave_conc:      fill(0.8, 0.5, 0.0),
+
+  note_global:      fill(0.2, 0.5, 0.8),
+  note_ratio:       fill(0.0, 0.5, 1.0),
+  note_tightness:   constant(0.5),
+  note_conc:        fill(0.8, 0.8, 0.2),
+
+  vol_global:       constant(0.1),
+  vol_ratio:        constant(0.0),
+  vol_tightness:    constant(0.0),
+  vol_conc:         constant(1.0),
+
+  bri_global:       fill(0.1, 0.5, 1.0),
+  bri_ratio:        fill(0.0, 1.0, 1.0),
+  bri_tightness:    constant(0.5),
+  bri_conc:         constant(0.5),
+
+  hrd_global:       fill(0.0, 0.2, 0.9),
+  hrd_ratio:        fill(0.0, 0.0, 1.0),
+  hrd_tightness:    constant(1.0),
+  hrd_conc:         constant(0.5),
+
+  tex_global:       fill(0.0, 0.0, 1.0),
+  tex_ratio:        fill(0.0, 0.0, 1.0),
+  tex_tightness:    constant(1.0),
+  tex_conc:         constant(0.0),
+})
+
+const newStepCount = ref(steps)
+const contextStepCount = ref(3)
+const contextStreamCount = ref(2)
+
+// const music = ref<any>({
+//   tracks: [], bpm: 120, loading: false, soundFilePath: null, setDataDialog: false,
+//   midiData: null, ticksPerBeat: 480, secondsPerTick: 0.5 / 480
+// })
+
 
 onMounted(() => {
   google.charts.load("current", {packages:["timeline", "corechart"]})
@@ -919,20 +990,6 @@ const createLinearIntegerArray = (start, end, count) => {
   return result
 }
 
-const subscribeToProgress = () =>{
-  jobId.value = uuidv4()
-
-  progress.value.percent = 0
-
-  const { unsubscribe } = useJobChannel(jobId.value, (data) => {
-    progress.value.status = data.status
-    progress.value.percent = data.progress
-
-    if (data.status === 'done') {
-      unsubscribe()
-    }
-  })
-}
 
 const analyseTimeseries = () => {
   methodType.value = 'analyse'
@@ -961,63 +1018,6 @@ const analyseTimeseries = () => {
   .catch(error => {
       console.log(error)
   })
-}
-const generatePolyphonic = () => {
-  // 進捗受信用（既存の仕組みがあれば）
-  subscribeToProgress()
-
-  const data = {
-    generate_polyphonic: {
-      // 必須: ジョブID
-      job_id: jobId.value,
-
-      // 1. 文脈 (Context): 過去の記憶
-      // 2声部で [0, 7] が3回続いている状態からスタート
-      initial_octaves: [
-        [0, 7],
-        [0, 7],
-        [0, 7]
-      ],
-
-      // --- 以下、生成する5ステップ分の指示 ---
-
-      // 2. 物理的制約
-      // 声部数: ずっと2声を維持
-      stream_counts:        [2, 2, 2, 2, 2],
-      // 文脈の持続度: 最初は持続(1.0)、最後は切断(0.0)
-      target_continuations: [1.0, 1.0, 1.0, 1.0, 0.0],
-
-      // 3. Method A (Global): 全体の緊張感
-      // 0.0(単純) -> 1.0(複雑) へ徐々に上げる
-      global_complexity:    [0.0, 0.0, 0.0, 0.0, 1.0],
-
-      // 4. Method B (Stream): 個別の役割分担
-
-      // (A) 動きの激しさの中心値 (0=静止, 1=跳躍)
-      stream_complexity_center: [0.1, 0.1, 0.5, 0.9, 0.9],
-
-      // (B) グループ数 (1=全員同じ動き, 2=二手に分かれる)
-      // 最初は1グループ、途中から2グループに分裂
-      complexity_group_count:   [2, 2, 2, 2, 2],
-
-      // (C) グループ間の対比 (0=差なし, 1=最大対比)
-      // 分裂後は、片方が静か・片方が激しいと極端に差をつける
-      complexity_diversity:     [0.0, 0.0, 0.0, 0.0, 1.0],
-
-      // (D) 結束度 (Method C: 1.0=物理的にユニゾン, 0.0=音高は自由)
-      // 最初はガチガチにユニゾン、後半は自由にバラけさせる
-      group_concordance:        [0.0, 0.0, 0.0, 0.0, 0.0]
-    }
-  }
-
-  axios.post('/api/web/time_series/generate_polyphonic', data)
-    .then(response => {
-      console.log('Generated Polyphonic Data:', response.data)
-      // response.data.timeSeries に結果が入っています
-    })
-    .catch(error => {
-      console.error('Generation failed:', error)
-    })
 }
 const generateTimeseries = () => {
   methodType.value = 'generate'
@@ -1177,54 +1177,6 @@ const onMouseoverCluster = (selected) => {
   drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
 }
 
-const onClickAddTrack = () => {
-  music.value.tracks.push({
-    name: getTrackId(),
-    durations: '',
-    durationRules: music.value.durationsRules,
-    midiNoteNumbers: '',
-    midiNoteNumbersRules: music.value.midiNoteNumbersRules,
-    color: getRandomHexColor(),
-    harmRichness: 0.0,
-    brightness: 0.0,
-    noiseContent: 0.0,
-    formantChar: 0.0,
-    inharmonicity: 0.0,
-    resonance: 0.0
-  })
-}
-
-const onClickDeleteTrack = (trackIndex: number) => {
-  music.value.tracks.splice(trackIndex, 1)
-}
-
-const setTimeSeriesToMusicElement = () => {
-  const track = music.value.tracks.find(t => t.name === analyse.value.selectedTrackName)
-  if (!track) return
-
-  if (analyse.value.selectedMusicElement === 'midiNoteNumbers') {
-    track.midiNoteNumbers = analyse.value.timeSeries
-  }else if(analyse.value.selectedMusicElement === 'durations'){
-    track.durations = analyse.value.timeSeries
-  }
-}
-
-const getRandomHexColor = () =>{
-  return '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
-}
-
-const getTrackId = () => {
-
-  return (music.value.trackIdCounter += 1).toString()
-}
-
-const closeAnalyseAndOpenMusicGenerate = () => {
-  analyse.value.setDataDialog = false
-  selectedMode.value = 'Music'
-  music.value.setDataDialog = true
-
-
-}
 const saveToFile = () => {
   const data = {
     methodType: methodType.value,
@@ -1288,85 +1240,16 @@ const switchStartOrStopSound = () =>{
 
 const stopPlayingSound = () => {
   nowPlaying.value = false
-  musicComponent.value?.stop()
   audio.value?.pause()
-  audio.value.currentTime = 0;
+  if(audio.value) audio.value.currentTime = 0
+  musicComponent.value?.stop()
 }
-
 const startPlayingSound = () => {
+  if(!audio.value) return
   nowPlaying.value = true
-  audio.value?.play();
-  if (musicComponent.value?.start) {
-    musicComponent.value.start()
-  }
+  audio.value.play()
+  musicComponent.value?.start()
 }
-
-const generateMidi = () => {
-  music.value.loading = true
-  const midi = new Midi()
-
-  // テンポを指定
-  midi.header.setTempo(music.value.bpm)
-
-  // トラックを追加
-  music.value.tracks.forEach(track => {
-    const midiTrack = midi.addTrack()
-    music.value.ticksPerBeat = music.value.ticksPerBeatDefault
-    music.value.secondsPerTick = (60 / music.value.bpm) / music.value.ticksPerBeat
-    const ticksPer16th = music.value.ticksPerBeat / 8 // 32分音符 = 60 ticks
-    let currentTick = 0
-    const durations = track.durations.split(',')
-    const midiNoteNumbers = track.midiNoteNumbers.split(',')
-    // ノートの数だけループ
-    for (let i = 0; i < durations.length; i++) {
-      const lengthIn16ths = parseInt(durations[i])         // 1〜32 の整数
-      const noteNumber = parseInt(midiNoteNumbers[i])      // MIDI ノート番号
-
-      const durationTicks = lengthIn16ths * ticksPer16th     // 実際のティック長さ
-
-      midiTrack.addNote({
-        midi: noteNumber,
-        time: currentTick / music.value.ticksPerBeat,  // 秒ではなく「拍」で指定（Tone.js互換）
-        duration: durationTicks / music.value.ticksPerBeat, // 同上
-        velocity: 0.8 // 任意の音量（0〜1）
-      })
-      midiTrack['color'] = track.color // トラックの色を設定
-
-      currentTick += durationTicks
-    }
-  })
-
-  let data = {
-    tracks: music.value.tracks
-  }
-  axios.post("/api/web/supercolliders/generate", data)
-  .then(response => {
-    const { sound_file_path, scd_file_path, audio_data } = response.data;
-
-    // Base64データをデコードしてArrayBufferに変換
-    console.log(audio_data)
-    const binary = atob(audio_data);
-    music.value.soundFilePath = sound_file_path
-    music.value.scdFilePath = scd_file_path
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-
-    const audioBlob = new Blob([bytes.buffer], { type: "audio/wav" });
-    const url = URL.createObjectURL(audioBlob);
-
-    audio.value = new Audio(url);
-    audio.value.addEventListener('ended', () => nowPlaying.value = false)
-    music.value.midiData = midi
-    music.value.loading = false
-    music.value.setDataDialog = false
-    cleanup()
-  })
-  .catch(error => console.error("音声生成エラー", error));
-}
-
 const cleanup = () => {
   let data = {
     cleanup: {
@@ -1381,96 +1264,172 @@ const cleanup = () => {
   .catch(error => console.error("音声削除エラー", error));
 }
 
-// deprecated------------------------------------------------------------------------------
-// tone.js
-const onMidiSelected = async () => {
-  if (!music.value.midi) return
 
-  const file = music.value.midi
-  const arrayBuffer = await file.arrayBuffer()
-  music.value.midiData = new Midi(arrayBuffer)
-
-  music.value.ticksPerBeat = music.value.midiData.header.tempos?.[0]?.ppq ?? music.value.ticksPerBeatDefault
-  music.value.bpm = music.value.midiData.header.tempos?.[0]?.bpm || music.value.bpmDefault
-  music.value.secondsPerTick = (60 / music.value.bpm) / music.value.ticksPerBeat
-
-  await nextTick()
-  music.value.setDataDialog = false
+const updateContextSteps = () => {
+  const targetLen = contextStepCount.value
+  const current = polyParams.value.initial_context
+  while (current.length < targetLen) {
+    const lastStep = current[current.length - 1]
+    current.push(JSON.parse(JSON.stringify(lastStep)))
+  }
+  if (current.length > targetLen) current.splice(targetLen)
 }
 
-const playNotes = () =>{
-  nowPlaying.value ? stopPlayingNotes() : startPlayingNotes()
-}
-const stopPlayingNotes = () => {
-  nowPlaying.value = false
-  musicComponent.value?.stop()
-  Tone.Transport.stop()
-  Tone.Transport.cancel()
-}
-
-const startPlayingNotes = () => {
-  nowPlaying.value = true
-  const score: ScoreEntry[] = []
-
-  // 各トラックごとに音符列を追加する
-  for (const track of music.value.tracks) {
-    const durations = track.durations.split(',').map(Number)
-    const midiNoteNumbers = track.midiNoteNumbers.split(',').map(Number)
-    let currentTimeInBeats = 0
-
-    for (let i = 0; i < midiNoteNumbers.length; i++) {
-      const midiNoteNumber = midiNoteNumbers[i]
-      const pitch = pitchMap.value[midiNoteNumber]
-
-      let setPitch: string
-      let setVelocity: number
-      if (pitch === undefined) {
-        setPitch = 'C1'
-        setVelocity = 0
-      } else {
-        setPitch = pitch
-        setVelocity = music.value.velocity ?? 0.8 // トラックごとにvelocityを持たせたければここで分ける
-      }
-
-      const dur = durations[i] || 1
-      const durationInBeats = Decimal.div(dur, 8)
-      score.push({
-        time: `${currentTimeInBeats}`,
-        note: `${setPitch}`,
-        duration: `${durationInBeats.toNumber()}`,
-        velocity: setVelocity
-      })
-
-      currentTimeInBeats = Decimal.add(currentTimeInBeats, durationInBeats).toNumber()
+const updateContextStreams = () => {
+  const targetCount = contextStreamCount.value
+  polyParams.value.initial_context.forEach(step => {
+    while (step.length < targetCount) {
+      step.push([4, 0, 0.8, 0.2, 0.2, 0.0])
     }
+    if (step.length > targetCount) {
+      step.splice(targetCount)
+    }
+  })
+}
+
+const updateStepCount = () => {
+  const targetLen = newStepCount.value
+  updateArrayLength(polyParams.value.stream_counts, targetLen, 2)
+  dimensions.forEach(dim => {
+    updateArrayLength(polyParams.value[`${dim.key}_global`], targetLen, 0.0)
+    updateArrayLength(polyParams.value[`${dim.key}_ratio`], targetLen, 0.0)
+    updateArrayLength(polyParams.value[`${dim.key}_tightness`], targetLen, 1.0)
+    updateArrayLength(polyParams.value[`${dim.key}_conc`], targetLen, 0.0)
+  })
+}
+
+const updateArrayLength = (arr, targetLen, defaultVal) => {
+  while (arr.length < targetLen) arr.push(arr.length > 0 ? arr[arr.length - 1] : defaultVal)
+  if (arr.length > targetLen) arr.splice(targetLen)
+}
+
+const subscribeToProgress = () => {
+  jobId.value = uuidv4()
+  progress.value = { percent: 0, status: 'start' }
+  const { unsubscribe } = useJobChannel(jobId.value, (data) => {
+    progress.value.status = data.status
+    progress.value.percent = data.progress
+    if (data.status === 'done') unsubscribe()
+  })
+}
+
+const generatePolyphonic = () => {
+  subscribeToProgress()
+  music.value.loading = true
+
+  const parseArr = (str) => Array.isArray(str) ? str : str.split(',').map(Number)
+
+  const payload = {
+    job_id: jobId.value,
+    stream_counts: parseArr(polyParams.value.stream_counts),
+    initial_context: polyParams.value.initial_context,
   }
 
-  // Sampler は1つでよい（全トラック分鳴らす）
-  const sampler = new Tone.Sampler({
-    urls: {
-      A0: "A0.mp3", C1: "C1.mp3", "D#1": "Ds1.mp3", "F#1": "Fs1.mp3",
-      A1: "A1.mp3", C2: "C2.mp3", "D#2": "Ds2.mp3", "F#2": "Fs2.mp3",
-      A2: "A2.mp3", C3: "C3.mp3", "D#3": "Ds3.mp3", "F#3": "Fs3.mp3",
-      A3: "A3.mp3", C4: "C4.mp3", "D#4": "Ds4.mp3", "F#4": "Fs4.mp3",
-      A4: "A4.mp3", C5: "C5.mp3", "D#5": "Ds5.mp3", "F#5": "Fs5.mp3",
-      A5: "A5.mp3", C6: "C6.mp3", "D#6": "Ds6.mp3", "F#6": "Fs6.mp3",
-      A6: "A6.mp3", C7: "C7.mp3", "D#7": "Ds7.mp3", "F#7": "Fs7.mp3",
-      A7: "A7.mp3", C8: "C8.mp3"
-    },
-    baseUrl: "https://tonejs.github.io/audio/salamander/",
-    onload: () => {
-      const part = new Tone.Part((time, note) => {
-        sampler.triggerAttackRelease(note.note, note.duration, time, note.velocity)
-        if (musicComponent.value?.start) {
-          musicComponent.value.start()
-        }
-      }, score)
-      part.start(0)
-      Tone.Transport.start()
-    }
-  }).toDestination()
+  dimensions.forEach(dim => {
+    payload[`${dim.key}_global`] = parseArr(polyParams.value[`${dim.key}_global`])
+    payload[`${dim.key}_ratio`] = parseArr(polyParams.value[`${dim.key}_ratio`])
+    payload[`${dim.key}_tightness`] = parseArr(polyParams.value[`${dim.key}_tightness`])
+    payload[`${dim.key}_conc`] = parseArr(polyParams.value[`${dim.key}_conc`])
+  })
+
+  axios.post('/api/web/time_series/generate_polyphonic', { generate_polyphonic: payload })
+    .then(response => {
+      console.log('Generated:', response.data)
+      const rawTimeSeries = response.data.timeSeries
+      convertResponseToTracks(rawTimeSeries)
+      renderPolyphonicAudio(rawTimeSeries)
+
+    })
+    .catch(error => {
+      console.error(error)
+      music.value.loading = false
+    })
 }
 
+const convertResponseToTracks = (timeSeries) => {
+  console.log("Converting Response:", timeSeries);
+  if (!timeSeries || timeSeries.length === 0) { console.warn("TimeSeries is empty"); return; }
+
+  const maxStreams = Math.max(...timeSeries.map(step => step.length))
+  const newTracksForUi = []
+  const newTracksForMidi = []
+  const TICKS_PER_STEP = 120
+
+  music.value.ticksPerBeat = 480
+  music.value.bpm = 120
+  music.value.secondsPerTick = 60 / music.value.bpm / music.value.ticksPerBeat
+
+  for (let s = 0; s < maxStreams; s++) {
+    const midiNotesStr = []
+    const durationsStr = []
+    const velocitiesStr = []
+    const notesForDrawing = []
+    const color = getStreamColor(s)
+    let currentTick = 0
+
+    timeSeries.forEach(step => {
+      const voice = step[s]
+      if (voice) {
+        const [oct, note, vol, bri, hrd, tex] = voice
+        const midiNoteNum = (oct + 1) * 12 + note
+
+        midiNotesStr.push(midiNoteNum)
+        durationsStr.push(4)
+        velocitiesStr.push(vol)
+
+        if (vol > 0.01) {
+          notesForDrawing.push({ midi: midiNoteNum, ticks: currentTick, durationTicks: TICKS_PER_STEP, velocity: vol })
+        }
+      } else {
+        midiNotesStr.push(0); durationsStr.push(4); velocitiesStr.push(0);
+      }
+      currentTick += TICKS_PER_STEP
+    })
+
+    newTracksForUi.push({
+      name: `Stream ${s + 1}`,
+      midiNoteNumbers: midiNotesStr.join(','),
+      durations: durationsStr.join(','),
+      velocities: velocitiesStr.join(','),
+      color: color,
+      brightness: timeSeries[timeSeries.length-1][s]?.[3] || 0.5,
+      hardness:   timeSeries[timeSeries.length-1][s]?.[4] || 0.5,
+      texture:    timeSeries[timeSeries.length-1][s]?.[5] || 0.0,
+      resonance:  0.2
+    })
+    newTracksForMidi.push({ color: color, notes: notesForDrawing })
+  }
+  music.value.tracks = newTracksForUi
+  music.value.midiData = { tracks: newTracksForMidi }
+}
+
+const getStreamColor = (index) => {
+  const hue = Math.floor((index * 137.508) % 360);
+  return `hsl(${hue}, 75%, 45%)`;
+}
+
+const renderPolyphonicAudio = (timeSeries) => {
+  progress.value.status = 'rendering'
+  const stepDuration = 60.0 / music.value.bpm / 4.0
+  axios.post('/api/web/supercolliders/render_polyphonic', {
+    time_series: timeSeries, step_duration: stepDuration
+  }).then(response => {
+    const { sound_file_path, audio_data } = response.data
+    music.value.soundFilePath = sound_file_path
+    const binary = atob(audio_data)
+    const len = binary.length
+    const bytes = new Uint8Array(len)
+    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
+    const blob = new Blob([bytes.buffer], { type: "audio/wav" })
+    const url = URL.createObjectURL(blob)
+    audio.value = new Audio(url)
+    audio.value.addEventListener('ended', () => nowPlaying.value = false)
+    music.value.loading = false
+    music.value.setDataDialog = false
+    cleanup()
+  })
+  .catch(error => { console.error("Rendering error:", error); music.value.loading = false })
+}
 
 </script>
 
@@ -1488,4 +1447,36 @@ const startPlayingNotes = () => {
   ::v-deep(.v-select .v-input__details) {
     display: none !important;
   }
+/* Grid Styles: remove max-height and overflow-y */
+.grid-card {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-height: none;
+  margin-bottom: 16px;
+}
+.grid-container { display: inline-block; }
+.param-grid { border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 0.8rem; }
+.param-grid th, .param-grid td {
+  border: 1px solid #e0e0e0; padding: 2px; text-align: center;
+  width: 3.5rem;
+  box-sizing: border-box; height: 1.5rem;
+}
+.sticky-col { position: sticky; z-index: 2; background-color: white; }
+.head-col { left: 0; z-index: 3; width: 100px !important; min-width: 100px !important; font-weight: bold; }
+.sub-col { left: 100px; z-index: 3; width: 60px !important; min-width: 60px !important; }
+thead th { position: sticky; top: 0; background-color: #f5f5f5; z-index: 2; height: 40px; }
+thead th.head-col, thead th.sub-col { z-index: 4; }
+.dim-start-row td { border-top: 3px solid #999 !important; }
+.row-label { text-align: left; padding-left: 8px; vertical-align: middle; background-color: white; }
+.border-none { border-top: none !important; }
+.grid-input { width: 100%; height: 100%; border: none; text-align: center; background: transparent; outline: none; font-size: 0.9rem; }
+.grid-input:focus { background-color: #e8f5e9; font-weight: bold; }
+.step-input { width: 60px; border: 1px solid #ccc; padding: 2px 5px; border-radius: 4px; background: white; }
+.label-count { color: #D81B60; font-weight: bold; }
+.label-target { color: #6A1B9A; font-weight: bold; }
+.label-global { color: #1976D2; font-weight: bold; }
+.label-stream { color: #FB8C00; }
+.label-conc { color: #43A047; }
+.label-dim { color: #607D8B; font-weight: bold; }
+.font-monospace textarea { font-family: monospace; font-size: 0.85rem; }
 </style>

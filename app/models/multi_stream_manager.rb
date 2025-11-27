@@ -18,7 +18,6 @@ class MultiStreamManager
     @stream_pool = []
     @next_stream_id = 0
 
-    # 転置してストリームごとに初期化
     initial_voices = history_matrix.transpose
 
     initial_voices.each do |voice_data|
@@ -44,8 +43,6 @@ class MultiStreamManager
     end
   end
 
-  # 事前計算 (8 x n)
-  # 戻り値に complexity も含める
   def precalculate_costs(range, quadratic_integer_array)
     active_streams.map do |s|
       costs = {}
@@ -57,7 +54,6 @@ class MultiStreamManager
     end
   end
 
-  # マッピング解決
   def resolve_mapping_and_score(cand_set, stream_costs)
     current_actives = active_streams
     n_streams = current_actives.size
@@ -123,7 +119,6 @@ class MultiStreamManager
     [ ordered_chord, { individual_scores: individual_scores } ]
   end
 
-  # 確定と更新
   def commit_state(ordered_chord, quadratic_integer_array)
     current_actives = active_streams
     n_notes = ordered_chord.size
@@ -136,18 +131,15 @@ class MultiStreamManager
       end
 
     elsif n_notes > n_streams
-      # 既存更新
       current_actives.each_with_index do |s, i|
         s.manager.add_data_point_permanently(ordered_chord[i])
         s.last_note = ordered_chord[i]
       end
 
-      # 新規作成 (分裂)
       (n_streams...n_notes).each do |i|
         note = ordered_chord[i]
         parent = current_actives.min_by { |s| (s.last_note - note).abs }
 
-        # 親をクローン (忘却ロジック削除に伴い life_energy 処理も削除)
         new_mgr = Marshal.load(Marshal.dump(parent.manager))
         new_mgr.add_data_point_permanently(note)
 

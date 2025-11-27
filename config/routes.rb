@@ -12,7 +12,7 @@ Rails.application.routes.draw do
         post 'generate_polyphonic'
       end
       namespace :supercolliders do
-        post 'generate'
+        post 'render_polyphonic'
         delete 'cleanup'
       end
     end

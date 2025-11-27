@@ -9,7 +9,8 @@ class TimeSeriesClusterManager
   attr_accessor :cluster_distance_cache
   attr_accessor :updated_cluster_ids_per_window_for_calculate_quantities
   attr_accessor :cluster_quantity_cache
-  attr_accessor :cluster_complexity_cache
+  attr_accessor :cluster_complexity_cache # ★追加: 内部複雑度キャッシュ
+
   attr_reader :recording_mode
 
   def initialize(data, merge_threshold_ratio, min_window_size, calculate_distance_when_added_subsequence_to_cluster)
@@ -34,7 +35,7 @@ class TimeSeriesClusterManager
     @cluster_quantity_cache = {}
     @cluster_quantity_cache[@min_window_size] ||= {}
     @cluster_complexity_cache = {}
-    @cluster_complexity_cache[@min_window_size] ||= {}
+    @cluster_complexity_cache[@min_window_size] ||= {} # ★初期化
 
     @cluster_id_counter += 1
     @tasks = []
@@ -54,7 +55,7 @@ class TimeSeriesClusterManager
     clustering_subsequences_incremental(@data.length - 1)
   end
 
-  # ★追加: これが不足していました。コントローラからロジックを移動。
+  # ★追加: キャッシュの永続的更新
   def update_caches_permanently(quadratic_integer_array)
     clusters_each_window_size = transform_clusters(@clusters, @min_window_size)
 
@@ -90,7 +91,7 @@ class TimeSeriesClusterManager
           quantity = cluster[:si].map { |s| quadratic_integer_array[s[0]] }.inject(1) { |product, n| product * n }
           q_cache[cid] = quantity
 
-          # 複雑度
+          # ★複雑度
           comp = calculate_cluster_complexity(cluster)
           c_cache[cid] = comp
         end
@@ -117,7 +118,7 @@ class TimeSeriesClusterManager
 
       sum_distances = 0
       sum_quantities = 0
-      sum_complexities = 0
+      sum_complexities = 0 # ★追加
 
       clusters_each_window_size.each do |window_size, same_window_size_clusters|
         # 距離計算
@@ -167,11 +168,13 @@ class TimeSeriesClusterManager
         updated_quant_ids.each do |cid|
           cluster = same_window_size_clusters[cid]
           if cluster && cluster[:si].length > 1
+            # 数量
             quantity = cluster[:si].map { |s| quadratic_integer_array[s[0]] }.inject(1) { |product, n| product * n }
             old_q = q_cache[cid]
             q_cache[cid] = quantity
             record_action(:cache_write, q_cache, cid, old_q)
 
+            # ★内部複雑度
             complexity = calculate_cluster_complexity(cluster)
             old_c = c_cache[cid]
             c_cache[cid] = complexity
@@ -190,21 +193,26 @@ class TimeSeriesClusterManager
     end
   end
 
+  # --- ★追加: クラスタ内部複雑度計算 ---
   def calculate_cluster_complexity(cluster)
     seq = cluster[:as]
     return 0.0 if seq.size < 2
     total_step_diff = 0.0
     (0...(seq.size - 1)).each do |i|
+      # step_distance: 単音(スカラー)なら差の絶対値
       diff = step_distance(seq[i], seq[i+1])
       total_step_diff += diff
     end
+    # 1ステップあたりの平均変化量
     total_step_diff / (seq.size - 1).to_f
   end
 
+  # 単音用のデフォルト距離 (ポリフォニックではオーバーライドされる)
   def step_distance(a, b)
     (a - b).abs
   end
 
+  # --- 既存: 変換メソッド ---
   def transform_clusters(clusters, min_window_size)
     clusters_each_window_size = {}
     stack = clusters.map { |id, cluster| [id, cluster, min_window_size] }

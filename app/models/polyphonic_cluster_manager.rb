@@ -30,6 +30,7 @@ class PolyphonicClusterManager < TimeSeriesClusterManager
     pitch_dist + count_dist
   end
 
+  # 内部複雑度計算用
   def step_distance(a, b)
     min_avg_distance(a, b)
   end

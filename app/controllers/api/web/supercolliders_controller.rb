@@ -1,49 +1,54 @@
 class Api::Web::SupercollidersController < ApplicationController
-  require 'erb'
-  def midi_to_freq(midi)
-    440.0 * (2.0 ** ((midi - 69) / 12.0))
-  end
+  # ============================================================
+  #  ★新規: 多声データからの音声レンダリング
+  # ============================================================
+  def render_polyphonic
+    # パラメータ: time_series (6次元データの3次元配列)
+    # [ [ [oct, note, vol, bri, hrd, tex], ... ], ... ]
+    time_series = params[:time_series]
 
-  def generate
-    raw_tracks = params[:supercollider] ? params[:supercollider][:tracks] : params[:tracks]
-    tracks = (raw_tracks || []).map do |track|
-      {
-        durations: track[:durations].is_a?(String) ? track[:durations].split(',').map(&:to_i) : Array(track[:durations]).map(&:to_i),
-        midiNoteNumbers: track[:midiNoteNumbers].is_a?(String) ? track[:midiNoteNumbers].split(',').map(&:to_i) : Array(track[:midiNoteNumbers]).map(&:to_i),
-        tone: track[:tone].to_i,
-        harmRichness: track[:harmRichness].to_f,
-        brightness: track[:brightness].to_f,
-        noiseContent: track[:noiseContent].to_f,
-        formantChar: track[:formantChar].to_f,
-        inharmonicity: track[:inharmonicity].to_f,
-        resonance: track[:resonance].to_f,
-      }
+    # 1ステップあたりの秒数
+    step_duration = params[:step_duration].to_f
+    step_duration = 0.25 if step_duration <= 0
+
+    if time_series.blank?
+      render plain: "No time series data provided", status: 400
+      return
     end
-    filename = "rendered_#{SecureRandom.hex}.wav"
+
+    filename = "poly_rendered_#{SecureRandom.hex}.wav"
     @sound_file_path = Rails.root.join("tmp", filename).to_s
-    total_duration = tracks.map { |track| track[:durations].sum }.max.to_f * 0.125 rescue 1.0
+
+    # 合計時間
+    total_duration = time_series.length * step_duration
 
     # ERBテンプレート展開
-    erb_path = Rails.root.join('supercollider', 'render.scd.erb')
-    @scd_file_path = Rails.root.join('tmp', "render_#{SecureRandom.hex}.scd")
+    erb_path = Rails.root.join('supercollider', 'render_polyphonic.scd.erb')
+    @scd_file_path = Rails.root.join('tmp', "render_poly_#{SecureRandom.hex}.scd")
+
     template = File.read(erb_path)
     renderer = ERB.new(template)
+
     scd_code = renderer.result_with_hash(
-      tracks: tracks,
+      time_series: time_series,
+      step_duration: step_duration,
       filepath: @sound_file_path,
       total_duration: total_duration,
-      midi_to_freq: method(:midi_to_freq)
+      # MIDIノート番号(0-127)を周波数に変換するヘルパー
+      midi_to_freq: ->(note) { 440.0 * (2.0 ** ((note - 69) / 12.0)) }
     )
+
     File.write(@scd_file_path, scd_code)
 
+    # SuperCollider実行
     pid = Process.spawn(
       { "QT_QPA_PLATFORM" => "offscreen" },
       "sclang", @scd_file_path.to_s
     )
     Process.detach(pid)
 
-    if wait_for_complete_file(@sound_file_path, timeout: 30)
-      # ファイルを読み込んでBase64に変換
+    # ファイル生成待ち (少し長めに45秒)
+    if wait_for_complete_file(@sound_file_path, timeout: 45)
       base64_data = Base64.strict_encode64(File.binread(@sound_file_path))
 
       render json: {
@@ -52,61 +57,36 @@ class Api::Web::SupercollidersController < ApplicationController
         audio_data: base64_data
       }
     else
-      render plain: "Failed to generate audio", status: 500
+      render plain: "Failed to render audio", status: 500
     end
-
   end
 
+  # 一時ファイル削除
   def cleanup
-    sound_file_path = delete_params[:sound_file_path]
-    if sound_file_path && File.exist?(sound_file_path)
-      File.delete(sound_file_path) rescue nil
-    else
-      render json: { message: "Sound File not found" }, status: 404
-    end
-
-    scd_file_path = delete_params[:scd_file_path]
-    if scd_file_path && File.exist?(scd_file_path)
-      File.delete(scd_file_path) rescue nil
-    else
-      render json: { message: "SCD File not found" }, status: 404
-    end
-
-    render json: { message: "File deleted" }
-  end
-
-  def wait_for_complete_file(filepath, timeout: 30)
-    start = Time.now
-    last_size = -1
-
-    loop do
-      # ファイルが存在しない場合
-      unless File.exist?(filepath)
-        break if Time.now - start > timeout
-        sleep 1.0
-        next
+    paths = [params[:cleanup][:sound_file_path], params[:cleanup][:scd_file_path]]
+    paths.each do |path|
+      if path.present? && File.exist?(path) && path.start_with?(Rails.root.join('tmp').to_s)
+        File.delete(path)
       end
-
-      current_size = File.size(filepath)
-
-      # ファイルサイズが前回と同じなら「生成完了」とみなす
-      if current_size > 0 && current_size == last_size
-        return true
-      end
-
-      last_size = current_size
-      break if Time.now - start > timeout
-      sleep 1.0
     end
-
-    false
+    render json: { status: 'ok' }
   end
 
   private
-    def delete_params
-      params.require(:cleanup).permit(
-        :sound_file_path,
-        :scd_file_path
-      )
+
+  def midi_to_freq(note)
+    440.0 * (2.0 ** ((note - 69) / 12.0))
+  end
+
+  def wait_for_complete_file(path, timeout: 30)
+    start = Time.now
+    while Time.now - start < timeout
+      if File.exist?(path) && File.size(path) > 0
+        sleep 0.5
+        return true
+      end
+      sleep 0.1
     end
+    false
+  end
 end
