@@ -13,6 +13,11 @@ WORKDIR /app
 
 # Gemfile のキャッシュを活用
 COPY Gemfile Gemfile.lock /app/
+
+# ★追加: gemのインストール先を vendor/bundle に設定
+# これにより、gemが /app/vendor/bundle にインストールされます
+RUN bundle config set --local path 'vendor/bundle'
+
 RUN bundle install
 
 # メモリ節約のため、環境変数を設定
@@ -34,7 +39,11 @@ RUN node node_modules/.bin/vite build --no-minify
 
 # scuser ユーザーで起動　sc実行のため必要
 RUN useradd -ms /bin/bash scuser
-RUN mkdir -p /app/tmp/cache && chown -R scuser:scuser /app/tmp
+
+# /app 全体の所有権を scuser に変更
+# これにより vendor/bundle や .bundle/config も scuser が読み書きできるようになります
+RUN chown -R scuser:scuser /app
+
 USER scuser
 
 CMD ["rails", "server", "-b", "0.0.0.0"]

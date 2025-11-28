@@ -1,0 +1,105 @@
+var server = Server(\nrt,
+    options: ServerOptions.new
+    .numOutputBusChannels_(2)
+    .numInputBusChannels_(2)
+    .sampleRate_(44100)
+);
+
+a = Score([
+  [0.0, ['/d_recv',
+    // 4軸制御シンセサイザー (前回の改良版を使用)
+    SynthDef(\polySynth, {
+        |out=0, freq=440, dur=0.25, amp=0.5,
+         brightness=0.5, hardness=0.5, texture=0.0, resonance=0.2|
+
+        var sig, env, core, sub;
+        var attackTime, releaseTime, cutoff, rq, feedback, pulseWidth, noiseSig;
+
+        // 1. Hardness -> Envelope
+        attackTime = (1.0 - hardness).linexp(0.0, 1.0, 0.001, 0.2).min(dur * 0.5);
+        releaseTime = dur * (1.0 + (resonance * 2.0));
+        env = EnvGen.ar(Env.perc(attackTime, releaseTime, 1.0, -4), doneAction: 2);
+
+        // 2. Texture -> Waveform
+        feedback = texture.linlin(0.0, 1.0, 0.0, 2.5);
+        core = SinOscFB.ar(freq, feedback);
+
+        pulseWidth = 0.5 + (texture * 0.4);
+        core = core * (1.0 - (texture * 0.5)) + (Pulse.ar(freq, pulseWidth) * (texture * 0.5));
+
+        noiseSig = PinkNoise.ar() * (texture - 0.7).max(0) * 0.5;
+        sub = SinOsc.ar(freq) * (1.0 - texture).max(0.2) * 0.5;
+        sig = core + noiseSig + sub;
+
+        // 3. Brightness -> Filter
+        cutoff = freq * (1 + (brightness * 20));
+        cutoff = cutoff.clip(20, 20000);
+
+        // 4. Resonance -> Filter Q
+        rq = (1.0 - (resonance * 0.95)).clip(0.02, 1.0);
+
+        sig = RLPF.ar(sig, cutoff, rq);
+        sig = BHiShelf.ar(sig, 3000, 1.0, (brightness - 0.5) * 12);
+
+        sig = sig * env * amp;
+        sig = sig.tanh;
+
+        Out.ar(out, sig ! 2);
+    }).asBytes;
+  ]],
+
+  <%
+    # time_series: [step][stream] = [oct, note, vol, bri, hrd, tex]
+    current_time = 0.0
+    node_id = 1000
+
+    time_series.each do |step_streams|
+  %>
+    <% step_streams.each do |s| %>
+      <%
+         # パラメータ展開
+         # s は数値の配列だが、JSON経由で文字列になっている可能性も考慮して to_f/to_i
+         oct  = s[0].to_i
+         note = s[1].to_i
+         vol  = s[2].to_f
+         bri  = s[3].to_f
+         hrd  = s[4].to_f
+         tex  = s[5].to_f
+
+         # MIDIノート計算 (C-1 = 0, C4 = 60 と仮定すると、Octave 4, Note 0 -> 60)
+         # 仕様: Octave 0-10, Note 0-11
+         # Octave 0 を MIDI 12 (C0) あたりにマッピングするのが一般的
+         midi_note = (oct + 1) * 12 + note
+         freq = midi_to_freq.call(midi_note)
+
+         # 音量が極端に小さい場合は発音しない
+         if vol > 0.01
+      %>
+        [<%= current_time %>, ['/s_new', \polySynth, <%= node_id %>, 0, 0,
+          \freq, <%= freq %>,
+          \dur, <%= step_duration %>,
+          \amp, <%= vol * 0.5 %>,
+          \brightness, <%= bri %>,
+          \hardness, <%= hrd %>,
+          \texture, <%= tex %>,
+          \resonance, 0.2
+        ]],
+      <%
+          node_id += 1
+         end
+      %>
+    <% end %>
+    <% current_time += step_duration %>
+  <% end %>
+]);
+
+a.recordNRT(
+    outputFilePath: "<%= filepath %>",
+    headerFormat: "wav",
+    sampleFormat: "int16",
+    options: server.options,
+    duration: <%= total_duration + 2.0 %>, // 余韻用
+    action: { "done".postln }
+);
+
+server.remove;
