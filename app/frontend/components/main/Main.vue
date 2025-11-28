@@ -328,6 +328,15 @@
                     <span v-if="progress.status === 'progress'">Generating: {{progress.percent}}%</span>
                     <span v-if="progress.status === 'rendering'">Rendering Audio...</span>
                   </div>
+                  <v-btn
+                    color="secondary"
+                    class="mr-2 open-param-gen-btn"
+                    :disabled="!focusedCell.type"
+                    @mousedown="setSuppressBlur"
+                    @click="openParamGenDialog"
+                  >
+                    GENERATE PARAMETERS
+                  </v-btn>
                   <!-- GENERATE & RENDER Button -->
                   <v-btn
                     color="success"
@@ -351,24 +360,24 @@
                     <v-spacer></v-spacer>
                     <!-- Context Controllers -->
                     <div class="d-flex align-center mr-4" style="font-size: 0.9rem;">
-                       <span class="mr-2">Streams:</span>
-                       <input
-                         type="number"
-                         v-model.number="contextStreamCount"
-                         min="1" max="16"
-                         class="step-input mr-1"
-                         @change="updateContextStreams"
-                       >
+                      <span class="mr-2">Streams:</span>
+                      <input
+                        type="number"
+                        v-model.number="contextStreamCount"
+                        min="1" max="16"
+                        class="step-input mr-1"
+                        @change="updateContextStreams"
+                      >
                     </div>
                     <div class="d-flex align-center mr-2" style="font-size: 0.9rem;">
-                       <span class="mr-2">Steps:</span>
-                       <input
-                         type="number"
-                         v-model.number="contextStepCount"
-                         min="1" max="100"
-                         class="step-input mr-1"
-                         @change="updateContextSteps"
-                       >
+                      <span class="mr-2">Steps:</span>
+                      <input
+                        type="number"
+                        v-model.number="contextStepCount"
+                        min="1" max="100"
+                        class="step-input mr-1"
+                        @change="updateContextSteps"
+                      >
                     </div>
                   </v-toolbar>
 
@@ -398,6 +407,7 @@
                                 class="grid-input"
                                 min="0" max="10"
                                 @paste="onContextPaste($event, s-1, 0, i)"
+                                @focus="onContextFocus(s-1, 0, i, { min: 0, max: 10, isInt: true })" @blur="onContextBlur"
                               >
                             </td>
                           </tr>
@@ -412,6 +422,7 @@
                                 class="grid-input"
                                 :step="dim.key === 'note' ? 1 : 0.1"
                                 @paste="onContextPaste($event, s-1, dIdx + 1, i)"
+                                @focus="onContextFocus(s-1, dIdx + 1, i, { min: dim.key === 'note' ? 0 : 0, max: dim.key === 'note' ? 11 : 1, isInt: dim.key === 'note' })" @blur="onContextBlur"
                               >
                             </td>
                           </tr>
@@ -427,14 +438,14 @@
                     <v-toolbar-title class="text-subtitle-1 font-weight-bold">2. Generation Parameters (Future Targets)</v-toolbar-title>
                     <v-spacer></v-spacer>
                     <div class="d-flex align-center mr-2" style="font-size: 0.9rem;">
-                       <span class="mr-2">Gen Steps:</span>
-                       <input
-                         type="number"
-                         v-model.number="newStepCount"
-                         min="1" max="100"
-                         class="step-input mr-1"
-                         @change="updateStepCount"
-                       >
+                      <span class="mr-2">Gen Steps:</span>
+                      <input
+                        type="number"
+                        v-model.number="newStepCount"
+                        min="1" max="100"
+                        class="step-input mr-1"
+                        @change="updateStepCount"
+                      >
                     </div>
                   </v-toolbar>
 
@@ -461,6 +472,7 @@
                               min="1"
                               class="grid-input"
                               @paste="onGenParamPaste($event, polyParams.stream_counts, i, true)"
+                              @focus="onGridFocus(polyParams.stream_counts, i, { min: 1, max: 16, isInt: true })" @blur="onGridBlur"
                             >
                           </td>
                         </tr>
@@ -477,6 +489,7 @@
                                 step="0.01" min="0" max="1"
                                 class="grid-input"
                                 @paste="onGenParamPaste($event, polyParams[`${dim.key}_global`], i)"
+                                @focus="onGridFocus(polyParams[`${dim.key}_global`], i, { min: 0, max: 1 })" @blur="onGridBlur"
                               >
                             </td>
                           </tr>
@@ -490,6 +503,7 @@
                                 step="0.01" min="0" max="1"
                                 class="grid-input"
                                 @paste="onGenParamPaste($event, polyParams[`${dim.key}_ratio`], i)"
+                                @focus="onGridFocus(polyParams[`${dim.key}_ratio`], i, { min: 0, max: 1 })" @blur="onGridBlur"
                               >
                             </td>
                           </tr>
@@ -503,6 +517,7 @@
                                 step="0.01" min="0" max="1"
                                 class="grid-input"
                                 @paste="onGenParamPaste($event, polyParams[`${dim.key}_tightness`], i)"
+                                @focus="onGridFocus(polyParams[`${dim.key}_tightness`], i, { min: 0, max: 1 })" @blur="onGridBlur"
                               >
                             </td>
                           </tr>
@@ -516,6 +531,7 @@
                                 step="0.01" min="-1" max="1"
                                 class="grid-input"
                                 @paste="onGenParamPaste($event, polyParams[`${dim.key}_conc`], i)"
+                                @focus="onGridFocus(polyParams[`${dim.key}_conc`], i, { min: -1, max: 1 })" @blur="onGridBlur"
                               >
                             </td>
                           </tr>
@@ -525,6 +541,74 @@
                   </div>
                 </v-card>
               </v-card-text>
+            </v-card>
+          </v-dialog>
+
+          <!-- ★追加: パラメータ生成用ダイアログ -->
+          <v-dialog v-model="paramGenDialog" width="500">
+            <v-card>
+              <v-card-title class="text-h6 bg-grey-lighten-3">Generate Parameters</v-card-title>
+              <v-card-text class="pt-4">
+                <v-row>
+                  <v-col cols="12">
+                    <v-text-field
+                      label="Steps to Generate"
+                      type="number"
+                      v-model.number="paramGen.steps"
+                      min="1"
+                      hint="Number of cells to fill from cursor"
+                      persistent-hint
+                    ></v-text-field>
+                  </v-col>
+
+                  <v-col cols="12">
+                    <v-tabs v-model="paramGen.mode" density="compact" color="primary">
+                      <v-tab value="transition">Transition</v-tab>
+                      <v-tab value="random">Random</v-tab>
+                    </v-tabs>
+
+                    <v-window v-model="paramGen.mode" class="mt-4">
+                      <!-- Transition Mode -->
+                      <v-window-item value="transition">
+                        <v-row>
+                          <v-col cols="6">
+                            <v-text-field label="Start Value" type="number" v-model.number="paramGen.start" step="0.1"></v-text-field>
+                          </v-col>
+                          <v-col cols="6">
+                            <v-text-field label="End Value" type="number" v-model.number="paramGen.end" step="0.1"></v-text-field>
+                          </v-col>
+                          <v-col cols="12">
+                            <v-select
+                              label="Curve Type"
+                              :items="easingFunctions"
+                              item-title="title"
+                              item-value="value"
+                              v-model="paramGen.curve"
+                            ></v-select>
+                          </v-col>
+                        </v-row>
+                      </v-window-item>
+
+                      <!-- Random Mode -->
+                      <v-window-item value="random">
+                        <v-row>
+                          <v-col cols="6">
+                            <v-text-field label="Min Value" type="number" v-model.number="paramGen.randMin" step="0.1"></v-text-field>
+                          </v-col>
+                          <v-col cols="6">
+                            <v-text-field label="Max Value" type="number" v-model.number="paramGen.randMax" step="0.1"></v-text-field>
+                          </v-col>
+                        </v-row>
+                      </v-window-item>
+                    </v-window>
+                  </v-col>
+                </v-row>
+              </v-card-text>
+              <v-card-actions>
+                <v-spacer></v-spacer>
+                <v-btn color="grey" text @click="paramGenDialog = false">Cancel</v-btn>
+                <v-btn color="primary" @click="applyGeneratedParams">Generate & Paste</v-btn>
+              </v-card-actions>
             </v-card>
           </v-dialog>
 
@@ -879,7 +963,7 @@ const fill = (start, mid, end, len=steps) => {
   }
   return arr;
 };
-const constant = (val) => Array(steps).fill(val);
+const constant = (val, len=steps) => Array(len).fill(val);
 
 const polyParams = ref<any>({
   stream_counts: constant(2),
@@ -888,7 +972,7 @@ const polyParams = ref<any>({
     [[4,0,0.8,0.2,0.2,0.0], [4,7,0.8,0.2,0.2,0.0]],
     [[4,0,0.8,0.2,0.2,0.0], [4,7,0.8,0.2,0.2,0.0]]
   ],
-
+ 
   octave_global:    fill(0.0, 0.1, 1.0),
   octave_ratio:     fill(0.0, 0.5, 1.0),
   octave_tightness: constant(1.0),
@@ -898,7 +982,6 @@ const polyParams = ref<any>({
   note_ratio:       fill(0.0, 0.5, 1.0),
   note_tightness:   constant(0.5),
   note_conc:        fill(0.8, 0.8, 0.2),
-
   vol_global:       constant(0.1),
   vol_ratio:        constant(0.0),
   vol_tightness:    constant(0.0),
@@ -924,11 +1007,31 @@ const newStepCount = ref(steps)
 const contextStepCount = ref(3)
 const contextStreamCount = ref(2)
 
-// const music = ref<any>({
-//   tracks: [], bpm: 120, loading: false, soundFilePath: null, setDataDialog: false,
-//   midiData: null, ticksPerBeat: 480, secondsPerTick: 0.5 / 480
-// })
+// ★追加: パラメータ生成用ステート
+const paramGenDialog = ref(false)
+const focusedCell = ref<any>({ type: null, targetArray: null, index: null, constraints: null })
+// snapshot of the focus target captured when opening the param-gen dialog
+const paramGenTarget = ref<any>(null)
+const _suppressBlurClear = ref(false)
 
+const setSuppressBlur = () => {
+  _suppressBlurClear.value = true
+  // clear after short timeout to avoid permanently suppressing
+  setTimeout(() => { _suppressBlurClear.value = false }, 300)
+}
+const paramGen = ref({
+  steps: 10,
+  mode: 'transition', // 'transition' | 'random'
+  start: 0, end: 1, curve: 'linear',
+  randMin: 0, randMax: 1
+})
+
+const easingFunctions = [
+  { title: 'Linear', value: 'linear' },
+  { title: 'Ease In (Quad)', value: 'easeInQuad' },
+  { title: 'Ease Out (Quad)', value: 'easeOutQuad' },
+  { title: 'Ease In Out (Quad)', value: 'easeInOutQuad' },
+]
 
 onMounted(() => {
   google.charts.load("current", {packages:["timeline", "corechart"]})
@@ -1367,10 +1470,230 @@ const onContextPaste = (e, streamIdx, dimIdx, stepIdx) => {
   values.forEach((val, k) => {
     const targetStep = polyParams.value.initial_context[stepIdx + k];
     if (targetStep && targetStep[streamIdx]) {
-       const isInt = (dimIdx === 0 || dimIdx === 1); // Octave, Note are ints
-       targetStep[streamIdx][dimIdx] = isInt ? Math.round(val) : val;
+      const isInt = (dimIdx === 0 || dimIdx === 1); // Octave, Note are ints
+      targetStep[streamIdx][dimIdx] = isInt ? Math.round(val) : val;
     }
   });
+}
+
+// ★追加: グリッドフォーカス検知
+const onGridFocus = (targetArr, idx, constraints) => {
+  // try to detect which polyParams key this array belongs to so we can reference it later
+  const findKey = (arr) => {
+    for (const k of Object.keys(polyParams.value)) {
+      try {
+        if (polyParams.value[k] === arr) return k
+      } catch (e) {
+        // ignore
+      }
+    }
+    return null
+  }
+  const keyName = findKey(targetArr)
+  focusedCell.value = {
+    type: 'simple',
+    targetArray: targetArr,
+    index: idx,
+    constraints: constraints,
+    keyName: keyName
+  }
+}
+
+// Clear simple-grid focus when input loses focus (unless focus moved inside the grid/dialog)
+const onGridBlur = () => {
+  // defer to allow click handlers (e.g. the button) to run first
+  setTimeout(() => {
+    if (_suppressBlurClear.value) return
+    const active = document.activeElement as HTMLElement | null
+    if (active && (active.closest('.param-grid') || active.closest('.grid-container') || active.closest('.grid-card'))) {
+      return
+    }
+    focusedCell.value = { type: null, targetArray: null, index: null, constraints: null }
+  }, 0)
+}
+
+// ★追加: Context用フォーカス検知
+const onContextFocus = (streamIdx, dimIdx, stepIdx, constraints) => {
+  focusedCell.value = {
+    type: 'context',
+    streamIdx, dimIdx, stepIdx,
+    constraints: constraints
+  }
+}
+
+// Clear context focus on blur (unless focus moved back into grid/dialog)
+const onContextBlur = () => {
+  setTimeout(() => {
+    if (_suppressBlurClear.value) return
+    const active = document.activeElement as HTMLElement | null
+    if (active && (active.closest('.param-grid') || active.closest('.grid-container') || active.closest('.grid-card'))) {
+      return
+    }
+    focusedCell.value = { type: null, targetArray: null, index: null, constraints: null }
+  }, 0)
+}
+
+// Document-level click handler to clear focus when clicking outside the grid
+let _docMouseDownHandler: ((e: MouseEvent) => void) | null = null
+const addDocumentClickHandler = () => {
+  if (_docMouseDownHandler) return
+  _docMouseDownHandler = (e: MouseEvent) => {
+    const t = e.target as HTMLElement | null
+    if (!t) return
+    if (t.closest('.param-grid') || t.closest('.grid-container') || t.closest('.grid-card') || t.closest('.open-param-gen-btn')) return
+    focusedCell.value = { type: null, targetArray: null, index: null, constraints: null }
+  }
+  document.addEventListener('mousedown', _docMouseDownHandler)
+}
+const removeDocumentClickHandler = () => {
+  if (!_docMouseDownHandler) return
+  document.removeEventListener('mousedown', _docMouseDownHandler)
+  _docMouseDownHandler = null
+}
+
+// attach/remove listener while the polyphonic dialog is open
+watch(() => music.value.setDataDialog, (open) => {
+  if (open) addDocumentClickHandler()
+  else removeDocumentClickHandler()
+})
+
+import { onBeforeUnmount } from 'vue'
+onBeforeUnmount(() => {
+  removeDocumentClickHandler()
+})
+
+// ★追加: 生成ダイアログオープン
+const openParamGenDialog = () => {
+  const { type, targetArray, index, stepIdx, constraints } = focusedCell.value || {}
+  if (!type) return
+
+  let currentVal = 0
+  if (type === 'simple') {
+    currentVal = targetArray && targetArray[index] !== undefined ? targetArray[index] : 0
+    // デフォルトステップ数: 残り全部
+    paramGen.value.steps = Math.max(1, (targetArray ? targetArray.length : 1) - index)
+  } else if (type === 'context') {
+    // Contextの場合は3次元配列から値を取得
+    const ctx = polyParams.value.initial_context
+    if (ctx[stepIdx] && ctx[stepIdx][focusedCell.streamIdx]) {
+       currentVal = ctx[stepIdx][focusedCell.streamIdx][focusedCell.dimIdx]
+    }
+    paramGen.value.steps = Math.max(1, ctx.length - stepIdx)
+  }
+
+  // capture minimal snapshot (identifiers, not deep-copy of array) so applyGeneratedParams
+  // can resolve the real target array later even if focus is lost
+  paramGenTarget.value = {
+    type: focusedCell.value.type,
+    keyName: focusedCell.value.keyName || null,
+    index: focusedCell.value.index,
+    streamIdx: focusedCell.value.streamIdx,
+    dimIdx: focusedCell.value.dimIdx,
+    stepIdx: focusedCell.value.stepIdx,
+    constraints: focusedCell.value.constraints || null
+  }
+
+  // 初期値設定
+  paramGen.value.start = currentVal
+  paramGen.value.end = constraints.max
+  paramGen.value.randMin = constraints.min
+  paramGen.value.randMax = constraints.max
+
+  paramGenDialog.value = true
+}
+
+// ★追加: パラメータ生成実行
+const applyGeneratedParams = () => {
+  // prefer live focusedCell, but fall back to the snapshot captured when opening dialog
+  const live = focusedCell.value || {}
+  const snap = paramGenTarget.value || {}
+  const use = (live && live.type) ? live : snap
+  const type = use.type
+  if (!type) return
+
+  const { steps, mode, start, end, curve, randMin, randMax } = paramGen.value
+
+  // resolve indices/constraints
+  const index = use.index
+  const streamIdx = use.streamIdx
+  const dimIdx = use.dimIdx
+  const stepIdx = use.stepIdx
+  const constraints = use.constraints || {}
+
+  // safe constraints defaults
+  const safeConstraints = {
+    min: Number.NEGATIVE_INFINITY,
+    max: Number.POSITIVE_INFINITY,
+    isInt: false,
+    ...(constraints || {})
+  }
+
+  // resolve targetArray: prefer live reference, otherwise resolve by saved keyName
+  let targetArray = (live && live.targetArray) ? live.targetArray : null
+  if (!targetArray && snap && snap.keyName) {
+    targetArray = polyParams.value[snap.keyName] || null
+  }
+
+  // 配列拡張判定
+  if (type === 'simple') {
+    const requiredLen = (index || 0) + steps
+    if (requiredLen > polyParams.value.stream_counts.length) {
+      newStepCount.value = requiredLen
+      updateStepCount()
+    }
+  } else if (type === 'context') {
+    const requiredLen = (stepIdx || 0) + steps
+    if (requiredLen > polyParams.value.initial_context.length) {
+      contextStepCount.value = requiredLen
+      updateContextSteps()
+    }
+  }
+
+  // 値の生成と適用
+  for (let i = 0; i < steps; i++) {
+    let val = 0
+    if (mode === 'transition') {
+      const t = steps > 1 ? i / (steps - 1) : 1
+      let easedT = t
+      if (curve === 'easeInQuad') easedT = t * t
+      if (curve === 'easeOutQuad') easedT = t * (2 - t)
+      if (curve === 'easeInOutQuad') easedT = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+
+      val = start + (end - start) * easedT
+    } else {
+      val = randMin + Math.random() * (randMax - randMin)
+    }
+
+    // 丸め & クランプ (use safeConstraints)
+    if (safeConstraints.isInt) {
+      val = Math.round(val)
+    } else {
+      val = Number(val.toFixed(2))
+    }
+    if (val < safeConstraints.min) val = safeConstraints.min
+    if (val > safeConstraints.max) val = safeConstraints.max
+
+    // 値セット
+    if (type === 'simple') {
+      if (targetArray && typeof index === 'number' && targetArray[index + i] !== undefined) {
+        targetArray[index + i] = val
+      }
+    } else if (type === 'context') {
+      const targetStep = polyParams.value.initial_context[(stepIdx || 0) + i]
+      if (targetStep && typeof streamIdx === 'number') {
+        targetStep[streamIdx][dimIdx] = val
+      }
+    }
+  }
+
+  // clear snapshot after applying
+  paramGenTarget.value = null
+
+  if (type === 'context') {
+    polyParams.value.initial_context_json = JSON.stringify(polyParams.value.initial_context, null, 2)
+  }
+
+  paramGenDialog.value = false
 }
 
 const generatePolyphonic = () => {
@@ -1507,19 +1830,33 @@ const renderPolyphonicAudio = (timeSeries) => {
   ::v-deep(.v-select .v-input__details) {
     display: none !important;
   }
-/* Grid Styles: remove max-height and overflow-y */
 .grid-card {
+  /* show horizontal scrollbar when content overflows, prevent vertical scroll */
   overflow-x: auto;
   overflow-y: hidden;
-  max-height: none;
   margin-bottom: 16px;
 }
-.grid-container { display: inline-block; }
-.param-grid { border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 0.8rem; }
+.grid-container {
+  display: block;
+  width: 100%;
+  overflow-x: auto; /* ensure inner scrolling when table is wider than container */
+}
+.param-grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  font-size: 0.8rem;
+  width: max-content; /* allow table to grow with fixed cell widths */
+}
 .param-grid th, .param-grid td {
-  border: 1px solid #e0e0e0; padding: 2px; text-align: center;
-  width: 3.5rem;
-  box-sizing: border-box; height: 1.5rem;
+  border: 1px solid #e0e0e0;
+  padding: 2px;
+  text-align: center;
+  min-width: 3.5rem; /* prevent compression */
+  width: 3.5rem;     /* fixed width */
+  box-sizing: border-box;
+  height: 1.5rem;
+  white-space: nowrap; /* avoid internal wrapping */
 }
 .sticky-col { position: sticky; z-index: 2; background-color: white; }
 .head-col { left: 0; z-index: 3; width: 100px !important; min-width: 100px !important; font-weight: bold; }
