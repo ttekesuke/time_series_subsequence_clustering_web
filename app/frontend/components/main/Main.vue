@@ -328,7 +328,6 @@
                     <span v-if="progress.status === 'progress'">Generating: {{progress.percent}}%</span>
                     <span v-if="progress.status === 'rendering'">Rendering Audio...</span>
                   </div>
-
                   <!-- GENERATE & RENDER Button -->
                   <v-btn
                     color="success"
@@ -398,6 +397,7 @@
                                 v-model.number="step[s-1][0]"
                                 class="grid-input"
                                 min="0" max="10"
+                                @paste="onContextPaste($event, s-1, 0, i)"
                               >
                             </td>
                           </tr>
@@ -411,6 +411,7 @@
                                 v-model.number="step[s-1][dIdx + 1]"
                                 class="grid-input"
                                 :step="dim.key === 'note' ? 1 : 0.1"
+                                @paste="onContextPaste($event, s-1, dIdx + 1, i)"
                               >
                             </td>
                           </tr>
@@ -459,6 +460,7 @@
                               v-model.number="polyParams.stream_counts[i]"
                               min="1"
                               class="grid-input"
+                              @paste="onGenParamPaste($event, polyParams.stream_counts, i, true)"
                             >
                           </td>
                         </tr>
@@ -474,6 +476,7 @@
                                 v-model.number="polyParams[`${dim.key}_global`][i]"
                                 step="0.01" min="0" max="1"
                                 class="grid-input"
+                                @paste="onGenParamPaste($event, polyParams[`${dim.key}_global`], i)"
                               >
                             </td>
                           </tr>
@@ -486,6 +489,7 @@
                                 v-model.number="polyParams[`${dim.key}_ratio`][i]"
                                 step="0.01" min="0" max="1"
                                 class="grid-input"
+                                @paste="onGenParamPaste($event, polyParams[`${dim.key}_ratio`], i)"
                               >
                             </td>
                           </tr>
@@ -498,6 +502,7 @@
                                 v-model.number="polyParams[`${dim.key}_tightness`][i]"
                                 step="0.01" min="0" max="1"
                                 class="grid-input"
+                                @paste="onGenParamPaste($event, polyParams[`${dim.key}_tightness`], i)"
                               >
                             </td>
                           </tr>
@@ -510,6 +515,7 @@
                                 v-model.number="polyParams[`${dim.key}_conc`][i]"
                                 step="0.01" min="-1" max="1"
                                 class="grid-input"
+                                @paste="onGenParamPaste($event, polyParams[`${dim.key}_conc`], i)"
                               >
                             </td>
                           </tr>
@@ -1311,6 +1317,60 @@ const subscribeToProgress = () => {
     progress.value.percent = data.progress
     if (data.status === 'done') unsubscribe()
   })
+}
+
+// ★ Paste Handler for Generation Parameters (Simple Array)
+const onGenParamPaste = (e, targetArr, startIndex, isInt = false) => {
+  e.preventDefault();
+  const text = e.clipboardData.getData('text');
+  if (!text) return;
+
+  // タブまたは空白で区切って配列化
+  const values = text.split(/\s+/).filter(v => v !== '').map(Number);
+  if (values.some(isNaN)) return;
+
+  const requiredLen = startIndex + values.length;
+
+  // ステップ数が足りない場合は拡張
+  if (requiredLen > polyParams.value.stream_counts.length) {
+    newStepCount.value = requiredLen;
+    updateStepCount(); // 既存メソッドを再利用して全配列を拡張
+  }
+
+  // 拡張後の配列に対して値をセット (Vueのリアクティブ性を考慮)
+  values.forEach((val, k) => {
+    // targetArrは参照渡しされている配列
+    if (targetArr[startIndex + k] !== undefined) {
+      targetArr[startIndex + k] = isInt ? Math.round(val) : val;
+    }
+  });
+}
+
+// ★ Paste Handler for Initial Context (Nested Array)
+const onContextPaste = (e, streamIdx, dimIdx, stepIdx) => {
+  e.preventDefault();
+  const text = e.clipboardData.getData('text');
+  if (!text) return;
+
+  const values = text.split(/\s+/).filter(v => v !== '').map(Number);
+  if (values.some(isNaN)) return;
+
+  const requiredLen = stepIdx + values.length;
+
+  // ステップ拡張
+  if (requiredLen > polyParams.value.initial_context.length) {
+    contextStepCount.value = requiredLen;
+    updateContextSteps(); // 既存メソッドで拡張
+  }
+
+  // 値の書き込み
+  values.forEach((val, k) => {
+    const targetStep = polyParams.value.initial_context[stepIdx + k];
+    if (targetStep && targetStep[streamIdx]) {
+       const isInt = (dimIdx === 0 || dimIdx === 1); // Octave, Note are ints
+       targetStep[streamIdx][dimIdx] = isInt ? Math.round(val) : val;
+    }
+  });
 }
 
 const generatePolyphonic = () => {
