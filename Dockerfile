@@ -31,6 +31,7 @@ RUN yarn install --network-concurrency 1 --prefer-offline --pure-lockfile --froz
 COPY . /app
 COPY entrypoint.sh /usr/bin/
 RUN chmod +x /usr/bin/entrypoint.sh
+RUN chmod +x /app/bin/rails || true
 ENTRYPOINT ["entrypoint.sh"]
 EXPOSE 3000
 
@@ -46,4 +47,4 @@ RUN chown -R scuser:scuser /app
 
 USER scuser
 
-CMD ["rails", "server", "-b", "0.0.0.0"]
+CMD ["bin/rails", "server", "-b", "0.0.0.0"]
