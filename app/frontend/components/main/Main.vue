@@ -35,59 +35,12 @@
                   </v-row>
                 </v-card-title>
                 <v-card-text>
+                <GridContainer
+                  v-model:rows="analyse.values"
+                  v-model:steps="analyse.steps"
+                  :showRowsLength="false"
+                />
                   <v-row>
-                    <v-col cols="12">
-                      <v-textarea
-                      placeholder="please set timeseries (like 1,2,3,4,5)"
-                      required
-                      v-model='analyse.timeSeries'
-                      label="timeseries"
-                      rows="1"
-                      :rules="analyse.timeSeriesRules"
-                    ></v-textarea>
-                    </v-col>
-                  </v-row>
-                  <v-row>
-                    <v-col cols="6">
-                      <v-card>
-                        <v-card-title>
-                          generate randoms
-                        </v-card-title>
-                        <v-card-text>
-                          <v-row>
-                            <v-col cols="3">
-                              <v-text-field
-                                label="min"
-                                type="number"
-                                v-model="analyse.random.min"
-                                min="1"
-                              ></v-text-field>
-                            </v-col>
-                            <v-col cols="3">
-                              <v-text-field
-                                label="max"
-                                type="number"
-                                v-model="analyse.random.max"
-                                :min="analyse.random.min"
-                                :max="timeseriesMax"
-                              ></v-text-field>
-                            </v-col>
-                            <v-col cols="3">
-                              <v-text-field
-                                label="length"
-                                type="number"
-                                v-model="analyse.random.length"
-                                min="3"
-                                max="2000"
-                              ></v-text-field>
-                            </v-col>
-                            <v-col cols="3">
-                              <v-btn :disabled='!analyse.random.max || !analyse.random.min || !analyse.random.length' @click="setRandoms">set</v-btn>
-                            </v-col>
-                          </v-row>
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
                     <v-col>
                       <v-row>
                         <v-col cols="4">
@@ -662,25 +615,11 @@
     </v-app-bar>
     <v-main>
       <div v-if="selectedMode === 'Clustering'">
-        <v-row no-gutters v-if='showTimeseriesChart'>
+        <!-- <v-row no-gutters v-if='showTimeseriesChart'>
           <v-col>
-            <div class='text-h6 ml-3 mb-2'>
-              <v-row>
-                <v-col cols="3">
-                  <span class="mr-2">Timeseries</span>
-                  <small v-if="analyse.processingTime !== null">Processing Time: {{ analyse.processingTime }} sec. </small>
-                </v-col>
-                <v-col cols="2">
-                  <v-btn @click="saveToFile" class="d-flex align-center fill-height">
-                    <v-icon>mdi-download</v-icon>
-                    <span>Download</span>
-                  </v-btn>
-                </v-col>
-              </v-row>
-            </div>
             <div id='timeseries' style='height: 20vh;'></div>
           </v-col>
-        </v-row>
+        </v-row>-->
         <v-row no-gutters>
           <v-col>
             <template v-if='showTimeseriesComplexityChart'>
@@ -697,6 +636,25 @@
             </template>
           </v-col>
         </v-row>
+        <div class='text-h6 ml-3 mb-2'>
+          <v-row>
+            <v-col cols="3">
+              <span class="mr-2">Timeseries</span>
+              <small v-if="analyse.processingTime !== null">Processing Time: {{ analyse.processingTime }} sec. </small>
+            </v-col>
+            <v-col cols="2">
+              <v-btn @click="saveToFile" class="d-flex align-center fill-height">
+                <v-icon>mdi-download</v-icon>
+                <span>Download</span>
+              </v-btn>
+            </v-col>
+          </v-row>
+        </div>
+
+        <VisualizerContainer
+          :streamValues="analyse.values[0].data"
+          :clustersData="analyse.clusteredSubsequences"
+        />
       </div>
       <div v-if="selectedMode === 'Music'">
         <v-row no-gutters>
@@ -730,9 +688,11 @@ import Music from '../../components/music/Music.vue';
 import Fft from '../../components/audio/Fft.vue';
 import { Midi } from '@tonejs/midi'
 import Decimal from 'decimal.js'
+import GridContainer from '../../components/grid/GridContainer.vue';
+import VisualizerContainer from '../../components/visualizer/VisualizerContainer.vue';
 const timeseriesMax = ref(100)
 const modes = ref(['Clustering', 'Music'])
-const selectedMode = ref('Music')
+const selectedMode = ref('Clustering')
 type Cluster = {
   si: number[]; // subsequence indexes
   cc: { [childId: string]: Cluster }; // child clusters
@@ -744,12 +704,12 @@ type Clusters = {
 import type { ComponentPublicInstance } from 'vue'
 const musicComponent = ref<ComponentPublicInstance<{ start: () => void; stop: () => void }> | null>(null)
 const analyse = ref<{
-  timeSeries: string;
+  values: Array<{ name: string; data: number[]; config: { min: number; max: number; isInt: boolean; step: number } }>;
+  steps: number;
   clusteredSubsequences: [string, string, number, number][];
   timeSeriesChart: (number | null | string)[][];
   setDataDialog: boolean;
   loading: boolean;
-  timeSeriesRules: ((v: any) => true | string)[];
   valid: boolean;
   random: {
     min: number | null;
@@ -763,19 +723,19 @@ const analyse = ref<{
   selectedTrackName: string | null;
   processingTime: null | number;
 }>({
-  timeSeries: '',
+  values: [
+    {
+      name: 'values',
+      data: [null, null, null],
+      config: { min: 0, isInt: true, step: 1 }
+    },
+  ],
+  steps: 3,
+
   clusteredSubsequences: [],
   timeSeriesChart: [],
   setDataDialog: false,
   loading: false,
-  timeSeriesRules: [
-    v => !!v || 'required',
-    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
-    v => (v && String(v).split(',').filter(n => n !== "").length >= 2) || 'must have at least 2 numbers',
-    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
-    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-    v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
-  ],
   valid: false,
   random: {
     min: null,
@@ -972,7 +932,7 @@ const polyParams = ref<any>({
     [[4,0,0.8,0.2,0.2,0.0], [4,7,0.8,0.2,0.2,0.0]],
     [[4,0,0.8,0.2,0.2,0.0], [4,7,0.8,0.2,0.2,0.0]]
   ],
- 
+
   octave_global:    fill(0.0, 0.1, 1.0),
   octave_ratio:     fill(0.0, 0.5, 1.0),
   octave_tightness: constant(1.0),
@@ -1041,31 +1001,18 @@ watch(selectedMode, async (newVal) => {
   if (newVal === 'Clustering') {
     await nextTick()
     if(showTimeseriesChart.value){
-      drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
+      // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
     }
     if(showTimeline.value){
-      drawTimeline()
+      // drawTimeline()
     }
     if(showTimeseriesComplexityChart.value){
-      drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
+      // drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
     }
   }
 })
 
 // life cycle hook------------------------------------------------------------------------------
-const setRandoms = () => {
-  const { min, max, length } = analyse.value.random;
-
-  if (min !== null && max !== null && length !== null) {
-    const minParsed = parseInt(String(min));
-    const maxParsed = parseInt(String(max));
-    const len = parseInt(String(length));
-
-    analyse.value.timeSeries = [...Array(len)]
-      .map(() => Math.floor(Math.random() * (maxParsed - minParsed + 1)) + minParsed)
-      .join(',');
-  }
-}
 
 const setLinearIntegers = (setType) => {
   const linearIntegerArray = createLinearIntegerArray(
@@ -1106,7 +1053,7 @@ const analyseTimeseries = () => {
   analyse.value.loading = true
   let data = {
     analyse: {
-      time_series: analyse.value.timeSeries,
+      time_series: analyse.value.values[0].data,
       merge_threshold_ratio: analyse.value.mergeThresholdRatio,
       job_id: jobId.value
     }
@@ -1121,8 +1068,8 @@ const analyseTimeseries = () => {
       analyse.value.setDataDialog = false
       showTimeseriesComplexityChart.value = false
       analyse.value.processingTime = response.data.processingTime
-      drawTimeline()
-      drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
+      // drawTimeline()
+      // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
   })
   .catch(error => {
       console.log(error)
@@ -1156,15 +1103,14 @@ const generateTimeseries = () => {
   .then(response => {
       console.log(response)
       analyse.value.clusteredSubsequences = response.data.clusteredSubsequences
-      analyse.value.timeSeries = String(response.data.timeSeries)
       analyse.value.timeSeriesChart = response.data.timeSeriesChart
       console.log(response.data.timeSeriesComplexityChart)
       generate.value.complexityTransitionChart = response.data.timeSeriesComplexityChart
       generate.value.clusters = response.data.clusters
       analyse.value.processingTime = response.data.processingTime
-      drawTimeline()
-      drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
-      drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
+      // drawTimeline()
+      // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
+      // drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
       generate.value.loading = false
       generate.value.setDataDialog = false
   })
@@ -1283,7 +1229,7 @@ const onMouseoverCluster = (selected) => {
     }
 
   })
-  drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
+  // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
 }
 
 const saveToFile = () => {
@@ -1322,14 +1268,14 @@ const onFileSelected = (file) => {
       const json = JSON.parse(text);
       if(json.methodType === 'analyse'){
         analyse.value = json.analyse
-        drawTimeline()
-        drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
+        // drawTimeline()
+        // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
       }else if(json.methodType === 'generate'){
         analyse.value = json.analyse
         generate.value = json.generate
-        drawTimeline()
-        drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
-        drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
+        // drawTimeline()
+        // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
+        // drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
         showTimeseriesComplexityChart.value = true
 
       }

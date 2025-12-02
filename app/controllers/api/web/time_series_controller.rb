@@ -8,7 +8,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     job_id = analyse_params[:job_id]
     broadcast_start(job_id)
 
-    data = analyse_params[:time_series].split(',').map { |elm| elm.to_i }
+    data = analyse_params[:time_series]
     merge_threshold_ratio = analyse_params[:merge_threshold_ratio].to_d
     calculate_distance_when_added_subsequence_to_cluster = true
 
@@ -571,7 +571,7 @@ class Api::Web::TimeSeriesController < ApplicationController
   end
 
   def analyse_params
-    params.require(:analyse).permit(:time_series, :merge_threshold_ratio, :job_id)
+    params.require(:analyse).permit(:merge_threshold_ratio, :job_id, time_series: [])
   end
 
   def generate_params

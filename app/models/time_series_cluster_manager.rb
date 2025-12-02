@@ -233,21 +233,40 @@ class TimeSeriesClusterManager
   end
 
   def clusters_to_timeline(clusters, min_window_size)
-    stack = clusters.map { |id, cluster| [min_window_size, id, cluster] }
+    # 戻り値の構造:
+    # [
+    #   {
+    #     window_size: 2,
+    #     cluster_id: "1a",
+    #     indices: [0, 10, 25]  # このクラスタが出現する全開始位置
+    #   },
+    #   ...
+    # ]
+
     result = []
+    stack = clusters.map { |id, cluster| [min_window_size, id, cluster] }
 
     until stack.empty?
       window_size, cluster_id, current = stack.pop
-      current[:si].each do |start_index|
-        result << [window_size.to_s, cluster_id.to_s(26).tr("0-9a-p", "a-z"), start_index * 1000, (start_index + window_size) * 1000]
+
+      # si (Start Indices) が複数ある(=反復がある)場合のみ、または1つでも表示したい場合はここを調整
+      if current[:si].any?
+        result << {
+          window_size: window_size,
+          cluster_id: cluster_id.to_s, # IDを一意な文字列として
+          indices: current[:si].sort
+        }
       end
+
       if current[:cc]
         current[:cc].each do |child_id, child_cluster|
           stack.push([window_size + 1, child_id, child_cluster])
         end
       end
     end
-    return result
+
+    # window_size順、出現位置順などでソートしておくとフロントが楽
+    result.sort_by { |r| [r[:window_size], r[:indices].first] }
   end
 
   def add_updated_id(hash, window, id)
