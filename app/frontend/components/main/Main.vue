@@ -17,9 +17,6 @@
           <v-btn color="primary" class="mr-2" :disabled="!hasOpenParams" @click="openParamsFromHeader">SET PARAMS</v-btn>
           <v-btn color="secondary" :disabled="!hasSaveToFile" @click="saveToFileFromHeader">Download</v-btn>
         </v-col>
-        <v-col class="v-col-auto">
-          <!-- feature area is rendered below -->
-        </v-col>
 
         <!-- Music Mode (New Polyphonic) -->
         <v-col class="v-col-auto" v-if="selectedMode === 'Music'">
@@ -423,69 +420,7 @@ type Clusters = {
 import type { ComponentPublicInstance } from 'vue'
 const musicComponent = ref<ComponentPublicInstance<{ start: () => void; stop: () => void }> | null>(null)
 const activeFeatureRef = ref<ComponentPublicInstance | null>(null)
-const analyse = ref<{
-  values: Array<{ name: string; data: number[]; config: { min: number; max: number; isInt: boolean; step: number } }>;
-  steps: number;
-  clusteredSubsequences: [string, string, number, number][];
-  timeSeriesChart: (number | null | string)[][];
-  setDataDialog: boolean;
-  loading: boolean;
-  valid: boolean;
-  random: {
-    min: number | null;
-    max: number | null;
-    length: number | null;
-  };
-  mergeThresholdRatio: number;
-  clusters: Clusters;
-  musicElements: string[];
-  selectedMusicElement: string;
-  selectedTrackName: string | null;
-  processingTime: null | number;
-}>({
-  values: [
-    {
-      name: 'values',
-      data: [null, null, null],
-      config: { min: 0, isInt: true, step: 1 }
-    },
-  ],
-  steps: 3,
 
-  clusteredSubsequences: [],
-  timeSeriesChart: [],
-  setDataDialog: false,
-  loading: false,
-  valid: false,
-  random: {
-    min: null,
-    max: null,
-    length: null
-  },
-  mergeThresholdRatio: 0.02,
-  clusters: {},
-  musicElements: ['durations', 'midiNoteNumbers'],
-  selectedMusicElement: 'durations',
-  selectedTrackName: null,
-  processingTime: null
-})
-const analyseDialog = ref(false)
-const complexityTransitionRules = computed(() => [
-    v => !!v || 'required',
-    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
-    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
-    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
-    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-  ]);
-const durationTransitionRules = computed(() =>  [
-    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
-    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
-    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
-    v => (v && String(v).split(',').length == generate.value.complexityTransition.split(',').length + generate.value.firstElements.split(',').length) || 'must have same length as complexity transition + first elements',
-    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-    v => (v && String(v).split(',').every(n => Number(n) >= 1)) || 'numbers must be 1 or more',
-    v => (v && String(v).split(',').every(n => Number(n) <= 32)) || 'numbers must be 32 or less',
-]);
 const generate = ref({
   setDataDialog: false,
   rangeMin: 0,
@@ -721,101 +656,8 @@ const easingFunctions = [
   { title: 'Ease In Out (Quad)', value: 'easeInOutQuad' },
 ]
 
-onMounted(() => {
-  google.charts.load("current", {packages:["timeline", "corechart"]})
-})
-
-watch(selectedMode, async (newVal) => {
-  if (newVal === 'Clustering') {
-    await nextTick()
-    if(showTimeseriesChart.value){
-      // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
-    }
-    if(showTimeline.value){
-      // drawTimeline()
-    }
-    if(showTimeseriesComplexityChart.value){
-      // drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
-    }
-  }
-})
-
-// life cycle hook------------------------------------------------------------------------------
-
-const setLinearIntegers = (setType) => {
-  const linearIntegerArray = createLinearIntegerArray(
-    generate.value.linear.start,
-    generate.value.linear.end,
-    generate.value.linear.length
-  ).join(',')
-  if(setType === 'overwrite'){
-    generate.value.complexityTransition = linearIntegerArray
-  }else if(setType === 'add'){
-    if(generate.value.complexityTransition === ''){
-      generate.value.complexityTransition = linearIntegerArray
-    }else{
-      generate.value.complexityTransition += (',' + linearIntegerArray)
-    }
-  }
-}
-const createLinearIntegerArray = (start, end, count) => {
-  const result: number[] = []
-  const step = (end - start) / (count - 1) // ステップを計算
-
-  for (let i = 0; i < count; i++) {
-      const value = parseInt(start) + step * i
-      // start < end の場合は Math.ceil、start > end の場合は Math.floor を使う
-      if (start < end) {
-          result.push(Math.ceil(value)) // 小数点を切り上げ
-      } else {
-          result.push(Math.floor(value)) // 小数点を切り捨て
-      }
-  }
-  return result
-}
 
 
-const analyseTimeseries = () => {
-  methodType.value = 'analyse'
-  subscribeToProgress()
-  analyse.value.loading = true
-  let data = {
-    analyse: {
-      time_series: analyse.value.values[0].data,
-      merge_threshold_ratio: analyse.value.mergeThresholdRatio,
-      job_id: jobId.value
-    }
-  }
-  axios.post('/api/web/time_series/analyse', data)
-  .then(response => {
-      console.log(response)
-      analyse.value.clusteredSubsequences = response.data.clusteredSubsequences
-      analyse.value.timeSeriesChart = response.data.timeSeriesChart
-      analyse.value.clusters = response.data.clusters
-      analyse.value.loading = false
-      analyse.value.setDataDialog = false
-      showTimeseriesComplexityChart.value = false
-      analyse.value.processingTime = response.data.processingTime
-      // drawTimeline()
-      // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
-  })
-  .catch(error => {
-      console.log(error)
-  })
-}
-
-// handler for analysed results emitted from ClusteringAnalyseDialog
-const handleAnalysed = (data) => {
-  analyse.value.clusteredSubsequences = data.clusteredSubsequences
-  analyse.value.timeSeriesChart = data.timeSeriesChart
-  analyse.value.clusters = data.clusters
-  analyse.value.loading = false
-  analyse.value.setDataDialog = false
-  showTimeseriesComplexityChart.value = false
-  analyse.value.processingTime = data.processingTime
-  showTimeseriesChart.value = true
-  showTimeline.value = true
-}
 const generateTimeseries = () => {
   methodType.value = 'generate'
   subscribeToProgress()
@@ -860,118 +702,7 @@ const generateTimeseries = () => {
   })
 }
 
-const drawTimeSeries = (elementId, drawData) => {
-  showTimeseriesChart.value = true
-  nextTick(() => {
-    drawScatterChart(elementId, drawData, 200)
-  })
-}
-const drawTimeSeriesComplexity = (elementId, drawData) => {
-  showTimeseriesComplexityChart.value = true
-  nextTick(() => {
-    drawScatterChart(elementId, drawData, 100)
-  })
-}
 
-const drawScatterChart = (elementId, drawData, height) => {
-  const onlyData = drawData.map(data => data[1]).slice(1, drawData.length)
-  const dataMin = Math.min(...onlyData)
-  const dataMax = Math.max(...onlyData)
-  const options = {
-    pointSize: 20,
-    'height': height,
-    'width': window.innerWidth,
-    isStacked: false,
-    legend: 'none' as 'none' | google.visualization.ChartLegend,
-    series: [
-      {pointShape: 'square'},
-      {pointShape: 'square'},
-      {pointShape: 'square'},
-    ],
-    interpolateNulls:false,
-    chartArea:{
-      left:30,
-      top:0,
-      width:'100%',
-      height:'100%',
-      backgroundColor:{
-        fill: 'white',
-        fillOpacity: 100,
-        strokeWidth: 10
-      }
-    },
-    vAxis: {
-      viewWindow: {
-        min: dataMin,
-        max: dataMax
-      },
-    }
-  }
-  const dataTable = new google.visualization.DataTable()
-  dataTable.addColumn('string', 'index')
-  dataTable.addColumn('number', 'value')
-  dataTable.addColumn('number', 'selectedValue')
-  dataTable.addColumn('number', 'playingValue')
-  dataTable.addRows(drawData)
-  const chart = new google.visualization.ScatterChart(document.getElementById(elementId) as HTMLElement)
-  chart.draw(dataTable, options)
-}
-
-const drawTimeline = () => {
-  if(analyse.value.clusteredSubsequences.length === 0){
-    showTimeline.value = false
-    return
-  }
-  showTimeline.value = true
-  nextTick(() => {
-    const container = document.getElementById('timeline')as HTMLElement;
-    const chart = new google.visualization.Timeline(container)
-    const dataTable = new google.visualization.DataTable()
-    const options = {'height': 470, 'width': window.innerWidth, 'title': 'clustering'}
-    dataTable.addColumn({ type: 'string', id: 'WindowSize' })
-    dataTable.addColumn({ type: 'string', id: 'Cluster' })
-    dataTable.addColumn({ type: 'number', id: 'Start' })
-    dataTable.addColumn({ type: 'number', id: 'End' })
-    dataTable.addRows(analyse.value.clusteredSubsequences)
-
-    chart.draw(dataTable, options)
-    google.visualization.events.addListener(chart, 'onmouseover', (e) => {
-      onMouseoverCluster(e)
-    })
-  })
-}
-
-const onMouseoverCluster = (selected) => {
-  let subsequencesIndexes: number[][] = []
-
-  analyse.value.clusteredSubsequences.filter(subsequence =>
-    subsequence[0] === analyse.value.clusteredSubsequences[selected['row']][0] && subsequence[1] === analyse.value.clusteredSubsequences[selected['row']][1]
-  ).forEach(subsequence => {
-    const startIndex = subsequence[2] / 1000
-    const endIndex = subsequence[3] / 1000
-    const len = endIndex - startIndex
-    const indexes: number[] = new Array(len)
-        .fill(null)
-        .map((_, i) => i + startIndex)
-    subsequencesIndexes.push(indexes)
-  })
-  let flattenSubsequencesIndexes: number[] = subsequencesIndexes.flat()
-  let subsequencesInSameCluster: (number | null | string)[] = []
-  analyse.value.timeSeriesChart.forEach((elm, index) => {
-    subsequencesInSameCluster.push(flattenSubsequencesIndexes.includes(index) ? elm[1] : null)
-  })
-  analyse.value.timeSeriesChart.forEach((elm, index) => {
-    if(elm.length === 4){
-      elm[2] = subsequencesInSameCluster[index]
-    }else if (elm.length === 3){
-      elm[2] = subsequencesInSameCluster[index]
-    }else if (elm.length === 2){
-      elm.push(subsequencesInSameCluster[index])
-    }
-
-  })
-  // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
-}
 
 const saveToFile = () => {
   const data = {

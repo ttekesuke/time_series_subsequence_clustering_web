@@ -116,6 +116,10 @@ const paramGenInit = ref({})
 
 // フォーカスアウト時の処理（コンポーネント外へフォーカスが移動したら選択解除）
 const onFocusOut = (event: FocusEvent) => {
+  // ダイアログが開いている最中は、フォーカスがダイアログ（DOM上は外部）に移動するため、
+  // 選択解除を行わないようにする
+  if (paramGenDialog.value) return
+
   const relatedTarget = event.relatedTarget as HTMLElement;
 
   // 移動先（relatedTarget）がラッパー内部の要素であれば、
