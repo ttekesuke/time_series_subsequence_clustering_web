@@ -13,258 +13,12 @@
             class="hide-details"
           ></v-select>
         </v-col>
-        <v-col class="v-col-auto" v-if="selectedMode === 'Clustering'">
-          <v-btn @click="analyse.setDataDialog = true">analyse</v-btn>
-          <v-dialog width="1000" v-model="analyse.setDataDialog" >
-            <v-form v-model='analyse.valid' fast-fail ref="form">
-              <v-card>
-                <v-card-title>
-                  <v-row>
-                    <v-col cols="5">
-                      <div class="text-h4 d-flex align-center fill-height">Clustering Analyse</div>
-                    </v-col>
-                    <v-col cols="7">
-                      <v-file-input
-                      label="upload json file"
-                      accept=".json"
-                      prepend-icon="mdi-upload"
-                      v-model="selectedFileAnalyse"
-                      @change="onFileSelected"
-                    ></v-file-input>
-                    </v-col>
-                  </v-row>
-                </v-card-title>
-                <v-card-text>
-                <GridContainer
-                  v-model:rows="analyse.values"
-                  v-model:steps="analyse.steps"
-                  :showRowsLength="false"
-                />
-                  <v-row>
-                    <v-col>
-                      <v-row>
-                        <v-col cols="4">
-                          <v-text-field
-                            label="merge threshold ratio"
-                            type="number"
-                            v-model="analyse.mergeThresholdRatio"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                          ></v-text-field>
-                        </v-col>
-                        <v-col cols="4">
-                          <v-btn :disabled='!analyse.valid' @click="analyseTimeseries" :loading="analyse.loading">Submit</v-btn>
-                          <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
-                        </v-col>
-                      </v-row>
-                    </v-col>
-                  </v-row>
-                </v-card-text>
-              </v-card>
-            </v-form>
-          </v-dialog>
-          <v-btn @click="generate.setDataDialog = true">generate</v-btn>
-          <v-dialog width="1000" v-model="generate.setDataDialog" >
-            <v-form v-model='generate.valid' fast-fail ref="form">
-              <v-card>
-                <v-card-title>
-                  <v-row>
-                    <v-col cols="5">
-                      <div class="text-h4 d-flex align-center fill-height">Clustering Generate</div>
-                    </v-col>
-                    <v-col cols="7">
-                      <v-file-input
-                      label="upload json file"
-                      accept=".json"
-                      prepend-icon="mdi-upload"
-                      v-model="selectedFileGenerate"
-                      @change="onFileSelected"
-                    ></v-file-input>
-                    </v-col>
-                  </v-row>
-                </v-card-title>
-                <v-card-text>
-                  <v-row>
-                    <v-col cols="3">
-                      <v-select
-                        label="use musical-feature"
-                        :items="generate.useMusicalFeatures"
-                        v-model="generate.selectedUseMusicalFeature"
-                      ></v-select>
-                    </v-col>
-                  </v-row>
-                  <v-row>
-                    <v-col>
-                      <v-textarea
-                        placeholder="please set the first elements of the time series. (like 0,1,2,3,4,5)"
-                        required
-                        v-model='generate.firstElements'
-                        label="first elements"
-                        rows="1"
-                        :rules="generate.firstElementsRules"
-                      ></v-textarea>
-                    </v-col>
-                  </v-row>
-                  <template v-if="generate.selectedUseMusicalFeature === 'dissonancesOutline'">
-                    <v-row>
-                      <v-col cols="10">
-                        <v-textarea
-                          placeholder="please set the dissonance transition. (like 1,2,3,4,5)"
-                          v-model='generate.dissonance.transition'
-                          label="dissonance transition(optional)"
-                          rows="1"
-                          :rules="generate.dissonance.transitionRules"
-                        ></v-textarea>
-                      </v-col>
-                      <v-col cols="2">
-                        <v-text-field
-                          label="dissonance range"
-                          type="number"
-                          v-model="generate.dissonance.range"
-                          min="1"
-                        ></v-text-field>
-                      </v-col>
-                    </v-row>
-                    <v-row>
-                      <v-col>
-                        <v-textarea
-                          placeholder="please set the duration transition. (like 1,1,2,1,1,2)"
-                          v-model='generate.dissonance.durationTransition'
-                          label="duration transition"
-                          rows="1"
-                          :rules="durationTransitionRules"
-                        ></v-textarea>
-                      </v-col>
-                    </v-row>
-                  </template>
-                  <template v-if="generate.selectedUseMusicalFeature === 'durationsOutline'">
-                    <v-row>
-                      <v-col cols="10">
-                        <v-textarea
-                          placeholder="please set the duration outline-transition. (like 11,11,11,0,0,0,0,0)"
-                          v-model='generate.duration.outlineTransition'
-                          label="duration outline-transition(optional)"
-                          rows="1"
-                          :rules="generate.duration.outlineRules"
-                        ></v-textarea>
-                      </v-col>
-                      <v-col cols="2">
-                        <v-text-field
-                          label="duration range"
-                          type="number"
-                          v-model="generate.duration.outlineRange"
-                          min="1"
-                        ></v-text-field>
-                      </v-col>
-                    </v-row>
-                  </template>
-                  <v-row>
-                    <v-col>
-                      <v-textarea
-                        placeholder="please set the complexity-ranking transition. (like 1,2,3,4,5)"
-                        required
-                        v-model='generate.complexityTransition'
-                        label="complexity transition"
-                        rows="1"
-                        :rules="complexityTransitionRules"
-                      ></v-textarea>
-                    </v-col>
-                  </v-row>
-                  <v-row>
-                    <v-col cols="8">
-                      <v-card>
-                        <v-card-title>
-                          generate linear integers
-                        </v-card-title>
-                        <v-card-text>
-                          <v-row>
-                            <v-col>
-                              <v-text-field
-                                label="min"
-                                type="number"
-                                v-model="generate.linear.start"
-                                min="1"
-                              ></v-text-field>
-                            </v-col>
-                            <v-col>
-                              <v-text-field
-                              label="max"
-                              type="number"
-                              v-model="generate.linear.end"
-                              :max="timeseriesMax"
-                            ></v-text-field>
-                            </v-col>
-                            <v-col>
-                              <v-text-field
-                                label="length"
-                                type="number"
-                                v-model="generate.linear.length"
-                                min="3"
-                                max="2000"
-                              ></v-text-field>
-                            </v-col>
-                            <v-col>
-                              <v-btn :disabled='!generate.linear.start || !generate.linear.end || !generate.linear.length' @click="setLinearIntegers('overwrite')">overwrite</v-btn>
-                            </v-col>
-                            <v-col>
-                              <v-btn :disabled='!generate.linear.start || !generate.linear.end || !generate.linear.length' @click="setLinearIntegers('add')">add</v-btn>
-                            </v-col>
-                          </v-row>
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
-                    <v-col cols="4">
-                      <v-card>
-                        <v-card-title>
-                          available range
-                        </v-card-title>
-                        <v-card-text>
-                          <v-row>
-                            <v-col>
-                              <v-text-field
-                              label="min"
-                              type="number"
-                              v-model="generate.rangeMin"
-                              min="1"
-                            ></v-text-field>
-                            </v-col>
-                            <v-col>
-                              <v-text-field
-                              label="max"
-                              type="number"
-                              v-model="generate.rangeMax"
-                              :min="generate.rangeMin"
-                              :max="timeseriesMax"
-                            ></v-text-field>
-                            </v-col>
-                          </v-row>
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
-                    <v-col cols="4">
-                      <v-row>
-                        <v-col>
-                          <v-text-field
-                            label="merge threshold ratio"
-                            type="number"
-                            v-model="generate.mergeThresholdRatio"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                          ></v-text-field>
-                        </v-col>
-                        <v-col>
-                          <v-btn  @click="generateTimeseries" :loading="generate.loading">Submit</v-btn>
-                          <span v-if="progress.status == 'start' || progress.status == 'progress'">{{progress.percent}}%</span>
-                        </v-col>
-                      </v-row>
-                    </v-col>
-                  </v-row>
-                </v-card-text>
-              </v-card>
-            </v-form>
-          </v-dialog>
+        <v-col class="v-col-auto">
+          <v-btn color="primary" class="mr-2" :disabled="!hasOpenParams" @click="openParamsFromHeader">SET PARAMS</v-btn>
+          <v-btn color="secondary" :disabled="!hasSaveToFile" @click="saveToFileFromHeader">Download</v-btn>
+        </v-col>
+        <v-col class="v-col-auto">
+          <!-- feature area is rendered below -->
         </v-col>
 
         <!-- Music Mode (New Polyphonic) -->
@@ -614,48 +368,9 @@
       </v-row>
     </v-app-bar>
     <v-main>
-      <div v-if="selectedMode === 'Clustering'">
-        <!-- <v-row no-gutters v-if='showTimeseriesChart'>
-          <v-col>
-            <div id='timeseries' style='height: 20vh;'></div>
-          </v-col>
-        </v-row>-->
-        <v-row no-gutters>
-          <v-col>
-            <template v-if='showTimeseriesComplexityChart'>
-              <div class='text-h6 ml-3 mb-2'>Complexity</div>
-              <div id='timeseries-complexity' style='height: 20vh;'></div>
-            </template>
-          </v-col>
-        </v-row>
-        <v-row no-gutters >
-          <v-col>
-            <template v-if='showTimeline'>
-              <div class='text-h6 ml-3 mb-2'>Clusters</div>
-              <div id='timeline' style='height: 70vh;'></div>
-            </template>
-          </v-col>
-        </v-row>
-        <div class='text-h6 ml-3 mb-2'>
-          <v-row>
-            <v-col cols="3">
-              <span class="mr-2">Timeseries</span>
-              <small v-if="analyse.processingTime !== null">Processing Time: {{ analyse.processingTime }} sec. </small>
-            </v-col>
-            <v-col cols="2">
-              <v-btn @click="saveToFile" class="d-flex align-center fill-height">
-                <v-icon>mdi-download</v-icon>
-                <span>Download</span>
-              </v-btn>
-            </v-col>
-          </v-row>
-        </div>
+    <component :is="selectedComponent" :job-id="jobId" ref="activeFeatureRef" />
 
-        <VisualizerContainer
-          :streamValues="analyse.values[0].data"
-          :clustersData="analyse.clusteredSubsequences"
-        />
-      </div>
+
       <div v-if="selectedMode === 'Music'">
         <v-row no-gutters>
           <v-col>
@@ -688,11 +403,15 @@ import Music from '../../components/music/Music.vue';
 import Fft from '../../components/audio/Fft.vue';
 import { Midi } from '@tonejs/midi'
 import Decimal from 'decimal.js'
+import ClusteringAnalyseDialog from '../../components/dialog/ClusteringAnalyseDialog.vue';
 import GridContainer from '../../components/grid/GridContainer.vue';
 import VisualizerContainer from '../../components/visualizer/VisualizerContainer.vue';
+import ClusteringAnalyse from '../../components/features/ClusteringAnalyse.vue'
+import ClusteringGenerate from '../../components/features/ClusteringGenerate.vue'
+import MusicGenerate from '../../components/features/MusicGenerate.vue'
 const timeseriesMax = ref(100)
-const modes = ref(['Clustering', 'Music'])
-const selectedMode = ref('Clustering')
+const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'MusicGenerate'])
+const selectedMode = ref('ClusteringAnalyse')
 type Cluster = {
   si: number[]; // subsequence indexes
   cc: { [childId: string]: Cluster }; // child clusters
@@ -703,6 +422,7 @@ type Clusters = {
 
 import type { ComponentPublicInstance } from 'vue'
 const musicComponent = ref<ComponentPublicInstance<{ start: () => void; stop: () => void }> | null>(null)
+const activeFeatureRef = ref<ComponentPublicInstance | null>(null)
 const analyse = ref<{
   values: Array<{ name: string; data: number[]; config: { min: number; max: number; isInt: boolean; step: number } }>;
   steps: number;
@@ -749,6 +469,7 @@ const analyse = ref<{
   selectedTrackName: null,
   processingTime: null
 })
+const analyseDialog = ref(false)
 const complexityTransitionRules = computed(() => [
     v => !!v || 'required',
     v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
@@ -812,6 +533,13 @@ const generate = ref({
     length: null
   },
   clusters: {}
+})
+
+const selectedComponent = computed(() => {
+  if (selectedMode.value === 'ClusteringAnalyse') return ClusteringAnalyse
+  if (selectedMode.value === 'ClusteringGenerate') return ClusteringGenerate
+  if (selectedMode.value === 'MusicGenerate') return MusicGenerate
+  return ClusteringAnalyse
 })
 type Track = {
   name: string;
@@ -1075,6 +803,19 @@ const analyseTimeseries = () => {
       console.log(error)
   })
 }
+
+// handler for analysed results emitted from ClusteringAnalyseDialog
+const handleAnalysed = (data) => {
+  analyse.value.clusteredSubsequences = data.clusteredSubsequences
+  analyse.value.timeSeriesChart = data.timeSeriesChart
+  analyse.value.clusters = data.clusters
+  analyse.value.loading = false
+  analyse.value.setDataDialog = false
+  showTimeseriesComplexityChart.value = false
+  analyse.value.processingTime = data.processingTime
+  showTimeseriesChart.value = true
+  showTimeline.value = true
+}
 const generateTimeseries = () => {
   methodType.value = 'generate'
   subscribeToProgress()
@@ -1253,6 +994,18 @@ const saveToFile = () => {
   a.click()
 
   URL.revokeObjectURL(url)
+}
+
+// Header -> call methods exposed by active feature component
+const hasOpenParams = computed(() => !!(activeFeatureRef.value && (activeFeatureRef.value as any).openParams))
+const hasSaveToFile = computed(() => !!(activeFeatureRef.value && (activeFeatureRef.value as any).saveToFile))
+const openParamsFromHeader = () => {
+  if (!activeFeatureRef.value) return
+  ;(activeFeatureRef.value as any).openParams?.()
+}
+const saveToFileFromHeader = () => {
+  if (!activeFeatureRef.value) return
+  ;(activeFeatureRef.value as any).saveToFile?.()
 }
 
 const onFileSelected = (file) => {

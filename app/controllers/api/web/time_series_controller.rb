@@ -1,7 +1,6 @@
 class Api::Web::TimeSeriesController < ApplicationController
   include DissonanceMemory
   include StatisticsCalculator
-  require 'pp'
 
   def analyse
     start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -24,7 +23,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     broadcast_done(job_id)
     render json: {
       clusteredSubsequences: timeline,
-      timeSeriesChart: [] + data.map.with_index { |elm, index| [index.to_s, elm, nil, nil] },
+      timeSeries: data,
       clusters: manager.clusters,
       processingTime: processing_time_s
     }

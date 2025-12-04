@@ -57,41 +57,61 @@ const calculateLayout = () => {
     // グループ開始Y位置
     const startY = currentY
 
-    // 干渉回避ロジック (レーン割り当て)
-    const lanes: number[] = []
+    // 密集配置のために、出現インスタンス単位でフラット化してソートする
+    type ClusterInstance = {
+       startIdx: number;
+       endIdx: number;
+       clusterId: string;
+       indices: number[];
+    }
+    let instances: ClusterInstance[] = []
 
     clusters.forEach(cluster => {
       cluster.indices.forEach(startIdx => {
-        const endIdx = startIdx + ws
+        instances.push({
+          startIdx: startIdx,
+          endIdx: startIdx + ws,
+          clusterId: cluster.cluster_id,
+          indices: cluster.indices
+        })
+      })
+    })
 
+    // 開始位置順にソート (左から順に詰めるため)
+    instances.sort((a, b) => a.startIdx - b.startIdx)
+
+    // 干渉回避ロジック (レーン割り当て: First Fit)
+    const lanes: number[] = []
+
+    instances.forEach(inst => {
         // 配置可能なレーンを探す
         let placedLane = -1
         for (let l = 0; l < lanes.length; l++) {
-          if (lanes[l] <= startIdx) {
+          if (lanes[l] <= inst.startIdx) {
             placedLane = l
-            lanes[l] = endIdx + 0.5
+            lanes[l] = inst.endIdx + 0.5
             break
           }
         }
         // 空きがなければ新しいレーン作成
         if (placedLane === -1) {
           placedLane = lanes.length
-          lanes.push(endIdx + 0.5)
+          lanes.push(inst.endIdx + 0.5)
         }
 
         layoutMap.push({
-          x: startIdx * props.stepWidth,
+          x: inst.startIdx * props.stepWidth,
           y: currentY + (placedLane * props.rowHeight),
           w: ws * props.stepWidth,
-          h: props.rowHeight - 6,
-          clusterId: cluster.cluster_id,
-          indices: cluster.indices,
+          h: props.rowHeight - 4, // 隙間調整
+          clusterId: inst.clusterId,
+          indices: inst.indices,
           windowSize: ws
         })
-      })
     })
 
-    const groupHeight = lanes.length * props.rowHeight
+    // グループの高さ
+    const groupHeight = Math.max(lanes.length, 1) * props.rowHeight
     currentY += groupHeight + 10 // マージン
 
     // グループ情報を保存 (描画時に使用)
@@ -144,7 +164,7 @@ const draw = () => {
 
     // ラベル (背景付きで左端に描画)
     const label = `Window Size: ${boundary.windowSize}`
-    const labelY = boundary.labelY + 12
+    const labelY = boundary.labelY + 10
 
     // ラベル背景 (文字が見やすいように半透明の白)
     ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'

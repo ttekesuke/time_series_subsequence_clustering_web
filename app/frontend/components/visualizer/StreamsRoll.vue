@@ -13,11 +13,11 @@ import { ref, onMounted, watch, computed, nextTick } from 'vue'
 const props = defineProps({
   // 配列の配列、またはカンマ区切り文字列の配列を受け取るため型定義を緩めます
   streamValues: { type: [Array, Object], required: true },
-  streamVelocities: { type: [Array, Object], default: () => [] },
+  streamVelocities: { type: [Array, Object], required: false, default: () => [] },
   minValue: { type: Number, default: 0 },
   maxValue: { type: Number, default: 127 },
   stepWidth: { type: Number, default: 10 },
-  height: { type: Number, default: 200 },
+  height: { type: Number, default: null },
   highlightIndices: { type: Array as () => number[], default: () => [] },
   highlightWindowSize: { type: Number, default: 0 }
 })
@@ -54,7 +54,7 @@ const draw = () => {
   const ctx = canvas.value.getContext('2d')
   if (!ctx) return
 
-  const values = [props.streamValues]
+  const values = props.streamValues
   const velocities = parsedStreamVelocities.value
 
   // データ量に応じた幅設定
@@ -66,11 +66,14 @@ const draw = () => {
   const contentWidth = maxStep * props.stepWidth
   const width = Math.max(wrapperWidth, contentWidth)
 
+  // determine canvas height: prefer explicit prop.height, otherwise use wrapper height
+  const canvasHeight = (props.height && props.height > 0) ? props.height : (scrollWrapper.value.clientHeight || 200)
   canvas.value.width = width
+  canvas.value.height = canvasHeight
 
   // 背景クリア
   ctx.fillStyle = '#f9f9f9'
-  ctx.fillRect(0, 0, width, props.height)
+  ctx.fillRect(0, 0, width, canvasHeight)
 
   // ハイライト描画 (背景)
   if (props.highlightIndices.length > 0 && props.highlightWindowSize > 0) {
@@ -78,7 +81,7 @@ const draw = () => {
     props.highlightIndices.forEach(idx => {
       const x = idx * props.stepWidth
       const w = props.highlightWindowSize * props.stepWidth
-      ctx.fillRect(x, 0, w, props.height)
+      ctx.fillRect(x, 0, w, canvasHeight)
     })
   }
 
@@ -91,18 +94,26 @@ const draw = () => {
     const x = i * props.stepWidth
     ctx.beginPath()
     ctx.moveTo(x, 0)
-    ctx.lineTo(x, props.height)
+    ctx.lineTo(x, canvasHeight)
     ctx.stroke()
   }
 
   // 値の描画
-  const range = props.maxValue - props.minValue
-  // 範囲が0の場合は1にしてゼロ除算回避
-  const safeRange = range === 0 ? 1 : range
+  const valueRange = (props.maxValue - props.minValue) + 1
 
-  const paddingY = 10
-  const plotHeight = props.height - (paddingY * 2)
 
+  // compute slot height per integer value; allow a minimum slot height and expand canvas if needed
+  const desiredPlotHeight = canvasHeight
+  const minSlotHeight = 4
+  let slotHeight = Math.floor(desiredPlotHeight / Math.max(1, valueRange))
+  let actualPlotHeight = desiredPlotHeight
+  if (slotHeight < minSlotHeight) {
+    slotHeight = minSlotHeight
+    actualPlotHeight = slotHeight * valueRange
+    // expand canvas height to fit all slots + padding
+    canvas.value.height = actualPlotHeight
+  }
+  const plotHeight = actualPlotHeight
 
   values.forEach((stream, sIdx) => {
 
@@ -113,11 +124,10 @@ const draw = () => {
     stream.forEach((val, step) => {
       if (val === null || val === undefined || isNaN(Number(val))) return
 
-      // Y座標計算 (上がMaxになるように)
-      // 値を範囲内にクランプ
+      // Y座標計算 (整数値ごとのスロットを上から割り当てる)
       const clampedVal = Math.max(props.minValue, Math.min(props.maxValue, Number(val)))
-      const normalizedVal = (clampedVal - props.minValue) / safeRange
-      const y = paddingY + (1 - normalizedVal) * plotHeight
+      const slotIndex = props.maxValue - clampedVal // 0-based from top
+      const y = slotIndex * slotHeight + (slotHeight / 2)
 
       // X座標: 親から渡された stepWidth に従う
       const x = step * props.stepWidth
@@ -141,7 +151,7 @@ const draw = () => {
       ctx.globalAlpha = alpha
 
       // 矩形として描画 (高さ固定のバー)
-      const barHeight = 8
+      const barHeight = Math.max(2, Math.floor(slotHeight - 2))
       // xはステップの開始位置
       // バーの幅は stepWidth から少し隙間(2px)を引いたもの
       const barWidth = Math.max(1, props.stepWidth - 2)
@@ -189,6 +199,6 @@ defineExpose({ scrollWrapper })
 .scroll-wrapper {
   flex-grow: 1;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
 }
 </style>
