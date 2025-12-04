@@ -406,7 +406,6 @@ import VisualizerContainer from '../../components/visualizer/VisualizerContainer
 import ClusteringAnalyse from '../../components/features/ClusteringAnalyse.vue'
 import ClusteringGenerate from '../../components/features/ClusteringGenerate.vue'
 import MusicGenerate from '../../components/features/MusicGenerate.vue'
-const timeseriesMax = ref(100)
 const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'MusicGenerate'])
 const selectedMode = ref('ClusteringAnalyse')
 type Cluster = {
@@ -421,54 +420,6 @@ import type { ComponentPublicInstance } from 'vue'
 const musicComponent = ref<ComponentPublicInstance<{ start: () => void; stop: () => void }> | null>(null)
 const activeFeatureRef = ref<ComponentPublicInstance | null>(null)
 
-const generate = ref({
-  setDataDialog: false,
-  rangeMin: 0,
-  rangeMax: 11,
-  complexityTransition: '',
-  firstElements: '',
-  firstElementsRules: [
-    v => !!v || 'required',
-    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
-    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
-    v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers',
-    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-    v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
-  ],
-  useMusicalFeatures: ['', 'durationsOutline', 'dissonancesOutline'],
-  selectedUseMusicalFeature: '',
-  dissonance: {
-    transition: '',
-    transitionRules: [
-      v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
-      v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers',
-      v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-      v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
-    ],
-    range: 2,
-    durationTransition: '',
-  },
-  duration: {
-    outlineTransition: '',
-    outlineRange: 2,
-    outlineRules: [
-      v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
-      v => (v && String(v).split(',').length >= 3) || 'must have at least 3 numbers',
-      v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-      v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
-    ],
-  },
-  loading: false,
-  valid: false,
-  mergeThresholdRatio: 0.02,
-  complexityTransitionChart: null,
-  linear: {
-    start: null,
-    end: null,
-    length: null
-  },
-  clusters: {}
-})
 
 const selectedComponent = computed(() => {
   if (selectedMode.value === 'ClusteringAnalyse') return ClusteringAnalyse
@@ -657,50 +608,6 @@ const easingFunctions = [
 ]
 
 
-
-const generateTimeseries = () => {
-  methodType.value = 'generate'
-  subscribeToProgress()
-  generate.value.loading = true
-  let data = { generate:
-    {
-      complexity_transition: generate.value.complexityTransition,
-      range_min: generate.value.rangeMin,
-      range_max: generate.value.rangeMax,
-      first_elements: generate.value.firstElements,
-      merge_threshold_ratio: generate.value.mergeThresholdRatio,
-      job_id: jobId.value,
-      dissonance: {
-        transition: generate.value.dissonance.transition,
-        duration_transition: generate.value.dissonance.durationTransition,
-        range: generate.value.dissonance.range,
-      },
-      duration: {
-        outline_transition: generate.value.duration.outlineTransition,
-        outline_range: generate.value.duration.outlineRange,
-      },
-      selected_use_musical_feature: generate.value.selectedUseMusicalFeature,
-    }
-  }
-  axios.post('/api/web/time_series/generate', data)
-  .then(response => {
-      console.log(response)
-      analyse.value.clusteredSubsequences = response.data.clusteredSubsequences
-      analyse.value.timeSeriesChart = response.data.timeSeriesChart
-      console.log(response.data.timeSeriesComplexityChart)
-      generate.value.complexityTransitionChart = response.data.timeSeriesComplexityChart
-      generate.value.clusters = response.data.clusters
-      analyse.value.processingTime = response.data.processingTime
-      // drawTimeline()
-      // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
-      // drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
-      generate.value.loading = false
-      generate.value.setDataDialog = false
-  })
-  .catch(error => {
-      console.log(error)
-  })
-}
 
 
 
