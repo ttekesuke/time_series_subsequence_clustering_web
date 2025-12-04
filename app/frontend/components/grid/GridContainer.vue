@@ -1,5 +1,10 @@
 <template>
-  <div class="grid-wrapper">
+  <!--
+    focusoutイベントを監視して、フォーカスがコンポーネント外に出た場合に検知する。
+    tabindex="-1" は必須ではないが、フォーカス管理の挙動を安定させるために付与することもある。
+    ここではdiv自体にフォーカスを当てる意図はないためイベント監視のみ行う。
+  -->
+  <div class="grid-wrapper" ref="wrapperRef" @focusout="onFocusOut">
     <!-- ツールバー (行数・列数・生成ボタン) -->
     <v-toolbar density="compact" color="grey-lighten-4" class="px-2 mb-2 rounded">
       <v-toolbar-title class="text-subtitle-1 font-weight-bold"></v-toolbar-title>
@@ -9,7 +14,7 @@
       <div v-if="showRowsLength" class="d-flex align-center mr-4" style="font-size: 0.9rem;">
         <span class="mr-2">Rows:</span>
         <input
-                    type="number"
+                  type="number"
           :value="rows.length"
           @input="updateRowCount($event)"
           min="1" max="32"
@@ -102,11 +107,26 @@ const props = defineProps({
 const emit = defineEmits(['update:rows', 'update:steps'])
 
 // --- State ---
+const wrapperRef = ref<HTMLElement | null>(null)
 const focusedCell = ref<any>(null) // { rowIndex, colIndex, config }
 const paramGenDialog = ref(false)
 const paramGenInit = ref({})
 
 // --- Methods ---
+
+// フォーカスアウト時の処理（コンポーネント外へフォーカスが移動したら選択解除）
+const onFocusOut = (event: FocusEvent) => {
+  const relatedTarget = event.relatedTarget as HTMLElement;
+
+  // 移動先（relatedTarget）がラッパー内部の要素であれば、
+  // まだ操作中とみなして選択解除しない（例: ツールバーのボタンクリック時など）
+  if (wrapperRef.value && wrapperRef.value.contains(relatedTarget)) {
+    return;
+  }
+
+  // 完全に外に出た場合のみ解除
+  focusedCell.value = null;
+}
 
 // 行データの更新
 const updateRow = (index: number, newRow: GridRowData) => {
