@@ -354,24 +354,65 @@ class Api::Web::TimeSeriesController < ApplicationController
     { global: g_mgr, stream: s_mgr }
   end
 
-  # --- ターゲット生成 (バイポーラ方式) ---
+  # --- ターゲット生成 (バイポーラ方式・決定論版) ---
   def generate_bipolar_targets(n, ratio, tightness)
+    return [] if n <= 0
+
+    # 念のためクランプ
+    ratio     = [[ratio.to_f, 0.0].max, 1.0].min
+    tightness = [[tightness.to_f, 0.0].max, 1.0].min
+
     complex_count = (n * ratio).round
-    simple_count = n - complex_count
+    simple_count  = n - complex_count
+
     targets = []
 
-    complex_count.times do
-      noise = (1.0 - tightness) * 0.5 * rand
-      targets << (1.0 - noise).clamp(0.0, 1.0)
+    # tightness=1.0 -> 全員 0 / 1 に張り付き
+    # tightness=0.0 -> 0..0.5 / 0.5..1.0 の幅で均等配置
+    width = (1.0 - tightness) * 0.5
+
+    # --- complex 側 (1.0 付近) ---
+    if complex_count > 0
+      if width <= 0.0
+        # 完全タイトなら全員 1.0
+        complex_count.times { targets << 1.0 }
+      else
+        # [1.0 - width, 1.0] を均等割り
+        if complex_count == 1
+          targets << (1.0 - width)  # 1人だけなら内側に置く
+        else
+          (0...complex_count).each do |i|
+            t = i.to_f / (complex_count - 1)
+            val = 1.0 - width * t
+            targets << val
+          end
+        end
+      end
     end
 
-    simple_count.times do
-      noise = (1.0 - tightness) * 0.5 * rand
-      targets << (0.0 + noise).clamp(0.0, 1.0)
+    # --- simple 側 (0.0 付近) ---
+    if simple_count > 0
+      if width <= 0.0
+        # 完全タイトなら全員 0.0
+        simple_count.times { targets << 0.0 }
+      else
+        # [0.0, width] を均等割り
+        if simple_count == 1
+          targets << width  # 1人だけなら内側に置く
+        else
+          (0...simple_count).each do |i|
+            t = i.to_f / (simple_count - 1)
+            val = 0.0 + width * t
+            targets << val
+          end
+        end
+      end
     end
 
+    # もともと sort して返していたので踏襲
     targets.sort
   end
+
 
   # --- 候補選択ロジック (次元共通) ---
   def select_best_chord_for_dimension(mgrs, candidates, stream_costs, q_array, global_target, stream_targets, concordance_weight, n, range_def)

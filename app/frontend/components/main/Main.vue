@@ -15,7 +15,6 @@
         </v-col>
         <v-col class="v-col-auto">
           <v-btn color="primary" class="mr-2" :disabled="!hasOpenParams" @click="openParamsFromHeader">SET PARAMS</v-btn>
-          <v-btn color="secondary" :disabled="!hasSaveToFile" @click="saveToFileFromHeader">Download</v-btn>
         </v-col>
 
         <!-- Music Mode (New Polyphonic) -->
@@ -122,66 +121,11 @@ const progress = ref({
 })
 const jobId = ref(uuidv4())
 
-let methodType = ref<"analyse" | "generate" | null>(null)
-let selectedFileAnalyse = ref<File | null>(null)
-let selectedFileGenerate = ref<File | null>(null)
-
-const dimensions = [
-  { key: 'octave', label: 'OCTAVE' },
-  { key: 'note',   label: 'NOTE' },
-  { key: 'vol',    label: 'VOLUME' },
-  { key: 'bri',    label: 'BRIGHTNESS' },
-  { key: 'hrd',    label: 'HARDNESS' },
-  { key: 'tex',    label: 'TEXTURE' }
-]
-
-const steps = 10
-const fill = (start, mid, end, len=steps) => {
-  const arr = [];
-  const pivot = Math.floor(len / 2);
-  for (let i = 0; i < len; i++) {
-    if (i < pivot) arr.push(Number((start + (mid - start) * (i / pivot)).toFixed(2)));
-    else arr.push(Number((mid + (end - mid) * ((i - pivot) / (len - pivot - 1))).toFixed(2)));
-  }
-  return arr;
-};
-const constant = (val, len=steps) => Array(len).fill(val);
-
-
-
-const saveToFile = () => {
-  const data = {
-    methodType: methodType.value,
-    downloadDatetime: new Date().toISOString()
-  }
-  if(methodType.value === 'analyse'){
-    data['analyse'] = analyse.value
-  }else if(methodType.value === 'generate'){
-    data['analyse'] = analyse.value
-    data['generate'] = generate.value
-  }
-  const jsonStr = JSON.stringify(data, null, 2)
-  const blob = new Blob([jsonStr], { type: "application/json" })
-  const url = URL.createObjectURL(blob)
-
-  const a = document.createElement("a")
-  a.href = url
-  a.download = `time-series-data-${methodType.value}-${data.downloadDatetime}.json`
-  a.click()
-
-  URL.revokeObjectURL(url)
-}
-
 // Header -> call methods exposed by active feature component
 const hasOpenParams = computed(() => !!(activeFeatureRef.value && (activeFeatureRef.value as any).openParams))
-const hasSaveToFile = computed(() => !!(activeFeatureRef.value && (activeFeatureRef.value as any).saveToFile))
 const openParamsFromHeader = () => {
   if (!activeFeatureRef.value) return
   ;(activeFeatureRef.value as any).openParams?.()
-}
-const saveToFileFromHeader = () => {
-  if (!activeFeatureRef.value) return
-  ;(activeFeatureRef.value as any).saveToFile?.()
 }
 
 
