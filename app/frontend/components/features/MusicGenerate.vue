@@ -178,6 +178,8 @@ import { useJobChannel } from '../../composables/useJobChannel'
 import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
 import { useScrollSync } from '../../composables/useScrollSync'
+
+
 // スクロール同期
 const pianoRollRef = ref(null)
 const briRollRef = ref(null)
@@ -190,7 +192,10 @@ const briClustersRef = ref(null)
 const hrdClustersRef = ref(null)
 const texClustersRef = ref(null)
 const containerRef = ref<HTMLElement | null>(null)
-
+const soundFilePath = ref('')
+const scdFilePath = ref('')
+const audio = ref<HTMLAudioElement | null>(null)// helpers
+const nowPlaying = ref(false)
 const containerWidth = ref(containerRef.value ? containerRef.value.clientWidth : 0)
 let resizeObserver: ResizeObserver | null = null
 
@@ -421,7 +426,24 @@ const onHoverClusterRight = (payload: { indices: number[]; windowSize: number } 
 
 const openParams = () => { setDataDialog.value = true }
 import { defineExpose } from 'vue'
-defineExpose({ openParams })
+
+const stopPlayingSound = () => {
+  nowPlaying.value = false
+  audio.value?.pause()
+  if(audio.value) audio.value.currentTime = 0
+}
+const startPlayingSound = () => {
+  if(!audio.value) return
+  nowPlaying.value = true
+  audio.value.play()
+}
+defineExpose({
+  openParams,
+  stopPlayingSound,
+  startPlayingSound,
+  soundFilePath,
+  nowPlaying
+ })
 
 const handleGenerated = (data: PolyphonicResponse) => {
   const ts = data.timeSeries
@@ -442,6 +464,43 @@ const handleGenerated = (data: PolyphonicResponse) => {
   generate.value.clusters.bri    = data.clusters.bri
   generate.value.clusters.hrd    = data.clusters.hrd
   generate.value.clusters.tex    = data.clusters.tex
+
+  renderPolyphonicAudio(ts)
+}
+const renderPolyphonicAudio = (timeSeries) => {
+  progress.value.status = 'rendering'
+  const stepDuration = 1 / 4.0
+  axios.post('/api/web/supercolliders/render_polyphonic', {
+    time_series: timeSeries, step_duration: stepDuration
+  }).then(response => {
+    const { sound_file_path, scd_file_path, audio_data } = response.data
+    soundFilePath.value = sound_file_path
+    scdFilePath.value = scd_file_path
+    const binary = atob(audio_data)
+    const len = binary.length
+    const bytes = new Uint8Array(len)
+    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
+    const blob = new Blob([bytes.buffer], { type: "audio/wav" })
+    const url = URL.createObjectURL(blob)
+    audio.value = new Audio(url)
+    audio.value.addEventListener('ended', () => nowPlaying.value = false)
+    cleanup()
+  })
+  .catch(error => { console.error("Rendering error:", error); music.value.loading = false })
+}
+
+const cleanup = () => {
+  let data = {
+    cleanup: {
+      sound_file_path: soundFilePath.value,
+      scd_file_path: scdFilePath.value
+    }
+  }
+  axios.delete("/api/web/supercolliders/cleanup", { data })
+  .then(response => {
+    console.log('deleted temporary files')
+  })
+  .catch(error => console.error("音声削除エラー", error));
 }
 
 const pitchStreams = computed(() => {

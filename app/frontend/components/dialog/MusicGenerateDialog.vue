@@ -209,8 +209,6 @@ const _suppressBlurClear = ref(false)
 const setSuppressBlur = () => { _suppressBlurClear.value = true; setTimeout(() => { _suppressBlurClear.value = false }, 300); };
 const paramGen = ref({ steps: 10, mode: 'transition', start: 0, end: 1, curve: 'linear', randMin: 0, randMax: 1 })
 const easingFunctions = [ { title: 'Linear', value: 'linear' }, { title: 'Ease In (Quad)', value: 'easeInQuad' }, { title: 'Ease Out (Quad)', value: 'easeOutQuad' }, { title: 'Ease In Out (Quad)', value: 'easeInOutQuad' } ]
-
-// helpers
 const updateContextSteps = () => { const targetLen = contextStepCount.value; const current = polyParams.value.initial_context; while (current.length < targetLen) { const lastStep = current[current.length - 1]; current.push(JSON.parse(JSON.stringify(lastStep))); } if (current.length > targetLen) current.splice(targetLen); };
 const updateContextStreams = () => { const targetCount = contextStreamCount.value; polyParams.value.initial_context.forEach(step => { while (step.length < targetCount) { step.push([4,0,0.8,0.2,0.2,0.0]); } if (step.length > targetCount) step.splice(targetCount); }); };
 const updateStepCount = () => { const targetLen = newStepCount.value; updateArrayLength(polyParams.value.stream_counts, targetLen, 2); dimensions.forEach(dim => { updateArrayLength(polyParams.value[`${dim.key}_global`], targetLen, 0.0); updateArrayLength(polyParams.value[`${dim.key}_ratio`], targetLen, 0.0); updateArrayLength(polyParams.value[`${dim.key}_tightness`], targetLen, 1.0); updateArrayLength(polyParams.value[`${dim.key}_conc`], targetLen, 0.0); }); };
@@ -314,12 +312,14 @@ const handleGeneratePolyphonic = async () => {
 
     const resp = await axios.post('/api/web/time_series/generate_polyphonic', payload)
     emit('generated-polyphonic', resp.data)
+
     open.value = false
   } catch (err) {
     console.error('Generate request failed', err)
   } finally {
   }
 }
+
 
 // expose some refs/methods for parent if needed
 import { defineExpose } from 'vue'

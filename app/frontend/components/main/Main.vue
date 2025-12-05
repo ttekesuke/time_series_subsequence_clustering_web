@@ -23,10 +23,10 @@
 
 
           <!-- Sound Player Control -->
-          <v-btn @click='switchStartOrStopSound()' class="ml-2" :disabled="!music.soundFilePath" :color="nowPlaying ? 'error' : 'primary'">
-            <v-icon v-if='nowPlaying'>mdi-stop</v-icon>
+          <v-btn @click='switchStartOrStopSound()' class="ml-2" :disabled="!canPlay" :color="isNowPlaying ? 'error' : 'primary'">
+            <v-icon v-if='isNowPlaying'>mdi-stop</v-icon>
             <v-icon v-else>mdi-play</v-icon>
-            <span class="ml-1">{{ nowPlaying ? 'STOP' : 'PLAY' }}</span>
+            <span class="ml-1">{{ isNowPlaying ? 'STOP' : 'PLAY' }}</span>
           </v-btn>
 
         </v-col>
@@ -97,6 +97,14 @@ import type { ComponentPublicInstance } from 'vue'
 const musicComponent = ref<ComponentPublicInstance<{ start: () => void; stop: () => void }> | null>(null)
 const activeFeatureRef = ref<ComponentPublicInstance | null>(null)
 
+const canPlay = computed(() => {
+  const inst = activeFeatureRef.value as any
+  return !!inst?.soundFilePath   // soundFilePath があれば再生可能とみなす
+})
+const isNowPlaying = computed(() => {
+  const inst = activeFeatureRef.value as any
+  return !!inst?.nowPlaying      // expose していれば
+})
 
 const selectedComponent = computed(() => {
   if (selectedMode.value === 'ClusteringAnalyse') return ClusteringAnalyse
@@ -104,83 +112,10 @@ const selectedComponent = computed(() => {
   if (selectedMode.value === 'MusicGenerate') return MusicGenerate
   return ClusteringAnalyse
 })
-type Track = {
-  name: string;
-  durations: string;
-  durationRules: ((v: any) => true | string)[];
-  midiNoteNumbers: string;
-  midiNoteNumbersRules: ((v: any) => true | string)[];
-  color: string;
-  harmRichness: number;
-  brightness: number;
-  noiseContent: number;
-  formantChar: number;
-  inharmonicity: number;
-  resonance: number;
-};
 
-const music = ref<{
-  notes: (MidiNote | null)[];
-  tracks: Track[];
-  trackIdCounter: number;
-  durations: string;
-  durationsRules: ((v: any) => true | string)[];
-  midiNoteNumbers: string;
-  midiNoteNumbersRules: ((v: any) => true | string)[];
-  setDataDialog: boolean;
-  valid: boolean;
-  midi: File[] | null;
-  midiData: any;
-  ticksPerBeat: number;
-  ticksPerBeatDefault: number;
-  bpmDefault: number;
-  bpm: number;
-  secondsPerTick: number;
-  velocity: number;
-  loading: boolean;
-  soundFilePath: string | null;
-  scdFilePath: string | null;
-}>({
-  notes: [],
-  tracks: [],
-  trackIdCounter: -1,
-  midiNoteNumbers: '',
-  midiNoteNumbersRules: [
-    v => !!v || 'required',
-    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
-    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
-    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
-    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-    v => (v && String(v).split(',').every(n => Number(n) >= 12)) || 'numbers must be 12 or more',
-    v => (v && String(v).split(',').every(n => Number(n) <= 127)) || 'numbers must be 127 or less',
-  ],
-  durations: '',
-  durationsRules: [
-    v => !!v || 'required',
-    v => (v && String(v).split(',').every(n => !isNaN(Number(n)) && n !== "")) || 'must be comma separated numbers',
-    v => (v && String(v).split(',').filter(n => n !== "").length >= 1) || 'must have at least 1 numbers',
-    v => (v && String(v).split(',').length <= 2000) || 'must have no more than 2000 numbers',
-    v => (v && String(v).split(',').every(n => Number.isInteger(Number(n)) && n.trim() !== "")) || 'must be integers',
-    v => (v && String(v).split(',').every(n => Number(n) >= 1)) || 'numbers must be 1 or more',
-    v => (v && String(v).split(',').every(n => Number(n) <= 100)) || 'numbers must be 100 or less'
-  ],
-  setDataDialog: false,
-  valid: false,
-  midi: null,
-  midiData: null,
-  ticksPerBeat: 480,
-  ticksPerBeatDefault: 480,
-  bpmDefault: 60,
-  bpm: 60,
-  secondsPerTick: 0,
-  velocity: 1,
-  loading: false,
-  soundFilePath: null,
-  scdFilePath: null
-})
 
 const audio = ref<HTMLAudioElement | null>(null)
-const nowPlaying = ref(false)
+
 const progress = ref({
   percent: 0,
   status: 'idle'
@@ -211,76 +146,6 @@ const fill = (start, mid, end, len=steps) => {
   return arr;
 };
 const constant = (val, len=steps) => Array(len).fill(val);
-
-const polyParams = ref<any>({
-  stream_counts: constant(2),
-  initial_context: [
-    [[4,0,0.8,0.2,0.2,0.0], [4,7,0.8,0.2,0.2,0.0]],
-    [[4,0,0.8,0.2,0.2,0.0], [4,7,0.8,0.2,0.2,0.0]],
-    [[4,0,0.8,0.2,0.2,0.0], [4,7,0.8,0.2,0.2,0.0]]
-  ],
-
-  octave_global:    fill(0.0, 0.1, 1.0),
-  octave_ratio:     fill(0.0, 0.5, 1.0),
-  octave_tightness: constant(1.0),
-  octave_conc:      fill(0.8, 0.5, 0.0),
-
-  note_global:      fill(0.2, 0.5, 0.8),
-  note_ratio:       fill(0.0, 0.5, 1.0),
-  note_tightness:   constant(0.5),
-  note_conc:        fill(0.8, 0.8, 0.2),
-  vol_global:       constant(0.1),
-  vol_ratio:        constant(0.0),
-  vol_tightness:    constant(0.0),
-  vol_conc:         constant(1.0),
-
-  bri_global:       fill(0.1, 0.5, 1.0),
-  bri_ratio:        fill(0.0, 1.0, 1.0),
-  bri_tightness:    constant(0.5),
-  bri_conc:         constant(0.5),
-
-  hrd_global:       fill(0.0, 0.2, 0.9),
-  hrd_ratio:        fill(0.0, 0.0, 1.0),
-  hrd_tightness:    constant(1.0),
-  hrd_conc:         constant(0.5),
-
-  tex_global:       fill(0.0, 0.0, 1.0),
-  tex_ratio:        fill(0.0, 0.0, 1.0),
-  tex_tightness:    constant(1.0),
-  tex_conc:         constant(0.0),
-})
-
-const newStepCount = ref(steps)
-const contextStepCount = ref(3)
-const contextStreamCount = ref(2)
-
-// ★追加: パラメータ生成用ステート
-const paramGenDialog = ref(false)
-const focusedCell = ref<any>({ type: null, targetArray: null, index: null, constraints: null })
-// snapshot of the focus target captured when opening the param-gen dialog
-const paramGenTarget = ref<any>(null)
-const _suppressBlurClear = ref(false)
-
-const setSuppressBlur = () => {
-  _suppressBlurClear.value = true
-  // clear after short timeout to avoid permanently suppressing
-  setTimeout(() => { _suppressBlurClear.value = false }, 300)
-}
-const paramGen = ref({
-  steps: 10,
-  mode: 'transition', // 'transition' | 'random'
-  start: 0, end: 1, curve: 'linear',
-  randMin: 0, randMax: 1
-})
-
-const easingFunctions = [
-  { title: 'Linear', value: 'linear' },
-  { title: 'Ease In (Quad)', value: 'easeInQuad' },
-  { title: 'Ease Out (Quad)', value: 'easeOutQuad' },
-  { title: 'Ease In Out (Quad)', value: 'easeInOutQuad' },
-]
-
-
 
 
 
@@ -319,97 +184,22 @@ const saveToFileFromHeader = () => {
   ;(activeFeatureRef.value as any).saveToFile?.()
 }
 
-const onFileSelected = (file) => {
-  const reader = new FileReader()
 
-  reader.onload = (e) => {
-    if (!e.target) {
-      console.error("FileReader event target is null.");
-      return;
-    }
-    const text = e.target.result;
-    if (typeof text === 'string') {
-      const json = JSON.parse(text);
-      if(json.methodType === 'analyse'){
-      }else if(json.methodType === 'generate'){
-
-      }
-    } else {
-      console.error("FileReader result is not a string.");
-    }
-  };
-
-  reader.readAsText(file.target.files[0]);
-}
 
 const switchStartOrStopSound = () =>{
-  nowPlaying.value ? stopPlayingSound() : startPlayingSound()
+  isNowPlaying.value ? stopPlayingSound() : startPlayingSound()
 }
 
 const stopPlayingSound = () => {
-  nowPlaying.value = false
-  audio.value?.pause()
-  if(audio.value) audio.value.currentTime = 0
-  musicComponent.value?.stop()
+  (activeFeatureRef.value as any)?.stopPlayingSound?.()
+
 }
 const startPlayingSound = () => {
-  if(!audio.value) return
-  nowPlaying.value = true
-  audio.value.play()
-  musicComponent.value?.start()
-}
-const cleanup = () => {
-  let data = {
-    cleanup: {
-      sound_file_path: music.value.soundFilePath,
-      scd_file_path: music.value.scdFilePath
-    }
-  }
-  axios.delete("/api/web/supercolliders/cleanup", { data })
-  .then(response => {
-    console.log('deleted temporary files')
-  })
-  .catch(error => console.error("音声削除エラー", error));
+  (activeFeatureRef.value as any)?.startPlayingSound?.()
+
 }
 
 
-const updateContextSteps = () => {
-  const targetLen = contextStepCount.value
-  const current = polyParams.value.initial_context
-  while (current.length < targetLen) {
-    const lastStep = current[current.length - 1]
-    current.push(JSON.parse(JSON.stringify(lastStep)))
-  }
-  if (current.length > targetLen) current.splice(targetLen)
-}
-
-const updateContextStreams = () => {
-  const targetCount = contextStreamCount.value
-  polyParams.value.initial_context.forEach(step => {
-    while (step.length < targetCount) {
-      step.push([4, 0, 0.8, 0.2, 0.2, 0.0])
-    }
-    if (step.length > targetCount) {
-      step.splice(targetCount)
-    }
-  })
-}
-
-const updateStepCount = () => {
-  const targetLen = newStepCount.value
-  updateArrayLength(polyParams.value.stream_counts, targetLen, 2)
-  dimensions.forEach(dim => {
-    updateArrayLength(polyParams.value[`${dim.key}_global`], targetLen, 0.0)
-    updateArrayLength(polyParams.value[`${dim.key}_ratio`], targetLen, 0.0)
-    updateArrayLength(polyParams.value[`${dim.key}_tightness`], targetLen, 1.0)
-    updateArrayLength(polyParams.value[`${dim.key}_conc`], targetLen, 0.0)
-  })
-}
-
-const updateArrayLength = (arr, targetLen, defaultVal) => {
-  while (arr.length < targetLen) arr.push(arr.length > 0 ? arr[arr.length - 1] : defaultVal)
-  if (arr.length > targetLen) arr.splice(targetLen)
-}
 
 const subscribeToProgress = () => {
   jobId.value = uuidv4()
@@ -421,374 +211,6 @@ const subscribeToProgress = () => {
   })
 }
 
-// ★ Paste Handler for Generation Parameters (Simple Array)
-const onGenParamPaste = (e, targetArr, startIndex, isInt = false) => {
-  e.preventDefault();
-  const text = e.clipboardData.getData('text');
-  if (!text) return;
-
-  // タブまたは空白で区切って配列化
-  const values = text.split(/\s+/).filter(v => v !== '').map(Number);
-  if (values.some(isNaN)) return;
-
-  const requiredLen = startIndex + values.length;
-
-  // ステップ数が足りない場合は拡張
-  if (requiredLen > polyParams.value.stream_counts.length) {
-    newStepCount.value = requiredLen;
-    updateStepCount(); // 既存メソッドを再利用して全配列を拡張
-  }
-
-  // 拡張後の配列に対して値をセット (Vueのリアクティブ性を考慮)
-  values.forEach((val, k) => {
-    // targetArrは参照渡しされている配列
-    if (targetArr[startIndex + k] !== undefined) {
-      targetArr[startIndex + k] = isInt ? Math.round(val) : val;
-    }
-  });
-}
-
-// ★ Paste Handler for Initial Context (Nested Array)
-const onContextPaste = (e, streamIdx, dimIdx, stepIdx) => {
-  e.preventDefault();
-  const text = e.clipboardData.getData('text');
-  if (!text) return;
-
-  const values = text.split(/\s+/).filter(v => v !== '').map(Number);
-  if (values.some(isNaN)) return;
-
-  const requiredLen = stepIdx + values.length;
-
-  // ステップ拡張
-  if (requiredLen > polyParams.value.initial_context.length) {
-    contextStepCount.value = requiredLen;
-    updateContextSteps(); // 既存メソッドで拡張
-  }
-
-  // 値の書き込み
-  values.forEach((val, k) => {
-    const targetStep = polyParams.value.initial_context[stepIdx + k];
-    if (targetStep && targetStep[streamIdx]) {
-      const isInt = (dimIdx === 0 || dimIdx === 1); // Octave, Note are ints
-      targetStep[streamIdx][dimIdx] = isInt ? Math.round(val) : val;
-    }
-  });
-}
-
-// ★追加: グリッドフォーカス検知
-const onGridFocus = (targetArr, idx, constraints) => {
-  // try to detect which polyParams key this array belongs to so we can reference it later
-  const findKey = (arr) => {
-    for (const k of Object.keys(polyParams.value)) {
-      try {
-        if (polyParams.value[k] === arr) return k
-      } catch (e) {
-        // ignore
-      }
-    }
-    return null
-  }
-  const keyName = findKey(targetArr)
-  focusedCell.value = {
-    type: 'simple',
-    targetArray: targetArr,
-    index: idx,
-    constraints: constraints,
-    keyName: keyName
-  }
-}
-
-// Clear simple-grid focus when input loses focus (unless focus moved inside the grid/dialog)
-const onGridBlur = () => {
-  // defer to allow click handlers (e.g. the button) to run first
-  setTimeout(() => {
-    if (_suppressBlurClear.value) return
-    const active = document.activeElement as HTMLElement | null
-    if (active && (active.closest('.param-grid') || active.closest('.grid-container') || active.closest('.grid-card'))) {
-      return
-    }
-    focusedCell.value = { type: null, targetArray: null, index: null, constraints: null }
-  }, 0)
-}
-
-// ★追加: Context用フォーカス検知
-const onContextFocus = (streamIdx, dimIdx, stepIdx, constraints) => {
-  focusedCell.value = {
-    type: 'context',
-    streamIdx, dimIdx, stepIdx,
-    constraints: constraints
-  }
-}
-
-// Clear context focus on blur (unless focus moved back into grid/dialog)
-const onContextBlur = () => {
-  setTimeout(() => {
-    if (_suppressBlurClear.value) return
-    const active = document.activeElement as HTMLElement | null
-    if (active && (active.closest('.param-grid') || active.closest('.grid-container') || active.closest('.grid-card'))) {
-      return
-    }
-    focusedCell.value = { type: null, targetArray: null, index: null, constraints: null }
-  }, 0)
-}
-
-// Document-level click handler to clear focus when clicking outside the grid
-let _docMouseDownHandler: ((e: MouseEvent) => void) | null = null
-const addDocumentClickHandler = () => {
-  if (_docMouseDownHandler) return
-  _docMouseDownHandler = (e: MouseEvent) => {
-    const t = e.target as HTMLElement | null
-    if (!t) return
-    if (t.closest('.param-grid') || t.closest('.grid-container') || t.closest('.grid-card') || t.closest('.open-param-gen-btn')) return
-    focusedCell.value = { type: null, targetArray: null, index: null, constraints: null }
-  }
-  document.addEventListener('mousedown', _docMouseDownHandler)
-}
-const removeDocumentClickHandler = () => {
-  if (!_docMouseDownHandler) return
-  document.removeEventListener('mousedown', _docMouseDownHandler)
-  _docMouseDownHandler = null
-}
-
-// attach/remove listener while the polyphonic dialog is open
-watch(() => music.value.setDataDialog, (open) => {
-  if (open) addDocumentClickHandler()
-  else removeDocumentClickHandler()
-})
-
-import { onBeforeUnmount } from 'vue'
-onBeforeUnmount(() => {
-  removeDocumentClickHandler()
-})
-
-// ★追加: 生成ダイアログオープン
-const openParamGenDialog = () => {
-  const { type, targetArray, index, stepIdx, constraints } = focusedCell.value || {}
-  if (!type) return
-
-  let currentVal = 0
-  if (type === 'simple') {
-    currentVal = targetArray && targetArray[index] !== undefined ? targetArray[index] : 0
-    // デフォルトステップ数: 残り全部
-    paramGen.value.steps = Math.max(1, (targetArray ? targetArray.length : 1) - index)
-  } else if (type === 'context') {
-    // Contextの場合は3次元配列から値を取得
-    const ctx = polyParams.value.initial_context
-    if (ctx[stepIdx] && ctx[stepIdx][focusedCell.streamIdx]) {
-       currentVal = ctx[stepIdx][focusedCell.streamIdx][focusedCell.dimIdx]
-    }
-    paramGen.value.steps = Math.max(1, ctx.length - stepIdx)
-  }
-
-  // capture minimal snapshot (identifiers, not deep-copy of array) so applyGeneratedParams
-  // can resolve the real target array later even if focus is lost
-  paramGenTarget.value = {
-    type: focusedCell.value.type,
-    keyName: focusedCell.value.keyName || null,
-    index: focusedCell.value.index,
-    streamIdx: focusedCell.value.streamIdx,
-    dimIdx: focusedCell.value.dimIdx,
-    stepIdx: focusedCell.value.stepIdx,
-    constraints: focusedCell.value.constraints || null
-  }
-
-  // 初期値設定
-  paramGen.value.start = currentVal
-  paramGen.value.end = constraints.max
-  paramGen.value.randMin = constraints.min
-  paramGen.value.randMax = constraints.max
-
-  paramGenDialog.value = true
-}
-
-// ★追加: パラメータ生成実行
-const applyGeneratedParams = () => {
-  // prefer live focusedCell, but fall back to the snapshot captured when opening dialog
-  const live = focusedCell.value || {}
-  const snap = paramGenTarget.value || {}
-  const use = (live && live.type) ? live : snap
-  const type = use.type
-  if (!type) return
-
-  const { steps, mode, start, end, curve, randMin, randMax } = paramGen.value
-
-  // resolve indices/constraints
-  const index = use.index
-  const streamIdx = use.streamIdx
-  const dimIdx = use.dimIdx
-  const stepIdx = use.stepIdx
-  const constraints = use.constraints || {}
-
-  // safe constraints defaults
-  const safeConstraints = {
-    min: Number.NEGATIVE_INFINITY,
-    max: Number.POSITIVE_INFINITY,
-    isInt: false,
-    ...(constraints || {})
-  }
-
-  // resolve targetArray: prefer live reference, otherwise resolve by saved keyName
-  let targetArray = (live && live.targetArray) ? live.targetArray : null
-  if (!targetArray && snap && snap.keyName) {
-    targetArray = polyParams.value[snap.keyName] || null
-  }
-
-  // 配列拡張判定
-  if (type === 'simple') {
-    const requiredLen = (index || 0) + steps
-    if (requiredLen > polyParams.value.stream_counts.length) {
-      newStepCount.value = requiredLen
-      updateStepCount()
-    }
-  } else if (type === 'context') {
-    const requiredLen = (stepIdx || 0) + steps
-    if (requiredLen > polyParams.value.initial_context.length) {
-      contextStepCount.value = requiredLen
-      updateContextSteps()
-    }
-  }
-
-  // 値の生成と適用
-  for (let i = 0; i < steps; i++) {
-    let val = 0
-    if (mode === 'transition') {
-      const t = steps > 1 ? i / (steps - 1) : 1
-      let easedT = t
-      if (curve === 'easeInQuad') easedT = t * t
-      if (curve === 'easeOutQuad') easedT = t * (2 - t)
-      if (curve === 'easeInOutQuad') easedT = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
-
-      val = start + (end - start) * easedT
-    } else {
-      val = randMin + Math.random() * (randMax - randMin)
-    }
-
-    // 丸め & クランプ (use safeConstraints)
-    if (safeConstraints.isInt) {
-      val = Math.round(val)
-    } else {
-      val = Number(val.toFixed(2))
-    }
-    if (val < safeConstraints.min) val = safeConstraints.min
-    if (val > safeConstraints.max) val = safeConstraints.max
-
-    // 値セット
-    if (type === 'simple') {
-      if (targetArray && typeof index === 'number' && targetArray[index + i] !== undefined) {
-        targetArray[index + i] = val
-      }
-    } else if (type === 'context') {
-      const targetStep = polyParams.value.initial_context[(stepIdx || 0) + i]
-      if (targetStep && typeof streamIdx === 'number') {
-        targetStep[streamIdx][dimIdx] = val
-      }
-    }
-  }
-
-  // clear snapshot after applying
-  paramGenTarget.value = null
-
-  if (type === 'context') {
-    polyParams.value.initial_context_json = JSON.stringify(polyParams.value.initial_context, null, 2)
-  }
-
-  paramGenDialog.value = false
-}
-
-const generatePolyphonic = () => {
-  subscribeToProgress()
-  music.value.loading = true
-
-  const parseArr = (str) => Array.isArray(str) ? str : str.split(',').map(Number)
-
-  const payload = {
-    job_id: jobId.value,
-    stream_counts: parseArr(polyParams.value.stream_counts),
-    initial_context: polyParams.value.initial_context,
-  }
-
-  dimensions.forEach(dim => {
-    payload[`${dim.key}_global`] = parseArr(polyParams.value[`${dim.key}_global`])
-    payload[`${dim.key}_ratio`] = parseArr(polyParams.value[`${dim.key}_ratio`])
-    payload[`${dim.key}_tightness`] = parseArr(polyParams.value[`${dim.key}_tightness`])
-    payload[`${dim.key}_conc`] = parseArr(polyParams.value[`${dim.key}_conc`])
-  })
-
-  axios.post('/api/web/time_series/generate_polyphonic', { generate_polyphonic: payload })
-    .then(response => {
-      console.log('Generated:', response.data)
-      const rawTimeSeries = response.data.timeSeries
-      convertResponseToTracks(rawTimeSeries)
-      renderPolyphonicAudio(rawTimeSeries)
-
-    })
-    .catch(error => {
-      console.error(error)
-      music.value.loading = false
-    })
-}
-
-const convertResponseToTracks = (timeSeries) => {
-  console.log("Converting Response:", timeSeries);
-  if (!timeSeries || timeSeries.length === 0) { console.warn("TimeSeries is empty"); return; }
-
-  const maxStreams = Math.max(...timeSeries.map(step => step.length))
-  const newTracksForUi = []
-  const newTracksForMidi = []
-  const TICKS_PER_STEP = 120
-
-  music.value.ticksPerBeat = 480
-  music.value.bpm = 120
-  music.value.secondsPerTick = 60 / music.value.bpm / music.value.ticksPerBeat
-
-  for (let s = 0; s < maxStreams; s++) {
-    const midiNotesStr = []
-    const durationsStr = []
-    const velocitiesStr = []
-    const notesForDrawing = []
-    const color = getStreamColor(s)
-    let currentTick = 0
-
-    timeSeries.forEach(step => {
-      const voice = step[s]
-      if (voice) {
-        const [oct, note, vol, bri, hrd, tex] = voice
-        const midiNoteNum = (oct + 1) * 12 + note
-
-        midiNotesStr.push(midiNoteNum)
-        durationsStr.push(4)
-        velocitiesStr.push(vol)
-
-        if (vol > 0.01) {
-          notesForDrawing.push({ midi: midiNoteNum, ticks: currentTick, durationTicks: TICKS_PER_STEP, velocity: vol })
-        }
-      } else {
-        midiNotesStr.push(0); durationsStr.push(4); velocitiesStr.push(0);
-      }
-      currentTick += TICKS_PER_STEP
-    })
-
-    newTracksForUi.push({
-      name: `Stream ${s + 1}`,
-      midiNoteNumbers: midiNotesStr.join(','),
-      durations: durationsStr.join(','),
-      velocities: velocitiesStr.join(','),
-      color: color,
-      brightness: timeSeries[timeSeries.length-1][s]?.[3] || 0.5,
-      hardness:   timeSeries[timeSeries.length-1][s]?.[4] || 0.5,
-      texture:    timeSeries[timeSeries.length-1][s]?.[5] || 0.0,
-      resonance:  0.2
-    })
-    newTracksForMidi.push({ color: color, notes: notesForDrawing })
-  }
-  music.value.tracks = newTracksForUi
-  music.value.midiData = { tracks: newTracksForMidi }
-}
-
-const getStreamColor = (index) => {
-  const hue = Math.floor((index * 137.508) % 360);
-  return `hsl(${hue}, 75%, 45%)`;
-}
 
 const renderPolyphonicAudio = (timeSeries) => {
   progress.value.status = 'rendering'
@@ -796,8 +218,9 @@ const renderPolyphonicAudio = (timeSeries) => {
   axios.post('/api/web/supercolliders/render_polyphonic', {
     time_series: timeSeries, step_duration: stepDuration
   }).then(response => {
-    const { sound_file_path, audio_data } = response.data
+    const { sound_file_path, scd_file_path, audio_data } = response.data
     music.value.soundFilePath = sound_file_path
+    music.value.scdFilePath = scd_file_path
     const binary = atob(audio_data)
     const len = binary.length
     const bytes = new Uint8Array(len)
@@ -805,7 +228,7 @@ const renderPolyphonicAudio = (timeSeries) => {
     const blob = new Blob([bytes.buffer], { type: "audio/wav" })
     const url = URL.createObjectURL(blob)
     audio.value = new Audio(url)
-    audio.value.addEventListener('ended', () => nowPlaying.value = false)
+    // audio.value.addEventListener('ended', () => nowPlaying.value = false)
     music.value.loading = false
     music.value.setDataDialog = false
     cleanup()
