@@ -1,7 +1,6 @@
 <template>
   <div>
     <div class="viz-container" ref="containerRef">
-      <!-- 上段: Value Roll -->
       <div class="viz-row" style="height: 50%;">
         <StreamsRoll
           ref="StreamsRollRef"
@@ -14,8 +13,6 @@
           @scroll="onScroll"
         />
       </div>
-
-      <!-- 下段: Clusters Roll -->
       <div class="viz-row" style="height: 50%;">
         <ClustersRoll
           ref="clustersRollRef"
@@ -63,10 +60,6 @@ const analyse = ref({
   processingTime: null
 })
 
-let showTimeseriesComplexityChart = ref(false)
-let showTimeline = ref(false)
-
-
 const onFileSelected = (file) => {
   const reader = new FileReader()
   reader.onload = (e) => {
@@ -77,8 +70,6 @@ const onFileSelected = (file) => {
       if (json.methodType === 'analyse') {
         analyse.value = json.analyse
       }
-      showTimeseriesComplexityChart.value = true
-      showTimeline.value = true
     }
   }
   reader.readAsText(file.target.files[0])
@@ -89,13 +80,6 @@ const handleAnalysed = (data) => {
   analyse.value.timeseries = data.timeSeries
   analyse.value.clusters = data.clusters
   analyse.value.processingTime = data.processingTime
-  // ensure charts show
-  showTimeseriesComplexityChart.value = false
-  showTimeline.value = false
-  nextTick(() => {
-    showTimeseriesComplexityChart.value = true
-    showTimeline.value = true
-  })
 }
 
 const saveToFile = () => {

@@ -1,6 +1,18 @@
 class PolyphonicClusterManager < TimeSeriesClusterManager
-  def initialize(data, merge_threshold_ratio, min_window_size)
+  def initialize(data, merge_threshold_ratio, min_window_size, value_range = nil)
     super(data, merge_threshold_ratio, min_window_size, false)
+    if value_range && !value_range.empty?
+      @value_min = value_range.min.to_f
+      @value_max = value_range.max.to_f
+      @max_step_distance = (@value_max - @value_min).abs
+    else
+      # 互換性確保のデフォルト（従来は octave 0..7 前提だった）
+      @value_min = 0.0
+      @value_max = 7.0
+      @max_step_distance = 7.0
+    end
+    # 万が一 range 幅が 0 なら最低 1.0 にする
+    @max_step_distance = 1.0 if @max_step_distance <= 0.0
   end
 
   def squared_euclidean_distance(seq_a, seq_b)
@@ -18,9 +30,10 @@ class PolyphonicClusterManager < TimeSeriesClusterManager
   end
 
   def min_avg_distance(a, b)
-    return 7.0 unless a.is_a?(Array) && b.is_a?(Array)
+    # 型がおかしい / 一方が空、などのときは「最大断絶」とみなす
+    return @max_step_distance unless a.is_a?(Array) && b.is_a?(Array)
     return 0.0 if a.empty? && b.empty?
-    return 7.0 if a.empty? || b.empty?
+    return @max_step_distance if a.empty? || b.empty?
 
     a_avg = a.map { |x| b.map { |y| (x - y).abs }.min }.sum.to_f / a.length
     b_avg = b.map { |y| a.map { |x| (y - x).abs }.min }.sum.to_f / b.length
@@ -97,9 +110,13 @@ class PolyphonicClusterManager < TimeSeriesClusterManager
       d = vec_a[i] - vec_b[i]
       sum += d * d
     end
-    sum += (vec_a.size - vec_b.size).abs * 49.0
+
+    # 長さ差には「1 ステップあたり最大距離」の二乗を掛ける
+    sum += (vec_a.size - vec_b.size).abs * (@max_step_distance ** 2)
+
     sum
   end
+
 
   def calculate_vector_mean(vectors)
     return vectors.first if vectors.empty?

@@ -82,6 +82,7 @@ import ClusteringAnalyse from '../../components/features/ClusteringAnalyse.vue'
 import ClusteringGenerate from '../../components/features/ClusteringGenerate.vue'
 import MusicGenerate from '../../components/features/MusicGenerate.vue'
 import InfoDialog from './InfoDialog.vue'
+const infoDialog = ref(false)
 const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'MusicGenerate'])
 const selectedMode = ref('ClusteringAnalyse')
 type Cluster = {
@@ -179,10 +180,6 @@ const music = ref<{
 })
 
 const audio = ref<HTMLAudioElement | null>(null)
-let showTimeseriesChart = ref(false)
-let showTimeseriesComplexityChart = ref(false)
-let showTimeline = ref(false)
-let infoDialog = ref(false)
 const nowPlaying = ref(false)
 const progress = ref({
   percent: 0,
@@ -334,20 +331,9 @@ const onFileSelected = (file) => {
     if (typeof text === 'string') {
       const json = JSON.parse(text);
       if(json.methodType === 'analyse'){
-        analyse.value = json.analyse
-        // drawTimeline()
-        // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
       }else if(json.methodType === 'generate'){
-        analyse.value = json.analyse
-        generate.value = json.generate
-        // drawTimeline()
-        // drawTimeSeries('timeseries', analyse.value.timeSeriesChart)
-        // drawTimeSeriesComplexity('timeseries-complexity', generate.value.complexityTransitionChart)
-        showTimeseriesComplexityChart.value = true
 
       }
-      showTimeseriesChart.value = true
-      showTimeline.value = true
     } else {
       console.error("FileReader result is not a string.");
     }

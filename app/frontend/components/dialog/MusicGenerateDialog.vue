@@ -17,7 +17,7 @@
           >
             GENERATE PARAMETERS
           </v-btn>
-          <v-btn color="success" class="mr-2" :loading="music.loading" @click="generatePolyphonic">GENERATE & RENDER</v-btn>
+          <v-btn color="success" class="mr-2" :loading="music.loading" @click="handleGeneratePolyphonic">GENERATE & RENDER</v-btn>
           <v-btn icon @click="open = false"><v-icon>mdi-close</v-icon></v-btn>
         </div>
       </v-card-title>
@@ -179,7 +179,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { useJobChannel } from '../../composables/useJobChannel'
 
 const props = defineProps({ modelValue: Boolean, progress: { type: Object, required: false } })
-const emit = defineEmits(['update:modelValue', 'generate-polyphonic'])
+const emit = defineEmits(['update:modelValue', 'generated-polyphonic'])
 
 const open = ref(false)
 watch(() => props.modelValue, (v) => open.value = v)
@@ -298,13 +298,28 @@ const applyGeneratedParams = () => {
   paramGenDialog.value = false;
 };
 
-// generate polyphonic
-const generatePolyphonic = () => {
+
+const handleGeneratePolyphonic = async () => {
+  try {
   const parseArr = (str) => Array.isArray(str) ? str : String(str).split(',').map(Number)
-  const payload = { job_id: uuidv4(), stream_counts: parseArr(polyParams.value.stream_counts), initial_context: polyParams.value.initial_context }
+  const payload = {
+    generate_polyphonic: {
+      job_id: uuidv4(),
+      stream_counts: parseArr(polyParams.value.stream_counts),
+      initial_context: polyParams.value.initial_context
+
+    }
+  }
   dimensions.forEach(dim => { payload[`${dim.key}_global`] = parseArr(polyParams.value[`${dim.key}_global`]); payload[`${dim.key}_ratio`] = parseArr(polyParams.value[`${dim.key}_ratio`]); payload[`${dim.key}_tightness`] = parseArr(polyParams.value[`${dim.key}_tightness`]); payload[`${dim.key}_conc`] = parseArr(polyParams.value[`${dim.key}_conc`]) })
-  emit('generate-polyphonic', { generate_polyphonic: payload });
-};
+
+    const resp = await axios.post('/api/web/time_series/generate_polyphonic', payload)
+    emit('generated-polyphonic', resp.data)
+    open.value = false
+  } catch (err) {
+    console.error('Generate request failed', err)
+  } finally {
+  }
+}
 
 // expose some refs/methods for parent if needed
 import { defineExpose } from 'vue'

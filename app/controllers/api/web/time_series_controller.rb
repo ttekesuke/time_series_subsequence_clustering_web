@@ -1,7 +1,7 @@
 class Api::Web::TimeSeriesController < ApplicationController
   include DissonanceMemory
   include StatisticsCalculator
-
+  include PolyphonicConfig
   def analyse
     start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     job_id = analyse_params[:job_id]
@@ -169,10 +169,9 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     render json: {
       clusteredSubsequences: timeline,
-      timeSeriesChart: [] + results.map.with_index { |elm, index| [index.to_s, elm, nil, nil] },
       timeSeries: results,
       # UI用には整数の配列(0-100)を返す
-      timeSeriesComplexityChart: [] + chart_elements_for_complexity + complexity_transition_int.map.with_index { |elm, index| [(user_set_results.length + index).to_s, elm, nil, nil] },
+      complexityTransition: user_set_results.map{|result| nil} + complexity_transition_int,
       clusters: manager.clusters,
       processingTime: processing_time_s
     }
@@ -182,6 +181,7 @@ class Api::Web::TimeSeriesController < ApplicationController
   #  多声生成アクション (6次元 x 4制御パラメータ)
   # ============================================================
   def generate_polyphonic
+
     start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
     # Strong Parameters は使用せず、直接 params を参照して柔軟にデータを受け取る
@@ -204,12 +204,12 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     # --- 2. 次元定義 (6次元) ---
     dimensions = [
-      { key: 'octave', range: (0..10).to_a, is_float: false },
-      { key: 'note',   range: (0..11).to_a, is_float: false },
-      { key: 'vol',    range: (0..10).map { |i| (i / 10.0).round(1) }, is_float: true },
-      { key: 'bri',    range: (0..10).map { |i| (i / 10.0).round(1) }, is_float: true },
-      { key: 'hrd',    range: (0..10).map { |i| (i / 10.0).round(1) }, is_float: true },
-      { key: 'tex',    range: (0..10).map { |i| (i / 10.0).round(1) }, is_float: true }
+      { key: 'octave', range: PolyphonicConfig::OCTAVE_RANGE.to_a, is_float: false },
+      { key: 'note',   range: PolyphonicConfig::NOTE_RANGE.to_a,   is_float: false },
+      { key: 'vol',    range: PolyphonicConfig::FLOAT_STEPS,       is_float: true },
+      { key: 'bri',    range: PolyphonicConfig::FLOAT_STEPS,       is_float: true },
+      { key: 'hrd',    range: PolyphonicConfig::FLOAT_STEPS,       is_float: true },
+      { key: 'tex',    range: PolyphonicConfig::FLOAT_STEPS,       is_float: true }
     ]
 
     # 次元ごとにマネージャセット(Global + Stream)を初期化
@@ -231,7 +231,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         (min_window + 1 - dim_history.length).times { dim_history << last_val.dup }
       end
 
-      managers[dim[:key]] = initialize_managers_for_dimension(dim_history, merge_threshold_ratio, min_window)
+      managers[dim[:key]] = initialize_managers_for_dimension(dim_history, merge_threshold_ratio, min_window, dim[:range] )
     end
 
     # --- 3. 生成ループ (Time Step) ---
@@ -246,7 +246,8 @@ class Api::Web::TimeSeriesController < ApplicationController
       dimensions.each_with_index do |dim, dim_idx|
         key = dim[:key]
         mgrs = managers[key]
-
+        value_min = dim[:range].min.to_f
+        value_max = dim[:range].max.to_f
         # パラメータ取得
         p_global = (raw_params["#{key}_global"] || [])[step_idx].to_f
         p_ratio  = (raw_params["#{key}_ratio"]  || [])[step_idx].to_f
@@ -260,7 +261,11 @@ class Api::Web::TimeSeriesController < ApplicationController
         candidates_set = dim[:range].repeated_combination(current_stream_count).to_a
 
         # 事前計算
-        q_array = create_quadratic_integer_array(0, 7 * (results.length + 1), results.length + 1)
+        q_array = create_quadratic_integer_array(
+          value_min,
+          value_max,
+          results.length + 1
+        )
         stream_costs = mgrs[:stream].precalculate_costs(dim[:range], q_array)
 
         # ベスト候補の選択
@@ -292,9 +297,41 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     broadcast_done(job_id)
+    # === ここからクラスタ情報の組み立て ===
 
+    cluster_payload = {}
+
+    dimensions.each do |dim|
+      key  = dim[:key]        # "octave", "note", "vol", "bri", "hrd", "tex"
+      mgrs = managers[key]
+      g_mgr = mgrs[:global]
+      s_mgr = mgrs[:stream]
+
+      # Global クラスタのタイムライン
+      global_timeline =
+        g_mgr.clusters_to_timeline(g_mgr.clusters, min_window)
+
+      # 各ストリームごとのタイムライン
+      streams_hash = {}
+
+      s_mgr.stream_pool.each do |container|
+        stream_id = container.id
+        s_mgr_for_stream = container.manager
+        streams_hash[stream_id] =
+          s_mgr_for_stream.clusters_to_timeline(
+            s_mgr_for_stream.clusters,
+            min_window
+          )
+      end
+
+      cluster_payload[key] = {
+        global:  global_timeline,
+        streams: streams_hash
+      }
+    end
     render json: {
       timeSeries: results,
+      clusters: cluster_payload,
       processingTime: ((end_time - start_time)).round(2)
     }
   end
@@ -302,12 +339,12 @@ class Api::Web::TimeSeriesController < ApplicationController
   private
 
   # --- 次元ごとのマネージャ初期化 ---
-  def initialize_managers_for_dimension(history, ratio, min_window)
+  def initialize_managers_for_dimension(history, ratio, min_window, value_range)
     # Global
-    g_mgr = PolyphonicClusterManager.new(history.dup, ratio, min_window)
+    g_mgr = PolyphonicClusterManager.new(history.dup, ratio, min_window, value_range)
     g_mgr.process_data
     g_clusters = g_mgr.transform_clusters(g_mgr.clusters, min_window)
-    initial_calc_values(g_mgr, g_clusters, 7, 0, history.length)
+    initial_calc_values(g_mgr, g_clusters, value_range.max.to_f, value_range.min.to_f, history.length)
     g_mgr.updated_cluster_ids_per_window_for_calculate_distance = {}
 
     # Stream

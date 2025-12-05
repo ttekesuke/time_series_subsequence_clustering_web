@@ -1,16 +1,9 @@
 <template>
   <div>
-    <v-row class="pa-3 align-center">
-      <v-col />
-      <v-col class="v-col-auto">
-        <!-- header buttons moved to Main.vue -->
-      </v-col>
-    </v-row>
-
     <div class="viz-container" ref="containerRef">
-      <div class="viz-row" style="height:50%">
+      <div class="viz-row" style="height:35%">
         <StreamsRoll
-          ref="streamsRollRef"
+          ref="timeseriesStreamsRollRef"
           :streamValues="[generate.timeseries]"
           :minValue="minValue"
           :maxValue="maxValue"
@@ -20,7 +13,19 @@
           @scroll="onScroll"
         />
       </div>
-      <div class="viz-row" style="height:50%">
+      <div class="viz-row" style="height:35%">
+        <StreamsRoll
+          ref="complexityTransitionStreamsRollRef"
+          :streamValues="[generate.complexityTransition]"
+          :minValue="0"
+          :maxValue="100"
+          :highlightIndices="highlightedIndices"
+          :highlightWindowSize="highlightedWindowSize"
+          :stepWidth="computedStepWidth"
+          @scroll="onScroll"
+        />
+      </div>
+      <div class="viz-row" style="height:40%">
         <ClustersRoll
           ref="clustersRollRef"
           :clustersData="generate.clusteredSubsequences"
@@ -58,16 +63,13 @@ const progress = ref({ percent: 0, status: 'idle' })
 
 const generate = ref({
   timeseries: [],
+  complexityTransition: [],
   clusteredSubsequences: [],
-  timeSeriesChart: [],
   loading: false,
   mergeThresholdRatio: 0.02,
   clusters: {},
   processingTime: null
 })
-
-let showTimeseriesComplexityChart = ref(false)
-let showTimeline = ref(false)
 
 const onFileSelected = (file) => {
   const reader = new FileReader()
@@ -79,8 +81,6 @@ const onFileSelected = (file) => {
       if (json.methodType === 'generate') {
         generate.value = json.generate || {}
       }
-      showTimeseriesComplexityChart.value = true
-      showTimeline.value = true
     }
   }
   reader.readAsText(file.target.files[0])
@@ -95,16 +95,11 @@ const handleGenerated = (data) => {
 
   if (!generate.value.timeseries) generate.value.timeseries = []
   generate.value.timeseries.splice(0, generate.value.timeseries.length, ...(data.timeSeries || []))
+  generate.value.complexityTransition = data.complexityTransition || []
 
   generate.value.clusters = data.clusters ? { ...data.clusters } : {}
   generate.value.processingTime = data.processingTime
 
-  showTimeseriesComplexityChart.value = false
-  showTimeline.value = false
-  nextTick(() => {
-    showTimeseriesComplexityChart.value = true
-    showTimeline.value = true
-  })
 }
 
 const saveToFile = () => {
@@ -126,12 +121,13 @@ import { defineExpose } from 'vue'
 defineExpose({ openParams, saveToFile: save })
 
 const containerRef = ref<HTMLElement | null>(null)
-const streamsRollRef = ref(null)
+const timeseriesStreamsRollRef = ref(null)
+const complexityTransitionStreamsRollRef = ref(null)
 const clustersRollRef = ref(null)
 const containerWidth = ref(containerRef.value ? containerRef.value.clientWidth : 0)
 let resizeObserver: ResizeObserver | null = null
 // スクロール同期
-const { syncScroll } = useScrollSync([streamsRollRef, clustersRollRef])
+const { syncScroll } = useScrollSync([timeseriesStreamsRollRef, clustersRollRef, complexityTransitionStreamsRollRef])
 const onScroll = (e) => syncScroll(e)
 
 // ハイライト状態
@@ -183,6 +179,15 @@ onUnmounted(() => { if (resizeObserver) resizeObserver.disconnect() })
 </script>
 
 <style scoped>
-.viz-container { display: flex; flex-direction: column; height: calc(100vh - 120px); width: 100%; }
-.viz-row { height: 50%; width: 100%; overflow-y: auto; }
+.viz-container {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 80px); /* adjust so it fills main area under header */
+  width: 100%;
+}
+.viz-row {
+  height: 50%;
+  width: 100%;
+  overflow-y: auto;
+}
 </style>

@@ -19,7 +19,8 @@ const props = defineProps({
   stepWidth: { type: Number, default: 10 },
   height: { type: Number, default: null },
   highlightIndices: { type: Array as () => number[], default: () => [] },
-  highlightWindowSize: { type: Number, default: 0 }
+  highlightWindowSize: { type: Number, default: 0 },
+  valueResolution: { type: Number, default: 1 }
 })
 
 const emit = defineEmits(['scroll'])
@@ -30,32 +31,13 @@ const onScroll = (e: Event) => {
   emit('scroll', e)
 }
 
-// データ変換ヘルパー: 文字列("1,2,3")やProxyオブジェクトを数値配列に変換
-const parseData = (input: any): number[][] => {
-  if (!input) return []
-
-  // 配列化 (Objectの場合はvaluesをとる)
-  const arr = Array.isArray(input) ? input : Object.values(input)
-
-  return arr.map((row: any) => {
-    if (Array.isArray(row)) return row as number[]
-    if (typeof row === 'string') {
-       if (row.trim() === '') return []
-       return row.split(',').map(v => parseFloat(v))
-    }
-    return []
-  })
-}
-
-const parsedStreamVelocities = computed(() => parseData(props.streamVelocities))
-
 const draw = () => {
   if (!canvas.value || !scrollWrapper.value) return
   const ctx = canvas.value.getContext('2d')
   if (!ctx) return
 
   const values = props.streamValues
-  const velocities = parsedStreamVelocities.value
+  const velocities = props.streamVelocities
 
   // データ量に応じた幅設定
   const maxStep = Math.max(0, ...values.map(s => s.length))
@@ -65,31 +47,34 @@ const draw = () => {
   const wrapperWidth = scrollWrapper.value.clientWidth
   const contentWidth = maxStep * props.stepWidth
   const width = Math.max(wrapperWidth, contentWidth)
-
   // determine canvas height: prefer explicit prop.height, otherwise use wrapper height
-  const canvasHeight = (props.height && props.height > 0) ? props.height : (scrollWrapper.value.clientHeight || 200)
+  const baseCanvasHeight = (props.height && props.height > 0) ? props.height : (scrollWrapper.value.clientHeight || 200)
+
+  // 値の描画に必要な高さを計算してキャンバスの高さを確定する
+  const valueRange = (props.maxValue - props.minValue) + 1
+  const steps = Math.max(
+    1,
+    Math.floor((props.maxValue - props.minValue) / props.valueResolution) + 1
+  )
+
+  const minSlotHeight = 4
+  let slotHeight = Math.floor(baseCanvasHeight / steps)
+  let actualPlotHeight = baseCanvasHeight
+  if (slotHeight < minSlotHeight) {
+    slotHeight = minSlotHeight
+    actualPlotHeight = slotHeight * steps
+  }
   canvas.value.width = width
-  canvas.value.height = canvasHeight
+  canvas.value.height = actualPlotHeight
+  const canvasHeight = actualPlotHeight
 
   // 背景クリア
   ctx.fillStyle = '#f9f9f9'
   ctx.fillRect(0, 0, width, canvasHeight)
 
-  // ハイライト描画 (背景)
-  if (props.highlightIndices.length > 0 && props.highlightWindowSize > 0) {
-    ctx.fillStyle = 'rgba(255, 200, 200, 0.5)'
-    props.highlightIndices.forEach(idx => {
-      const x = idx * props.stepWidth
-      const w = props.highlightWindowSize * props.stepWidth
-      ctx.fillRect(x, 0, w, canvasHeight)
-    })
-  }
-
-  // グリッド線
+  // グリッド線 (先に描画しておく)
   ctx.strokeStyle = '#eeeeee'
   ctx.lineWidth = 1
-  // 画面外まで描画しないようにクリッピングするか、必要な分だけループしてもよいが、
-  // ここではシンプルに全ステップ描画
   for (let i = 0; i <= maxStep; i++) {
     const x = i * props.stepWidth
     ctx.beginPath()
@@ -97,23 +82,6 @@ const draw = () => {
     ctx.lineTo(x, canvasHeight)
     ctx.stroke()
   }
-
-  // 値の描画
-  const valueRange = (props.maxValue - props.minValue) + 1
-
-
-  // compute slot height per integer value; allow a minimum slot height and expand canvas if needed
-  const desiredPlotHeight = canvasHeight
-  const minSlotHeight = 4
-  let slotHeight = Math.floor(desiredPlotHeight / Math.max(1, valueRange))
-  let actualPlotHeight = desiredPlotHeight
-  if (slotHeight < minSlotHeight) {
-    slotHeight = minSlotHeight
-    actualPlotHeight = slotHeight * valueRange
-    // expand canvas height to fit all slots + padding
-    canvas.value.height = actualPlotHeight
-  }
-  const plotHeight = actualPlotHeight
 
   values.forEach((stream, sIdx) => {
 
@@ -126,7 +94,13 @@ const draw = () => {
 
       // Y座標計算 (整数値ごとのスロットを上から割り当てる)
       const clampedVal = Math.max(props.minValue, Math.min(props.maxValue, Number(val)))
-      const slotIndex = props.maxValue - clampedVal // 0-based from top
+
+      // ★ 値 → 0〜(steps-1) のインデックスに変換
+      const normalizedIndex = Math.round(
+        (clampedVal - props.minValue) / props.valueResolution
+      )
+      // 上が最大値になるように反転
+      const slotIndex = (steps - 1) - normalizedIndex
       const y = slotIndex * slotHeight + (slotHeight / 2)
 
       // X座標: 親から渡された stepWidth に従う
@@ -142,7 +116,7 @@ const draw = () => {
         }
       }
 
-      // ハイライト時の色変更
+      // ハイライト時の色変更 (バー自体の色)
       const isHighlighted = props.highlightIndices.some(
         hIdx => step >= hIdx && step < hIdx + props.highlightWindowSize
       )
@@ -161,10 +135,28 @@ const draw = () => {
       ctx.globalAlpha = 1.0
     })
   })
+
+  // ハイライト描画 (オーバーレイで目立たせる)
+  if (props.highlightIndices.length > 0 && props.highlightWindowSize > 0) {
+    ctx.fillStyle = 'rgba(255, 200, 200, 0.25)'
+    props.highlightIndices.forEach(idx => {
+      const x = idx * props.stepWidth
+      const w = props.highlightWindowSize * props.stepWidth
+      ctx.fillRect(x, 0, w, canvasHeight)
+    })
+  }
 }
 
 watch(
-  () => [props.streamValues, props.streamVelocities, props.highlightIndices, props.stepWidth, props.minValue, props.maxValue],
+  () => [
+    props.streamValues,
+    props.streamVelocities,
+    props.highlightIndices,
+    props.stepWidth,
+    props.minValue,
+    props.maxValue,
+    props.valueResolution
+  ],
   () => { nextTick(draw) },
   { deep: true }
 )
@@ -174,7 +166,7 @@ onMounted(() => {
   setTimeout(draw, 100)
 })
 
-defineExpose({ scrollWrapper })
+defineExpose({ scrollWrapper, redraw: draw })
 </script>
 
 <style scoped>

@@ -37,7 +37,10 @@
 import { computed } from 'vue'
 const props = defineProps({ modelValue: Boolean })
 const emit = defineEmits(['update:modelValue'])
-const open = computed({ get: () => props.modelValue, set: (v: boolean) => emit('update:modelValue', v) })
+const open = computed({
+  get: () => props.modelValue,
+  set: (v: boolean) => emit('update:modelValue', v)
+})
 </script>
 
 <style scoped>
