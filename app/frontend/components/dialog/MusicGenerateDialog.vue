@@ -4,10 +4,6 @@
       <v-card-title class="text-h5 grey lighten-2 d-flex align-center justify-space-between py-2">
         <span>Polyphonic Stream Generation Parameters</span>
         <div class="d-flex align-center">
-          <div class="mr-4 text-caption" v-if="progress.status === 'progress' || progress.status === 'rendering'">
-            <span v-if="progress.status === 'progress'">Generating: {{progress.percent}}%</span>
-            <span v-if="progress.status === 'rendering'">Rendering Audio...</span>
-          </div>
           <v-btn
             color="secondary"
             class="mr-2 open-param-gen-btn"
@@ -17,7 +13,19 @@
           >
             GENERATE PARAMETERS
           </v-btn>
-          <v-btn color="success" class="mr-2" :loading="music.loading" @click="handleGeneratePolyphonic">GENERATE & RENDER</v-btn>
+          <v-btn
+            color="success"
+            class="mr-2"
+            :loading="music.loading || isProcessing"
+            :disabled="isProcessing"
+            @click="handleGeneratePolyphonic"
+          >
+            GENERATE & RENDER
+          </v-btn>
+          <div class="text-caption" v-if="progress.status === 'progress' || progress.status === 'rendering'">
+            <span v-if="progress.status === 'progress'">{{ progress.percent }}%</span>
+            <span v-if="progress.status === 'rendering'">Rendering Audio...</span>
+          </div>
           <v-btn icon @click="open = false"><v-icon>mdi-close</v-icon></v-btn>
         </div>
       </v-card-title>
@@ -173,13 +181,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { computed, onUnmounted, ref, watch, nextTick } from 'vue'
 import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
 import { useJobChannel } from '../../composables/useJobChannel'
 
 const props = defineProps({ modelValue: Boolean, progress: { type: Object, required: false } })
-const emit = defineEmits(['update:modelValue', 'generated-polyphonic'])
+const emit = defineEmits(['update:modelValue', 'generated-polyphonic', 'progress-update'])
 
 const open = ref(false)
 watch(() => props.modelValue, (v) => open.value = v)
@@ -187,7 +195,36 @@ watch(open, (v) => emit('update:modelValue', v))
 
 // music state (local to dialog)
 const music = ref({ loading: false, setDataDialog: false, tracks: [], midiData: null })
-const progressLocal = props.progress || { percent: 0, status: 'idle' }
+const progress = ref(props.progress || { percent: 0, status: 'idle' })
+watch(() => props.progress, (val) => { if (val) progress.value = val })
+
+const updateProgress = (data) => {
+  progress.value = data
+  emit('progress-update', data)
+}
+
+let unsubscribeProgress: (() => void) | null = null
+const cleanupProgress = () => {
+  if (unsubscribeProgress) {
+    unsubscribeProgress()
+    unsubscribeProgress = null
+  }
+}
+
+const startProgressTracking = (jobId: string) => {
+  cleanupProgress()
+  updateProgress({ percent: 0, status: 'start' })
+  const { unsubscribe } = useJobChannel(jobId, (data) => {
+    updateProgress({
+      percent: data.progress ?? progress.value.percent,
+      status: data.status
+    })
+    if (data.status === 'done') cleanupProgress()
+  })
+  unsubscribeProgress = unsubscribe
+}
+
+const isProcessing = computed(() => ['start', 'progress', 'rendering'].includes(progress.value.status))
 
 // param / grid state (copied minimal logic)
 const dimensions = [ { key: 'octave', label: 'OCTAVE' }, { key: 'note', label: 'NOTE' }, { key: 'vol', label: 'VOLUME' }, { key: 'bri', label: 'BRIGHTNESS' }, { key: 'hrd', label: 'HARDNESS' }, { key: 'tex', label: 'TEXTURE' } ]
@@ -299,10 +336,12 @@ const applyGeneratedParams = () => {
 
 const handleGeneratePolyphonic = async () => {
   try {
+  const jobId = uuidv4()
+  startProgressTracking(jobId)
   const parseArr = (str) => Array.isArray(str) ? str : String(str).split(',').map(Number)
   const payload = {
     generate_polyphonic: {
-      job_id: uuidv4(),
+      job_id: jobId,
       stream_counts: parseArr(polyParams.value.stream_counts),
       initial_context: polyParams.value.initial_context
 
@@ -317,8 +356,14 @@ const handleGeneratePolyphonic = async () => {
   } catch (err) {
     console.error('Generate request failed', err)
   } finally {
+    if (progress.value.status !== 'rendering' && progress.value.status !== 'done') {
+      updateProgress({ percent: 0, status: 'idle' })
+    }
+    cleanupProgress()
   }
 }
+
+onUnmounted(() => cleanupProgress())
 
 
 // expose some refs/methods for parent if needed

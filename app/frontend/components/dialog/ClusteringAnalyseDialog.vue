@@ -1,6 +1,6 @@
 <template>
   <v-dialog width="1000" v-model="open">
-    <v-form  fast-fail>
+    <v-form fast-fail>
       <v-card>
         <v-card-title>
           <v-row>
@@ -37,9 +37,9 @@
                     step="0.01"
                   ></v-text-field>
                 </v-col>
-                  <v-col cols="4">
-                  <v-btn @click="handleAnalyseTimeseries" :loading="loading">Submit</v-btn>
-                  <span v-if="props.progress.status == 'start' || props.progress.status == 'progress'">{{props.progress.percent}}%</span>
+                <v-col cols="4" class="d-flex align-center">
+                  <v-btn @click="handleAnalyseTimeseries" :loading="loading || isProcessing" :disabled="isProcessing">Submit</v-btn>
+                  <span class="ml-2" v-if="progress.status == 'start' || progress.status == 'progress'">{{ progress.percent }}%</span>
                 </v-col>
               </v-row>
             </v-col>
@@ -51,19 +51,52 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import { v4 as uuidv4 } from 'uuid'
+import { useJobChannel } from '../../composables/useJobChannel'
 const props = defineProps({
   modelValue: Boolean,
   progress: { type: Object, required: false },
   onFileSelected: { type: Function, required: false },
   jobId: { type: String, required: false }
 })
-const emit = defineEmits(['update:modelValue', 'analysed'])
+const emit = defineEmits(['update:modelValue', 'analysed', 'progress-update'])
 
 const open = computed({
   get: () => props.modelValue,
   set: (v: boolean) => emit('update:modelValue', v)
 })
+
+const progress = ref(props.progress || { percent: 0, status: 'idle' })
+watch(() => props.progress, (val) => { if (val) progress.value = val })
+
+const updateProgress = (data) => {
+  progress.value = data
+  emit('progress-update', data)
+}
+
+let unsubscribeProgress: (() => void) | null = null
+const cleanupProgress = () => {
+  if (unsubscribeProgress) {
+    unsubscribeProgress()
+    unsubscribeProgress = null
+  }
+}
+
+const startProgressTracking = (jobId: string) => {
+  cleanupProgress()
+  updateProgress({ percent: 0, status: 'start' })
+  const { unsubscribe } = useJobChannel(jobId, (data) => {
+    updateProgress({
+      percent: data.progress ?? progress.value.percent,
+      status: data.status
+    })
+    if (data.status === 'done') cleanupProgress()
+  })
+  unsubscribeProgress = unsubscribe
+}
+
+const isProcessing = computed(() => progress.value.status === 'start' || progress.value.status === 'progress')
 
 import GridContainer from '../grid/GridContainer.vue'
 import axios from 'axios'
@@ -82,8 +115,10 @@ const handleFileSelected = (e) => {
 const handleAnalyseTimeseries = async () => {
   loading.value = true
   try {
+    const jobId = props.jobId || uuidv4()
+    startProgressTracking(jobId)
     const time_series = (rows.value && rows.value[0] && rows.value[0].data) ? rows.value[0].data : []
-    const data = { analyse: { time_series: time_series, merge_threshold_ratio: mergeThreshold.value, job_id: props.jobId } }
+    const data = { analyse: { time_series: time_series, merge_threshold_ratio: mergeThreshold.value, job_id: jobId } }
     const resp = await axios.post('/api/web/time_series/analyse', data)
     // emit full response data to parent; do not mutate parent props here
     emit('analysed', resp.data)
@@ -91,10 +126,14 @@ const handleAnalyseTimeseries = async () => {
     open.value = false
   } catch (err) {
     console.error('Analyse request failed', err)
+    updateProgress({ percent: 0, status: 'idle' })
+    cleanupProgress()
   } finally {
     loading.value = false
   }
 }
+
+onUnmounted(() => cleanupProgress())
 </script>
 
 <style scoped>
