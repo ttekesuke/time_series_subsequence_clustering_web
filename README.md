@@ -1,6 +1,6 @@
 # time_series_subsequence_clustering_web
 
-A web application for analyzing, generating, and rendering time-series subsequences. It combines clustering-based insights with generative tools that can also output multi-voice music.
+A web application for analyzing, generating, and rendering time-series subsequences. It scans incoming sequences from the start to uncover recurring motifs, combines clustering-based insights with generative tools, and can output multi-voice music.
 
 ## Features
 
