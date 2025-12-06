@@ -2,6 +2,13 @@
 
 A web application for analyzing, generating, and rendering time-series subsequences. It scans incoming sequences from the start to uncover recurring motifs, combines clustering-based insights with generative tools, and can output multi-voice music.
 
+## How it works
+
+1. **Sequential scanning & clustering:** Every series is scanned from the beginning so early motifs are captured. The pipeline clusters similar subsequences across a wide range of lengths, exposing both short patterns and longer-term repetitions.
+2. **Complexity measurement:** The clustering results are used to estimate structural complexity. This metric serves as a guide for generation tasks and for comparing candidate outputs.
+3. **Search-based generation:** When provided with a target progression of complexity values, the system enumerates candidate sequences, measures each one’s complexity, and returns the options that best fit the requested trajectory.
+4. **Multi-voice music rendering:** Generated sequences can be translated into music across multiple auditory streams. Pitch, octave, loudness, and timbre are chosen to respect the target complexity transitions while balancing how the combined parts are perceived.
+
 ## Features
 
 - **Time-series clustering:** Scans series from the beginning, groups similar subsequences of various lengths, and surfaces clusters for visual inspection.

@@ -33,11 +33,12 @@
 
         <section class="mb-6">
           <h3>Working with modes</h3>
-          <p>
-            Use the mode selector in the header to switch between clustering analysis, sequence generation, and music
-            generation. Each feature exposes its own parameter dialog and display; closing a dialog returns you to the last
-            selected view.
-          </p>
+          <ul class="custom-list">
+            <li>Switch modes from the header select: ClusteringAnalyse, ClusteringGenerate, or MusicGenerate.</li>
+            <li>Use the <strong>SET PARAMS</strong> button in the header (or the feature’s own controls) to open the parameter dialog for the active mode.</li>
+            <li>Each feature remembers its state when you close a dialog so you can continue from the last view.</li>
+            <li>In MusicGenerate mode, the Play/Stop control in the header becomes available after audio has been rendered.</li>
+          </ul>
         </section>
 
         <section>
@@ -46,6 +47,7 @@
             <li>Usage is free; inputs and results are not saved.</li>
             <li>System behavior may change without notice, and result correctness is not guaranteed.</li>
             <li>If the app has been idle, the first request may take additional time while services restart.</li>
+            <li>Generated audio and previews are session-scoped and are cleared when you refresh the page.</li>
           </ul>
         </section>
       </v-card-text>
