@@ -42,6 +42,7 @@
       :on-file-selected="onFileSelected"
       :progress="progress"
       :job-id="props.jobId"
+      @progress-update="(p) => (progress.value = p)"
       @generated="handleGenerated"
     />
   </div>

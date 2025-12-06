@@ -130,6 +130,7 @@
     <MusicGenerateDialog
       v-model="setDataDialog"
       :progress="progress"
+      @progress-update="(p) => (progress.value = p)"
       @generated-polyphonic="handleGenerated"
     />
   </div>
@@ -465,10 +466,10 @@ const handleGenerated = (data: PolyphonicResponse) => {
   generate.value.clusters.hrd    = data.clusters.hrd
   generate.value.clusters.tex    = data.clusters.tex
 
+  progress.value = { percent: 100, status: 'rendering' }
   renderPolyphonicAudio(ts)
 }
 const renderPolyphonicAudio = (timeSeries) => {
-  progress.value.status = 'rendering'
   const stepDuration = 1 / 4.0
   axios.post('/api/web/supercolliders/render_polyphonic', {
     time_series: timeSeries, step_duration: stepDuration
@@ -485,8 +486,9 @@ const renderPolyphonicAudio = (timeSeries) => {
     audio.value = new Audio(url)
     audio.value.addEventListener('ended', () => nowPlaying.value = false)
     cleanup()
+    progress.value = { percent: 100, status: 'done' }
   })
-  .catch(error => { console.error("Rendering error:", error); music.value.loading = false })
+  .catch(error => { console.error("Rendering error:", error); music.value.loading = false; progress.value = { percent: 0, status: 'idle' } })
 }
 
 const cleanup = () => {
