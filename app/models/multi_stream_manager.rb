@@ -103,37 +103,61 @@ end
 
   def commit_state(ordered_chord, quadratic_integer_array)
     current_actives = active_streams
-    n_notes = ordered_chord.size
+    n_notes   = ordered_chord.size
     n_streams = current_actives.size
 
     if n_notes == n_streams
+      # --- ケース1: ノート数 = ストリーム数 ---
       current_actives.each_with_index do |s, i|
-        s.manager.add_data_point_permanently(ordered_chord[i])
-        s.last_note = ordered_chord[i]
+        note = ordered_chord[i]
+        s.manager.add_data_point_permanently(note)
+        s.last_note = note
       end
 
     elsif n_notes > n_streams
-      current_actives.each_with_index do |s, i|
-        s.manager.add_data_point_permanently(ordered_chord[i])
-        s.last_note = ordered_chord[i]
-      end
+      # --- ケース2: ノート数 > ストリーム数（ストリーム増加） ---
 
-      (n_streams...n_notes).each do |i|
-        note = ordered_chord[i]
-        parent = current_actives.min_by { |s| (s.last_note - note).abs }
+      # 既存ストリームに割り当てるノートと、
+      # 新規ストリーム用ノートを分離（resolve_* の仕様に合わせて先頭 n_streams を既存用とみなす）
+      base_notes  = ordered_chord[0, n_streams]         # 既存ストリームに入るノート
+      extra_notes = ordered_chord[n_streams..-1] || []  # 増加分（新規ストリーム用）
 
-        new_mgr = Marshal.load(Marshal.dump(parent.manager))
-        new_mgr.add_data_point_permanently(note)
+      new_containers = []
 
-        new_container = StreamContainer.new(@next_stream_id, new_mgr)
-        @stream_pool << new_container
+      # 1) まず「分岐元からのクローン」を作る（この段階では既存ストリームにはまだ add しない）
+      extra_notes.each do |note|
+        # ★どのストリームから分岐させるか
+        parent =
+          # ここを「current_actives.first」にすれば必ず Stm1 から分岐
+          current_actives.min_by { |s| (s.last_note - note).abs }
+
+        # 親の“現在ステップ前”の状態を丸ごとコピー
+        parent_snapshot = Marshal.load(Marshal.dump(parent.manager))
+        # 新ストリーム側にこのステップのノートを 1 回だけ追加
+        parent_snapshot.add_data_point_permanently(note)
+
+        new_container = StreamContainer.new(@next_stream_id, parent_snapshot)
+        new_container.last_note = note
+        new_containers << new_container
         @next_stream_id += 1
       end
 
-    else # n_notes < n_streams
-      available_streams = current_actives.dup
-      next_actives = []
+      # 2) 既存ストリームに対して、このステップのノートを追加
+      current_actives.each_with_index do |s, i|
+        note = base_notes[i]
+        s.manager.add_data_point_permanently(note)
+        s.last_note = note
+      end
 
+      # 3) 新しく生まれたストリームをプールに登録
+      @stream_pool.concat(new_containers)
+
+    else
+      # --- ケース3: ノート数 < ストリーム数（ストリーム減少） ---
+      available_streams = current_actives.dup
+      next_actives      = []
+
+      # 各ノートに対して「一番近い last_note を持つストリーム」を選び、そのストリームだけ延命
       ordered_chord.each do |note|
         best_s = available_streams.min_by { |s| (s.last_note - note).abs }
         best_s.manager.add_data_point_permanently(note)
@@ -142,10 +166,12 @@ end
         available_streams.delete(best_s)
       end
 
+      # 余ったストリームは非アクティブ化
       available_streams.each { |s| s.active = false }
-      next_actives.each { |s| s.active = true }
+      next_actives.each     { |s| s.active = true }
     end
   end
+
 
   def update_caches_permanently(quadratic_integer_array)
     active_streams.each do |s|

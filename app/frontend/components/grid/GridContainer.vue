@@ -1,35 +1,62 @@
 <template>
-  <!--
-    focusoutイベントを監視して、フォーカスがコンポーネント外に出た場合に検知する。
-    tabindex="-1" は必須ではないが、フォーカス管理の挙動を安定させるために付与することもある。
-    ここではdiv自体にフォーカスを当てる意図はないためイベント監視のみ行う。
-  -->
+  <!-- フォーカス監視ラッパ -->
   <div class="grid-wrapper" ref="wrapperRef" @focusout="onFocusOut">
-    <!-- ツールバー (行数・列数・生成ボタン) -->
+    <!-- ツールバー -->
     <v-toolbar density="compact" color="grey-lighten-4" class="px-2 mb-2 rounded">
-      <v-toolbar-title class="text-subtitle-1 font-weight-bold"></v-toolbar-title>
+      <v-toolbar-title class="text-subtitle-1 font-weight-bold">
+        {{ title }}
+      </v-toolbar-title>
       <v-spacer></v-spacer>
 
-      <!-- 行数・列数管理 -->
-      <div v-if="showRowsLength" class="d-flex align-center mr-4" style="font-size: 0.9rem;">
+      <!-- Streams 管理（初期コンテキスト用） -->
+      <div
+        v-if="showStreamCount"
+        class="d-flex align-center mr-4"
+        style="font-size: 0.9rem;"
+      >
+        <span class="mr-2">Streams:</span>
+        <input
+          type="number"
+          :value="streamCount"
+          @input="onStreamInput"
+          min="1"
+          max="16"
+          class="step-input mr-1"
+        >
+      </div>
+
+      <!-- 行数管理（汎用用） -->
+      <div
+        v-if="showRowsLength"
+        class="d-flex align-center mr-4"
+        style="font-size: 0.9rem;"
+      >
         <span class="mr-2">Rows:</span>
         <input
-                  type="number"
+          type="number"
           :value="rows.length"
           @input="updateRowCount($event)"
-          min="1" max="32"
+          min="1"
+          max="32"
           class="step-input mr-1"
-         >
+        >
       </div>
-      <div v-if="showColsLength" class="d-flex align-center mr-4" style="font-size: 0.9rem;">
+
+      <!-- 列数管理 -->
+      <div
+        v-if="showColsLength"
+        class="d-flex align-center mr-4"
+        style="font-size: 0.9rem;"
+      >
         <span class="mr-2">Steps:</span>
         <input
           type="number"
           :value="steps"
           @input="$emit('update:steps', parseInt(($event.target as HTMLInputElement).value))"
-          min="1" max="200"
+          min="1"
+          max="200"
           class="step-input mr-1"
-         >
+        >
       </div>
 
       <!-- パラメータ生成ボタン -->
@@ -50,7 +77,11 @@
           <thead>
             <tr>
               <th class="sticky-col head-col">Steps</th>
-              <th v-for="i in steps" :key="`h-${i}`" class="data-col">
+              <th
+                v-for="i in steps"
+                :key="`h-${i}`"
+                class="data-col"
+              >
                 {{ i }}
               </th>
             </tr>
@@ -81,11 +112,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import GridRow from './GridRow.vue'
 import ParamGenDialog from './ParamGenDialog.vue'
 
-// 行データの型定義
+// 行データの型
 type GridRowData = {
   name: string;
   data: number[];
@@ -98,48 +129,57 @@ type GridRowData = {
 }
 
 const props = defineProps({
+  title: { type: String, default: '' },
   rows: { type: Array as () => GridRowData[], required: true },
   steps: { type: Number, required: true },
   showRowsLength: { type: Boolean, default: true },
-  showColsLength: { type: Boolean, default: true }
+  showColsLength: { type: Boolean, default: true },
+  // 初期コンテキスト用: Streams 入力
+  showStreamCount: { type: Boolean, default: false },
+  streamCount: { type: Number, default: 0 }
 })
 
-const emit = defineEmits(['update:rows', 'update:steps'])
+const emit = defineEmits([
+  'update:rows',
+  'update:steps',
+  'update:streamCount'
+])
 
 // --- State ---
 const wrapperRef = ref<HTMLElement | null>(null)
 const focusedCell = ref<any>(null) // { rowIndex, colIndex, config }
 const paramGenDialog = ref(false)
-const paramGenInit = ref({})
+const paramGenInit = ref<any>({})
 
 // --- Methods ---
 
-// フォーカスアウト時の処理（コンポーネント外へフォーカスが移動したら選択解除）
-const onFocusOut = (event: FocusEvent) => {
-  // ダイアログが開いている最中は、フォーカスがダイアログ（DOM上は外部）に移動するため、
-  // 選択解除を行わないようにする
-  if (paramGenDialog.value) return
-
-  const relatedTarget = event.relatedTarget as HTMLElement;
-
-  // 移動先（relatedTarget）がラッパー内部の要素であれば、
-  // まだ操作中とみなして選択解除しない（例: ツールバーのボタンクリック時など）
-  if (wrapperRef.value && wrapperRef.value.contains(relatedTarget)) {
-    return;
-  }
-
-  // 完全に外に出た場合のみ解除
-  focusedCell.value = null;
+// Streams 入力変更
+const onStreamInput = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  const v = parseInt(target.value)
+  if (isNaN(v) || v < 1) return
+  emit('update:streamCount', v)
 }
 
-// 行データの更新
+// フォーカスアウト時: コンポーネント外に出たら選択解除
+const onFocusOut = (event: FocusEvent) => {
+  if (paramGenDialog.value) return
+
+  const relatedTarget = event.relatedTarget as HTMLElement | null
+  if (relatedTarget && wrapperRef.value && wrapperRef.value.contains(relatedTarget)) {
+    return
+  }
+  focusedCell.value = null
+}
+
+// 行更新
 const updateRow = (index: number, newRow: GridRowData) => {
   const newRows = [...props.rows]
   newRows[index] = newRow
   emit('update:rows', newRows)
 }
 
-// 行数の変更 (末尾に追加 / 末尾から削除)
+// 行数変更（汎用用）
 const updateRowCount = (e: Event) => {
   const target = e.target as HTMLInputElement
   const newCount = parseInt(target.value)
@@ -148,8 +188,6 @@ const updateRowCount = (e: Event) => {
   const currentRows = [...props.rows]
 
   if (newCount > currentRows.length) {
-    // 追加: 最後の行の設定をコピーするか、デフォルト設定で追加
-    // ここでは簡易的にデフォルト設定
     while (currentRows.length < newCount) {
       currentRows.push({
         name: `Param ${currentRows.length + 1}`,
@@ -158,37 +196,30 @@ const updateRowCount = (e: Event) => {
       })
     }
   } else if (newCount < currentRows.length) {
-    // 削除
     currentRows.splice(newCount)
   }
+
   emit('update:rows', currentRows)
 }
 
-// フォーカス検知
+// フォーカス
 const onCellFocus = (payload: any) => {
   focusedCell.value = payload
 }
 
-// ペースト処理
+// ペースト
 const onCellPaste = (payload: any) => {
   const { text, rowIndex, colIndex, config } = payload
-
-  // 空白またはタブで区切る
   const values = text.split(/[\s\t]+/).filter((v: string) => v !== '').map(Number)
   if (values.some(isNaN)) return
 
   const requiredLen = colIndex + values.length
 
   // 列数の自動拡張
-  if (requiredLen > props.steps) {
-    emit('update:steps', requiredLen)
-  }
+  if (requiredLen > props.steps) emit('update:steps', requiredLen)
 
-  // データの適用
   const targetRow = { ...props.rows[rowIndex] }
   const newData = [...targetRow.data]
-
-  // 足りない分を埋める
   while (newData.length < requiredLen) newData.push(0)
 
   values.forEach((val: number, k: number) => {
@@ -196,7 +227,6 @@ const onCellPaste = (payload: any) => {
     if (config.isInt) v = Math.round(v)
     if (v < config.min) v = config.min
     if (v > config.max) v = config.max
-
     newData[colIndex + k] = v
   })
 
@@ -204,14 +234,13 @@ const onCellPaste = (payload: any) => {
   updateRow(rowIndex, targetRow)
 }
 
-// パラメータ生成ダイアログオープン
+// ParamGen ダイアログオープン
 const openParamGenDialog = () => {
   if (!focusedCell.value) return
 
   const { rowIndex, colIndex, config } = focusedCell.value
-  const currentVal = props.rows[rowIndex].data[colIndex] || 0
+  const currentVal = props.rows[rowIndex].data[colIndex] ?? 0
 
-  // 初期値をセット
   paramGenInit.value = {
     steps: Math.max(1, props.steps - colIndex),
     start: currentVal,
@@ -225,16 +254,13 @@ const openParamGenDialog = () => {
   paramGenDialog.value = true
 }
 
-// 生成データの適用
+// 生成データ適用
 const applyGeneratedParams = (params: any) => {
   const { steps, mode, start, end, curve, randMin, randMax } = params
   const { rowIndex, colIndex, config } = focusedCell.value
 
-  // 自動拡張
   const requiredLen = colIndex + steps
-  if (requiredLen > props.steps) {
-    emit('update:steps', requiredLen)
-  }
+  if (requiredLen > props.steps) emit('update:steps', requiredLen)
 
   const targetRow = { ...props.rows[rowIndex] }
   const newData = [...targetRow.data]
@@ -247,19 +273,17 @@ const applyGeneratedParams = (params: any) => {
       let easedT = t
       if (curve === 'easeInQuad') easedT = t * t
       if (curve === 'easeOutQuad') easedT = t * (2 - t)
-      if (curve === 'easeInOutQuad') easedT = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
-
+      if (curve === 'easeInOutQuad') {
+        easedT = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+      }
       val = start + (end - start) * easedT
     } else {
       val = randMin + Math.random() * (randMax - randMin)
     }
 
-    // 丸め & クランプ
-    if (config.isInt) {
-      val = Math.round(val)
-    } else {
-      val = Number(val.toFixed(2))
-    }
+    if (config.isInt) val = Math.round(val)
+    else val = Number(val.toFixed(2))
+
     if (val < config.min) val = config.min
     if (val > config.max) val = config.max
 
@@ -316,6 +340,6 @@ const applyGeneratedParams = (params: any) => {
   border-right: 2px solid #ccc;
 }
 thead th.sticky-col {
-  z-index: 4; /* 交差部分は最上位 */
+  z-index: 4;
 }
 </style>
