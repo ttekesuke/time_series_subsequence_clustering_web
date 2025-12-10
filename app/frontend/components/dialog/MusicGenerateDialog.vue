@@ -294,6 +294,27 @@ const genRowMetas: GenRowMeta[] = [
     isInt: true,
     defaultFactory: (len) => Array(len).fill(2)
   },
+
+  // ★ 追加: Stream 強度ターゲット / スプレッド
+  {
+    name: 'STREAM Strength Target',
+    key: 'stream_strength_target',
+    min: 0,
+    max: 1,
+    step: 0.01,
+    isInt: false,
+    defaultFactory: (len) => constant(0.5, len) // 真ん中をデフォルト
+  },
+  {
+    name: 'STREAM Strength Spread',
+    key: 'stream_strength_spread',
+    min: 0,
+    max: 1,
+    step: 0.01,
+    isInt: false,
+    defaultFactory: (len) => constant(0.0, len) // 0 = 集中, 1 = 分散
+  },
+
   // octave
   { name: 'OCT Global', key: 'octave_global', min: 0, max: 1, step: 0.01,
     defaultFactory: (len) => fill(0.0, 0.1, 1.0, len) },
@@ -419,6 +440,10 @@ const buildGenParamsFromRows = () => {
 
   result.stream_counts = get('stream_counts')
 
+  // ★ 追加: stream_strength_* を build
+  result.stream_strength_target = get('stream_strength_target')
+  result.stream_strength_spread = get('stream_strength_spread')
+
   result.octave_global    = get('octave_global')
   result.octave_ratio     = get('octave_ratio')
   result.octave_tightness = get('octave_tightness')
@@ -465,16 +490,20 @@ const handleGeneratePolyphonic = async () => {
       generate_polyphonic: {
         job_id: jobId,
         stream_counts: genParams.stream_counts,
-        initial_context: initialContext
+        initial_context: initialContext,
+        // ★ 追加: stream_strength_* を generate_polyphonic に含める
+        stream_strength_target: genParams.stream_strength_target,
+        stream_strength_spread: genParams.stream_strength_spread
       }
     }
 
     ;['octave', 'note', 'vol', 'bri', 'hrd', 'tex'].forEach((k) => {
-      payload[`${k}_global`]    = genParams[`${k}_global`]
-      payload[`${k}_ratio`]     = genParams[`${k}_ratio`]
-      payload[`${k}_tightness`] = genParams[`${k}_tightness`]
-      payload[`${k}_conc`]      = genParams[`${k}_conc`]
+      payload.generate_polyphonic[`${k}_global`]    = genParams[`${k}_global`]
+      payload.generate_polyphonic[`${k}_ratio`]     = genParams[`${k}_ratio`]
+      payload.generate_polyphonic[`${k}_tightness`] = genParams[`${k}_tightness`]
+      payload.generate_polyphonic[`${k}_conc`]      = genParams[`${k}_conc`]
     })
+
 
     const resp = await axios.post('/api/web/time_series/generate_polyphonic', payload)
     emit('generated-polyphonic', resp.data)

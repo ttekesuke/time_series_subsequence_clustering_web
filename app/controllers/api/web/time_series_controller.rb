@@ -181,11 +181,8 @@ class Api::Web::TimeSeriesController < ApplicationController
   #  多声生成アクション (6次元 x 4制御パラメータ)
   # ============================================================
   def generate_polyphonic
-
     start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
-    # Strong Parameters は使用せず、直接 params を参照して柔軟にデータを受け取る
-    # (特に initial_context のような複雑なネスト構造のため)
     raw_params = params.require(:generate_polyphonic)
     job_id = raw_params[:job_id]
     broadcast_start(job_id)
@@ -198,6 +195,10 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     stream_counts = raw_params[:stream_counts].map(&:to_i)
     steps_to_generate = stream_counts.length
+
+    # ★追加: ストリーム強度制御パラメータ (step ごと)
+    strength_targets = (raw_params[:stream_strength_target] || []).map(&:to_f)
+    strength_spreads = (raw_params[:stream_strength_spread] || []).map(&:to_f)
 
     # 結果格納用 (初期文脈をコピー)
     results = initial_context.deep_dup
@@ -218,28 +219,28 @@ class Api::Web::TimeSeriesController < ApplicationController
     min_window = 2
 
     dimensions.each do |dim|
-      # その次元の履歴データだけを抽出してマネージャを作る
-      # results は [[stream1_vec, stream2_vec], ...]
-      # stream1_vec は [oct, note, vol, ...]
       dim_history = results.map do |step_streams|
         step_streams.map { |s| s[dimensions.index(dim)] }
       end
 
-      # 足りない文脈の補完 (最低3ステップ)
       if dim_history.length < min_window + 1
         last_val = dim_history.last || Array.new(stream_counts.first, dim[:range].first)
         (min_window + 1 - dim_history.length).times { dim_history << last_val.dup }
       end
 
-      managers[dim[:key]] = initialize_managers_for_dimension(dim_history, merge_threshold_ratio, min_window, dim[:range] )
+      managers[dim[:key]] = initialize_managers_for_dimension(
+        dim_history,
+        merge_threshold_ratio,
+        min_window,
+        dim[:range]
+      )
     end
 
     # --- 3. 生成ループ (Time Step) ---
     steps_to_generate.times do |step_idx|
       current_stream_count = stream_counts[step_idx]
 
-      # このステップの全ストリームの値を格納する配列 (初期化)
-      # current_step_values[stream_idx] = [oct, note, vol, ...]
+      # このステップの全ストリームの値を格納する配列
       current_step_values = Array.new(current_stream_count) { [] }
 
       # --- 4. 次元ループ (Dimension) ---
@@ -248,25 +249,32 @@ class Api::Web::TimeSeriesController < ApplicationController
         mgrs = managers[key]
         value_min = dim[:range].min.to_f
         value_max = dim[:range].max.to_f
+
         # パラメータ取得
-        p_global = (raw_params["#{key}_global"] || [])[step_idx].to_f
-        p_ratio  = (raw_params["#{key}_ratio"]  || [])[step_idx].to_f
-        p_tight  = (raw_params["#{key}_tightness"] || [])[step_idx].to_f
-        p_conc   = (raw_params["#{key}_conc"]   || [])[step_idx].to_f
+        p_global = (raw_params["#{key}_global"]     || [])[step_idx].to_f
+        p_ratio  = (raw_params["#{key}_ratio"]      || [])[step_idx].to_f
+        p_tight  = (raw_params["#{key}_tightness"]  || [])[step_idx].to_f
+        p_conc   = (raw_params["#{key}_conc"]       || [])[step_idx].to_f
 
         # ターゲット生成 (Method B: バイポーラ)
-        stream_targets = generate_bipolar_targets(current_stream_count, p_ratio, p_tight)
+        stream_targets = generate_centered_targets(current_stream_count, p_ratio, p_tight)
+        p "stream_targets: #{stream_targets.inspect}"
 
         # 候補生成 (重複組み合わせ 11Hn)
         candidates_set = dim[:range].repeated_combination(current_stream_count).to_a
 
-        # 事前計算
+        # 事前計算 (数量用ウェイト)
         q_array = create_quadratic_integer_array(
           value_min,
           value_max,
           results.length + 1
         )
         stream_costs = mgrs[:stream].precalculate_costs(dim[:range], q_array)
+
+        # ★vol 次元のときは、このステップ開始時点の強度を更新しておく
+        if key == 'vol'
+          mgrs[:stream].update_strengths!
+        end
 
         # ベスト候補の選択
         best_chord = select_best_chord_for_dimension(
@@ -280,7 +288,21 @@ class Api::Web::TimeSeriesController < ApplicationController
         mgrs[:global].add_data_point_permanently(best_chord)
         mgrs[:global].update_caches_permanently(q_array)
 
-        mgrs[:stream].commit_state(best_chord, q_array)
+        if key == 'vol'
+          # ★vol 次元だけ、ストリーム増減のプロトタイプ選択に強度パラメータを渡す
+          st_target = strength_targets[step_idx] || 0.5
+          st_spread = strength_spreads[step_idx] || 0.0
+
+          mgrs[:stream].commit_state(
+            best_chord,
+            q_array,
+            strength_params: { target: st_target, spread: st_spread }
+          )
+        else
+          # 他次元は従来どおり
+          mgrs[:stream].commit_state(best_chord, q_array)
+        end
+
         mgrs[:stream].update_caches_permanently(q_array)
 
         # 現在のステップのデータに、決定した次元の値を追加
@@ -297,8 +319,8 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     broadcast_done(job_id)
-    # === ここからクラスタ情報の組み立て ===
 
+    # === ここからクラスタ情報の組み立て ===
     cluster_payload = {}
 
     dimensions.each do |dim|
@@ -307,13 +329,10 @@ class Api::Web::TimeSeriesController < ApplicationController
       g_mgr = mgrs[:global]
       s_mgr = mgrs[:stream]
 
-      # Global クラスタのタイムライン
       global_timeline =
         g_mgr.clusters_to_timeline(g_mgr.clusters, min_window)
 
-      # 各ストリームごとのタイムライン
       streams_hash = {}
-
       s_mgr.stream_pool.each do |container|
         stream_id = container.id
         s_mgr_for_stream = container.manager
@@ -329,12 +348,14 @@ class Api::Web::TimeSeriesController < ApplicationController
         streams: streams_hash
       }
     end
+
     render json: {
       timeSeries: results,
       clusters: cluster_payload,
       processingTime: ((end_time - start_time)).round(2)
     }
   end
+
 
   private
 
@@ -355,62 +376,39 @@ class Api::Web::TimeSeriesController < ApplicationController
   end
 
   # --- ターゲット生成 (バイポーラ方式・決定論版) ---
-  def generate_bipolar_targets(n, ratio, tightness)
+  def generate_centered_targets(n, center, spread)
     return [] if n <= 0
 
-    # 念のためクランプ
-    ratio     = [[ratio.to_f, 0.0].max, 1.0].min
-    tightness = [[tightness.to_f, 0.0].max, 1.0].min
+    # n=1 の場合は中心そのものを返す
+    return [center] if n == 1
 
-    complex_count = (n * ratio).round
-    simple_count  = n - complex_count
+    # spread（広がり幅）を安全な値に調整（必要なければ外してもOK）
+    center = [[center.to_f, 0.0].max, 1.0].min
+    spread = [[spread.to_f, 0.0].max, 1.0].min
+
+    # 全体の幅の半分を計算
+    half_width = spread / 2.0
+
+    # 開始地点と終了地点を計算
+    start_val = center - half_width
+    end_val   = center + half_width
 
     targets = []
 
-    # tightness=1.0 -> 全員 0 / 1 に張り付き
-    # tightness=0.0 -> 0..0.5 / 0.5..1.0 の幅で均等配置
-    width = (1.0 - tightness) * 0.5
+    # 等間隔に分割して値を生成
+    (0...n).each do |i|
+      # 進行度 (0.0 〜 1.0)
+      t = i.to_f / (n - 1)
 
-    # --- complex 側 (1.0 付近) ---
-    if complex_count > 0
-      if width <= 0.0
-        # 完全タイトなら全員 1.0
-        complex_count.times { targets << 1.0 }
-      else
-        # [1.0 - width, 1.0] を均等割り
-        if complex_count == 1
-          targets << (1.0 - width)  # 1人だけなら内側に置く
-        else
-          (0...complex_count).each do |i|
-            t = i.to_f / (complex_count - 1)
-            val = 1.0 - width * t
-            targets << val
-          end
-        end
-      end
+      # 線形補間 (Linear Interpolation)
+      val = start_val + (end_val - start_val) * t
+
+      # 念のため 0.0 ~ 1.0 に収める（Clamp）
+      val = [[val, 0.0].max, 1.0].min
+      targets << val
     end
 
-    # --- simple 側 (0.0 付近) ---
-    if simple_count > 0
-      if width <= 0.0
-        # 完全タイトなら全員 0.0
-        simple_count.times { targets << 0.0 }
-      else
-        # [0.0, width] を均等割り
-        if simple_count == 1
-          targets << width  # 1人だけなら内側に置く
-        else
-          (0...simple_count).each do |i|
-            t = i.to_f / (simple_count - 1)
-            val = 0.0 + width * t
-            targets << val
-          end
-        end
-      end
-    end
-
-    # もともと sort して返していたので踏襲
-    targets.sort
+    targets
   end
 
 
