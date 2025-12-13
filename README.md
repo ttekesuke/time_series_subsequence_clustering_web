@@ -1,31 +1,69 @@
 # time_series_subsequence_clustering_web
 
-A web application for analyzing, generating, and rendering time-series subsequences. It scans incoming sequences from the start to uncover recurring motifs, combines clustering-based insights with generative tools, and can output multi-voice music.
+Time-series subsequence clustering, complexity-guided generation, and polyphonic music rendering — packaged as a web application.
+
+This project scans an input time series from the beginning, discovers recurring subsequences across multiple window sizes, and exposes them as clusters you can inspect. Those clustering results can also be used as a “structural complexity” signal to drive greedy, step-by-step generation. For music use-cases, generated sequences can be mapped into multiple auditory streams (voices) with controls over octave, pitch class, loudness, and timbre.
 
 ## How it works
 
-1. **Sequential scanning & clustering:** Every series is scanned from the beginning so early motifs are captured. The pipeline clusters similar subsequences across a wide range of lengths, exposing both short patterns and longer-term repetitions.
-2. **Complexity measurement:** The clustering results are used to estimate structural complexity. This metric serves as a guide for generation tasks and for comparing candidate outputs.
-3. **Search-based generation:** When provided with a target progression of complexity values, the system greedily proposes candidates step by step, measuring the complexity of each option from clustering results and choosing the sequences that best follow the requested trajectory.
-4. **Multi-voice music rendering:** Generated sequences can be translated into music across multiple auditory streams. Pitch, octave, loudness, and timbre are chosen to respect the target complexity transitions while balancing how the combined parts are perceived.
+### 1) Incremental subsequence clustering
+- The time series is processed **sequentially** (left to right).
+- For each new point, the system builds/updates clusters of subsequences across increasing window sizes.
+- Similar subsequences are merged into clusters, while new motifs form new clusters.
 
-## Pushing changes
+### 2) Cluster-derived “complexity” metrics
+From the cluster structure, the system derives numerical scores that can be used to compare candidates:
 
-This repository is not configured with a remote by default. To push, set your own remote URL once (for example, `git remote add origin <your_repo_url>`) and push the `work` branch explicitly: `git push origin work`.
+- **Distance-based variation (cluster-to-cluster distance drift):**  
+  Measures how much **the distance between clusters** changes as new subsequences are added.  
+  Intuitively, if clusters that used to be “close” become “far” (or vice versa) over time, this metric grows.
+
+- **Quantity / repetition structure:**  
+  Captures how strongly motifs recur and how repetition structure evolves.
+
+- **Internal complexity:**  
+  Measures how much the average subsequence inside a cluster changes from step to step.
+
+These act as a proxy for “how structured / complex the series looks” to the clustering model.
+
+### 3) Greedy, search-based generation
+- You provide a **target complexity trajectory** (e.g. 0→1 over time).
+- For each step, the generator proposes candidate next values (or candidate chords in the polyphonic mode),
+  simulates “what clustering would look like if we appended it,”
+  and selects the candidate that best matches the target score.
+
+### 4) Polyphonic parameter generation (music mode)
+In polyphonic mode, generation happens across multiple dimensions (e.g. octave, pitch class, loudness, timbre).
+- Stream-wise and global targets shape the output.
+- A short-term-memory (STM) roughness/dissonance model can be used to select pitch-class sets that match a dissonance target.
+- Results can be rendered/played via the web UI (and optionally via SuperCollider-based synthesis/rendering).
 
 ## Features
 
-- **Time-series clustering:** Scans series from the beginning, groups similar subsequences of various lengths, and surfaces clusters for visual inspection.
-- **Complexity-aware generation:** Estimates structural complexity from clustering results. Given a target progression of complexity values, the system greedily explores candidate sequences, scoring each by its clustering-derived complexity to keep pace with the requested trajectory.
-- **Music rendering:** Generates music with multiple auditory streams (voices) using parameters such as pitch, octave, loudness, and timbre that follow the supplied complexity transitions. The arrangement considers how the combined streams will be perceived.
-- **Web experience:** Built with Vue and Vuetify on the frontend, backed by Rails APIs and SuperCollider rendering for polyphonic output.
+### Analysis
+- Incremental subsequence clustering over multiple window sizes
+- Cluster timeline output for visualization
+- Structural metrics derived from clusters (cluster-distance drift / repetition / internal complexity)
 
-## Development
+### Generation
+- Complexity-guided greedy generation for scalar time series
+- Polyphonic generation across multiple streams (voices)
+- Per-dimension controls (global / ratio / tightness / conc) to shape:
+  - octave
+  - pitch class / note decisions
+  - volume
+  - timbre parameters (brightness / hardness / texture)
+  - chord size (stream-wise chord tone count)
 
-- Vue 3 + TypeScript frontend served via Vite.
-- Ruby on Rails backend with ActionCable channels for job progress updates.
-- SuperCollider integration for rendering polyphonic audio from generated sequences.
+### Music / perception-oriented controls
+- STM-based dissonance/roughness targeting (fast “virtual” estimation; currently using octave + volume + pitch class)
+- Deterministic candidate selection (no randomness / probability sampling)
+
+### Web app
+- Vue + Vuetify frontend
+- Rails API backend
+- Progress updates via ActionCable
 
 ## Deployment
 
-The production instance is available at [time-series-subsequence-clustering-web.onrender.com](https://time-series-subsequence-clustering-web.onrender.com/).
+Production instance: https://time-series-subsequence-clustering-web.onrender.com/
