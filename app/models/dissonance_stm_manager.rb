@@ -1,4 +1,3 @@
-# app/models/dissonance_stm_manager.rb
 # frozen_string_literal: true
 
 class DissonanceStmManager

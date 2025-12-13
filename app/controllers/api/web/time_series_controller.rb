@@ -1,4 +1,3 @@
-# app/controllers/api/web/time_series_controller.rb
 # frozen_string_literal: true
 
 require 'set'
