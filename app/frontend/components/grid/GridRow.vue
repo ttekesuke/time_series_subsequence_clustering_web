@@ -2,7 +2,21 @@
   <tr>
     <!-- 固定ヘッダー列 (パラメータ名) -->
     <td class="sticky-col head-col row-label">
-      {{ row.name }}
+      <span>
+        {{ row.shortName }}
+        <v-tooltip
+          v-if="row.help"
+          activator="parent"
+          location="end"
+        >
+          <div style="max-width: 340px;" class="text-body-2">
+            <div class="mt-1"> {{ row.help.overview }}</div>
+            <div><b>範囲:</b> {{ row.help.range }}</div>
+            <div class="mt-1"> {{ row.help.atMin }}</div>
+            <div class="mt-1"> {{ row.help.atMax }}</div>
+          </div>
+        </v-tooltip>
+      </span>
     </td>
 
     <!-- データ列 -->

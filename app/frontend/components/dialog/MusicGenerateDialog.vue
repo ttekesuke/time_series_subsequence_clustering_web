@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch, nextTick } from 'vue'
 import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
 import { useJobChannel } from '../../composables/useJobChannel'
@@ -140,12 +140,12 @@ type GridRowData = {
 
 // 次元(6D): [oct, note, vol, bri, hrd, tex]
 const dimensions = [
-  { key: 'octave', label: 'OCTAVE' },
-  { key: 'note', label: 'NOTE' },
-  { key: 'vol', label: 'VOLUME' },
-  { key: 'bri', label: 'BRIGHTNESS' },
-  { key: 'hrd', label: 'HARDNESS' },
-  { key: 'tex', label: 'TEXTURE' }
+  { key: 'octave', shortName: 'OCTAVE', name: 'OCTAVE' },
+  { key: 'note', shortName: 'NOTE', name: 'NOTE' },
+  { key: 'vol', shortName: 'VOLUME', name: 'VOLUME' },
+  { key: 'bri', shortName: 'BRIGHTNESS', name: 'BRIGHTNESS' },
+  { key: 'hrd', shortName: 'HARDNESS', name: 'HARDNESS' },
+  { key: 'tex', shortName: 'TEXTURE', name: 'TEXTURE' }
 ]
 
 // 各次元のデフォルト値 (1ストリーム分) [oct, note, vol, bri, hrd, tex]
@@ -169,7 +169,8 @@ const makeContextRow = (streamIdx: number, dimIdx: number): GridRowData => {
   const dim = dimensions[dimIdx]
   const base = defaultContextBase[dimIdx] ?? 0
   return {
-    name: `S${streamIdx + 1} ${dim.label}`,
+    name: `S${streamIdx + 1} ${dim.name}`,
+    shortName: `S${streamIdx + 1} ${dim.shortName}`,
     data: Array(contextSteps.value).fill(base),
     config: makeContextConfig(dim.key)
   }
@@ -254,16 +255,41 @@ const buildInitialContext = () => {
 }
 
 /** ========== 2. Generation Parameters 用定義 ========== */
+type RowHelp = {
+  overview: string
+  range: string
+  atMin: string
+  atMax: string
+}
 
 type GenRowMeta = {
-  name: string;
-  key: string;
-  min: number;
-  max: number;
-  step?: number;
-  isInt?: boolean;
-  defaultFactory: (len: number) => number[];
+  shortName: string
+  name: string
+  key: string
+  min: number
+  max: number
+  step?: number
+  isInt?: boolean
+  defaultFactory: (len: number) => number[]
+  help?: RowHelp
 }
+
+const makeRangeText = (m: Pick<GenRowMeta, "min" | "max" | "step" | "isInt">) => {
+  const step = m.isInt ? 1 : (m.step ?? 1)
+  return `${m.min}〜${m.max}（step ${step}）`
+}
+
+const H = (
+  meta: Pick<GenRowMeta, "min" | "max" | "step" | "isInt">,
+  overview: string,
+  atMin: string,
+  atMax: string
+): RowHelp => ({
+  overview,
+  range: makeRangeText(meta),
+  atMin,
+  atMax
+})
 
 const stepsDefault = 10
 
@@ -285,108 +311,541 @@ const constant = (val: number, len: number = stepsDefault) => Array(len).fill(va
 const genSteps = ref<number>(stepsDefault)
 
 const genRowMetas: GenRowMeta[] = [
-  { // stream count
-    name: 'STREAM COUNT',
-    key: 'stream_counts',
+  // =========================================================
+  // stream count
+  // =========================================================
+  {
+    shortName: "STREAM COUNT",
+    name: "Stream Count (Number of Streams)",
+    key: "stream_counts",
     min: 1,
     max: 16,
     step: 1,
     isInt: true,
-    defaultFactory: (len) => Array(len).fill(2)
+    defaultFactory: (len) => Array(len).fill(2),
+    help: H(
+      { min: 1, max: 16, step: 1, isInt: true },
+      "各stepで同時に扱うストリーム（声部）の本数を指定します。以降の全パラメータは、この本数に応じて「同時発音の並び（和音/配置）」が決まります。",
+      "1：単一ストリーム。配置・クラスタリングが単純で追跡しやすい（モノフォニック寄り）。",
+      "16：最大16ストリーム。多層化しやすいが、探索空間と評価の負荷が増える（ただしアルゴリズムは決定論）。"
+    )
   },
 
-  // ★ 追加: Stream 強度ターゲット / スプレッド
+  // =========================================================
+  // stream strength control
+  // =========================================================
   {
-    name: 'STREAM Strength Target',
-    key: 'stream_strength_target',
+    shortName: "STR Target",
+    name: "Stream Strength Target",
+    key: "stream_strength_target",
     min: 0,
     max: 1,
     step: 0.01,
-    isInt: false,
-    defaultFactory: (len) => constant(0.5, len) // 真ん中をデフォルト
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "vol次元のstream側評価で「どの程度ストリーム間の強弱（存在感の差）を作るか」の目標値です。",
+      "0：ストリーム間の強弱差を作りにくい（均し寄り）。",
+      "1：ストリーム間の強弱差を作りやすい（主役/従役が立ちやすい）。"
+    )
   },
   {
-    name: 'STREAM Strength Spread',
-    key: 'stream_strength_spread',
+    shortName: "STR Spread",
+    name: "Stream Strength Spread",
+    key: "stream_strength_spread",
     min: 0,
     max: 1,
     step: 0.01,
-    isInt: false,
-    defaultFactory: (len) => constant(0.0, len) // 0 = 集中, 1 = 分散
+    defaultFactory: (len) => constant(0.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "Stream Strength Target を中心に、ストリームごとの強度ターゲットをどのくらい広げるかです（中心±幅）。",
+      "0：全ストリームがほぼ同じ強度ターゲットになる（差を作りにくい）。",
+      "1：強度ターゲットの幅が最大（強い/弱いの役割が分かれやすい）。"
+    )
   },
 
+  // =========================================================
+  // dissonance target (0..1)
+  // =========================================================
+  {
+    shortName: "DISSON Target",
+    name: "Dissonance Target (STM Roughness Target)",
+    key: "dissonance_target",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "STM roughness（不協和度）で、12Ck候補の中から「そのstepで使う pitch-class 集合」を選ぶための目標です。今の実装では octave/volume/chord_size を仮置きして roughness を測り、targetに最も近い集合を選びます。",
+      "0：より協和寄り（roughnessが低い候補を選びやすい）。",
+      "1：より不協和寄り（roughnessが高い候補を選びやすい）。"
+    )
+  },
+
+  // =========================================================
+  // chord_size params (7th concept)
+  // =========================================================
+  {
+    shortName: "CHORD Global",
+    name: "Chord Size Global Target",
+    key: "chord_size_global",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.2, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "各streamの chord_size（和音構成音数）の「同時刻パターン（全ストリームまとめた並び）」の時系列的な複雑度を、global側でどれくらい目標にするかです。",
+      "0：和音数パターンが単純・反復しやすい（似た並びが続く）。",
+      "1：和音数パターンが複雑・変化しやすい（並びが揺れやすい）。"
+    )
+  },
+  {
+    shortName: "CHORD Ratio",
+    name: "Chord Size Stream Ratio",
+    key: "chord_size_ratio",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "各streamの chord_size を stream側でどう分布させるかの中心位置です（stream_targets の中心）。",
+      "0：stream_targets の中心が低め（全体的に小さめの chord_size を狙いやすい）。",
+      "1：stream_targets の中心が高め（全体的に大きめの chord_size を狙いやすい）。"
+    )
+  },
+  {
+    shortName: "CHORD Tight",
+    name: "Chord Size Stream Tightness",
+    key: "chord_size_tightness",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "stream_targets の広がり（spread）の強さです。高いほどストリーム間のばらつきを抑え、低いほどばらけやすくします。",
+      "0：ストリーム間で chord_size がばらけやすい（役割分担が出やすい）。",
+      "1：ストリーム間で chord_size が揃いやすい（均質になりやすい）。"
+    )
+  },
+  {
+    shortName: "CHORD Conc",
+    name: "Chord Size Concordance Weight",
+    key: "chord_size_conc",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.0, len),
+    help: H(
+      { min: -1, max: 1, step: 0.01 },
+      "同時刻の値（和音数）の“幅”を罰則にする重みです（discordance×weight）。負の場合は無視します。",
+      "-1：同時刻の幅（最大-最小）を評価から外す（罰則なし）。",
+      "1：同時刻の幅が大きいほど強く罰する（揃った chord_size を好む）。"
+    )
+  },
+
+  // =========================================================
   // octave
-  { name: 'OCT Global', key: 'octave_global', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.1, 1.0, len) },
-  { name: 'OCT Ratio', key: 'octave_ratio', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.5, 1.0, len) },
-  { name: 'OCT Tight', key: 'octave_tightness', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(1.0, len) },
-  { name: 'OCT Conc', key: 'octave_conc', min: -1, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.8, 0.5, 0.0, len) },
+  // =========================================================
+  {
+    shortName: "OCT Global",
+    name: "Octave Global Target",
+    key: "octave_global",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.0, 0.1, 1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "octave（各streamのオクターブ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
+      "0：オクターブ配置の変化が単純・反復しやすい。",
+      "1：オクターブ配置の変化が複雑・揺れやすい。"
+    )
+  },
+  {
+    shortName: "OCT Ratio",
+    name: "Octave Stream Ratio",
+    key: "octave_ratio",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.0, 0.5, 1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "stream側での octave ターゲット分布の中心です（低域寄り/高域寄り）。",
+      "0：低域寄りの octave を狙いやすい。",
+      "1：高域寄りの octave を狙いやすい。"
+    )
+  },
+  {
+    shortName: "OCT Tight",
+    name: "Octave Stream Tightness",
+    key: "octave_tightness",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "octave の stream_targets のばらつき抑制です。",
+      "0：ストリーム間で octave がばらけやすい（上下に広がりやすい）。",
+      "1：ストリーム間で octave が揃いやすい（密集しやすい）。"
+    )
+  },
+  {
+    shortName: "OCT Conc",
+    name: "Octave Concordance Weight",
+    key: "octave_conc",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.8, 0.5, 0.0, len),
+    help: H(
+      { min: -1, max: 1, step: 0.01 },
+      "同時刻の octave 幅（max-min）を罰則にする重みです。負なら無視。",
+      "-1：同時刻の octave 幅を評価から外す（罰則なし）。",
+      "1：同時刻の octave 幅を強く抑える（同じ帯域に集めやすい）。"
+    )
+  },
 
+  // =========================================================
   // note
-  { name: 'NOTE Global', key: 'note_global', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.2, 0.5, 0.8, len) },
-  { name: 'NOTE Ratio', key: 'note_ratio', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.5, 1.0, len) },
-  { name: 'NOTE Tight', key: 'note_tightness', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(0.5, len) },
-  { name: 'NOTE Conc', key: 'note_conc', min: -1, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.8, 0.8, 0.2, len) },
+  // =========================================================
+  {
+    shortName: "NOTE Global",
+    name: "Note Global Target (Root Notes Only)",
+    key: "note_global",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.2, 0.5, 0.8, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "note（root note; 0..11）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。※実体の和音 pitch-class 集合は dissonance + chord_size で別決定し、ここは root の配置最適化（shift後の候補から選択）に使います。",
+      "0：root配置が単純・反復しやすい（似たroot並びが続く）。",
+      "1：root配置が複雑・変化しやすい（root並びが揺れやすい）。"
+    )
+  },
+  {
+    shortName: "NOTE Ratio",
+    name: "Note Stream Ratio",
+    key: "note_ratio",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.0, 0.5, 1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "stream側での root note ターゲット分布の中心です（低いpitch-class寄り/高いpitch-class寄り）。",
+      "0：低めの pitch-class を狙いやすい。",
+      "1：高めの pitch-class を狙いやすい。"
+    )
+  },
+  {
+    shortName: "NOTE Tight",
+    name: "Note Stream Tightness",
+    key: "note_tightness",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "root note の stream_targets のばらつき抑制です。",
+      "0：ストリーム間で root note がばらけやすい（分散しやすい）。",
+      "1：ストリーム間で root note が揃いやすい（同じ/近い音に寄りやすい）。"
+    )
+  },
+  {
+    shortName: "NOTE Conc",
+    name: "Note Concordance Weight",
+    key: "note_conc",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.8, 0.8, 0.2, len),
+    help: H(
+      { min: -1, max: 1, step: 0.01 },
+      "同時刻の root note 幅（max-min）を罰則にする重みです。負なら無視。",
+      "-1：同時刻の root note 幅を評価から外す（罰則なし）。",
+      "1：同時刻の root note 幅を強く抑える（同じ音付近に寄せやすい）。"
+    )
+  },
 
+  // =========================================================
   // volume
-  { name: 'VOL Global', key: 'vol_global', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(0.1, len) },
-  { name: 'VOL Ratio', key: 'vol_ratio', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(0.0, len) },
-  { name: 'VOL Tight', key: 'vol_tightness', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(0.0, len) },
-  { name: 'VOL Conc', key: 'vol_conc', min: -1, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(1.0, len) },
+  // =========================================================
+  {
+    shortName: "VOL Global",
+    name: "Volume Global Target",
+    key: "vol_global",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.1, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "vol（音量）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
+      "0：音量パターンが単純・反復しやすい。",
+      "1：音量パターンが複雑・変化しやすい。"
+    )
+  },
+  {
+    shortName: "VOL Ratio",
+    name: "Volume Stream Ratio",
+    key: "vol_ratio",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "stream側での vol ターゲット分布の中心です（全体的に小さめ/大きめ）。",
+      "0：全体的に小さめの vol を狙いやすい。",
+      "1：全体的に大きめの vol を狙いやすい。"
+    )
+  },
+  {
+    shortName: "VOL Tight",
+    name: "Volume Stream Tightness",
+    key: "vol_tightness",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "vol の stream_targets のばらつき抑制です。",
+      "0：ストリーム間で vol がばらけやすい（強弱差が出やすい）。",
+      "1：ストリーム間で vol が揃いやすい（均質になりやすい）。"
+    )
+  },
+  {
+    shortName: "VOL Conc",
+    name: "Volume Concordance Weight",
+    key: "vol_conc",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(1.0, len),
+    help: H(
+      { min: -1, max: 1, step: 0.01 },
+      "同時刻の vol 幅（max-min）を罰則にする重みです。負なら無視。",
+      "-1：同時刻の vol 幅を評価から外す（罰則なし）。",
+      "1：同時刻の vol 幅を強く抑える（全ストリームの音量が揃いやすい）。"
+    )
+  },
 
+  // =========================================================
   // brightness
-  { name: 'BRI Global', key: 'bri_global', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.1, 0.5, 1.0, len) },
-  { name: 'BRI Ratio', key: 'bri_ratio', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.0, 1.0, 1.0, len) },
-  { name: 'BRI Tight', key: 'bri_tightness', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(0.5, len) },
-  { name: 'BRI Conc', key: 'bri_conc', min: -1, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(0.5, len) },
+  // =========================================================
+  {
+    shortName: "BRI Global",
+    name: "Brightness Global Target",
+    key: "bri_global",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.1, 0.5, 1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "bri（明るさ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
+      "0：明るさパターンが単純・反復しやすい。",
+      "1：明るさパターンが複雑・変化しやすい。"
+    )
+  },
+  {
+    shortName: "BRI Ratio",
+    name: "Brightness Stream Ratio",
+    key: "bri_ratio",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.0, 1.0, 1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "stream側での bri ターゲット分布の中心です。",
+      "0：暗め（bri低め）を狙いやすい。",
+      "1：明るめ（bri高め）を狙いやすい。"
+    )
+  },
+  {
+    shortName: "BRI Tight",
+    name: "Brightness Stream Tightness",
+    key: "bri_tightness",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "bri の stream_targets のばらつき抑制です。",
+      "0：ストリーム間で bri がばらけやすい（役割差が出やすい）。",
+      "1：ストリーム間で bri が揃いやすい（均質になりやすい）。"
+    )
+  },
+  {
+    shortName: "BRI Conc",
+    name: "Brightness Concordance Weight",
+    key: "bri_conc",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: -1, max: 1, step: 0.01 },
+      "同時刻の bri 幅（max-min）を罰則にする重みです。負なら無視。",
+      "-1：同時刻の bri 幅を評価から外す（罰則なし）。",
+      "1：同時刻の bri 幅を強く抑える（同時に似た明るさに寄せやすい）。"
+    )
+  },
 
+  // =========================================================
   // hardness
-  { name: 'HRD Global', key: 'hrd_global', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.2, 0.9, len) },
-  { name: 'HRD Ratio', key: 'hrd_ratio', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.0, 1.0, len) },
-  { name: 'HRD Tight', key: 'hrd_tightness', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(1.0, len) },
-  { name: 'HRD Conc', key: 'hrd_conc', min: -1, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(0.5, len) },
+  // =========================================================
+  {
+    shortName: "HRD Global",
+    name: "Hardness Global Target",
+    key: "hrd_global",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.0, 0.2, 0.9, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "hrd（硬さ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
+      "0：硬さパターンが単純・反復しやすい。",
+      "1：硬さパターンが複雑・変化しやすい。"
+    )
+  },
+  {
+    shortName: "HRD Ratio",
+    name: "Hardness Stream Ratio",
+    key: "hrd_ratio",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.0, 0.0, 1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "stream側での hrd ターゲット分布の中心です。",
+      "0：柔らかめ（hrd低め）を狙いやすい。",
+      "1：硬め（hrd高め）を狙いやすい。"
+    )
+  },
+  {
+    shortName: "HRD Tight",
+    name: "Hardness Stream Tightness",
+    key: "hrd_tightness",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "hrd の stream_targets のばらつき抑制です。",
+      "0：ストリーム間で hrd がばらけやすい。",
+      "1：ストリーム間で hrd が揃いやすい。"
+    )
+  },
+  {
+    shortName: "HRD Conc",
+    name: "Hardness Concordance Weight",
+    key: "hrd_conc",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: -1, max: 1, step: 0.01 },
+      "同時刻の hrd 幅（max-min）を罰則にする重みです。負なら無視。",
+      "-1：同時刻の hrd 幅を評価から外す。",
+      "1：同時刻の hrd 幅を強く抑える（同時に似た硬さに寄せやすい）。"
+    )
+  },
 
+  // =========================================================
   // texture
-  { name: 'TEX Global', key: 'tex_global', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.0, 1.0, len) },
-  { name: 'TEX Ratio', key: 'tex_ratio', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.0, 1.0, len) },
-  { name: 'TEX Tight', key: 'tex_tightness', min: 0, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(1.0, len) },
-  { name: 'TEX Conc', key: 'tex_conc', min: -1, max: 1, step: 0.01,
-    defaultFactory: (len) => constant(0.0, len) }
+  // =========================================================
+  {
+    shortName: "TEX Global",
+    name: "Texture Global Target",
+    key: "tex_global",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.0, 0.0, 1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "tex（テクスチャ/粗さ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
+      "0：テクスチャ変化が単純・反復しやすい。",
+      "1：テクスチャ変化が複雑・変化しやすい。"
+    )
+  },
+  {
+    shortName: "TEX Ratio",
+    name: "Texture Stream Ratio",
+    key: "tex_ratio",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => fill(0.0, 0.0, 1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "stream側での tex ターゲット分布の中心です。",
+      "0：tex低めを狙いやすい。",
+      "1：tex高めを狙いやすい。"
+    )
+  },
+  {
+    shortName: "TEX Tight",
+    name: "Texture Stream Tightness",
+    key: "tex_tightness",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(1.0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "tex の stream_targets のばらつき抑制です。",
+      "0：ストリーム間で tex がばらけやすい。",
+      "1：ストリーム間で tex が揃いやすい。"
+    )
+  },
+  {
+    shortName: "TEX Conc",
+    name: "Texture Concordance Weight",
+    key: "tex_conc",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.0, len),
+    help: H(
+      { min: -1, max: 1, step: 0.01 },
+      "同時刻の tex 幅（max-min）を罰則にする重みです。負なら無視。",
+      "-1：同時刻の tex 幅を評価から外す。",
+      "1：同時刻の tex 幅を強く抑える（同時に似た質感に寄せやすい）。"
+    )
+  }
 ]
 
 // rows 実体
 const genRows = ref<GridRowData[]>(
   genRowMetas.map((meta) => ({
     name: meta.name,
+    shortName: meta.shortName,
     data: meta.defaultFactory(genSteps.value),
     config: {
       min: meta.min,
       max: meta.max,
       step: meta.step,
       isInt: meta.isInt
-    }
+    },
+    help: meta.help
   }))
 )
 
@@ -396,7 +855,7 @@ watch(genSteps, (len) => {
     const meta = genRowMetas[idx]
     const data = [...row.data]
     while (data.length < len) {
-      data.push(meta.isInt ? meta.min : 0)
+      data.push(data.length > 0 ? data[data.length - 1] : (meta.isInt ? meta.min : 0))
     }
     if (data.length > len) data.splice(len)
     return { ...row, data }
@@ -440,10 +899,18 @@ const buildGenParamsFromRows = () => {
 
   result.stream_counts = get('stream_counts')
 
-  // ★ 追加: stream_strength_* を build
+  // ★追加
   result.stream_strength_target = get('stream_strength_target')
   result.stream_strength_spread = get('stream_strength_spread')
+  result.dissonance_target      = get('dissonance_target')
 
+  // ★追加 (chord_size)
+  result.chord_size_global      = get('chord_size_global')
+  result.chord_size_ratio       = get('chord_size_ratio')
+  result.chord_size_tightness   = get('chord_size_tightness')
+  result.chord_size_conc        = get('chord_size_conc')
+
+  // 既存6次元
   result.octave_global    = get('octave_global')
   result.octave_ratio     = get('octave_ratio')
   result.octave_tightness = get('octave_tightness')
@@ -486,24 +953,25 @@ const handleGeneratePolyphonic = async () => {
     const genParams = buildGenParamsFromRows()
     const initialContext = buildInitialContext()
 
+    // ★重要: すべて generate_polyphonic 配下にネストする
     const payload: any = {
       generate_polyphonic: {
         job_id: jobId,
         stream_counts: genParams.stream_counts,
         initial_context: initialContext,
-        // ★ 追加: stream_strength_* を generate_polyphonic に含める
+
         stream_strength_target: genParams.stream_strength_target,
-        stream_strength_spread: genParams.stream_strength_spread
+        stream_strength_spread: genParams.stream_strength_spread,
+        dissonance_target:      genParams.dissonance_target,
       }
     }
 
-    ;['octave', 'note', 'vol', 'bri', 'hrd', 'tex'].forEach((k) => {
+    ;['octave', 'note', 'vol', 'bri', 'hrd', 'tex', 'chord_size'].forEach((k) => {
       payload.generate_polyphonic[`${k}_global`]    = genParams[`${k}_global`]
       payload.generate_polyphonic[`${k}_ratio`]     = genParams[`${k}_ratio`]
       payload.generate_polyphonic[`${k}_tightness`] = genParams[`${k}_tightness`]
       payload.generate_polyphonic[`${k}_conc`]      = genParams[`${k}_conc`]
     })
-
 
     const resp = await axios.post('/api/web/time_series/generate_polyphonic', payload)
     emit('generated-polyphonic', resp.data)
