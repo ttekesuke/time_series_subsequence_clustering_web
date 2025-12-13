@@ -10,6 +10,7 @@
           location="end"
         >
           <div style="max-width: 340px;" class="text-body-2">
+            <div class="mt-1"> {{ row.name }}</div>
             <div class="mt-1"> {{ row.help.overview }}</div>
             <div><b>範囲:</b> {{ row.help.range }}</div>
             <div class="mt-1"> {{ row.help.atMin }}</div>
