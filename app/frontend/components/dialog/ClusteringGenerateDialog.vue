@@ -100,7 +100,7 @@ const rangeMax = ref(11)
 const mergeThreshold = ref(0.02)
 const loading = ref(false)
 
-const handleFileSelected = (e) => { if (props.onFileSelected) props.onFileSelected(e) }
+const handleFileSelected = (e: Event) => { if (props.onFileSelected) props.onFileSelected(e) }
 
 const handleGenerateTimeseries = async () => {
   loading.value = true
