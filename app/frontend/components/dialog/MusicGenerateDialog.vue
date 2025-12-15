@@ -127,6 +127,7 @@ const music = ref({ loading: false, setDataDialog: false, tracks: [] as any[], m
 /** 共通型 */
 type GridRowData = {
   name: string;
+  shortName: string;
   data: number[];
   config: {
     min: number;
@@ -149,10 +150,10 @@ const dimensions = [
 ]
 
 // 各次元のデフォルト値 (1ストリーム分) [oct, note, vol, bri, hrd, tex]
-const defaultContextBase = [4, 0, 0.8, 0.2, 0.2, 0.0]
+const defaultContextBase = [4, 0, 1, 0, 0, 0]
 
 const contextSteps = ref(3)
-const contextStreamCount = ref(2)
+const contextStreamCount = ref(1)
 const contextRows = ref<GridRowData[]>([])
 
 const makeContextConfig = (dimKey: string) => {
@@ -322,7 +323,7 @@ const genRowMetas: GenRowMeta[] = [
     max: 16,
     step: 1,
     isInt: true,
-    defaultFactory: (len) => Array(len).fill(2),
+    defaultFactory: (len) => Array(len).fill(1),
     help: H(
       { min: 1, max: 16, step: 1, isInt: true },
       "各stepで同時に扱うストリーム（声部）の本数を指定します。以降の全パラメータは、この本数に応じて「同時発音の並び（和音/配置）」が決まります。",
@@ -341,7 +342,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.5, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "vol次元のstream側評価で「どの程度ストリーム間の強弱（存在感の差）を作るか」の目標値です。",
@@ -356,7 +357,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "Stream Strength Target を中心に、ストリームごとの強度ターゲットをどのくらい広げるかです（中心±幅）。",
@@ -375,7 +376,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.5, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "STM roughness（不協和度）で、12Ck候補の中から「そのstepで使う pitch-class 集合」を選ぶための目標です。今の実装では octave/volume/chord_size を仮置きして roughness を測り、targetに最も近い集合を選びます。",
@@ -394,7 +395,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.2, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "各streamの chord_size（和音構成音数）の「同時刻パターン（全ストリームまとめた並び）」の時系列的な複雑度を、global側でどれくらい目標にするかです。",
@@ -409,7 +410,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.5, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "各streamの chord_size を stream側でどう分布させるかの中心位置です（stream_targets の中心）。",
@@ -424,7 +425,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "stream_targets の広がり（spread）の強さです。高いほどストリーム間のばらつきを抑え、低いほどばらけやすくします。",
@@ -439,7 +440,7 @@ const genRowMetas: GenRowMeta[] = [
     min: -1,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: -1, max: 1, step: 0.01 },
       "同時刻の値（和音数）の“幅”を罰則にする重みです（discordance×weight）。負の場合は無視します。",
@@ -458,7 +459,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.1, 1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "octave（各streamのオクターブ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
@@ -473,7 +474,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.5, 1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "stream側での octave ターゲット分布の中心です（低域寄り/高域寄り）。",
@@ -488,7 +489,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "octave の stream_targets のばらつき抑制です。",
@@ -503,7 +504,7 @@ const genRowMetas: GenRowMeta[] = [
     min: -1,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.8, 0.5, 0.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: -1, max: 1, step: 0.01 },
       "同時刻の octave 幅（max-min）を罰則にする重みです。負なら無視。",
@@ -522,7 +523,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.2, 0.5, 0.8, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "note（root note; 0..11）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。※実体の和音 pitch-class 集合は dissonance + chord_size で別決定し、ここは root の配置最適化（shift後の候補から選択）に使います。",
@@ -537,7 +538,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.5, 1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "stream側での root note ターゲット分布の中心です（低いpitch-class寄り/高いpitch-class寄り）。",
@@ -552,7 +553,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.5, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "root note の stream_targets のばらつき抑制です。",
@@ -567,7 +568,7 @@ const genRowMetas: GenRowMeta[] = [
     min: -1,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.8, 0.8, 0.2, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: -1, max: 1, step: 0.01 },
       "同時刻の root note 幅（max-min）を罰則にする重みです。負なら無視。",
@@ -586,7 +587,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.1, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "vol（音量）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
@@ -601,7 +602,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "stream側での vol ターゲット分布の中心です（全体的に小さめ/大きめ）。",
@@ -616,7 +617,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "vol の stream_targets のばらつき抑制です。",
@@ -631,7 +632,7 @@ const genRowMetas: GenRowMeta[] = [
     min: -1,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: -1, max: 1, step: 0.01 },
       "同時刻の vol 幅（max-min）を罰則にする重みです。負なら無視。",
@@ -650,7 +651,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.1, 0.5, 1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "bri（明るさ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
@@ -665,7 +666,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.0, 1.0, 1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "stream側での bri ターゲット分布の中心です。",
@@ -680,7 +681,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.5, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "bri の stream_targets のばらつき抑制です。",
@@ -695,7 +696,7 @@ const genRowMetas: GenRowMeta[] = [
     min: -1,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.5, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: -1, max: 1, step: 0.01 },
       "同時刻の bri 幅（max-min）を罰則にする重みです。負なら無視。",
@@ -714,7 +715,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.2, 0.9, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "hrd（硬さ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
@@ -729,7 +730,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.0, 1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "stream側での hrd ターゲット分布の中心です。",
@@ -744,7 +745,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "hrd の stream_targets のばらつき抑制です。",
@@ -759,7 +760,7 @@ const genRowMetas: GenRowMeta[] = [
     min: -1,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.5, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: -1, max: 1, step: 0.01 },
       "同時刻の hrd 幅（max-min）を罰則にする重みです。負なら無視。",
@@ -778,7 +779,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.0, 1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "tex（テクスチャ/粗さ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
@@ -793,7 +794,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => fill(0.0, 0.0, 1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "stream側での tex ターゲット分布の中心です。",
@@ -808,7 +809,7 @@ const genRowMetas: GenRowMeta[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(1.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "tex の stream_targets のばらつき抑制です。",
@@ -823,7 +824,7 @@ const genRowMetas: GenRowMeta[] = [
     min: -1,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0.0, len),
+    defaultFactory: (len) => constant(0, len),
     help: H(
       { min: -1, max: 1, step: 0.01 },
       "同時刻の tex 幅（max-min）を罰則にする重みです。負なら無視。",
