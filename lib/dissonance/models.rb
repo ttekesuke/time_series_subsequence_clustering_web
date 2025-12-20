@@ -1,3 +1,6 @@
+# ============================================================
+# lib/dissonance/models.rb
+# ============================================================
 module DissonanceModels
   module_function
 
@@ -14,17 +17,15 @@ module DissonanceModels
       a1 = Array(a1)
       a2 = Array(a2)
 
-      s = f1.map { |f| D_MAX / (S1 * f + S2) }
-      x = s.each_with_index.map { |s_i, i| s_i * (f2[i] - f1[i]) }
-      spl = a1.zip(a2).map { |a, b| a * b }
-      d = x.map { |xi| Math.exp(-A * xi) - Math.exp(-B * xi) }
+      s   = f1.map { |f| D_MAX / (S1 * f + S2) }
+      x   = s.each_with_index.map { |s_i, i| s_i * (f2[i] - f1[i]) }
+      spl = a1.zip(a2).map { |a, b| a.to_f * b.to_f }
+      d   = x.map { |xi| Math.exp(-A * xi) - Math.exp(-B * xi) }
       spl.zip(d).map { |s_i, d_i| s_i * d_i }
     end
   end
 
   def models
-    {
-      'sethares1993' => Sethares1993.new
-    }
+    { 'sethares1993' => Sethares1993.new }
   end
 end

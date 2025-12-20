@@ -48,7 +48,7 @@ In polyphonic mode, generation happens across multiple dimensions (e.g. octave, 
 ### Generation
 - Complexity-guided greedy generation for scalar time series
 - Polyphonic generation across multiple streams (voices)
-- Per-dimension controls (global / ratio / tightness / conc) to shape:
+- Per-dimension controls (global / center / spread / conc) to shape:
   - octave
   - pitch class / note decisions
   - volume

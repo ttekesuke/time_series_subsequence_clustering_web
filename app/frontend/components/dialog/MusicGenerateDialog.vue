@@ -404,9 +404,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "CHORD Ratio",
-    name: "Chord Size Stream Ratio",
-    key: "chord_size_ratio",
+    shortName: "CHORD Center",
+    name: "Chord Size Stream Center",
+    key: "chord_size_center",
     min: 0,
     max: 1,
     step: 0.01,
@@ -419,9 +419,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "CHORD Tight",
-    name: "Chord Size Stream Tightness",
-    key: "chord_size_tightness",
+    shortName: "CHORD Spread",
+    name: "Chord Size Stream Spread",
+    key: "chord_size_spread",
     min: 0,
     max: 1,
     step: 0.01,
@@ -468,9 +468,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "OCT Ratio",
-    name: "Octave Stream Ratio",
-    key: "octave_ratio",
+    shortName: "OCT Center",
+    name: "Octave Stream Center",
+    key: "octave_center",
     min: 0,
     max: 1,
     step: 0.01,
@@ -483,9 +483,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "OCT Tight",
-    name: "Octave Stream Tightness",
-    key: "octave_tightness",
+    shortName: "OCT Spread",
+    name: "Octave Stream Spread",
+    key: "octave_spread",
     min: 0,
     max: 1,
     step: 0.01,
@@ -532,9 +532,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "NOTE Ratio",
-    name: "Note Stream Ratio",
-    key: "note_ratio",
+    shortName: "NOTE Center",
+    name: "Note Stream Center",
+    key: "note_center",
     min: 0,
     max: 1,
     step: 0.01,
@@ -547,9 +547,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "NOTE Tight",
-    name: "Note Stream Tightness",
-    key: "note_tightness",
+    shortName: "NOTE Spread",
+    name: "Note Stream Spread",
+    key: "note_spread",
     min: 0,
     max: 1,
     step: 0.01,
@@ -596,9 +596,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "VOL Ratio",
-    name: "Volume Stream Ratio",
-    key: "vol_ratio",
+    shortName: "VOL Center",
+    name: "Volume Stream Center",
+    key: "vol_center",
     min: 0,
     max: 1,
     step: 0.01,
@@ -611,9 +611,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "VOL Tight",
-    name: "Volume Stream Tightness",
-    key: "vol_tightness",
+    shortName: "VOL Spread",
+    name: "Volume Stream Spread",
+    key: "vol_spread",
     min: 0,
     max: 1,
     step: 0.01,
@@ -660,9 +660,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "BRI Ratio",
-    name: "Brightness Stream Ratio",
-    key: "bri_ratio",
+    shortName: "BRI Center",
+    name: "Brightness Stream Center",
+    key: "bri_center",
     min: 0,
     max: 1,
     step: 0.01,
@@ -675,9 +675,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "BRI Tight",
-    name: "Brightness Stream Tightness",
-    key: "bri_tightness",
+    shortName: "BRI Spread",
+    name: "Brightness Stream Spread",
+    key: "bri_spread",
     min: 0,
     max: 1,
     step: 0.01,
@@ -724,9 +724,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "HRD Ratio",
-    name: "Hardness Stream Ratio",
-    key: "hrd_ratio",
+    shortName: "HRD Center",
+    name: "Hardness Stream Center",
+    key: "hrd_center",
     min: 0,
     max: 1,
     step: 0.01,
@@ -739,9 +739,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "HRD Tight",
-    name: "Hardness Stream Tightness",
-    key: "hrd_tightness",
+    shortName: "HRD Spread",
+    name: "Hardness Stream Spread",
+    key: "hrd_spread",
     min: 0,
     max: 1,
     step: 0.01,
@@ -788,9 +788,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "TEX Ratio",
-    name: "Texture Stream Ratio",
-    key: "tex_ratio",
+    shortName: "TEX Center",
+    name: "Texture Stream Center",
+    key: "tex_center",
     min: 0,
     max: 1,
     step: 0.01,
@@ -803,9 +803,9 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "TEX Tight",
-    name: "Texture Stream Tightness",
-    key: "tex_tightness",
+    shortName: "TEX Spread",
+    name: "Texture Stream Spread",
+    key: "tex_spread",
     min: 0,
     max: 1,
     step: 0.01,
@@ -907,39 +907,39 @@ const buildGenParamsFromRows = () => {
 
   // ★追加 (chord_size)
   result.chord_size_global      = get('chord_size_global')
-  result.chord_size_ratio       = get('chord_size_ratio')
-  result.chord_size_tightness   = get('chord_size_tightness')
+  result.chord_size_center       = get('chord_size_center')
+  result.chord_size_spread   = get('chord_size_spread')
   result.chord_size_conc        = get('chord_size_conc')
 
   // 既存6次元
   result.octave_global    = get('octave_global')
-  result.octave_ratio     = get('octave_ratio')
-  result.octave_tightness = get('octave_tightness')
+  result.octave_center     = get('octave_center')
+  result.octave_spread = get('octave_spread')
   result.octave_conc      = get('octave_conc')
 
   result.note_global      = get('note_global')
-  result.note_ratio       = get('note_ratio')
-  result.note_tightness   = get('note_tightness')
+  result.note_center       = get('note_center')
+  result.note_spread   = get('note_spread')
   result.note_conc        = get('note_conc')
 
   result.vol_global       = get('vol_global')
-  result.vol_ratio        = get('vol_ratio')
-  result.vol_tightness    = get('vol_tightness')
+  result.vol_center        = get('vol_center')
+  result.vol_spread    = get('vol_spread')
   result.vol_conc         = get('vol_conc')
 
   result.bri_global       = get('bri_global')
-  result.bri_ratio        = get('bri_ratio')
-  result.bri_tightness    = get('bri_tightness')
+  result.bri_center        = get('bri_center')
+  result.bri_spread    = get('bri_spread')
   result.bri_conc         = get('bri_conc')
 
   result.hrd_global       = get('hrd_global')
-  result.hrd_ratio        = get('hrd_ratio')
-  result.hrd_tightness    = get('hrd_tightness')
+  result.hrd_center        = get('hrd_center')
+  result.hrd_spread    = get('hrd_spread')
   result.hrd_conc         = get('hrd_conc')
 
   result.tex_global       = get('tex_global')
-  result.tex_ratio        = get('tex_ratio')
-  result.tex_tightness    = get('tex_tightness')
+  result.tex_center        = get('tex_center')
+  result.tex_spread    = get('tex_spread')
   result.tex_conc         = get('tex_conc')
 
   return result
@@ -969,8 +969,8 @@ const handleGeneratePolyphonic = async () => {
 
     ;['octave', 'note', 'vol', 'bri', 'hrd', 'tex', 'chord_size'].forEach((k) => {
       payload.generate_polyphonic[`${k}_global`]    = genParams[`${k}_global`]
-      payload.generate_polyphonic[`${k}_ratio`]     = genParams[`${k}_ratio`]
-      payload.generate_polyphonic[`${k}_tightness`] = genParams[`${k}_tightness`]
+      payload.generate_polyphonic[`${k}_center`]     = genParams[`${k}_center`]
+      payload.generate_polyphonic[`${k}_spread`] = genParams[`${k}_spread`]
       payload.generate_polyphonic[`${k}_conc`]      = genParams[`${k}_conc`]
     })
 
