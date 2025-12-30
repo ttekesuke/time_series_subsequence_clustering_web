@@ -160,7 +160,7 @@ class DissonanceStmManager
       v = vols[s].to_f
       a_each = v / pcs.length.to_f
 
-      base_c_midi = (oct.to_i + 1) * 12
+      base_c_midi = oct.to_i * 12
 
       pcs.each do |pc|
         midi_notes << (base_c_midi + pc.to_i)

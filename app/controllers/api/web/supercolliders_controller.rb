@@ -1,13 +1,19 @@
+# ============================================================
+# app/controllers/api/web/supercolliders_controller.rb
+# ============================================================
+# frozen_string_literal: true
+
+require "timeout"
+
 class Api::Web::SupercollidersController < ApplicationController
   # ============================================================
-  #  ★新規: 多声データからの音声レンダリング
+  #  多声データからの音声レンダリング（和音対応）
   # ============================================================
   def render_polyphonic
-    # パラメータ: time_series (6次元データの3次元配列)
-    # [ [ [oct, note, vol, bri, hrd, tex], ... ], ... ]
-    time_series = params[:time_series]
+    time_series = params[:time_series] || params.dig(:supercollider, :time_series)
+    p time_series
+    note_chords_pitch_classes = params[:note_chords_pitch_classes] || params.dig(:supercollider, :note_chords_pitch_classes) || []
 
-    # 1ステップあたりの秒数
     step_duration = params[:step_duration].to_f
     step_duration = 0.25 if step_duration <= 0
 
@@ -31,10 +37,10 @@ class Api::Web::SupercollidersController < ApplicationController
 
     scd_code = renderer.result_with_hash(
       time_series: time_series,
+      note_chords_pitch_classes: note_chords_pitch_classes, # ★追加
       step_duration: step_duration,
       filepath: @sound_file_path,
       total_duration: total_duration,
-      # MIDIノート番号(0-127)を周波数に変換するヘルパー
       midi_to_freq: ->(note) { 440.0 * (2.0 ** ((note - 69) / 12.0)) }
     )
 

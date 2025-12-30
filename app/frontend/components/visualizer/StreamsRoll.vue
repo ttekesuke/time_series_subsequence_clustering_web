@@ -1,6 +1,5 @@
 <template>
   <div class="roll-container" ref="container">
-    <!-- スクロールエリア -->
     <div
       class="scroll-wrapper"
       ref="scrollWrapper"
@@ -15,7 +14,6 @@
       ></canvas>
     </div>
 
-    <!-- ホバー時ツールチップ -->
     <div
       v-if="hoverInfo"
       ref="tooltipEl"
@@ -31,6 +29,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch, nextTick } from 'vue'
+
+type StreamCellValue = number | number[] | null | undefined
 
 const props = defineProps({
   streamValues: { type: [Array, Object], required: true },
@@ -74,12 +74,12 @@ const draw = () => {
   const ctx = canvas.value.getContext('2d')
   if (!ctx) return
 
-  const values = props.streamValues as any[]
+  const values = props.streamValues as StreamCellValue[][]
   const velocities = props.streamVelocities as any[]
 
   rects.value = []
 
-  const maxStep = Math.max(0, ...values.map(s => s.length))
+  const maxStep = Math.max(0, ...values.map(s => (Array.isArray(s) ? s.length : 0)))
 
   const wrapperWidth = scrollWrapper.value.clientWidth
   const contentWidth = maxStep * props.stepWidth
@@ -90,17 +90,17 @@ const draw = () => {
       ? props.height
       : (scrollWrapper.value.clientHeight || 200)
 
-  const steps = Math.max(
+  const stepsY = Math.max(
     1,
     Math.floor((props.maxValue - props.minValue) / props.valueResolution) + 1
   )
 
   const minSlotHeight = 4
-  let slotHeight = Math.floor(baseCanvasHeight / steps)
+  let slotHeight = Math.floor(baseCanvasHeight / stepsY)
   let actualPlotHeight = baseCanvasHeight
   if (slotHeight < minSlotHeight) {
     slotHeight = minSlotHeight
-    actualPlotHeight = slotHeight * steps
+    actualPlotHeight = slotHeight * stepsY
   }
 
   canvas.value.width = width
@@ -122,58 +122,61 @@ const draw = () => {
     ctx.stroke()
   }
 
-  // 矩形描画＋記録
+  // 矩形描画（★val が number[] の場合は分割して複数描画）
   values.forEach((stream, sIdx) => {
     const hue = (sIdx * 137.5) % 360
     const baseColor = `hsla(${hue}, 70%, 45%, 1)`
 
-    stream.forEach((val: any, step: number) => {
-      if (val === null || val === undefined || isNaN(Number(val))) return
+    stream.forEach((cellVal: StreamCellValue, step: number) => {
+      if (cellVal == null) return
 
-      const numVal = Number(val)
-      const clampedVal = Math.max(props.minValue, Math.min(props.maxValue, numVal))
+      const notes: number[] = Array.isArray(cellVal)
+        ? cellVal.map(n => Number(n)).filter(n => Number.isFinite(n))
+        : [Number(cellVal)].filter(n => Number.isFinite(n))
 
-      const normalizedIndex = Math.round(
-        (clampedVal - props.minValue) / props.valueResolution
-      )
-      const slotIndex = (steps - 1) - normalizedIndex
-      const yCenter = slotIndex * slotHeight + slotHeight / 2
+      if (notes.length === 0) return
 
-      const x = step * props.stepWidth
+      const xBase = step * props.stepWidth
 
       let alpha = 0.8
       if (velocities[sIdx] && velocities[sIdx][step] !== undefined) {
         const vel = Number(velocities[sIdx][step])
-        if (!isNaN(vel)) {
-          alpha = 0.3 + vel * 0.7
-        }
+        if (!isNaN(vel)) alpha = 0.3 + vel * 0.7
       }
 
       const isHighlighted = props.highlightIndices.some(
         hIdx => step >= hIdx && step < hIdx + props.highlightWindowSize
       )
 
-      ctx.fillStyle = isHighlighted ? 'red' : baseColor
-      ctx.globalAlpha = alpha
+      // step 内の横幅を chord 構成音で割る
+      const fullBarWidth = Math.max(1, props.stepWidth - 2)
+      const rectX = xBase + 1
 
-      const barHeight = Math.max(2, Math.floor(slotHeight - 2))
-      const barWidth = Math.max(1, props.stepWidth - 2)
+      notes.forEach((numVal) => {
+        const clampedVal = Math.max(props.minValue, Math.min(props.maxValue, numVal))
+        const normalizedIndex = Math.round((clampedVal - props.minValue) / props.valueResolution)
+        const slotIndex = (stepsY - 1) - normalizedIndex
+        const yCenter = slotIndex * slotHeight + slotHeight / 2
 
-      const rectX = x + 1
-      const rectY = yCenter - barHeight / 2
+        const barHeight = Math.max(2, Math.floor(slotHeight - 2))
+        const rectY = yCenter - barHeight / 2
 
-      ctx.fillRect(rectX, rectY, barWidth, barHeight)
-      ctx.globalAlpha = 1.0
+        ctx.fillStyle = isHighlighted ? 'red' : baseColor
+        ctx.globalAlpha = alpha
+        ctx.fillRect(rectX, rectY, fullBarWidth, barHeight)
+        ctx.globalAlpha = 1.0
 
-      rects.value.push({
-        x: rectX,
-        y: rectY,
-        width: barWidth,
-        height: barHeight,
-        step,
-        value: numVal,
-        streamIndex: sIdx
+        rects.value.push({
+          x: rectX,
+          y: rectY,
+          width: fullBarWidth,
+          height: barHeight,
+          step,
+          value: numVal,
+          streamIndex: sIdx
+        })
       })
+
     })
   })
 
@@ -187,7 +190,6 @@ const draw = () => {
   }
 }
 
-/** マウス移動 → ヒットテスト + ツールチップ位置(上下切り替え) */
 const onMouseMove = (e: MouseEvent) => {
   if (!canvas.value || !container.value) return
 
@@ -206,21 +208,15 @@ const onMouseMove = (e: MouseEvent) => {
 
   if (hit) {
     cursorStyle.value = 'pointer'
-
     const baseOffset = 10
     const tooltipHeight = tooltipEl.value?.offsetHeight ?? 24
 
-    // マウス位置をコンテナ基準に変換
     const mouseXInContainer = e.clientX - containerRect.left
     const mouseYInContainer = e.clientY - containerRect.top
-
     const canvasBottomInContainer = canvasRect.bottom - containerRect.top
 
-    // デフォルトはマウスの下
     let tipX = mouseXInContainer + baseOffset
     let tipY = mouseYInContainer + baseOffset
-
-    // 下にはみ出す場合はマウスの「上」に移動
     if (tipY + tooltipHeight > canvasBottomInContainer) {
       tipY = mouseYInContainer - tooltipHeight - baseOffset
       if (tipY < 0) tipY = 0
@@ -280,7 +276,6 @@ defineExpose({ scrollWrapper, redraw: draw })
   overflow-y: auto;
 }
 
-/* ツールチップ */
 .tooltip {
   position: absolute;
   pointer-events: none;

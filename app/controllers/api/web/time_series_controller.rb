@@ -1,6 +1,3 @@
-# ============================================================
-# app/controllers/api/web/time_series_controller.rb
-# ============================================================
 # frozen_string_literal: true
 
 require 'set'
@@ -29,20 +26,27 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     data = analyse_params[:time_series]
     merge_threshold_ratio = analyse_params[:merge_threshold_ratio].to_d
+    calculate_distance_when_added_subsequence_to_cluster = true
     min_window_size = 2
 
-    manager = TimeSeriesClusterManager.new(data, merge_threshold_ratio, min_window_size, true)
+    manager = TimeSeriesClusterManager.new(
+      data,
+      merge_threshold_ratio,
+      min_window_size,
+      calculate_distance_when_added_subsequence_to_cluster
+    )
     manager.process_data
 
     timeline = manager.clusters_to_timeline(manager.clusters, min_window_size)
     end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    processing_time_s = (end_time - start_time).round(2)
 
     broadcast_done(job_id)
     render json: {
       clusteredSubsequences: timeline,
       timeSeries: data,
       clusters: manager.clusters,
-      processingTime: (end_time - start_time).round(2)
+      processingTime: processing_time_s
     }
   end
 
@@ -55,6 +59,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     broadcast_start(job_id)
 
     user_set_results = generate_params[:first_elements].split(',').map(&:to_i)
+
     complexity_transition_int = generate_params[:complexity_transition].split(',').map(&:to_i)
     complexity_targets = complexity_transition_int.map { |val| val / 100.0 }
 
@@ -68,33 +73,38 @@ class Api::Web::TimeSeriesController < ApplicationController
     dissonance_current_time = 0.to_d
     dissonance_short_term_memory = []
     time_unit = 0.125
+    calculate_distance_when_added_subsequence_to_cluster = false
 
-    if selected_use_musical_feature == 'dissonancesOutline'
+    if selected_use_musical_feature.present? && selected_use_musical_feature == 'dissonancesOutline'
       dissonance_transition = generate_params[:dissonance][:transition].split(',').map(&:to_i)
       dissonance_duration_transition = generate_params[:dissonance][:duration_transition].split(',').map(&:to_i)
       dissonance_range = generate_params[:dissonance][:range].to_i
     end
-
-    if selected_use_musical_feature == 'durationsOutline'
+    if selected_use_musical_feature.present? && selected_use_musical_feature == 'durationsOutline'
       duration_outline_transition = generate_params[:duration][:outline_transition].split(',').map(&:to_i)
       duration_outline_range = generate_params[:duration][:outline_range].to_i
     end
 
-    manager = TimeSeriesClusterManager.new(user_set_results.dup, merge_threshold_ratio, min_window_size, false)
+    manager = TimeSeriesClusterManager.new(
+      user_set_results.dup,
+      merge_threshold_ratio,
+      min_window_size,
+      calculate_distance_when_added_subsequence_to_cluster
+    )
 
     user_set_results.each_with_index do |elm, data_index|
-      if selected_use_musical_feature == 'dissonancesOutline'
-        duration = dissonance_duration_transition[data_index]
-        dissonance_current_time += duration * time_unit.to_d
-        dissonance, dissonance_short_term_memory = STMStateless.process([elm], dissonance_current_time, dissonance_short_term_memory)
-        dissonance_results << dissonance
-      end
+      next unless selected_use_musical_feature == 'dissonancesOutline'
+      duration = dissonance_duration_transition[data_index]
+      dissonance_current_time += duration * time_unit.to_d
+      dissonance, dissonance_short_term_memory = STMStateless.process([elm], dissonance_current_time, dissonance_short_term_memory)
+      dissonance_results << dissonance
     end
 
     manager.process_data
 
     clusters_each_window_size = manager.transform_clusters(manager.clusters, min_window_size)
     initial_calc_values(manager, clusters_each_window_size, candidate_max_master, candidate_min_master, user_set_results.length)
+
     manager.updated_cluster_ids_per_window_for_calculate_distance = {}
 
     results = user_set_results.dup
@@ -107,12 +117,10 @@ class Api::Web::TimeSeriesController < ApplicationController
       if selected_use_musical_feature == 'dissonancesOutline'
         dissonance_current_time += dissonance_duration_transition[rank_index] * time_unit.to_d
         dissonance_rank = dissonance_transition[rank_index]
-
         results_in_candidates = candidates.map do |note|
           dissonance, memory = STMStateless.process([note], dissonance_current_time, current_dissonance_short_term_memory)
           { dissonance: dissonance, memory: memory, note: note }
         end
-
         from = [dissonance_rank - dissonance_range, 0].max
         to = [dissonance_rank + dissonance_range, results_in_candidates.size - 1].min
         sorted = results_in_candidates.sort_by { |r| r[:dissonance] }
@@ -145,6 +153,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
       results << result
       manager.add_data_point_permanently(result)
+
       update_caches_permanently(manager, min_window_size, quadratic_integer_array)
 
       if selected_use_musical_feature == 'dissonancesOutline'
@@ -158,6 +167,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     timeline = manager.clusters_to_timeline(manager.clusters, min_window_size)
     end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    processing_time_s = (end_time - start_time).round(2)
 
     broadcast_done(job_id)
 
@@ -166,33 +176,50 @@ class Api::Web::TimeSeriesController < ApplicationController
       timeSeries: results,
       complexityTransition: user_set_results.map { nil } + complexity_transition_int,
       clusters: manager.clusters,
-      processingTime: (end_time - start_time).round(2)
+      processingTime: processing_time_s
     }
   end
 
   # ============================================================
   # generate_polyphonic (多声)
+  #   生成順序（確定）:
+  #     1) vol
+  #     2) octave
+  #     3) chord_size
+  #     4) timbre(bri, hrd, tex)
+  #     5) note（12Ck + STM dissonanceで集合 -> shiftでroot配置）
   # ============================================================
   def generate_polyphonic
     start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
-    raw_params = polyphonic_params
-    job_id = raw_params['job_id']
+    raw = polyphonic_params # to_unsafe_h
+    job_id = raw['job_id']
     broadcast_start(job_id)
 
-    initial_context = raw_params['initial_context'] || []
-    stream_counts   = (raw_params['stream_counts'] || []).map(&:to_i)
+    initial_context = raw['initial_context'] || []
+    stream_counts   = (raw['stream_counts'] || []).map(&:to_i)
     steps_to_generate = stream_counts.length
 
-    strength_targets   = (raw_params['stream_strength_target'] || []).map(&:to_f)
-    strength_spreads   = (raw_params['stream_strength_spread'] || []).map(&:to_f)
-    dissonance_targets = (raw_params['dissonance_target'] || []).map(&:to_f)
+    strength_targets   = (raw['stream_strength_target'] || []).map(&:to_f)
+    strength_spreads   = (raw['stream_strength_spread'] || []).map(&:to_f)
+    dissonance_targets = (raw['dissonance_target'] || []).map(&:to_f)
+    results = deep_dup(initial_context) # 6D: [step][stream][dim]
+    base_step_index = results.length    # ★fix: onsetの基準
 
-    results = deep_dup(initial_context)
+    # ★fix: initial_context ぶんも最初から埋めて、step位置を timeSeries と揃える
+    chord_sizes_timeline = results.map do |step_streams|
+      step_streams = step_streams || []
+      Array.new(step_streams.length, 1) # 初期は chord_size=1 扱い
+    end
 
-    chord_sizes_timeline = []
-    note_chords_pitch_classes = []
-
+    note_chords_pitch_classes = results.map do |step_streams|
+      step_streams = step_streams || []
+      step_streams.map do |s|
+        pc = s[DIM_INDEX['note']].to_i % 12
+        [pc] # 初期は root の単音=和音サイズ1
+      end
+    end
+    # 次元順（確定）
     dimension_order = %w[vol octave chord_size bri hrd tex note]
 
     dim_defs = {
@@ -202,32 +229,56 @@ class Api::Web::TimeSeriesController < ApplicationController
       'bri'    => { key: 'bri',    range: PolyphonicConfig::FLOAT_STEPS,       is_float: true,  idx_in_result: 3 },
       'hrd'    => { key: 'hrd',    range: PolyphonicConfig::FLOAT_STEPS,       is_float: true,  idx_in_result: 4 },
       'tex'    => { key: 'tex',    range: PolyphonicConfig::FLOAT_STEPS,       is_float: true,  idx_in_result: 5 },
-      'chord_size' => { key: 'chord_size', range: PolyphonicConfig::CHORD_SIZE_RANGE.to_a, is_float: false, idx_in_result: nil }
+      'chord_size' => {
+        key: 'chord_size',
+        range: PolyphonicConfig::CHORD_SIZE_RANGE.to_a,
+        is_float: false,
+        idx_in_result: nil
+      }
     }
 
+    # --- managers 初期化 ---
     managers = {}
     merge_threshold_ratio = 0.1
     min_window = 2
+    max_simultaneous_notes = PolyphonicConfig::CHORD_SIZE_RANGE.max.to_i
 
     %w[octave note vol bri hrd tex].each do |key|
       dim = dim_defs[key]
-      dim_history = results.map { |step_streams| step_streams.map { |s| s[dim[:idx_in_result]] } }
+      dim_history = results.map do |step_streams|
+        (step_streams || []).map { |s| s[dim[:idx_in_result]] }
+      end
 
       if dim_history.length < min_window + 1
         last_val = dim_history.last || Array.new(stream_counts.first || 1, dim[:range].first)
         (min_window + 1 - dim_history.length).times { dim_history << deep_dup(last_val) }
       end
 
-      managers[key] = initialize_managers_for_dimension(dim_history, merge_threshold_ratio, min_window, dim[:range])
+      managers[key] = initialize_managers_for_dimension(
+        dim_history,
+        merge_threshold_ratio,
+        min_window,
+        dim[:range],
+        max_simultaneous_notes: max_simultaneous_notes
+      )
     end
 
-    chord_history = results.map { |step_streams| Array.new(step_streams.length) { 1 } }
+    chord_history = results.map do |step_streams|
+      Array.new((step_streams || []).length, 1)
+    end
     if chord_history.length < min_window + 1
       last = chord_history.last || Array.new(stream_counts.first || 1, 1)
       (min_window + 1 - chord_history.length).times { chord_history << deep_dup(last) }
     end
-    managers['chord_size'] = initialize_managers_for_dimension(chord_history, merge_threshold_ratio, min_window, dim_defs['chord_size'][:range])
+    managers['chord_size'] = initialize_managers_for_dimension(
+      chord_history,
+      merge_threshold_ratio,
+      min_window,
+      dim_defs['chord_size'][:range],
+      max_simultaneous_notes: max_simultaneous_notes
+    )
 
+    # --- STM manager（Sethares + interference） ---
     stm_mgr = DissonanceStmManager.new(
       memory_span: 1.5,
       memory_weight: 1.0,
@@ -235,9 +286,8 @@ class Api::Web::TimeSeriesController < ApplicationController
       amp_profile: 0.88
     )
 
+    # initial_context を STM に投入（過去音として扱う）
     step_duration = 0.25
-
-    # 初期履歴を STM にコミット
     results.each_with_index do |step_streams, i|
       next if step_streams.nil? || step_streams.empty?
 
@@ -258,39 +308,37 @@ class Api::Web::TimeSeriesController < ApplicationController
       stm_mgr.commit!(midi_notes, amps, onset)
     end
 
+    # --- 生成ループ ---
     steps_to_generate.times do |step_idx|
-      current_stream_count = stream_counts[step_idx]
+      current_stream_count = stream_counts[step_idx].to_i
+      current_stream_count = 1 if current_stream_count <= 0
+
       current_step_values = Array.new(current_stream_count) { Array.new(6) }
-
-      # ★fix: onset の絶対位置（results.length だけでOK / +step_idx は二重カウント）
-      onset = results.length.to_f * step_duration
-
       step_decisions = {}
 
       dimension_order.each do |key|
         dim  = dim_defs[key]
         mgrs = managers[key]
 
-        # ★fix: center/spread 命名 & key を整理（後方互換で旧キーも読む）
-        global_target = param_at(raw_params, "#{key}_global", idx: step_idx, default: 0.5).to_f
-        center        = param_at(raw_params, "#{key}_center", "#{key}_center", idx: step_idx, default: 0.5).to_f
-        spread        = param_at(raw_params, "#{key}_spread", "#{key}_spread", idx: step_idx, default: 0.0).to_f
-        concord_w     = param_at(raw_params, "#{key}_concordance_weight", "#{key}_conc", idx: step_idx, default: -1.0).to_f
+        # ★fix: ratio/tightness ではなく center/spread を使う（フロントと一致）
+        global_target = array_param(raw, "#{key}_global", step_idx).to_f
+        stream_center = array_param(raw, "#{key}_center", step_idx).to_f
+        stream_spread = array_param(raw, "#{key}_spread", step_idx).to_f
+        concord_w     = array_param(raw, "#{key}_conc", step_idx).to_f
 
-        stream_targets = generate_targets_from_center_and_spread(current_stream_count, center, spread)
+        stream_targets = generate_centered_targets(current_stream_count, stream_center, stream_spread)
 
-        range_min = dim[:range].min.to_f
-        range_max = dim[:range].max.to_f
-        range_width = (range_max - range_min).abs
-        range_width = 1.0 if range_width == 0.0
-
+        value_min = dim[:range].min.to_f
+        value_max = dim[:range].max.to_f
         current_len = mgrs[:global].data.length + 1
-        q_array = create_quadratic_integer_array(0, range_width * current_len, current_len)
+        q_array = create_quadratic_integer_array(value_min, value_max, current_len)
 
         stream_costs = mgrs[:stream].precalculate_costs(dim[:range], q_array)
-
         mgrs[:stream].update_strengths! if key == 'vol'
 
+        # ============================================================
+        # note 特別処理
+        # ============================================================
         if key == 'note'
           chord_sizes = step_decisions.fetch('chord_size')
           octaves     = step_decisions.fetch('octave')
@@ -301,6 +349,7 @@ class Api::Web::TimeSeriesController < ApplicationController
           k = 12 if k > 12
 
           pitch_classes = (0..11).to_a
+          onset = (base_step_index + step_idx).to_f * step_duration
           target01 = (dissonance_targets[step_idx] || 0.5).to_f.clamp(0.0, 1.0)
 
           combos = pitch_classes.combination(k).to_a
@@ -309,7 +358,12 @@ class Api::Web::TimeSeriesController < ApplicationController
           ordered_list_for_combo = []
 
           combos.each do |combo|
-            ordered = stm_mgr.order_pitch_classes_by_contribution(combo, octaves: octaves, vols: vols, onset: onset)
+            ordered = stm_mgr.order_pitch_classes_by_contribution(
+              combo,
+              octaves: octaves,
+              vols: vols,
+              onset: onset
+            )
 
             chords_pcs = chord_sizes.each_with_index.map do |cs, s|
               cs = cs.to_i
@@ -329,7 +383,8 @@ class Api::Web::TimeSeriesController < ApplicationController
               end
             end
 
-            rough_list << stm_mgr.evaluate(midi_notes, amps, onset).to_f
+            d = stm_mgr.evaluate(midi_notes, amps, onset).to_f
+            rough_list << d
             ordered_list_for_combo << ordered
           end
 
@@ -351,7 +406,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
           best_ordered = ordered_list_for_combo[best_i]
 
-          # A 確定後だけ commit
+          # Aの確定後だけ STM を commit
           best_chords_pcs_for_commit = chord_sizes.each_with_index.map do |cs, s|
             cs = cs.to_i
             cs = 1 if cs < 1
@@ -371,11 +426,16 @@ class Api::Web::TimeSeriesController < ApplicationController
           end
           stm_mgr.commit!(midi_notes, amps, onset)
 
+          # --- B) shift(0..11) を試して root配置（global/stream/conc）で確定 ---
           best_shift = 0
           best_note_chord = nil
           best_note_cost = Float::INFINITY
 
-          max_note_candidates = PolyphonicConfig::MAX_NOTE_CANDIDATES
+          max_note_candidates = (PolyphonicConfig::MAX_NOTE_CANDIDATES rescue 8000)
+
+          absolute_bases = octaves.map { |o| (o.to_i + 1) * 12 }   # ★追加
+          active_note_counts = chord_sizes.map(&:to_i)             # ★追加
+          active_total_notes = active_note_counts.sum.to_i         # ★追加
 
           (0..11).each do |shift|
             allowed = best_ordered.map { |pc| (pc + shift) % 12 }.sort
@@ -390,7 +450,11 @@ class Api::Web::TimeSeriesController < ApplicationController
               stream_targets,
               concord_w,
               current_stream_count,
-              { min: 0, max: 11 } # ★fix: shiftごとに幅が変わらないよう固定
+              { min: 0, max: 11 }, # ★fix: shiftごとに幅が変わらないよう固定
+              absolute_bases: absolute_bases,
+              active_note_counts: active_note_counts,
+              active_total_notes: active_total_notes,
+              max_simultaneous_notes: max_simultaneous_notes
             )
 
             if cand_cost < best_note_cost
@@ -424,6 +488,9 @@ class Api::Web::TimeSeriesController < ApplicationController
           next
         end
 
+        # ============================================================
+        # note 以外：従来枠組み
+        # ============================================================
         candidates_set = dim[:range].repeated_combination(current_stream_count).to_a
 
         cand_chord, _cost = select_best_chord_for_dimension_with_cost(
@@ -435,9 +502,9 @@ class Api::Web::TimeSeriesController < ApplicationController
           stream_targets,
           concord_w,
           current_stream_count,
-          dim[:range]
+          dim[:range],
+          max_simultaneous_notes: max_simultaneous_notes
         )
-
         best_chord = cand_chord
 
         mgrs[:global].add_data_point_permanently(best_chord)
@@ -470,9 +537,12 @@ class Api::Web::TimeSeriesController < ApplicationController
     end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     broadcast_done(job_id)
 
+    # === クラスタ情報 ===
     cluster_payload = {}
     %w[octave note vol bri hrd tex chord_size].each do |key|
       mgrs = managers[key]
+      next unless mgrs
+
       g_mgr = mgrs[:global]
       s_mgr = mgrs[:stream]
 
@@ -499,23 +569,22 @@ class Api::Web::TimeSeriesController < ApplicationController
 
   private
 
+  # ----------------------------
+  # small utilities
+  # ----------------------------
   def deep_dup(obj)
     Marshal.load(Marshal.dump(obj))
   rescue
     obj.is_a?(Array) ? obj.map { |e| deep_dup(e) } : obj
   end
 
-  # ★fix: center/spread の “新旧キー” を吸収して idx の値を取る
-  def param_at(raw, *keys, idx:, default: nil)
-    keys.each do |k|
-      v = raw[k]
-      next unless v.is_a?(Array)
-      val = v[idx]
-      return val unless val.nil?
-    end
-    default
+  def array_param(raw, key, idx)
+    arr = raw[key]
+    return nil unless arr.is_a?(Array)
+    arr[idx]
   end
 
+  # 決定論で repeated_combination を「最大 limit 個まで」生成する（values昇順前提）
   def limited_repeated_combinations(values, n, limit)
     values = values.sort
     return [] if n <= 0
@@ -542,21 +611,29 @@ class Api::Web::TimeSeriesController < ApplicationController
     out
   end
 
-  def initialize_managers_for_dimension(history, ratio, min_window, value_range)
-    g_mgr = PolyphonicClusterManager.new(history.dup, ratio, min_window, value_range, max_set_size: PolyphonicConfig::CHORD_SIZE_RANGE.max)
+  # --- 次元ごとのマネージャ初期化 ---
+  def initialize_managers_for_dimension(history, ratio, min_window, value_range, max_simultaneous_notes: PolyphonicConfig::CHORD_SIZE_RANGE.max)
+    g_mgr = PolyphonicClusterManager.new(
+      history.dup,
+      ratio,
+      min_window,
+      value_range,
+      max_set_size: max_simultaneous_notes
+    )
     g_mgr.process_data
     g_clusters = g_mgr.transform_clusters(g_mgr.clusters, min_window)
     initial_calc_values(g_mgr, g_clusters, value_range.max.to_f, value_range.min.to_f, history.length)
     g_mgr.updated_cluster_ids_per_window_for_calculate_distance = {}
 
-    s_mgr = MultiStreamManager.new(history, ratio, min_window, use_complexity_mapping: true)
+    s_mgr = MultiStreamManager.new(history, ratio, min_window)
     s_mgr.initialize_caches
 
     { global: g_mgr, stream: s_mgr }
   end
 
-  # ★名前を “center/spread” に合わせる（挙動は同じ）
-  def generate_targets_from_center_and_spread(n, center, spread)
+  # --- ターゲット生成（決定論） ---
+  # spread: 0..1 を「分布の幅」として扱う（大きいほどstream間に差が出る）
+  def generate_centered_targets(n, center, spread)
     return [] if n <= 0
     return [center.to_f.clamp(0.0, 1.0)] if n == 1
 
@@ -564,25 +641,37 @@ class Api::Web::TimeSeriesController < ApplicationController
     spread = spread.to_f.clamp(0.0, 1.0)
 
     half_width = spread / 2.0
-    start_val = center - half_width
-    end_val   = center + half_width
+    start_val = (center - half_width).clamp(0.0, 1.0)
+    end_val   = (center + half_width).clamp(0.0, 1.0)
 
     targets = []
     (0...n).each do |i|
       t = i.to_f / (n - 1)
-      val = start_val + (end_val - start_val) * t
-      targets << val.clamp(0.0, 1.0)
+      targets << (start_val + (end_val - start_val) * t).clamp(0.0, 1.0)
     end
     targets
   end
 
-  def select_best_polyphonic_candidate_unified_with_cost(metrics, global_target, stream_targets, concordance_weight)
+  # ============================================================
+  # 既存ロジック（cost付きラッパ） - FIX: hardcode "7" 제거
+  # ============================================================
+  def select_best_polyphonic_candidate_unified_with_cost(
+    metrics,
+    global_target,
+    stream_targets,
+    concordance_weight,
+    stream_dist_max: 1.0 # ★追加：次元ごとの最大距離で正規化する
+  )
     best_idx = nil
     min_total_cost = Float::INFINITY
 
     g_dists, _ = normalize_scores(metrics.map { |m| m[:global_dist] }, true)
     g_qtys, _  = normalize_scores(metrics.map { |m| m[:global_qty] }, false)
     g_comps, _ = normalize_scores(metrics.map { |m| m[:global_comp] }, true)
+
+    # safety
+    stream_dist_max = stream_dist_max.to_f
+    stream_dist_max = 1.0 if stream_dist_max <= 0.0
 
     metrics.each_with_index do |m, i|
       current_global = (g_dists[i] + g_qtys[i] + g_comps[i]) / 3.0
@@ -591,15 +680,23 @@ class Api::Web::TimeSeriesController < ApplicationController
       cost_b = 0.0
       if stream_targets.size > 0
         m[:stream_scores].each_with_index do |score, s_idx|
-          raw = score[:dist].to_f
-          s_comp = raw.clamp(0.0, 1.0) # ここは「dist を 0..1 に揃える」前提
+          raw_dist = score[:dist].to_f
+
+          # ★FIX: 常に値域で 0..1 に正規化（raw_dist が 1 以下でも割る）
+          dist01 = (raw_dist / stream_dist_max).clamp(0.0, 1.0)
+
           target = stream_targets[s_idx].to_f
-          cost_b += (s_comp - target).abs
+          cost_b += (dist01 - target).abs
         end
         cost_b /= stream_targets.size.to_f
       end
 
-      cost_c = concordance_weight.to_f < 0 ? 0.0 : (m[:discordance].to_f * concordance_weight.to_f)
+      cost_c =
+        if concordance_weight.to_f < 0
+          0.0
+        else
+          m[:discordance].to_f * concordance_weight.to_f
+        end
 
       total = cost_a + cost_b + cost_c
       if total < min_total_cost
@@ -611,6 +708,11 @@ class Api::Web::TimeSeriesController < ApplicationController
     [best_idx, min_total_cost]
   end
 
+
+  # range_def:
+  #   Array(range) でも Hash{min,max} でもOK（note shift用の幅固定に使う）
+  # range_def:
+  #   Array(range) でも Hash{min,max} でもOK（note shift用の幅固定に使う）
   def select_best_chord_for_dimension_with_cost(
     mgrs,
     candidates,
@@ -619,25 +721,83 @@ class Api::Web::TimeSeriesController < ApplicationController
     global_target,
     stream_targets,
     concordance_weight,
-    _n,
-    range_def
+    n,
+    range_def,
+    absolute_bases: nil,
+    active_note_counts: nil,
+    active_total_notes: nil,
+    max_simultaneous_notes: PolyphonicConfig::CHORD_SIZE_RANGE.max
   )
     indexed_metrics = []
 
+    # -----------------------------
+    # 密度（0..1）→ 所属判定の甘さ調整
+    # -----------------------------
+    max_simul = max_simultaneous_notes.to_i
+    max_simul = 1 if max_simul <= 0
+
+    total_notes = active_total_notes.to_i
+    density01 =
+      if n.to_i <= 0
+        0.0
+      else
+        (total_notes.to_f / (max_simul * n.to_i)).clamp(0.0, 1.0)
+      end
+
+    assignment_distance_weight   = density01
+    assignment_complexity_weight = 1.0 - density01
+
+    # -----------------------------
+    # range_def から min/max/width を一度だけ決める
+    # -----------------------------
+    min_val =
+      if range_def.is_a?(Hash)
+        range_def[:min].to_f
+      else
+        Array(range_def).min.to_f
+      end
+
+    max_val =
+      if range_def.is_a?(Hash)
+        range_def[:max].to_f
+      else
+        Array(range_def).max.to_f
+      end
+
+    range_width = (max_val - min_val).abs
+    range_width = 1.0 if range_width <= 0.0
+
+    # ★ stream_dist_max の「候補」
+    #  - 通常：その次元の range_width
+    #  - note 特別処理（absolute_basesあり）：absolute pitch の幅を候補に
+    base_stream_dist_max =
+      if absolute_bases
+        abs_min = PolyphonicConfig::OCTAVE_RANGE.min * 12 + PolyphonicConfig::NOTE_RANGE.min
+        abs_max = PolyphonicConfig::OCTAVE_RANGE.max * 12 + PolyphonicConfig::NOTE_RANGE.max
+        w = (abs_max - abs_min).abs.to_f
+        w <= 0.0 ? 1.0 : w
+      else
+        range_width
+      end
+
+    # -----------------------------
+    # 候補ごとの計測
+    # -----------------------------
     candidates.each_with_index do |cand_set, idx|
-      best_ordered_cand, stream_metric = mgrs[:stream].resolve_mapping_and_score(cand_set, stream_costs)
+      best_ordered_cand, stream_metric =
+        mgrs[:stream].resolve_mapping_and_score(
+          cand_set,
+          stream_costs,
+          absolute_bases: absolute_bases,
+          active_note_counts: active_note_counts,
+          active_total_notes: active_total_notes,
+          distance_weight: assignment_distance_weight,
+          complexity_weight: assignment_complexity_weight
+        )
+
       g_dist, g_qty, g_comp = mgrs[:global].simulate_add_and_calculate(best_ordered_cand, q_array, mgrs[:global])
 
-      min_val, max_val =
-        if range_def.is_a?(Hash)
-          [range_def[:min].to_f, range_def[:max].to_f]
-        else
-          [range_def.min.to_f, range_def.max.to_f]
-        end
-      range_width = (max_val - min_val).to_f
-      range_width = 1.0 if range_width == 0.0
-
-      vals = best_ordered_cand.map(&:to_f)
+      vals = best_ordered_cand
       discordance = (vals.max - vals.min).to_f / range_width
 
       indexed_metrics << {
@@ -646,28 +806,58 @@ class Api::Web::TimeSeriesController < ApplicationController
         global_dist: g_dist,
         global_qty: g_qty,
         global_comp: g_comp,
-        stream_scores: stream_metric[:individual_scores],
+        stream_scores: (stream_metric && stream_metric[:individual_scores]) ? stream_metric[:individual_scores] : [],
         discordance: discordance
       }
     end
 
+    return [[], Float::INFINITY] if indexed_metrics.empty?
+
+    # -----------------------------
+    # ★ dist が「既に0..1」かどうかを見て分母を決める
+    #   - max_raw_dist <= 1 なら 1.0（追加で割らない）
+    #   - それ以外は base_stream_dist_max（次元の最大幅で割る）
+    # -----------------------------
+    max_raw_dist = 0.0
+    indexed_metrics.each do |m|
+      (m[:stream_scores] || []).each do |score|
+        d = score[:dist].to_f
+        max_raw_dist = d if d > max_raw_dist
+      end
+    end
+
+    stream_dist_max_for_cost =
+      if max_raw_dist <= 1.000001
+        1.0
+      else
+        base_stream_dist_max
+      end
+
+    # -----------------------------
+    # best選択（★ここが修正点：stream_dist_max を渡す）
+    # -----------------------------
     best_idx, best_cost = select_best_polyphonic_candidate_unified_with_cost(
       indexed_metrics,
       global_target,
       stream_targets,
-      concordance_weight
+      concordance_weight,
+      stream_dist_max: stream_dist_max_for_cost
     )
 
     best = indexed_metrics[best_idx]
     [best[:ordered_cand], best_cost]
   end
 
+
+  # ============================================================
+  # cluster cache init
+  # ============================================================
   def initial_calc_values(manager, clusters_each_window_size, max_master, min_master, len)
-    quadratic_integer_array = create_quadratic_integer_array(0, (max_master - min_master).abs * len, len)
+    quadratic_integer_array = create_quadratic_integer_array(0, (max_master - min_master) * len, len)
 
     clusters_each_window_size.each do |window_size, same_window_size_clusters|
       all_ids = same_window_size_clusters.keys
-      updated_ids = (manager.updated_cluster_ids_per_window_for_calculate_distance[window_size] || Set.new).to_a
+      updated_ids = manager.updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
       cache = manager.cluster_distance_cache[window_size] ||= {}
 
       updated_ids.each do |cid1|
@@ -680,7 +870,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         end
       end
 
-      updated_quant_ids = (manager.updated_cluster_ids_per_window_for_calculate_quantities[window_size] || Set.new).to_a
+      updated_quant_ids = manager.updated_cluster_ids_per_window_for_calculate_quantities[window_size].to_a rescue []
       q_cache = manager.cluster_quantity_cache[window_size] ||= {}
       c_cache = manager.cluster_complexity_cache[window_size] ||= {}
 
@@ -688,7 +878,11 @@ class Api::Web::TimeSeriesController < ApplicationController
         cluster = same_window_size_clusters[cid]
         next unless cluster && cluster[:si].length > 1
 
-        quantity = cluster[:si].map { |s| quadratic_integer_array[s[0]] }.inject(1) { |product, n| product * n }
+        quantity =
+          cluster[:si]
+            .map { |s| quadratic_integer_array[s[0]] }
+            .inject(1) { |product, n| product * n }
+
         q_cache[cid] = quantity
         c_cache[cid] = manager.calculate_cluster_complexity(cluster)
       end
@@ -696,9 +890,48 @@ class Api::Web::TimeSeriesController < ApplicationController
   end
 
   def update_caches_permanently(manager, min_window_size, quadratic_integer_array)
-    manager.update_caches_permanently(quadratic_integer_array)
+    clusters_each_window_size = manager.transform_clusters(manager.clusters, min_window_size)
+
+    clusters_each_window_size.each do |window_size, same_window_size_clusters|
+      all_ids = same_window_size_clusters.keys
+      updated_ids = manager.updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
+      cache = manager.cluster_distance_cache[window_size] ||= {}
+
+      updated_ids.each do |cid1|
+        all_ids.each do |cid2|
+          next if cid1 == cid2
+          key = [cid1, cid2].sort
+          as1 = same_window_size_clusters.dig(cid1, :as)
+          as2 = same_window_size_clusters.dig(cid2, :as)
+          cache[key] = manager.euclidean_distance(as1, as2) if as1 && as2
+        end
+      end
+
+      updated_quant_ids = manager.updated_cluster_ids_per_window_for_calculate_quantities[window_size].to_a rescue []
+      q_cache = manager.cluster_quantity_cache[window_size] ||= {}
+      c_cache = manager.cluster_complexity_cache[window_size] ||= {}
+
+      updated_quant_ids.each do |cid|
+        cluster = same_window_size_clusters[cid]
+        next unless cluster && cluster[:si].length > 1
+
+        quantity =
+          cluster[:si]
+            .map { |s| quadratic_integer_array[s[0]] }
+            .inject(1) { |product, n| product * n }
+        q_cache[cid] = quantity
+
+        c_cache[cid] = manager.calculate_cluster_complexity(cluster)
+      end
+    end
+
+    manager.updated_cluster_ids_per_window_for_calculate_distance = {}
+    manager.updated_cluster_ids_per_window_for_calculate_quantities = {}
   end
 
+  # ============================================================
+  # scoring helpers
+  # ============================================================
   def normalize_scores(raw_values, is_complex_when_larger)
     min_val = raw_values.min
     max_val = raw_values.max
@@ -757,6 +990,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     best_index
   end
 
+  # ★NaN防止：count<=1 を必ず処理
   def create_quadratic_integer_array(start_val, end_val, count)
     count = count.to_i
     return [start_val.to_f.ceil + 1] if count <= 1
@@ -771,6 +1005,9 @@ class Api::Web::TimeSeriesController < ApplicationController
     result
   end
 
+  # ============================================================
+  # params
+  # ============================================================
   def analyse_params
     params.require(:analyse).permit(:merge_threshold_ratio, :job_id, time_series: [])
   end
@@ -784,10 +1021,14 @@ class Api::Web::TimeSeriesController < ApplicationController
     )
   end
 
+  # initial_context はネスト配列なので permit だと落ちることがある → to_unsafe_h
   def polyphonic_params
     params.require(:generate_polyphonic).to_unsafe_h
   end
 
+  # ============================================================
+  # broadcast
+  # ============================================================
   def broadcast_start(job_id)
     raise "job_id missing" if job_id.blank?
     ActionCable.server.broadcast("progress_#{job_id}", { status: 'start', job_id: job_id })

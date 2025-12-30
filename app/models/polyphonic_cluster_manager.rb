@@ -1,23 +1,35 @@
-# ============================================================
-# app/models/polyphonic_cluster_manager.rb
-# ============================================================
-# frozen_string_literal: true
-
 class PolyphonicClusterManager < TimeSeriesClusterManager
   # value_range: 次元の値域（pitch class 0..11 / octave 0..7 / float 0..1 等）
   # max_set_size: 「同時発音数（chord_size）」の最大（count_dist 正規化に使う）
   def initialize(data, merge_threshold_ratio, min_window_size, value_range = nil, max_set_size: PolyphonicConfig::CHORD_SIZE_RANGE.max)
     super(data, merge_threshold_ratio, min_window_size, false)
 
-    if value_range && !value_range.empty?
-      @value_min = value_range.min.to_f
-      @value_max = value_range.max.to_f
+    min_v = nil
+    max_v = nil
+
+    if value_range
+      # ★Hashでも受けられるようにする（{min:, max:} / {"min"=>, "max"=>}）
+      if value_range.is_a?(Hash)
+        min_v = value_range[:min] || value_range['min']
+        max_v = value_range[:max] || value_range['max']
+      else
+        # Array/Range等
+        min_v = value_range.min if value_range.respond_to?(:min)
+        max_v = value_range.max if value_range.respond_to?(:max)
+      end
+    end
+
+    if !min_v.nil? && !max_v.nil?
+      @value_min = min_v.to_f
+      @value_max = max_v.to_f
       @value_width = (@value_max - @value_min).abs
     else
+      # フォールバック（従来通り）
       @value_min = 0.0
       @value_max = 7.0
       @value_width = 7.0
     end
+
     @value_width = 1.0 if @value_width <= 0.0
 
     @max_set_size = max_set_size.to_i

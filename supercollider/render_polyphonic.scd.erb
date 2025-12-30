@@ -7,20 +7,19 @@ var server = Server(\nrt,
 
 a = Score([
   [0.0, ['/d_recv',
-    // 4軸制御シンセサイザー (前回の改良版を使用)
     SynthDef(\polySynth, {
-        |out=0, freq=440, dur=0.25, amp=0.5,
+        |out=0, freq=440, dur=0.25, amp=0.5, pan=0,
          brightness=0.5, hardness=0.5, texture=0.0, resonance=0.2|
 
         var sig, env, core, sub;
         var attackTime, releaseTime, cutoff, rq, feedback, pulseWidth, noiseSig;
 
-        // 1. Hardness -> Envelope
+        // 1) Hardness -> Envelope
         attackTime = (1.0 - hardness).linexp(0.0, 1.0, 0.001, 0.2).min(dur * 0.5);
         releaseTime = dur * (1.0 + (resonance * 2.0));
         env = EnvGen.ar(Env.perc(attackTime, releaseTime, 1.0, -4), doneAction: 2);
 
-        // 2. Texture -> Waveform
+        // 2) Texture -> Waveform
         feedback = texture.linlin(0.0, 1.0, 0.0, 2.5);
         core = SinOscFB.ar(freq, feedback);
 
@@ -31,11 +30,11 @@ a = Score([
         sub = SinOsc.ar(freq) * (1.0 - texture).max(0.2) * 0.5;
         sig = core + noiseSig + sub;
 
-        // 3. Brightness -> Filter
+        // 3) Brightness -> Filter
         cutoff = freq * (1 + (brightness * 20));
         cutoff = cutoff.clip(20, 20000);
 
-        // 4. Resonance -> Filter Q
+        // 4) Resonance -> Filter Q
         rq = (1.0 - (resonance * 0.95)).clip(0.02, 1.0);
 
         sig = RLPF.ar(sig, cutoff, rq);
@@ -44,52 +43,77 @@ a = Score([
         sig = sig * env * amp;
         sig = sig.tanh;
 
-        Out.ar(out, sig ! 2);
+        Out.ar(out, Pan2.ar(sig, pan));
     }).asBytes;
   ]],
 
   <%
-    # time_series: [step][stream] = [oct, note, vol, bri, hrd, tex]
     current_time = 0.0
     node_id = 1000
 
-    time_series.each do |step_streams|
+    # time_series: [step][stream] = [oct, note, vol, bri, hrd, tex]
+    # note_chords_pitch_classes: [step][stream] = [pc...]
+    time_series.each_with_index do |step_streams, step_idx|
+      step_streams = step_streams || []
   %>
-    <% step_streams.each do |s| %>
+    <% step_streams.each_with_index do |s, stream_idx| %>
       <%
-         # パラメータ展開
-         # s は数値の配列だが、JSON経由で文字列になっている可能性も考慮して to_f/to_i
-         oct  = s[0].to_i
-         note = s[1].to_i
-         vol  = s[2].to_f
-         bri  = s[3].to_f
-         hrd  = s[4].to_f
-         tex  = s[5].to_f
+        oct  = s[0].to_i
+        note = s[1]
+        vol  = s[2].to_f
+        bri  = s[3].to_f
+        hrd  = s[4].to_f
+        tex  = s[5].to_f
 
-         # MIDIノート計算 (C-1 = 0, C4 = 60 と仮定すると、Octave 4, Note 0 -> 60)
-         # 仕様: Octave 0-10, Note 0-11
-         # Octave 0 を MIDI 12 (C0) あたりにマッピングするのが一般的
-         midi_note = (oct + 1) * 12 + note
-         freq = midi_to_freq.call(midi_note)
+        next unless vol > 0.01
 
-         # 音量が極端に小さい場合は発音しない
-         if vol > 0.01
+        # ★ここが重要：
+        # サーバ側で note_chords_pitch_classes があればそれを使う。
+        # 無い/空なら time_series の note(root) を [root] 扱いにする。
+        pcs = note_chords_pitch_classes.dig(step_idx, stream_idx)
+        p "pcs"
+        p pcs
+        pcs = Array(pcs).compact.map { |x| x.to_i } if pcs
+        if pcs.nil? || pcs.empty?
+          root_pc =
+            if note.is_a?(Array)
+              note.first.to_i % 12
+            else
+              note.to_i % 12
+            end
+          pcs = [root_pc]
+        end
+
+        # base midi はあなたの表示と合わせて (oct+1)*12
+        base_midi = (oct + 1) * 12
+
+        chord_size = [pcs.size, 1].max
+        amp_each = (vol * 0.5) / chord_size.to_f
       %>
+
+      <% pcs.uniq.each do |pc| %>
+        <%
+          midi_note = base_midi + (pc % 12)
+          freq = midi_to_freq.call(midi_note)
+        %>
         [<%= current_time %>, ['/s_new', \polySynth, <%= node_id %>, 0, 0,
           \freq, <%= freq %>,
           \dur, <%= step_duration %>,
-          \amp, <%= vol * 0.5 %>,
+          \amp, <%= amp_each %>,
           \brightness, <%= bri %>,
           \hardness, <%= hrd %>,
           \texture, <%= tex %>,
           \resonance, 0.2
         ]],
-      <%
+        <%
           node_id += 1
-         end
-      %>
+        %>
+      <% end %>
     <% end %>
-    <% current_time += step_duration %>
+
+    <%
+      current_time += step_duration
+    %>
   <% end %>
 ]);
 
@@ -98,7 +122,7 @@ a.recordNRT(
     headerFormat: "wav",
     sampleFormat: "int16",
     options: server.options,
-    duration: <%= total_duration + 2.0 %>, // 余韻用
+    duration: <%= total_duration + 2.0 %>, // 余韻
     action: { "done".postln }
 );
 
