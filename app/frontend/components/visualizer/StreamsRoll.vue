@@ -42,6 +42,9 @@ const props = defineProps({
   highlightIndices: { type: Array as () => number[], default: () => [] },
   highlightWindowSize: { type: Number, default: 0 },
 
+  // Optional background title (watermark-like). May be omitted.
+  title: { type: String, default: '' },
+
   // ★ここが「小数のステップ（0.1など）」に相当
   valueResolution: { type: Number, default: 1 }
 })
@@ -158,6 +161,19 @@ const draw = () => {
     ctx.moveTo(x, 0)
     ctx.lineTo(x, canvasHeight)
     ctx.stroke()
+  }
+
+  // 背景テキスト（キャンバス左端から開始。矩形の背面に描画）
+  if (props.title) {
+    ctx.save()
+    const text = String(props.title)
+    const fontSize = 30
+    ctx.font = `${fontSize}px sans-serif`
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'
+    ctx.fillText(text, 0, canvasHeight / 2)
+    ctx.restore()
   }
 
   // 矩形描画（val が number[] の場合は複数描画）
@@ -291,7 +307,8 @@ watch(
     props.stepWidth,
     props.minValue,
     props.maxValue,
-    props.valueResolution
+    props.valueResolution,
+    props.title
   ],
   () => { nextTick(draw) },
   { deep: true }

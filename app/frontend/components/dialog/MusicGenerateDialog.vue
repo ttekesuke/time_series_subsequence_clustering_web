@@ -152,7 +152,7 @@ const dimensions = [
 // 各次元のデフォルト値 (1ストリーム分) [oct, note, vol, bri, hrd, tex]
 const defaultContextBase = [4, 0, 1, 0, 0, 0]
 
-const contextSteps = ref(3)
+const contextSteps = ref(5)
 const contextStreamCount = ref(1)
 const contextRows = ref<GridRowData[]>([])
 
@@ -292,7 +292,7 @@ const H = (
   atMax
 })
 
-const stepsDefault = 10
+const stepsDefault = 3
 
 const fill = (start: number, mid: number, end: number, len: number = stepsDefault) => {
   const arr: number[] = []

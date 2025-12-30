@@ -10,6 +10,7 @@
           :highlightIndices="highlightedIndices"
           :highlightWindowSize="highlightedWindowSize"
           :stepWidth="computedStepWidth"
+          title="Generated TimeSeries"
           @scroll="onScroll"
         />
       </div>
@@ -23,6 +24,7 @@
           :highlightIndices="highlightedIndices"
           :highlightWindowSize="highlightedWindowSize"
           :stepWidth="computedStepWidth"
+          title="Complexity Transition"
           @scroll="onScroll"
         />
       </div>

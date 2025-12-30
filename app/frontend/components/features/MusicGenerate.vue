@@ -12,6 +12,7 @@
           :highlightIndices="leftHighlightedIndices"
           :highlightWindowSize="leftHighlightedWindowSize"
           :stepWidth="computedStepWidth"
+          title="Piano Roll(octaves, notes, volumes)"
           @scroll="onScroll"
         />
       </div>
@@ -28,6 +29,7 @@
               :stepWidth="computedStepWidth"
               :highlightIndices="rightHighlightedIndices"
               :highlightWindowSize="rightHighlightedWindowSize"
+              title="Brightness"
               @scroll="onScroll"
             />
           </div>
@@ -41,6 +43,7 @@
               :stepWidth="computedStepWidth"
               :highlightIndices="rightHighlightedIndices"
               :highlightWindowSize="rightHighlightedWindowSize"
+              title="Hardness"
               @scroll="onScroll"
             />
           </div>
@@ -54,6 +57,7 @@
               :stepWidth="computedStepWidth"
               :highlightIndices="rightHighlightedIndices"
               :highlightWindowSize="rightHighlightedWindowSize"
+              title="Texture"
               @scroll="onScroll"
             />
           </div>

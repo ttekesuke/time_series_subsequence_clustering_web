@@ -10,6 +10,7 @@
           :stepWidth="computedStepWidth"
           :highlightIndices="highlightedIndices"
           :highlightWindowSize="highlightedWindowSize"
+          title="Analysing Values"
           @scroll="onScroll"
         />
       </div>
