@@ -60,8 +60,8 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     user_set_results = generate_params[:first_elements].split(',').map(&:to_i)
 
-    complexity_transition_int = generate_params[:complexity_transition].split(',').map(&:to_i)
-    complexity_targets = complexity_transition_int.map { |val| val / 100.0 }
+    complexity_transition_int =
+    complexity_targets = generate_params[:complexity_transition].split(',').map(&:to_f)
 
     merge_threshold_ratio = generate_params[:merge_threshold_ratio].to_d
     candidate_min_master = generate_params[:range_min].to_i
@@ -171,6 +171,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     broadcast_done(job_id)
 
+    p results
     render json: {
       clusteredSubsequences: timeline,
       timeSeries: results,

@@ -7,14 +7,14 @@
             <v-col cols="5">
               <div class="text-h4 d-flex align-center fill-height">Clustering Generate</div>
             </v-col>
-            <v-col cols="7">
+            <!-- <v-col cols="7">
               <v-file-input
                 label="upload json file"
                 accept=".json"
                 prepend-icon="mdi-upload"
                 @change="handleFileSelected"
               ></v-file-input>
-            </v-col>
+            </v-col> -->
           </v-row>
         </v-card-title>
         <v-card-text>
@@ -52,7 +52,7 @@
               ></v-text-field>
             </v-col>
             <v-col cols="4">
-              <v-btn color="primary" :loading="loading" @click="handleGenerateTimeseries">Generate</v-btn>
+              <v-btn color="success" :loading="loading" @click="handleGenerateTimeseries">Generate</v-btn>
               <span v-if="props.progress && (props.progress.status == 'start' || props.progress.status == 'progress')">{{props.progress.percent}}%</span>
             </v-col>
           </v-row>
@@ -77,15 +77,49 @@ const open = computed({ get: () => props.modelValue, set: (v: boolean) => emit('
 
 import GridContainer from '../grid/GridContainer.vue'
 import axios from 'axios'
+/** 共通型 */
+type GridRowData = {
+  name: string;
+  shortName: string;
+  data: number[];
+  config: {
+    min: number;
+    max: number;
+    step?: number;
+    isInt?: boolean;
+  }
+}
+const rangeMin = ref(0)
+const rangeMax = ref(11)
 
 // rows[0] === firstElements, rows[1] === complexityTransition
-const rows = ref([
-  { name: 'firstElements', data: [0,0,0], config: { min: -9999, max: 9999, isInt: true, step: 1 } },
-  { name: 'complexityTransition', data: [0,0,0], config: { min: -9999, max: 9999, isInt: true, step: 1 } }
+const rows = ref<GridRowData[]>([
+  {
+    name: 'firstElements',
+    shortName: 'First Elements',
+    data: [0,0,0],
+    config: {
+      min: rangeMin.value,
+      max: rangeMax.value,
+      isInt: true,
+      step: 1
+    }
+  },
+  {
+    name: 'complexityTransition',
+    shortName: 'Complexity Transition',
+    data: [0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.9,0.8,0.7,0.6,0.5,0.4,0.3,0.2,0.1,0],
+    config: {
+      min: 0,
+      max: 1,
+      isInt: false,
+      step: 0.01
+    }
+  }
 ])
 // computed mappings for two separate GridContainer instances
 const firstSteps = ref(3)
-const complexitySteps = ref(3)
+const complexitySteps = ref(31)
 
 const firstRows = computed({
   get: () => [ rows.value[0] || { name: 'firstElements', data: Array(firstSteps.value).fill(0), config: { min: -9999, max: 9999, isInt: true, step: 1 } } ],
@@ -95,8 +129,6 @@ const complexityRows = computed({
   get: () => [ rows.value[1] || { name: 'complexityTransition', data: Array(complexitySteps.value).fill(0), config: { min: -9999, max: 9999, isInt: true, step: 1 } } ],
   set: (v) => { rows.value[1] = (v && v[0]) ? v[0] : rows.value[1] }
 })
-const rangeMin = ref(0)
-const rangeMax = ref(11)
 const mergeThreshold = ref(0.02)
 const loading = ref(false)
 

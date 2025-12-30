@@ -7,14 +7,14 @@
             <v-col cols="5">
               <div class="text-h4 d-flex align-center fill-height">Clustering Analyse</div>
             </v-col>
-            <v-col cols="7">
+            <!-- <v-col cols="7">
               <v-file-input
                 label="upload json file"
                 accept=".json"
                 prepend-icon="mdi-upload"
                 @change="handleFileSelected"
               ></v-file-input>
-            </v-col>
+            </v-col> -->
           </v-row>
         </v-card-title>
           <v-card-text>
@@ -38,7 +38,7 @@
                   ></v-text-field>
                 </v-col>
                   <v-col cols="4">
-                  <v-btn @click="handleAnalyseTimeseries" :loading="loading">Submit</v-btn>
+                  <v-btn @click="handleAnalyseTimeseries" :loading="loading" color="success">Submit</v-btn>
                   <span v-if="props.progress.status == 'start' || props.progress.status == 'progress'">{{props.progress.percent}}%</span>
                 </v-col>
               </v-row>
@@ -69,8 +69,18 @@ import GridContainer from '../grid/GridContainer.vue'
 import axios from 'axios'
 
 const timeseriesMax = 100
-
-const rows = ref([{ name: 'values', data: [null, null, null], config: { min: 0, isInt: true, step: 1 } }])
+const rows = ref<GridRowData[]>([
+  {
+    name: 'analysingValues',
+    shortName: 'Analysing Values',
+    data: [0,0,0],
+    config: {
+      min: 0,
+      isInt: true,
+      step: 1
+    }
+  },
+])
 const steps = ref(3)
 const mergeThreshold = ref(0.02)
 const loading = ref(false)

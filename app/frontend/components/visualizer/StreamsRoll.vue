@@ -41,6 +41,8 @@ const props = defineProps({
   height: { type: Number, default: null },
   highlightIndices: { type: Array as () => number[], default: () => [] },
   highlightWindowSize: { type: Number, default: 0 },
+
+  // ★ここが「小数のステップ（0.1など）」に相当
   valueResolution: { type: Number, default: 1 }
 })
 
@@ -65,8 +67,26 @@ const rects = ref<RectInfo[]>([])
 const hoverInfo = ref<null | { x: number; y: number; step: number; value: number; streamIndex: number }>(null)
 const cursorStyle = ref<string>('default')
 
-const onScroll = (e: Event) => {
-  emit('scroll', e)
+const onScroll = (e: Event) => emit('scroll', e)
+
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
+
+/**
+ * ★小数ステップ対策:
+ * valueResolution が整数になるまで 10倍して、整数世界で index 計算する
+ * (0.1, 0.01, 0.25 などでも "だいたい整数" になるまで最大6桁)
+ */
+const calcScale = (step: number) => {
+  let s = 1
+  const eps = 1e-9
+  const target = Math.abs(Number(step))
+  if (!Number.isFinite(target) || target <= 0) return 1
+  for (let i = 0; i < 6; i++) {
+    const v = target * s
+    if (Math.abs(v - Math.round(v)) < eps) return s
+    s *= 10
+  }
+  return s
 }
 
 const draw = () => {
@@ -90,10 +110,28 @@ const draw = () => {
       ? props.height
       : (scrollWrapper.value.clientHeight || 200)
 
-  const stepsY = Math.max(
-    1,
-    Math.floor((props.maxValue - props.minValue) / props.valueResolution) + 1
-  )
+  // =========================
+  // ★小数 valueResolution を安定処理
+  // =========================
+  const valueRes = Number(props.valueResolution)
+  const safeValueRes = Number.isFinite(valueRes) && valueRes > 0 ? valueRes : 1
+
+  const scale = calcScale(safeValueRes)
+
+  const minV = Number(props.minValue)
+  const maxV = Number(props.maxValue)
+  const minRaw = Number.isFinite(minV) ? minV : 0
+  const maxRaw = Number.isFinite(maxV) ? maxV : 0
+
+  const rangeMin = Math.min(minRaw, maxRaw)
+  const rangeMax = Math.max(minRaw, maxRaw)
+
+  const scaledMin = Math.round(rangeMin * scale)
+  const scaledMax = Math.round(rangeMax * scale)
+  const scaledRes = Math.max(1, Math.round(safeValueRes * scale))
+
+  // Y方向の段数（整数で計算するのでズレない）
+  const stepsY = Math.max(1, Math.floor((scaledMax - scaledMin) / scaledRes) + 1)
 
   const minSlotHeight = 4
   let slotHeight = Math.floor(baseCanvasHeight / stepsY)
@@ -111,7 +149,7 @@ const draw = () => {
   ctx.fillStyle = '#f9f9f9'
   ctx.fillRect(0, 0, width, canvasHeight)
 
-  // グリッド線
+  // グリッド線（縦）
   ctx.strokeStyle = '#eeeeee'
   ctx.lineWidth = 1
   for (let i = 0; i <= maxStep; i++) {
@@ -122,7 +160,7 @@ const draw = () => {
     ctx.stroke()
   }
 
-  // 矩形描画（★val が number[] の場合は分割して複数描画）
+  // 矩形描画（val が number[] の場合は複数描画）
   values.forEach((stream, sIdx) => {
     const hue = (sIdx * 137.5) % 360
     const baseColor = `hsla(${hue}, 70%, 45%, 1)`
@@ -148,17 +186,21 @@ const draw = () => {
         hIdx => step >= hIdx && step < hIdx + props.highlightWindowSize
       )
 
-      // step 内の横幅を chord 構成音で割る
       const fullBarWidth = Math.max(1, props.stepWidth - 2)
       const rectX = xBase + 1
+      const barHeight = Math.max(2, Math.floor(slotHeight - 2))
 
       notes.forEach((numVal) => {
-        const clampedVal = Math.max(props.minValue, Math.min(props.maxValue, numVal))
-        const normalizedIndex = Math.round((clampedVal - props.minValue) / props.valueResolution)
+        // 値をレンジにクランプ
+        const clampedVal = clamp(numVal, rangeMin, rangeMax)
+
+        // ★ここが重要：整数スケールで index を出す
+        const scaledVal = Math.round(clampedVal * scale)
+        const rawIndex = Math.round((scaledVal - scaledMin) / scaledRes)
+        const normalizedIndex = clamp(rawIndex, 0, stepsY - 1)
+
         const slotIndex = (stepsY - 1) - normalizedIndex
         const yCenter = slotIndex * slotHeight + slotHeight / 2
-
-        const barHeight = Math.max(2, Math.floor(slotHeight - 2))
         const rectY = yCenter - barHeight / 2
 
         ctx.fillStyle = isHighlighted ? 'red' : baseColor
@@ -176,10 +218,10 @@ const draw = () => {
           streamIndex: sIdx
         })
       })
-
     })
   })
 
+  // ハイライト領域
   if (props.highlightIndices.length > 0 && props.highlightWindowSize > 0) {
     ctx.fillStyle = 'rgba(255, 200, 200, 0.25)'
     props.highlightIndices.forEach(idx => {
@@ -190,6 +232,7 @@ const draw = () => {
   }
 }
 
+/** マウス移動 → ヒットテスト + ツールチップ位置 */
 const onMouseMove = (e: MouseEvent) => {
   if (!canvas.value || !container.value) return
 
