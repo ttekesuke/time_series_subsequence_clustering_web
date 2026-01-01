@@ -1,7 +1,11 @@
+# frozen_string_literal: true
+
 # ============================================================
 # app/models/dissonance_stm_manager.rb
 # ============================================================
-# frozen_string_literal: true
+
+require_relative 'polyphonic_config'
+require_relative '../../lib/dissonance/dissonance'
 
 class DissonanceStmManager
   def initialize(
@@ -84,12 +88,17 @@ class DissonanceStmManager
   private
 
   def dissonance_current(midi_notes, amps)
+    midi_notes = Array(midi_notes)
+    amps = Array(amps)
+    return 0.0 if midi_notes.length < 2
+    return 0.0 if midi_notes.length != amps.length
+
     freqs = []
     a = []
 
     midi_notes.each_with_index do |m, idx|
       amp = amps[idx].to_f
-      next if amp <= 1e-6
+      next if amp <= PolyphonicConfig::AMP_EPS
 
       f0 = midi_to_freq(m)
       1.upto(@n_partials) do |p|
@@ -138,7 +147,7 @@ class DissonanceStmManager
   end
 
   def midi_to_freq(midi)
-    440.0 * (2.0 ** ((midi.to_f - 69.0) / 12.0))
+    PolyphonicConfig::A4_FREQ * (2.0 ** ((midi.to_f - PolyphonicConfig::MIDI_A4) / PolyphonicConfig::STEPS_PER_OCTAVE.to_f))
   end
 
   def build_chord_midi_and_amps_for_all_streams(octaves:, vols:, pitch_classes_per_stream:, chord_sizes:, chords_pcs: nil)
@@ -160,10 +169,10 @@ class DissonanceStmManager
       v = vols[s].to_f
       a_each = v / pcs.length.to_f
 
-      base_c_midi = oct.to_i * 12
+      base_c_midi = PolyphonicConfig.base_c_midi(oct)
 
       pcs.each do |pc|
-        midi_notes << (base_c_midi + pc.to_i)
+        midi_notes << (base_c_midi + (pc.to_i % PolyphonicConfig.pitch_class_mod))
         amps      << a_each
       end
     end

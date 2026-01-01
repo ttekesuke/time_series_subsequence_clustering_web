@@ -2,15 +2,6 @@
 
 # ============================================================
 # lib/multi_stream_manager.rb
-#
-# 役割:
-# - cand_set（同時刻の値配列）を「どのストリームに割り当てるか」を決める
-# - ストリームごとの TimeSeriesClusterManager(PolyphonicClusterManager) を保持して更新する
-#
-# 重要:
-# - mapping は「距離」と「複雑度(=cluster由来スコア)」の混合で行える
-# - note の場合は octave 決定後に absolute pitch (= base + pc) の距離で mapping できる
-# - 同時発音密度(density)により distance_weight / complexity_weight を外側から与えられる
 # ============================================================
 
 require_relative 'polyphonic_config'
@@ -22,20 +13,17 @@ class MultiStreamManager
   StreamContainer = Struct.new(
     :id,
     :manager,
-    :last_value,      # 直近の「この次元の値」（noteなら pitch-class）
-    :last_abs_pitch,  # note専用: 直近の「絶対ピッチ」（octave base + pc）
-    :strength,        # vol用など（任意）
+    :last_value,
+    :last_abs_pitch,
+    :strength,
     keyword_init: true
   )
 
   attr_reader :stream_pool
 
-  # history_matrix: [step][stream] の配列（その次元だけ抜き出した履歴）
   def initialize(history_matrix, merge_threshold_ratio, min_window_size, use_complexity_mapping: true)
     @merge_threshold_ratio = merge_threshold_ratio
     @min_window_size = min_window_size
-
-    # ★fix: これを入れないと @use_complexity_mapping 未初期化を踏む/真偽が曖昧になりがち
     @use_complexity_mapping = !!use_complexity_mapping
 
     @history_matrix = normalize_history_matrix(history_matrix)
@@ -43,13 +31,10 @@ class MultiStreamManager
     @next_stream_id = 1
     @stream_pool = []
 
-    # 値域（あとから candidates を見て更新しても良い）
     infer_value_range_from_history!
 
-    # note用: resolve_mapping_and_score 呼び出し中に保持 → commit_state で確定値に反映する
     @pending_absolute_bases = nil
 
-    # chord_size 最大（count_dist 正規化に使う）
     @max_simultaneous_notes = PolyphonicConfig::CHORD_SIZE_RANGE.max.to_i
     @max_simultaneous_notes = 1 if @max_simultaneous_notes <= 0
 
@@ -57,7 +42,7 @@ class MultiStreamManager
   end
 
   # ------------------------------------------------------------
-  # 初期化系
+  # init
   # ------------------------------------------------------------
   def initialize_caches
     @stream_pool.each do |c|
@@ -67,7 +52,6 @@ class MultiStreamManager
   end
 
   def update_strengths!
-    # vol 用の「ストリーム存在感」みたいなやつ（任意）
     values = @stream_pool.map { |c| c.last_value.to_f }
     min_v = values.min
     max_v = values.max
@@ -80,41 +64,34 @@ class MultiStreamManager
   end
 
   # ------------------------------------------------------------
-  # candidates に対する stream 側の「複雑度スコア」を前計算
-  # 返り値:
-  #   { stream_id => { value => { complexity01: Float } } }
+  # precalc complexity costs (per stream, per value)
   # ------------------------------------------------------------
   def precalculate_costs(candidate_values, q_array)
     candidate_values = Array(candidate_values)
-
-    # ★候補を見て値域を最新化（距離正規化が安定する）
     update_value_range_from_candidates!(candidate_values)
 
     costs = {}
 
     @stream_pool.each do |c|
       per_value = {}
-
       raw_complexities = []
 
       candidate_values.each do |v|
-        # simulate_add_and_calculate が無い/失敗しても落ちないように
-        dist, qty, comp = safe_simulate_add_and_calculate(c.manager, v, q_array)
+        dist, _qty, comp = safe_simulate_add_and_calculate(c.manager, v, q_array)
 
-        # 「複雑度代表値」は comp を優先。無ければ dist を流用
-        raw = if comp && finite_number?(comp)
-                comp.to_f
-              elsif dist && finite_number?(dist)
-                dist.to_f
-              else
-                0.0
-              end
+        raw =
+          if comp && finite_number?(comp)
+            comp.to_f
+          elsif dist && finite_number?(dist)
+            dist.to_f
+          else
+            0.0
+          end
 
         per_value[v] = { raw_complexity: raw }
         raw_complexities << raw
       end
 
-      # 0..1 正規化（その stream 内での相対）
       min_r = raw_complexities.min
       max_r = raw_complexities.max
       span  = (max_r - min_r).abs
@@ -132,15 +109,7 @@ class MultiStreamManager
   end
 
   # ------------------------------------------------------------
-  # cand_set を「現在の active streams」に割り当てて
-  # 「ordered_cand（= stream順に並んだ配列）」と
-  # 「stream側のスコア」を返す
-  #
-  # keyword:
-  #   absolute_bases: note専用。stream i の octave base（midiのC）配列
-  #   active_note_counts: note専用。stream i の chord_size
-  #   active_total_notes: note専用。総ノート数（密度計算は外側で済ませてもOK）
-  #   distance_weight / complexity_weight: 距離と複雑度の混合率（0..1想定）
+  # mapping + score
   # ------------------------------------------------------------
   def resolve_mapping_and_score(
     cand_set,
@@ -155,10 +124,8 @@ class MultiStreamManager
     n = cand_set.length
     ensure_stream_count!(n)
 
-    # note用: commit_state で last_abs_pitch を更新するため保持
     @pending_absolute_bases = absolute_bases if absolute_bases
 
-    # mode（従来互換）
     if distance_weight.nil? || complexity_weight.nil?
       if @use_complexity_mapping
         distance_weight   = 0.0
@@ -174,7 +141,6 @@ class MultiStreamManager
 
     actives = active_streams(n)
 
-    # コスト行列（stream i に cand j を割り当てるコスト）
     cost_matrix = Array.new(n) { Array.new(n, 0.0) }
     dist_matrix = Array.new(n) { Array.new(n, 0.0) }
     comp_matrix = Array.new(n) { Array.new(n, 0.0) }
@@ -182,7 +148,9 @@ class MultiStreamManager
     abs_width = nil
     if absolute_bases
       bases = Array(absolute_bases).map(&:to_f)
-      abs_width = ((bases.max - bases.min).abs + 11.0)
+      pc_width = (PolyphonicConfig::NOTE_RANGE.max - PolyphonicConfig::NOTE_RANGE.min).abs.to_f
+      pc_width = 1.0 if pc_width <= 0.0
+      abs_width = ((bases.max - bases.min).abs + pc_width)
       abs_width = 1.0 if abs_width <= 0.0
     end
 
@@ -192,7 +160,6 @@ class MultiStreamManager
 
         dist01 =
           if absolute_bases
-            # note: stream i に割り当てた場合の絶対ピッチ距離
             base = absolute_bases[i].to_f
             abs_candidate = base + v.to_f
             last_abs = stream.last_abs_pitch
@@ -200,7 +167,6 @@ class MultiStreamManager
 
             pitch_dist01 = ((abs_candidate - last_abs).abs / abs_width).clamp(0.0, 1.0)
 
-            # ★count_dist 正規化: chord_size / max_simultaneous_notes
             count01 =
               if active_note_counts
                 (active_note_counts[i].to_f / @max_simultaneous_notes.to_f).clamp(0.0, 1.0)
@@ -208,10 +174,8 @@ class MultiStreamManager
                 0.0
               end
 
-            # ★pitch_dist と count_dist を同スケールで平均（以前ここが怪しかった）
             ((pitch_dist01 + count01) / 2.0).clamp(0.0, 1.0)
           else
-            # 通常次元: 最終値との距離
             last = stream.last_value
             last = v if last.nil?
             raw = (v.to_f - last.to_f).abs
@@ -219,7 +183,6 @@ class MultiStreamManager
           end
 
         comp01 = begin
-          # stream_costs は precalculate_costs の返り値を想定
           h = stream_costs && stream_costs[stream.id] && stream_costs[stream.id][v]
           h ? h[:complexity01].to_f : 0.5
         rescue
@@ -233,7 +196,6 @@ class MultiStreamManager
     end
 
     assignment = hungarian_min_assignment(cost_matrix)
-    # assignment: stream i -> cand index j
 
     ordered = Array.new(n)
     individual_scores = []
@@ -248,8 +210,12 @@ class MultiStreamManager
       total_dist += dist_matrix[i][j]
       total_comp += comp_matrix[i][j]
 
-      # cost_b 側で使う想定（0..1の複雑度寄りスコア）
-      individual_scores << { stream_id: stream.id, dist: comp_matrix[i][j] }
+      # ★FIX: dist は距離(0..1)を入れる。必要なら complexity01 も添える
+      individual_scores << {
+        stream_id: stream.id,
+        dist: dist_matrix[i][j],
+        complexity01: comp_matrix[i][j]
+      }
     end
 
     avg_dist = (total_dist / n.to_f).clamp(0.0, 1.0)
@@ -265,7 +231,7 @@ class MultiStreamManager
   end
 
   # ------------------------------------------------------------
-  # 確定値を各 stream manager にコミット
+  # commit
   # ------------------------------------------------------------
   def commit_state(best_chord, q_array, strength_params: nil)
     best_chord = Array(best_chord)
@@ -280,18 +246,13 @@ class MultiStreamManager
       safe_add_data_point!(stream.manager, v)
       stream.last_value = v
 
-      # note の場合、resolve_mapping_and_score で保持した absolute_bases を使って last_abs_pitch を更新
       if @pending_absolute_bases
         base = @pending_absolute_bases[i].to_i
         stream.last_abs_pitch = base + v.to_i
       end
     end
 
-    # vol の「主従」を作りたい場合など（任意）
-    if strength_params
-      update_strengths!
-    end
-
+    update_strengths! if strength_params
     true
   end
 
@@ -299,13 +260,11 @@ class MultiStreamManager
     @stream_pool.each do |c|
       safe_update_caches_permanently!(c.manager, q_array)
     end
-
-    # note用の保持は「その step の commit が終わったら」捨てる
     @pending_absolute_bases = nil
   end
 
   # ------------------------------------------------------------
-  # 内部ヘルパ
+  # internals
   # ------------------------------------------------------------
   private
 
@@ -313,9 +272,7 @@ class MultiStreamManager
     m = Array(history_matrix)
     m = [] if m.nil?
     m.map do |row|
-      Array(row).map do |v|
-        v.nil? ? 0 : v
-      end
+      Array(row).map { |v| v.nil? ? 0 : v }
     end
   end
 
@@ -355,10 +312,8 @@ class MultiStreamManager
     n = 1 if n <= 0
 
     if @stream_pool.length < n
-      add_count = n - @stream_pool.length
-      add_count.times { add_new_stream! }
+      (n - @stream_pool.length).times { add_new_stream! }
     elsif @stream_pool.length > n
-      # 減った場合は「後ろを inactive」と見做す（保持しても良いが、ここでは切る）
       @stream_pool = @stream_pool.first(n)
     end
   end
@@ -366,7 +321,6 @@ class MultiStreamManager
   def add_new_stream!
     id = next_stream_id!
 
-    # 既存の長さに合わせて“素直に”埋める
     len =
       if @stream_pool.first && @stream_pool.first.manager.respond_to?(:data)
         Array(@stream_pool.first.manager.data).length
@@ -404,7 +358,6 @@ class MultiStreamManager
     id
   end
 
-  # 値域推定（初期）
   def infer_value_range_from_history!
     flat = @history_matrix.flatten.compact.map(&:to_f)
     if flat.empty?
@@ -415,14 +368,12 @@ class MultiStreamManager
       @value_max = flat.max
     end
 
-    # それっぽいレンジを用意（PolyphonicClusterManager に渡す）
     @value_range = [@value_min, @value_max]
 
     @value_width = (@value_max - @value_min).abs
     @value_width = 1.0 if @value_width <= 0.0
   end
 
-  # 候補を見て値域更新（距離正規化が崩れないように）
   def update_value_range_from_candidates!(candidate_values)
     vals = Array(candidate_values).map(&:to_f)
     return if vals.empty?
@@ -440,9 +391,7 @@ class MultiStreamManager
   end
 
   # ------------------------------------------------------------
-  # Hungarian (min assignment)  O(n^3)
-  # 入力: cost[n][n]
-  # 出力: assignment[n] where assignment[i]=j
+  # Hungarian (min assignment)
   # ------------------------------------------------------------
   def hungarian_min_assignment(cost)
     n = cost.length
@@ -450,7 +399,7 @@ class MultiStreamManager
 
     u = Array.new(n + 1, 0.0)
     v = Array.new(n + 1, 0.0)
-    p = Array.new(n + 1, 0)   # matched row for column j
+    p = Array.new(n + 1, 0)
     way = Array.new(n + 1, 0)
 
     (1..n).each do |i|
@@ -507,7 +456,7 @@ class MultiStreamManager
   end
 
   # ------------------------------------------------------------
-  # manager 呼び出しの安全ラッパ
+  # safe wrappers
   # ------------------------------------------------------------
   def safe_process_manager!(mgr)
     mgr.process_data if mgr.respond_to?(:process_data)
@@ -516,8 +465,6 @@ class MultiStreamManager
   end
 
   def prime_manager_cache_structures!(mgr)
-    # simulate_add_and_calculate が内部でこれらを期待する場合があるので
-    # “あれば”初期化しておく
     %i[
       cluster_distance_cache
       cluster_quantity_cache
@@ -526,11 +473,8 @@ class MultiStreamManager
       updated_cluster_ids_per_window_for_calculate_quantities
     ].each do |sym|
       next unless mgr.respond_to?(sym) && mgr.respond_to?("#{sym}=")
-
       cur = mgr.public_send(sym)
-      if cur.nil?
-        mgr.public_send("#{sym}=", (sym.to_s.include?('updated_') ? {} : {}))
-      end
+      mgr.public_send("#{sym}=", {}) if cur.nil?
     end
   rescue
     # noop
