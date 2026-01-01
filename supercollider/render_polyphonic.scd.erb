@@ -8,18 +8,16 @@ var server = Server(\nrt,
 a = Score([
   [0.0, ['/d_recv',
     SynthDef(\polySynth, {
-        |out=0, freq=440, dur=0.25, amp=0.5, pan=0,
+        |out=0, freq=440, dur=0.25, amp=0.5,
          brightness=0.5, hardness=0.5, texture=0.0, resonance=0.2|
 
         var sig, env, core, sub;
         var attackTime, releaseTime, cutoff, rq, feedback, pulseWidth, noiseSig;
 
-        // 1) Hardness -> Envelope
         attackTime = (1.0 - hardness).linexp(0.0, 1.0, 0.001, 0.2).min(dur * 0.5);
         releaseTime = dur * (1.0 + (resonance * 2.0));
         env = EnvGen.ar(Env.perc(attackTime, releaseTime, 1.0, -4), doneAction: 2);
 
-        // 2) Texture -> Waveform
         feedback = texture.linlin(0.0, 1.0, 0.0, 2.5);
         core = SinOscFB.ar(freq, feedback);
 
@@ -30,11 +28,9 @@ a = Score([
         sub = SinOsc.ar(freq) * (1.0 - texture).max(0.2) * 0.5;
         sig = core + noiseSig + sub;
 
-        // 3) Brightness -> Filter
         cutoff = freq * (1 + (brightness * 20));
         cutoff = cutoff.clip(20, 20000);
 
-        // 4) Resonance -> Filter Q
         rq = (1.0 - (resonance * 0.95)).clip(0.02, 1.0);
 
         sig = RLPF.ar(sig, cutoff, rq);
@@ -43,7 +39,7 @@ a = Score([
         sig = sig * env * amp;
         sig = sig.tanh;
 
-        Out.ar(out, Pan2.ar(sig, pan));
+        Out.ar(out, sig ! 2);
     }).asBytes;
   ]],
 
@@ -51,51 +47,31 @@ a = Score([
     current_time = 0.0
     node_id = 1000
 
-    # time_series: [step][stream] = [oct, note, vol, bri, hrd, tex]
-    # note_chords_pitch_classes: [step][stream] = [pc...]
-    time_series.each_with_index do |step_streams, step_idx|
-      step_streams = step_streams || []
+    # time_series: [step][stream] = [oct, notePCS(Array or scalar), vol, bri, hrd, tex]
+    time_series.each do |step_streams|
   %>
-    <% step_streams.each_with_index do |s, stream_idx| %>
+    <% (step_streams || []).each do |s| %>
       <%
-        oct  = s[0].to_i
-        note = s[1]
-        vol  = s[2].to_f
-        bri  = s[3].to_f
-        hrd  = s[4].to_f
-        tex  = s[5].to_f
+         oct  = s[0].to_i
+         note_val = s[1]
+         pcs = note_val.is_a?(Array) ? note_val : [note_val]
+         pcs = pcs.compact.map { |x| x.to_i % 12 }
+         pcs = [0] if pcs.empty?
 
-        next unless vol > 0.01
+         vol  = s[2].to_f
+         bri  = s[3].to_f
+         hrd  = s[4].to_f
+         tex  = s[5].to_f
 
-        # ★ここが重要：
-        # サーバ側で note_chords_pitch_classes があればそれを使う。
-        # 無い/空なら time_series の note(root) を [root] 扱いにする。
-        pcs = note_chords_pitch_classes.dig(step_idx, stream_idx)
-        p "pcs"
-        p pcs
-        pcs = Array(pcs).compact.map { |x| x.to_i } if pcs
-        if pcs.nil? || pcs.empty?
-          root_pc =
-            if note.is_a?(Array)
-              note.first.to_i % 12
-            else
-              note.to_i % 12
-            end
-          pcs = [root_pc]
-        end
+         base_c_midi = (oct + 1) * 12
+         amp_each = (pcs.length > 0) ? (vol.to_f / pcs.length.to_f) : vol.to_f
+         amp_each *= 0.5
 
-        # base midi はあなたの表示と合わせて (oct+1)*12
-        base_midi = (oct + 1) * 12
-
-        chord_size = [pcs.size, 1].max
-        amp_each = (vol * 0.5) / chord_size.to_f
+         if vol > 0.01
+           pcs.each do |pc|
+             midi_note = base_c_midi + pc.to_i
+             freq = midi_to_freq.call(midi_note)
       %>
-
-      <% pcs.uniq.each do |pc| %>
-        <%
-          midi_note = base_midi + (pc % 12)
-          freq = midi_to_freq.call(midi_note)
-        %>
         [<%= current_time %>, ['/s_new', \polySynth, <%= node_id %>, 0, 0,
           \freq, <%= freq %>,
           \dur, <%= step_duration %>,
@@ -105,24 +81,22 @@ a = Score([
           \texture, <%= tex %>,
           \resonance, 0.2
         ]],
-        <%
-          node_id += 1
-        %>
-      <% end %>
+      <%
+             node_id += 1
+           end
+         end
+      %>
     <% end %>
-
-    <%
-      current_time += step_duration
-    %>
+    <% current_time += step_duration %>
   <% end %>
 ]);
 
 a.recordNRT(
-    outputFilePath: "<%= filepath %>",
+    outputFilePath: <%= filepath.to_s.dump %>,
     headerFormat: "wav",
     sampleFormat: "int16",
     options: server.options,
-    duration: <%= total_duration + 2.0 %>, // 余韻
+    duration: <%= total_duration + 2.0 %>,
     action: { "done".postln }
 );
 

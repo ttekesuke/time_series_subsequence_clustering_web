@@ -171,7 +171,6 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     broadcast_done(job_id)
 
-    p results
     render json: {
       clusteredSubsequences: timeline,
       timeSeries: results,
@@ -193,38 +192,57 @@ class Api::Web::TimeSeriesController < ApplicationController
   def generate_polyphonic
     start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
-    raw = polyphonic_params # to_unsafe_h
+    raw = polyphonic_params
     job_id = raw['job_id']
     broadcast_start(job_id)
 
-    initial_context = raw['initial_context'] || []
-    stream_counts   = (raw['stream_counts'] || []).map(&:to_i)
+    initial_context   = raw['initial_context'] || []
+    stream_counts     = (raw['stream_counts'] || []).map(&:to_i)
     steps_to_generate = stream_counts.length
 
     strength_targets   = (raw['stream_strength_target'] || []).map(&:to_f)
     strength_spreads   = (raw['stream_strength_spread'] || []).map(&:to_f)
     dissonance_targets = (raw['dissonance_target'] || []).map(&:to_f)
-    results = deep_dup(initial_context) # 6D: [step][stream][dim]
-    base_step_index = results.length    # ★fix: onsetの基準
 
-    # ★fix: initial_context ぶんも最初から埋めて、step位置を timeSeries と揃える
-    chord_sizes_timeline = results.map do |step_streams|
-      step_streams = step_streams || []
-      Array.new(step_streams.length, 1) # 初期は chord_size=1 扱い
+    # ============================================================
+    # results: [step][stream][6] = [oct, notePCS(Array), vol, bri, hrd, tex]
+    # ★重要: note を常に配列化しておく（initial_contextも含む）
+    # ============================================================
+    results = deep_dup(initial_context)
+
+    note_idx = 1
+    oct_idx  = 0
+    vol_idx  = 2
+    bri_idx  = 3
+    hrd_idx  = 4
+    tex_idx  = 5
+
+    normalize_pcs = ->(v) do
+      pcs = v.is_a?(Array) ? v : [v]
+      pcs = pcs.compact.map { |x| x.to_i % 12 }
+      pcs = [0] if pcs.empty?
+      pcs
     end
 
-    note_chords_pitch_classes = results.map do |step_streams|
-      step_streams = step_streams || []
-      step_streams.map do |s|
-        pc = s[DIM_INDEX['note']].to_i % 12
-        [pc] # 初期は root の単音=和音サイズ1
+    results.each do |step_streams|
+      next if step_streams.nil?
+      step_streams.each do |vec|
+        next if vec.nil? || !vec.is_a?(Array)
+        vec[note_idx] = normalize_pcs.call(vec[note_idx])
       end
     end
+
+    base_step_index = results.length  # ★fix: onset基準
+
+    chord_sizes_timeline = []   # [generatedStep][stream] = chord_size
+    # note_chords_pitch_classes は廃止（timeSeries.note に入れる）
+
     # 次元順（確定）
     dimension_order = %w[vol octave chord_size bri hrd tex note]
 
     dim_defs = {
       'octave' => { key: 'octave', range: PolyphonicConfig::OCTAVE_RANGE.to_a, is_float: false, idx_in_result: 0 },
+      # ★noteは idx 1 だが、中身は配列（pcs）
       'note'   => { key: 'note',   range: PolyphonicConfig::NOTE_RANGE.to_a,   is_float: false, idx_in_result: 1 },
       'vol'    => { key: 'vol',    range: PolyphonicConfig::FLOAT_STEPS,       is_float: true,  idx_in_result: 2 },
       'bri'    => { key: 'bri',    range: PolyphonicConfig::FLOAT_STEPS,       is_float: true,  idx_in_result: 3 },
@@ -246,9 +264,21 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     %w[octave note vol bri hrd tex].each do |key|
       dim = dim_defs[key]
-      dim_history = results.map do |step_streams|
-        (step_streams || []).map { |s| s[dim[:idx_in_result]] }
-      end
+
+      dim_history =
+        if key == 'note'
+          # ★noteは配列なので、クラスタリング用履歴は root（pcs.first）で作る
+          results.map do |step_streams|
+            (step_streams || []).map do |s|
+              pcs = normalize_pcs.call(s[dim[:idx_in_result]])
+              pcs.first
+            end
+          end
+        else
+          results.map do |step_streams|
+            (step_streams || []).map { |s| s[dim[:idx_in_result]] }
+          end
+        end
 
       if dim_history.length < min_window + 1
         last_val = dim_history.last || Array.new(stream_counts.first || 1, dim[:range].first)
@@ -264,8 +294,14 @@ class Api::Web::TimeSeriesController < ApplicationController
       )
     end
 
+    # chord_size の履歴（initial_context の notePCS 配列長を使えるなら使う）
     chord_history = results.map do |step_streams|
-      Array.new((step_streams || []).length, 1)
+      (step_streams || []).map do |s|
+        pcs = normalize_pcs.call(s[note_idx])
+        cs = pcs.length
+        cs = 1 if cs < 1
+        cs
+      end
     end
     if chord_history.length < min_window + 1
       last = chord_history.last || Array.new(stream_counts.first || 1, 1)
@@ -279,7 +315,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       max_simultaneous_notes: max_simultaneous_notes
     )
 
-    # --- STM manager（Sethares + interference） ---
+    # --- STM manager ---
     stm_mgr = DissonanceStmManager.new(
       memory_span: 1.5,
       memory_weight: 1.0,
@@ -287,22 +323,26 @@ class Api::Web::TimeSeriesController < ApplicationController
       amp_profile: 0.88
     )
 
-    # initial_context を STM に投入（過去音として扱う）
+    # initial_context を STM に投入（★notePCS配列として扱う）
     step_duration = 0.25
     results.each_with_index do |step_streams, i|
       next if step_streams.nil? || step_streams.empty?
 
-      octaves = step_streams.map { |s| s[DIM_INDEX['octave']] }.map(&:to_i)
-      notes   = step_streams.map { |s| s[DIM_INDEX['note']] }.map(&:to_i)
-      vols    = step_streams.map { |s| s[DIM_INDEX['vol']] }.map(&:to_f)
-
       midi_notes = []
       amps = []
 
-      notes.each_with_index do |pc, s|
-        base_c_midi = (octaves[s] + 1) * 12
-        midi_notes << (base_c_midi + (pc % 12))
-        amps << vols[s]
+      step_streams.each do |s|
+        oct = s[oct_idx].to_i
+        pcs = normalize_pcs.call(s[note_idx])     # 配列
+        vol = s[vol_idx].to_f
+
+        base_c_midi = (oct + 1) * 12
+        a_each = vol / pcs.length.to_f
+
+        pcs.each do |pc|
+          midi_notes << (base_c_midi + (pc.to_i % 12))
+          amps << a_each
+        end
       end
 
       onset = i.to_f * step_duration
@@ -321,7 +361,6 @@ class Api::Web::TimeSeriesController < ApplicationController
         dim  = dim_defs[key]
         mgrs = managers[key]
 
-        # ★fix: ratio/tightness ではなく center/spread を使う（フロントと一致）
         global_target = array_param(raw, "#{key}_global", step_idx).to_f
         stream_center = array_param(raw, "#{key}_center", step_idx).to_f
         stream_spread = array_param(raw, "#{key}_spread", step_idx).to_f
@@ -338,7 +377,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         mgrs[:stream].update_strengths! if key == 'vol'
 
         # ============================================================
-        # note 特別処理
+        # note 特別処理：結果は notePCS(Array) を timeSeries に入れる
         # ============================================================
         if key == 'note'
           chord_sizes = step_decisions.fetch('chord_size')
@@ -407,7 +446,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
           best_ordered = ordered_list_for_combo[best_i]
 
-          # Aの確定後だけ STM を commit
+          # A確定後だけ STM commit
           best_chords_pcs_for_commit = chord_sizes.each_with_index.map do |cs, s|
             cs = cs.to_i
             cs = 1 if cs < 1
@@ -427,22 +466,22 @@ class Api::Web::TimeSeriesController < ApplicationController
           end
           stm_mgr.commit!(midi_notes, amps, onset)
 
-          # --- B) shift(0..11) を試して root配置（global/stream/conc）で確定 ---
+          # --- B) shift を試して root 配置（クラスタ評価用）は root で決める ---
           best_shift = 0
-          best_note_chord = nil
+          best_root_chord = nil
           best_note_cost = Float::INFINITY
 
           max_note_candidates = (PolyphonicConfig::MAX_NOTE_CANDIDATES rescue 8000)
 
-          absolute_bases = octaves.map { |o| (o.to_i + 1) * 12 }   # ★追加
-          active_note_counts = chord_sizes.map(&:to_i)             # ★追加
-          active_total_notes = active_note_counts.sum.to_i         # ★追加
+          absolute_bases = octaves.map { |o| (o.to_i + 1) * 12 }
+          active_note_counts = chord_sizes.map(&:to_i)
+          active_total_notes = active_note_counts.sum.to_i
 
           (0..11).each do |shift|
             allowed = best_ordered.map { |pc| (pc + shift) % 12 }.sort
             candidates_set = limited_repeated_combinations(allowed, current_stream_count, max_note_candidates)
 
-            cand_chord, cand_cost = select_best_chord_for_dimension_with_cost(
+            cand_root, cand_cost = select_best_chord_for_dimension_with_cost(
               mgrs,
               candidates_set,
               stream_costs,
@@ -451,7 +490,7 @@ class Api::Web::TimeSeriesController < ApplicationController
               stream_targets,
               concord_w,
               current_stream_count,
-              { min: 0, max: 11 }, # ★fix: shiftごとに幅が変わらないよう固定
+              { min: 0, max: 11 },
               absolute_bases: absolute_bases,
               active_note_counts: active_note_counts,
               active_total_notes: active_total_notes,
@@ -460,13 +499,12 @@ class Api::Web::TimeSeriesController < ApplicationController
 
             if cand_cost < best_note_cost
               best_note_cost = cand_cost
-              best_note_chord = cand_chord
+              best_root_chord = cand_root
               best_shift = shift
             end
           end
 
-          best_chord = best_note_chord
-
+          # ★timeSeries に入れる chord pcs 配列を確定
           shifted_ordered = best_ordered.map { |pc| (pc + best_shift) % 12 }
           chords_for_streams = chord_sizes.each_with_index.map do |cs, s|
             cs = cs.to_i
@@ -474,23 +512,25 @@ class Api::Web::TimeSeriesController < ApplicationController
             cs = shifted_ordered.length if cs > shifted_ordered.length
             shifted_ordered.first(cs)
           end
-          note_chords_pitch_classes << chords_for_streams
 
-          mgrs[:global].add_data_point_permanently(best_chord)
+          # --- 内部クラスタリングは root（数値）で更新 ---
+          mgrs[:global].add_data_point_permanently(best_root_chord)
           mgrs[:global].update_caches_permanently(q_array)
-          mgrs[:stream].commit_state(best_chord, q_array)
+          mgrs[:stream].commit_state(best_root_chord, q_array)
           mgrs[:stream].update_caches_permanently(q_array)
 
-          best_chord.each_with_index do |val, s_i|
-            current_step_values[s_i][dim[:idx_in_result]] = val
+          # --- ★出力 timeSeries の note スロットには chord pcs 配列を入れる ---
+          chords_for_streams.each_with_index do |pcs, s_i|
+            current_step_values[s_i][note_idx] = pcs.map { |pc| pc.to_i % 12 }
           end
 
-          step_decisions[key] = best_chord
+          # root は step_decisions に残す（後段で使う可能性があるなら）
+          step_decisions[key] = best_root_chord
           next
         end
 
         # ============================================================
-        # note 以外：従来枠組み
+        # note 以外：従来枠組み（数値）
         # ============================================================
         candidates_set = dim[:range].repeated_combination(current_stream_count).to_a
 
@@ -531,6 +571,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         end
       end
 
+      # ★この時点で current_step_values[s][note] は配列、他は数値になっている
       results << current_step_values
       broadcast_progress(job_id, step_idx + 1, steps_to_generate)
     end
@@ -558,15 +599,15 @@ class Api::Web::TimeSeriesController < ApplicationController
 
       cluster_payload[key] = { global: global_timeline, streams: streams_hash }
     end
+    p results
 
     render json: {
       timeSeries: results,
-      chord_sizes: chord_sizes_timeline,
-      note_chords_pitch_classes: note_chords_pitch_classes,
       clusters: cluster_payload,
       processingTime: (end_time - start_time).round(2)
     }
   end
+
 
   private
 

@@ -277,23 +277,12 @@ type ClusterData = {
   cluster_id: string
   indices: number[]
 }
-
+type StepVec = [number, number[] | number, number, number, number, number]
 type PolyphonicResponse = {
-  timeSeries: number[][][] // [step][stream][6]
-
-  // どっちで来ても拾う（サーバがsnake_caseの可能性が高いので保険）
-  chordSizes?: number[][]                 // camelCase
-  noteChordsPitchClasses?: number[][][]   // camelCase
-  chord_sizes?: number[][]               // snake_case
-  note_chords_pitch_classes?: number[][][] // snake_case
-
-  clusters: {
-    [key: string]: {
-      global: ClusterData[]
-      streams: { [streamId: string]: ClusterData[] }
-    }
-  }
-  processingTime: number
+  timeSeries: StepVec[][];   // [step][stream][6]
+  chordSizes?: number[][];
+  clusters: Record<string, { global: ClusterData[]; streams: Record<string, ClusterData[]> }>;
+  processingTime: number;
 }
 
 // ===== state =====
@@ -329,33 +318,7 @@ const DIM = {
 } as const
 
 // ===== helpers =====
-const expandTimeSeries = (ts: number[][][]) => {
-  stepCount.value = ts.length
-  const maxStreams = Math.max(0, ...ts.map(step => step.length))
 
-  const make2D = () =>
-    Array.from({ length: maxStreams }, () => Array(stepCount.value).fill(null))
-
-  const octs = make2D()
-  const notes = make2D()
-  const vels = make2D()
-  const bris = make2D()
-  const hrds = make2D()
-  const texs = make2D()
-
-  ts.forEach((stepStreams, stepIdx) => {
-    stepStreams.forEach((vec, streamIdx) => {
-      octs[streamIdx][stepIdx]  = vec[DIM.OCT]
-      notes[streamIdx][stepIdx] = vec[DIM.NOTE]
-      vels[streamIdx][stepIdx]  = vec[DIM.VOL]
-      bris[streamIdx][stepIdx]  = vec[DIM.BRI]
-      hrds[streamIdx][stepIdx]  = vec[DIM.HRD]
-      texs[streamIdx][stepIdx]  = vec[DIM.TEX]
-    })
-  })
-
-  return { octs, notes, vels, bris, hrds, texs, maxStreams }
-}
 
 /**
  * noteChordsPitchClasses / chordSizes は「生成step分だけ」返る想定が多いので
@@ -372,17 +335,16 @@ const alignTailBySteps = <T>(fullSteps: number, partial: T[] | undefined | null)
 // ===== handle response =====
 const handleGenerated = (data: PolyphonicResponse) => {
   const ts = data.timeSeries
-  const { octs, notes, vels, bris, hrds, texs, maxStreams } = expandTimeSeries(ts)
+  const { octs, notes, vels, bris, hrds, texs } = expandTimeSeries(ts)
 
   generate.value.rawTimeSeries = ts
-  generate.value.octaves = octs
-  generate.value.notes = notes
-  generate.value.velocities = vels
-  generate.value.brightness = bris
-  generate.value.hardness = hrds
-  generate.value.texture = texs
+  generate.value.octaves      = octs
+  generate.value.notes        = notes      // ★root（pcs[0]）だけ入れる互換用途
+  generate.value.velocities   = vels
+  generate.value.brightness   = bris
+  generate.value.hardness     = hrds
+  generate.value.texture      = texs
 
-  // clusters
   generate.value.clusters.octave = data.clusters.octave
   generate.value.clusters.note   = data.clusters.note
   generate.value.clusters.vol    = data.clusters.vol
@@ -390,44 +352,37 @@ const handleGenerated = (data: PolyphonicResponse) => {
   generate.value.clusters.hrd    = data.clusters.hrd
   generate.value.clusters.tex    = data.clusters.tex
 
-  // chords (snake_case / camelCase どっちでも)
-  const chordSizesPartial =
-    data.chordSizes ?? data.chord_sizes ?? []
+  generate.value.chordSizes = data.chordSizes ?? []
+  renderPolyphonicAudio(ts) // ★tsだけでレンダできる
+}
 
-  const pcsPartial =
-    data.noteChordsPitchClasses ?? data.note_chords_pitch_classes ?? []
+// expandTimeSeries: noteは配列が来るので root を取る
+const expandTimeSeries = (ts: any[]) => {
+  stepCount.value = ts.length
+  const maxStreams = Math.max(0, ...ts.map(step => step.length))
+  const make2D = () => Array.from({ length: maxStreams }, () => Array(stepCount.value).fill(null))
 
-  // align: [step][stream] に揃える（partial は [step][stream] だけ持ってる前提）
-  const chordSizesByStep = alignTailBySteps<number[]>(ts.length, chordSizesPartial) // (number[] | null)[]
-  const pcsByStep        = alignTailBySteps<number[][]>(ts.length, pcsPartial)      // (number[][] | null)[]
+  const octs = make2D()
+  const notes = make2D()
+  const vels = make2D()
+  const bris = make2D()
+  const hrds = make2D()
+  const texs = make2D()
 
-  // stream方向も maxStreams に合わせて pad
-  const chordSizesAligned: (number | null)[][] = Array.from({ length: ts.length }, () => Array(maxStreams).fill(null))
-  const pcsAligned: (number[] | null)[][]      = Array.from({ length: ts.length }, () => Array(maxStreams).fill(null))
+  ts.forEach((stepStreams, stepIdx) => {
+    stepStreams.forEach((vec, streamIdx) => {
+      octs[streamIdx][stepIdx] = vec[0]
+      const noteVal = vec[1]
+      const pcs = Array.isArray(noteVal) ? noteVal : [noteVal]
+      notes[streamIdx][stepIdx] = (pcs[0] ?? 0) // root互換
+      vels[streamIdx][stepIdx] = vec[2]
+      bris[streamIdx][stepIdx] = vec[3]
+      hrds[streamIdx][stepIdx] = vec[4]
+      texs[streamIdx][stepIdx] = vec[5]
+    })
+  })
 
-  for (let stepIdx = 0; stepIdx < ts.length; stepIdx++) {
-    const stepChordSizes = chordSizesByStep[stepIdx] // number[] | null
-    const stepPcs = pcsByStep[stepIdx]              // number[][] | null
-
-    if (Array.isArray(stepChordSizes)) {
-      for (let s = 0; s < Math.min(maxStreams, stepChordSizes.length); s++) {
-        const v = stepChordSizes[s]
-        chordSizesAligned[stepIdx][s] = (v == null ? null : Number(v))
-      }
-    }
-
-    if (Array.isArray(stepPcs)) {
-      for (let s = 0; s < Math.min(maxStreams, stepPcs.length); s++) {
-        const pcs = stepPcs[s]
-        pcsAligned[stepIdx][s] = Array.isArray(pcs) ? pcs.map(n => Number(n)) : null
-      }
-    }
-  }
-
-  generate.value.chordSizes = chordSizesAligned
-  generate.value.noteChordsPitchClasses = pcsAligned
-
-  renderPolyphonicAudio(ts)
+  return { octs, notes, vels, bris, hrds, texs, maxStreams }
 }
 
 const renderPolyphonicAudio = (timeSeries: number[][][]) => {
@@ -558,24 +513,26 @@ const onHoverClusterRight = (payload: { indices: number[]; windowSize: number } 
 // ===== pitch streams (chord) =====
 // StreamsRoll に渡す値: [stream][step] だが、step要素は number | number[] | null を許す
 const chordPitchStreams = computed(() => {
-  if (!generate.value.octaves.length) return []
+  const ts = generate.value.rawTimeSeries as any[]
+  if (!ts.length) return []
 
-  const streams = generate.value.octaves.length
-  const steps = stepCount.value
+  const streamCount = Math.max(0, ...ts.map(step => step.length))
+  const stepLen = ts.length
 
-  return Array.from({ length: streams }, (_, sIdx) =>
-    Array.from({ length: steps }, (_, stepIdx) => {
-      const oct = generate.value.octaves[sIdx]?.[stepIdx]
-      const root = generate.value.notes[sIdx]?.[stepIdx]
-      if (oct == null || root == null) return null
+  return Array.from({ length: streamCount }, (_, sIdx) =>
+    Array.from({ length: stepLen }, (_, stepIdx) => {
+      const vec = ts[stepIdx]?.[sIdx]
+      if (!vec) return null
 
-      const baseC = Number(oct) * 12
+      const oct = Number(vec[0])
+      const noteVal = vec[1]
+      const pcs = Array.isArray(noteVal) ? noteVal : [noteVal]
+      const pcsSafe = pcs.filter(n => Number.isFinite(Number(n))).map(n => Number(n))
 
-      const pcs = generate.value.noteChordsPitchClasses?.[stepIdx]?.[sIdx]
-      const pcsSafe = Array.isArray(pcs) && pcs.length ? pcs : [Number(root) % 12]
+      if (!Number.isFinite(oct) || pcsSafe.length === 0) return null
 
-      // とりあえず同一octave上に展開（今後、配分ルールを増やすならここ）
-      return pcsSafe.map(pc => baseC + (Number(pc) % 12))
+      const baseC = (oct + 1) * 12
+      return pcsSafe.map(pc => baseC + ((pc % 12) + 12) % 12)
     })
   )
 })

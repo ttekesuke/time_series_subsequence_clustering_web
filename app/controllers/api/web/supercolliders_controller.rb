@@ -10,10 +10,7 @@ class Api::Web::SupercollidersController < ApplicationController
   #  多声データからの音声レンダリング（和音対応）
   # ============================================================
   def render_polyphonic
-    time_series = params[:time_series] || params.dig(:supercollider, :time_series)
-    p time_series
-    note_chords_pitch_classes = params[:note_chords_pitch_classes] || params.dig(:supercollider, :note_chords_pitch_classes) || []
-
+    time_series = params[:time_series]
     step_duration = params[:step_duration].to_f
     step_duration = 0.25 if step_duration <= 0
 
@@ -22,13 +19,13 @@ class Api::Web::SupercollidersController < ApplicationController
       return
     end
 
+    FileUtils.mkdir_p(Rails.root.join("tmp"))
+
     filename = "poly_rendered_#{SecureRandom.hex}.wav"
     @sound_file_path = Rails.root.join("tmp", filename).to_s
 
-    # 合計時間
     total_duration = time_series.length * step_duration
 
-    # ERBテンプレート展開
     erb_path = Rails.root.join('supercollider', 'render_polyphonic.scd.erb')
     @scd_file_path = Rails.root.join('tmp', "render_poly_#{SecureRandom.hex}.scd")
 
@@ -37,7 +34,6 @@ class Api::Web::SupercollidersController < ApplicationController
 
     scd_code = renderer.result_with_hash(
       time_series: time_series,
-      note_chords_pitch_classes: note_chords_pitch_classes, # ★追加
       step_duration: step_duration,
       filepath: @sound_file_path,
       total_duration: total_duration,
@@ -46,26 +42,27 @@ class Api::Web::SupercollidersController < ApplicationController
 
     File.write(@scd_file_path, scd_code)
 
-    # SuperCollider実行
+    log_path = Rails.root.join("tmp", "sclang_#{SecureRandom.hex}.log").to_s
     pid = Process.spawn(
       { "QT_QPA_PLATFORM" => "offscreen" },
-      "sclang", @scd_file_path.to_s
+      "sclang", @scd_file_path.to_s,
+      out: log_path, err: log_path
     )
     Process.detach(pid)
 
-    # ファイル生成待ち (少し長めに45秒)
     if wait_for_complete_file(@sound_file_path, timeout: 45)
       base64_data = Base64.strict_encode64(File.binread(@sound_file_path))
-
       render json: {
         sound_file_path: @sound_file_path,
         scd_file_path: @scd_file_path,
         audio_data: base64_data
       }
     else
-      render plain: "Failed to render audio", status: 500
+      tail = File.exist?(log_path) ? File.read(log_path).lines.last(80).join : ""
+      render plain: "Failed to render audio\n\n=== sclang log tail ===\n#{tail}", status: 500
     end
   end
+
 
   # 一時ファイル削除
   def cleanup
