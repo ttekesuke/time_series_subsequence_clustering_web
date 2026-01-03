@@ -6,16 +6,6 @@ class Api::Web::TimeSeriesController < ApplicationController
   include DissonanceMemory
   include StatisticsCalculator
 
-
-  DIM_INDEX = {
-    'octave' => 0,
-    'note'   => 1,
-    'vol'    => 2,
-    'bri'    => 3,
-    'hrd'    => 4,
-    'tex'    => 5
-  }.freeze
-
   # ============================================================
   # Analyse
   # ============================================================
@@ -68,22 +58,8 @@ class Api::Web::TimeSeriesController < ApplicationController
     candidate_max_master = generate_params[:range_max].to_i
     min_window_size = 2
     selected_use_musical_feature = generate_params[:selected_use_musical_feature]
-
-    dissonance_results = []
-    dissonance_current_time = 0.to_d
-    dissonance_short_term_memory = []
     time_unit = 0.125
     calculate_distance_when_added_subsequence_to_cluster = false
-
-    if selected_use_musical_feature.present? && selected_use_musical_feature == 'dissonancesOutline'
-      dissonance_transition = generate_params[:dissonance][:transition].split(',').map(&:to_i)
-      dissonance_duration_transition = generate_params[:dissonance][:duration_transition].split(',').map(&:to_i)
-      dissonance_range = generate_params[:dissonance][:range].to_i
-    end
-    if selected_use_musical_feature.present? && selected_use_musical_feature == 'durationsOutline'
-      duration_outline_transition = generate_params[:duration][:outline_transition].split(',').map(&:to_i)
-      duration_outline_range = generate_params[:duration][:outline_range].to_i
-    end
 
     manager = TimeSeriesClusterManager.new(
       user_set_results.dup,
@@ -92,13 +68,6 @@ class Api::Web::TimeSeriesController < ApplicationController
       calculate_distance_when_added_subsequence_to_cluster
     )
 
-    user_set_results.each_with_index do |elm, data_index|
-      next unless selected_use_musical_feature == 'dissonancesOutline'
-      duration = dissonance_duration_transition[data_index]
-      dissonance_current_time += duration * time_unit.to_d
-      dissonance, dissonance_short_term_memory = STMStateless.process([elm], dissonance_current_time, dissonance_short_term_memory)
-      dissonance_results << dissonance
-    end
 
     manager.process_data
 
@@ -111,27 +80,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     complexity_targets.each_with_index do |target_val, rank_index|
       candidates = (candidate_min_master..candidate_max_master).to_a
-      current_dissonance_short_term_memory = dissonance_short_term_memory.dup
       in_range = []
-
-      if selected_use_musical_feature == 'dissonancesOutline'
-        dissonance_current_time += dissonance_duration_transition[rank_index] * time_unit.to_d
-        dissonance_rank = dissonance_transition[rank_index]
-        results_in_candidates = candidates.map do |note|
-          dissonance, memory = STMStateless.process([note], dissonance_current_time, current_dissonance_short_term_memory)
-          { dissonance: dissonance, memory: memory, note: note }
-        end
-        from = [dissonance_rank - dissonance_range, 0].max
-        to = [dissonance_rank + dissonance_range, results_in_candidates.size - 1].min
-        sorted = results_in_candidates.sort_by { |r| r[:dissonance] }
-        in_range = sorted[from..to]
-        candidates = in_range.map { |r| r[:note] }
-      elsif selected_use_musical_feature == 'durationsOutline'
-        duration_outline_rank = duration_outline_transition[rank_index]
-        from = [duration_outline_rank - duration_outline_range, 0].max
-        to = [duration_outline_rank + duration_outline_range, candidates.size - 1].min
-        candidates = candidates[from..to]
-      end
 
       indexed_metrics = []
       current_len = results.length + 1
@@ -154,14 +103,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       results << result
       manager.add_data_point_permanently(result)
 
-      update_caches_permanently(manager, min_window_size, quadratic_integer_array)
-
-      if selected_use_musical_feature == 'dissonancesOutline'
-        best = in_range.find { |r| r[:note] == result }
-        dissonance_short_term_memory = best[:memory]
-        dissonance_results << best[:dissonance]
-      end
-
+      manager.update_caches_permanently(quadratic_integer_array)
       broadcast_progress(job_id, rank_index + 1, complexity_targets.length)
     end
 
@@ -209,54 +151,8 @@ class Api::Web::TimeSeriesController < ApplicationController
     best_index
   end
 
-  def update_caches_permanently(manager, min_window_size, quadratic_integer_array)
-    clusters_each_window_size = manager.transform_clusters(manager.clusters, min_window_size)
 
-    clusters_each_window_size.each do |window_size, same_window_size_clusters|
-      all_ids = same_window_size_clusters.keys
-      updated_ids = manager.updated_cluster_ids_per_window_for_calculate_distance[window_size].to_a
-      cache = manager.cluster_distance_cache[window_size] ||= {}
 
-      updated_ids.each do |cid1|
-        all_ids.each do |cid2|
-          next if cid1 == cid2
-          key = [cid1, cid2].sort
-          as1 = same_window_size_clusters.dig(cid1, :as)
-          as2 = same_window_size_clusters.dig(cid2, :as)
-          cache[key] = manager.euclidean_distance(as1, as2) if as1 && as2
-        end
-      end
-
-      updated_quant_ids = manager.updated_cluster_ids_per_window_for_calculate_quantities[window_size].to_a rescue []
-      q_cache = manager.cluster_quantity_cache[window_size] ||= {}
-      c_cache = manager.cluster_complexity_cache[window_size] ||= {}
-
-      updated_quant_ids.each do |cid|
-        cluster = same_window_size_clusters[cid]
-        next unless cluster && cluster[:si].length > 1
-
-        quantity =
-          cluster[:si]
-            .map { |s| quadratic_integer_array[s[0]] }
-            .inject(1) { |product, n| product * n }
-        q_cache[cid] = quantity
-
-        c_cache[cid] = manager.calculate_cluster_complexity(cluster)
-      end
-    end
-
-    manager.updated_cluster_ids_per_window_for_calculate_distance = {}
-    manager.updated_cluster_ids_per_window_for_calculate_quantities = {}
-  end
-  # ============================================================
-  # generate_polyphonic (多声)
-  #   生成順序（確定）:
-  #     1) vol
-  #     2) octave
-  #     3) chord_size
-  #     4) timbre(bri, hrd, tex)
-  #     5) note（12Ck + STM dissonanceで集合 -> shiftでroot配置）
-  # ============================================================
   # ============================================================
   # generate_polyphonic (多声)
   #   生成順序（確定）:
