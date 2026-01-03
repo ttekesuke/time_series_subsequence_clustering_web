@@ -3,7 +3,6 @@
 require 'set'
 
 class Api::Web::TimeSeriesController < ApplicationController
-  include DissonanceMemory
   include StatisticsCalculator
 
   # ============================================================
