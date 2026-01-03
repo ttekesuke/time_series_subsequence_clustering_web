@@ -561,7 +561,11 @@ class MultiStreamManager
 
     count_norm = ((a.length - b.length).abs.to_f / max_count.to_f).clamp(0.0, 1.0)
 
-    ((pitch_norm + count_norm) / 2.0).clamp(0.0, 1.0)
+    if count_norm <= 0.0
+      pitch_norm
+    else
+      ((pitch_norm + count_norm) / 2.0).clamp(0.0, 1.0)
+    end
   end
 
   # ------------------------------------------------------------

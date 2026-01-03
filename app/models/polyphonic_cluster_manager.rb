@@ -69,17 +69,19 @@ class PolyphonicClusterManager < TimeSeriesClusterManager
     return 0.0 if a.empty? && b.empty?
     return 1.0 if a.empty? || b.empty?
 
-    # orderless 距離
     a_avg = a.map { |x| b.map { |y| (x.to_f - y.to_f).abs }.min }.sum.to_f / a.length.to_f
     b_avg = b.map { |y| a.map { |x| (y.to_f - x.to_f).abs }.min }.sum.to_f / b.length.to_f
     pitch_dist = (a_avg + b_avg) / 2.0
-
     pitch_norm = (pitch_dist / @value_width).clamp(0.0, 1.0)
 
     count_dist = (a.length - b.length).abs.to_f
     count_norm = (count_dist / @max_set_size.to_f).clamp(0.0, 1.0)
 
-    (pitch_norm + count_norm) / 2.0
+    if count_norm <= 0.0
+      pitch_norm
+    else
+      (pitch_norm + count_norm) / 2.0
+    end
   end
 
   # 内部複雑度計算用

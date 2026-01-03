@@ -373,8 +373,10 @@ class Api::Web::TimeSeriesController < ApplicationController
         value_min = dim[:range].min.to_f
         value_max = dim[:range].max.to_f
         current_len = mgrs[:global].data.length + 1
-        q_array = create_quadratic_integer_array(value_min, value_max, current_len)
+        width = (value_max - value_min).abs
+        width = 1.0 if width <= 0.0
 
+        q_array = create_quadratic_integer_array(0, width * current_len, current_len)
         # ----------------------------
         # note 特別処理（root廃止 / chordをクラスタリング対象に）
         # ----------------------------
@@ -749,7 +751,11 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     count_norm = ((a.length - b.length).abs.to_f / max_count.to_f).clamp(0.0, 1.0)
 
-    ((pitch_norm + count_norm) / 2.0).clamp(0.0, 1.0)
+    if count_norm <= 0.0
+      pitch_norm
+    else
+      ((pitch_norm + count_norm) / 2.0).clamp(0.0, 1.0)
+    end
   end
 
   def average_pairwise_distance(chords, width:, max_count:)
