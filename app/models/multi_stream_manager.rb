@@ -14,8 +14,11 @@ class MultiStreamManager
     :id,
     :manager,
     :last_value,
-    :last_abs_pitch, # 数値でも配列でも可（note chord では配列を入れる）
-    :strength,
+    :last_abs_pitch,   # 数値でも配列でも可（note chord では配列を入れる）
+    :strength,         # 既存互換のため残す（未使用でもOK）
+    :presence_sum,     # vol平均用
+    :presence_count,   # vol平均用
+    :presence_avg,     # vol平均用
     keyword_init: true
   )
 
@@ -27,16 +30,23 @@ class MultiStreamManager
     min_window_size,
     use_complexity_mapping: true,
     value_range: nil,
-    max_set_size: PolyphonicConfig::CHORD_SIZE_RANGE.max
+    max_set_size: PolyphonicConfig::CHORD_SIZE_RANGE.max,
+    track_presence: false # ★追加：vol用だけ true
   )
     @merge_threshold_ratio = merge_threshold_ratio
     @min_window_size = min_window_size
     @use_complexity_mapping = !!use_complexity_mapping
+    @track_presence = !!track_presence
 
     @history_matrix = normalize_history_matrix(history_matrix)
 
     @next_stream_id = 1
     @stream_pool = []
+    @containers_by_id = {}
+
+    # active/inactive の概念を導入
+    @active_ids = []
+    @inactive_ids = []
 
     @max_simultaneous_notes = max_set_size.to_i
     @max_simultaneous_notes = 1 if @max_simultaneous_notes <= 0
@@ -60,15 +70,248 @@ class MultiStreamManager
     build_initial_streams_from_history!
   end
 
-  # note 側が shift 評価で使う
+  # ------------------------------------------------------------
+  # active stream control
+  # ------------------------------------------------------------
+
+  # controller から「この step の active をこの順で使う」を設定できるようにする
+  def set_active_stream_ids!(ids)
+    ids = Array(ids).map(&:to_i).uniq
+    ids = [@active_ids.first].compact if ids.empty? && @active_ids.any?
+    ids = [1] if ids.empty?
+
+    # 足りないIDがあれば作る（連番で増やす）
+    ensure_stream_id_max!(ids.max)
+
+    # inactive にいるなら復活
+    revive_stream_ids!(ids & @inactive_ids)
+
+    @active_ids = ids
+  end
+
   def active_stream_containers(n)
-    ensure_stream_count!(n)
-    @stream_pool.first(n)
+    n = n.to_i
+    n = 1 if n <= 0
+
+    # active_ids が空なら、先頭から n を active にする（初回互換）
+    if @active_ids.empty?
+      ensure_stream_count_min!(n)
+      @active_ids = @stream_pool.map(&:id).first(n)
+    end
+
+    # desired が違う場合は controller 側で lifecycle plan を適用してから set_active_stream_ids! する想定。
+    # 念のため足りない分は追加で active にする
+    if @active_ids.length < n
+      ensure_stream_count_min!(n)
+      extra = (@stream_pool.map(&:id) - @active_ids - @inactive_ids).first(n - @active_ids.length)
+      @active_ids += extra
+    elsif @active_ids.length > n
+      @active_ids = @active_ids.first(n)
+    end
+
+    @active_ids.map { |id| @containers_by_id[id] }.compact
+  end
+
+  def inactive_stream_containers
+    @inactive_ids.map { |id| @containers_by_id[id] }.compact
+  end
+
+  # ------------------------------------------------------------
+  # lifecycle planning / applying (★追加)
+  # ------------------------------------------------------------
+
+  # vol manager 側で呼ぶ。plan は全 dimension に適用する。
+  # plan 形式:
+  # {
+  #   deactivate_ids: [...],
+  #   revive_ids: [...],
+  #   fork_pairs: [[source_id, new_id], ...],
+  #   active_ids: [...]
+  # }
+  def build_stream_lifecycle_plan(desired_count, target:, spread:)
+    desired_count = desired_count.to_i
+    desired_count = 1 if desired_count <= 0
+
+    # 現在の active を確定
+    active_stream_containers(desired_count) if @active_ids.empty? # 初回互換
+
+    current_active = @active_ids.dup
+    cur_n = current_active.length
+
+    target = target.to_f.clamp(0.0, 1.0)
+    spread = spread.to_f.clamp(0.0, 1.0)
+
+    deactivate_ids = []
+    revive_ids = []
+    fork_pairs = []
+
+    # --- decrease ---
+    if desired_count < cur_n
+      k = cur_n - desired_count
+      targets = centered_targets(k, target, spread)
+
+      candidates = current_active.map { |id| [id, presence_of_id(id)] }
+      deactivate_ids = pick_ids_by_targets_unique(candidates, targets)
+      remaining = current_active - deactivate_ids
+
+      return {
+        deactivate_ids: deactivate_ids,
+        revive_ids: [],
+        fork_pairs: [],
+        active_ids: remaining
+      }
+    end
+
+    # --- increase ---
+    if desired_count > cur_n
+      k = desired_count - cur_n
+      targets = centered_targets(k, target, spread)
+
+      # 1) revive を優先
+      inactives = @inactive_ids.map { |id| [id, presence_of_id(id)] }
+      revive_ids = pick_ids_by_targets_unique(inactives, targets)
+      remaining_targets = targets.dup
+      # revive した分のターゲットを減らす（近い順に消費した扱いにする）
+      revive_ids.each do |rid|
+        pv = presence_of_id(rid)
+        idx = remaining_targets.each_with_index.min_by { |t, _i| (t.to_f - pv).abs }&.last
+        remaining_targets.delete_at(idx) if idx
+      end
+
+      # 2) 足りない分は fork
+      fork_count = [0, k - revive_ids.length].max
+      if fork_count > 0
+        actives = current_active.map { |id| [id, presence_of_id(id)] }
+
+        # spread が小さいほど「同じソースを繰り返し fork」しやすくする
+        allow_duplicate_sources = (spread <= 0.001)
+
+        chosen_sources =
+          if allow_duplicate_sources
+            # 一番近いソースを fork_count 回
+            best = remaining_targets.first || target
+            src = actives.min_by { |(_id, pv)| (pv.to_f - best.to_f).abs }&.first || current_active.first
+            Array.new(fork_count, src)
+          else
+            # できるだけ distinct に
+            srcs = []
+            remaining_targets.first(fork_count).each do |t|
+              pick = (actives - srcs.map { |sid| [sid, nil] }).min_by { |(_id, pv)| (pv.to_f - t.to_f).abs }
+              srcs << (pick ? pick.first : current_active.first)
+            end
+            # 足りなければ最後は重複可で埋める
+            while srcs.length < fork_count
+              srcs << current_active.first
+            end
+            srcs
+          end
+
+        # new_id を割り当て（apply 時に全 dimension で同じ new_id を作る）
+        next_id = @next_stream_id
+        chosen_sources.each do |src_id|
+          fork_pairs << [src_id, next_id]
+          next_id += 1
+        end
+      end
+
+      # active_ids の並び：既存を維持し、revive を末尾に、fork を末尾に
+      new_ids = fork_pairs.map(&:last)
+      active_after = current_active + revive_ids + new_ids
+
+      return {
+        deactivate_ids: [],
+        revive_ids: revive_ids,
+        fork_pairs: fork_pairs,
+        active_ids: active_after
+      }
+    end
+
+    # same count: no-op
+    { deactivate_ids: [], revive_ids: [], fork_pairs: [], active_ids: current_active }
+  end
+
+  def apply_stream_lifecycle_plan!(plan)
+    plan ||= {}
+    deactivate_ids = Array(plan[:deactivate_ids]).map(&:to_i)
+    revive_ids     = Array(plan[:revive_ids]).map(&:to_i)
+    fork_pairs     = Array(plan[:fork_pairs]).map { |a| [a[0].to_i, a[1].to_i] }
+    active_ids     = Array(plan[:active_ids]).map(&:to_i)
+
+    # deactivate
+    deactivate_stream_ids!(deactivate_ids)
+
+    # revive
+    revive_stream_ids!(revive_ids)
+
+    # fork
+    fork_pairs.each do |src_id, new_id|
+      fork_stream_from_id!(src_id, new_id)
+    end
+
+    # 次IDを進める（forkで new_id を指定するので）
+    if fork_pairs.any?
+      max_new = fork_pairs.map(&:last).max
+      @next_stream_id = [@next_stream_id, max_new + 1].max
+    end
+
+    # active を plan 通りに
+    set_active_stream_ids!(active_ids) if active_ids.any?
+  end
+
+  def deactivate_stream_ids!(ids)
+    ids = Array(ids).map(&:to_i)
+    ids.each do |id|
+      next unless @active_ids.include?(id)
+      @active_ids.delete(id)
+      @inactive_ids << id unless @inactive_ids.include?(id)
+    end
+  end
+
+  def revive_stream_ids!(ids)
+    ids = Array(ids).map(&:to_i)
+    ids.each do |id|
+      next unless @inactive_ids.include?(id)
+      @inactive_ids.delete(id)
+      @active_ids << id unless @active_ids.include?(id)
+    end
+  end
+
+  def fork_stream_from_id!(source_id, new_id)
+    source_id = source_id.to_i
+    new_id = new_id.to_i
+    return if @containers_by_id.key?(new_id)
+
+    ensure_stream_id_max!(source_id)
+
+    src = @containers_by_id[source_id]
+    # source が無い場合は seed 作成
+    if src.nil?
+      add_new_stream_with_id!(new_id)
+      return
+    end
+
+    new_mgr = deep_clone_manager(src.manager)
+
+    new_container = StreamContainer.new(
+      id: new_id,
+      manager: new_mgr,
+      last_value: deep_dup(src.last_value),
+      last_abs_pitch: deep_dup(src.last_abs_pitch),
+      strength: 0.0,
+      presence_sum: src.presence_sum.to_f,
+      presence_count: src.presence_count.to_i,
+      presence_avg: src.presence_avg.to_f
+    )
+
+    @stream_pool << new_container
+    @containers_by_id[new_id] = new_container
+    @active_ids << new_id unless @active_ids.include?(new_id)
   end
 
   # ------------------------------------------------------------
   # init
   # ------------------------------------------------------------
+
   def initialize_caches
     @stream_pool.each do |c|
       safe_process_manager!(c.manager)
@@ -76,28 +319,21 @@ class MultiStreamManager
     end
   end
 
-  def update_strengths!
-    values = @stream_pool.map { |c| c.last_value.to_f }
-    min_v = values.min
-    max_v = values.max
-    width = (max_v - min_v).abs
-    width = 1.0 if width <= 0.0
-
-    @stream_pool.each do |c|
-      c.strength = ((c.last_value.to_f - min_v) / width).clamp(0.0, 1.0)
-    end
-  end
-
   # ------------------------------------------------------------
   # precalc complexity costs (per stream, per value)
+  # ※この仕組み自体は残す（他次元で必要）
   # ------------------------------------------------------------
-  def precalculate_costs(candidate_values, q_array)
+  def precalculate_costs(candidate_values, q_array, n = nil)
     candidate_values = Array(candidate_values)
     update_value_range_from_candidates!(candidate_values) unless @fixed_value_range
 
+    n = (n || @active_ids.length).to_i
+    n = 1 if n <= 0
+    actives = active_stream_containers(n)
+
     costs = {}
 
-    @stream_pool.each do |c|
+    actives.each do |c|
       per_value = {}
       raw_complexities = []
 
@@ -147,7 +383,7 @@ class MultiStreamManager
   )
     cand_set = Array(cand_set)
     n = cand_set.length
-    ensure_stream_count!(n)
+    n = 1 if n <= 0
 
     @pending_absolute_bases = absolute_bases if absolute_bases
 
@@ -164,7 +400,7 @@ class MultiStreamManager
     distance_weight   = distance_weight.to_f.clamp(0.0, 1.0)
     complexity_weight = complexity_weight.to_f.clamp(0.0, 1.0)
 
-    actives = active_streams(n)
+    actives = active_stream_containers(n)
 
     cost_matrix = Array.new(n) { Array.new(n, 0.0) }
     dist_matrix = Array.new(n) { Array.new(n, 0.0) }
@@ -227,12 +463,13 @@ class MultiStreamManager
             end
           end
 
-        comp01 = begin
-          h = stream_costs && stream_costs[stream.id] && stream_costs[stream.id][v]
-          h ? h[:complexity01].to_f : 0.5
-        rescue
-          0.5
-        end
+        comp01 =
+          begin
+            h = stream_costs && stream_costs[stream.id] && stream_costs[stream.id][v]
+            h ? h[:complexity01].to_f : 0.5
+          rescue
+            0.5
+          end
 
         dist_matrix[i][j] = dist01
         comp_matrix[i][j] = comp01
@@ -280,11 +517,11 @@ class MultiStreamManager
   def commit_state(best_chord, q_array, strength_params: nil, absolute_bases: nil)
     best_chord = Array(best_chord)
     n = best_chord.length
-    ensure_stream_count!(n)
+    n = 1 if n <= 0
 
     @pending_absolute_bases = absolute_bases if absolute_bases
 
-    actives = active_streams(n)
+    actives = active_stream_containers(n)
 
     actives.each_with_index do |stream, i|
       v = best_chord[i]
@@ -301,9 +538,21 @@ class MultiStreamManager
             [base + (v.to_i % PolyphonicConfig.pitch_class_mod)]
           end
       end
+
+      # ★vol平均 tracking（scalar だけ）
+      if @track_presence && !(v.is_a?(Array))
+        vv = v.to_f.clamp(0.0, 1.0)
+        stream.presence_sum = stream.presence_sum.to_f + vv
+        stream.presence_count = stream.presence_count.to_i + 1
+        stream.presence_avg =
+          if stream.presence_count.to_i > 0
+            (stream.presence_sum.to_f / stream.presence_count.to_f).clamp(0.0, 1.0)
+          else
+            vv
+          end
+      end
     end
 
-    update_strengths! if strength_params
     true
   end
 
@@ -325,6 +574,93 @@ class MultiStreamManager
     obj.is_a?(Array) ? obj.map { |e| deep_dup(e) } : obj
   end
 
+  def deep_clone_manager(mgr)
+    Marshal.load(Marshal.dump(mgr))
+  rescue
+    # フォールバック：data を複製して再構築（重いが安全）
+    data = begin
+      mgr.respond_to?(:data) ? deep_dup(mgr.data) : []
+    rescue
+      []
+    end
+
+    new_mgr = PolyphonicClusterManager.new(
+      data,
+      @merge_threshold_ratio,
+      @min_window_size,
+      @value_range,
+      max_set_size: @max_simultaneous_notes
+    )
+    safe_process_manager!(new_mgr)
+    prime_manager_cache_structures!(new_mgr)
+    new_mgr
+  end
+
+  def ensure_stream_id_max!(max_id)
+    max_id = max_id.to_i
+    return if max_id <= 0
+    while @next_stream_id <= max_id
+      add_new_stream_with_id!(@next_stream_id)
+      @next_stream_id += 1
+    end
+  end
+
+  def ensure_stream_count_min!(n)
+    n = n.to_i
+    n = 1 if n <= 0
+    ensure_stream_id_max!(n) if @stream_pool.length < n
+  end
+
+  def add_new_stream_with_id!(id)
+    id = id.to_i
+    return if @containers_by_id.key?(id)
+
+    len =
+      if @stream_pool.first && @stream_pool.first.manager.respond_to?(:data)
+        Array(@stream_pool.first.manager.data).length
+      else
+        @history_matrix.length
+      end
+    len = 1 if len <= 0
+
+    seed =
+      if @stream_pool.first && @stream_pool.first.last_value.is_a?(Array)
+        [@value_min]
+      else
+        @value_min
+      end
+
+    series = Array.new(len) { deep_dup(seed) }
+
+    mgr = PolyphonicClusterManager.new(
+      series.dup,
+      @merge_threshold_ratio,
+      @min_window_size,
+      @value_range,
+      max_set_size: @max_simultaneous_notes
+    )
+
+    safe_process_manager!(mgr)
+    prime_manager_cache_structures!(mgr)
+
+    container = StreamContainer.new(
+      id: id,
+      manager: mgr,
+      last_value: deep_dup(seed),
+      last_abs_pitch: nil,
+      strength: 0.0,
+      presence_sum: 0.0,
+      presence_count: 0,
+      presence_avg: 0.0
+    )
+
+    @stream_pool << container
+    @containers_by_id[id] = container
+
+    # 初期は active に入れておく（controller が後で調整）
+    @active_ids << id unless @active_ids.include?(id)
+  end
+
   def normalize_history_matrix(history_matrix)
     rows = Array(history_matrix).map { |row| Array(row) }
     rows = [] if rows.nil?
@@ -332,7 +668,6 @@ class MultiStreamManager
     max_cols = rows.map(&:length).max.to_i
     max_cols = 1 if max_cols <= 0
 
-    # 「値が配列か？」を見て、デフォルトを決める（note chord なら [0]）
     has_array_value =
       rows.any? do |row|
         row.any? { |v| v.is_a?(Array) }
@@ -355,7 +690,8 @@ class MultiStreamManager
 
     (0...stream_count).each do |s_idx|
       series = Array.new(steps) { |t| @history_matrix[t][s_idx] }
-      id = next_stream_id!
+      id = @next_stream_id
+      @next_stream_id += 1
 
       mgr = PolyphonicClusterManager.new(
         series.dup,
@@ -365,82 +701,39 @@ class MultiStreamManager
         max_set_size: @max_simultaneous_notes
       )
 
-      @stream_pool << StreamContainer.new(
+      # presence 初期化（scalar のときだけ）
+      pres_sum = 0.0
+      pres_cnt = 0
+      pres_avg = 0.0
+      if @track_presence
+        series.each do |v|
+          next if v.is_a?(Array)
+          vv = v.to_f.clamp(0.0, 1.0)
+          pres_sum += vv
+          pres_cnt += 1
+        end
+        pres_avg = pres_cnt > 0 ? (pres_sum / pres_cnt.to_f).clamp(0.0, 1.0) : series.last.to_f.clamp(0.0, 1.0)
+      end
+
+      container = StreamContainer.new(
         id: id,
         manager: mgr,
         last_value: series.last,
         last_abs_pitch: nil,
-        strength: 0.0
+        strength: 0.0,
+        presence_sum: pres_sum,
+        presence_count: pres_cnt,
+        presence_avg: pres_avg
       )
+
+      @stream_pool << container
+      @containers_by_id[id] = container
+      @active_ids << id
     end
-  end
-
-  def active_streams(n)
-    @stream_pool.first(n)
-  end
-
-  def ensure_stream_count!(n)
-    n = n.to_i
-    n = 1 if n <= 0
-
-    if @stream_pool.length < n
-      (n - @stream_pool.length).times { add_new_stream! }
-    elsif @stream_pool.length > n
-      @stream_pool = @stream_pool.first(n)
-    end
-  end
-
-  def add_new_stream!
-    id = next_stream_id!
-
-    len =
-      if @stream_pool.first && @stream_pool.first.manager.respond_to?(:data)
-        Array(@stream_pool.first.manager.data).length
-      else
-        @history_matrix.length
-      end
-    len = 1 if len <= 0
-
-    # 既存が配列なら、新規も「セット（配列）」で seed
-    seed =
-      if @stream_pool.first && @stream_pool.first.last_value.is_a?(Array)
-        [@value_min]
-      else
-        @value_min
-      end
-
-    series = Array.new(len) { deep_dup(seed) }
-
-    mgr = PolyphonicClusterManager.new(
-      series.dup,
-      @merge_threshold_ratio,
-      @min_window_size,
-      @value_range,
-      max_set_size: @max_simultaneous_notes
-    )
-
-    safe_process_manager!(mgr)
-    prime_manager_cache_structures!(mgr)
-
-    @stream_pool << StreamContainer.new(
-      id: id,
-      manager: mgr,
-      last_value: deep_dup(seed),
-      last_abs_pitch: nil,
-      strength: 0.0
-    )
-  end
-
-  def next_stream_id!
-    id = @next_stream_id
-    @next_stream_id += 1
-    id
   end
 
   def infer_value_range_from_history!
     flat = @history_matrix.flatten.compact
-
-    # chord配列が混ざる場合は flatten がさらに下まで入るのでOK
     nums = flat.flatten.map(&:to_f) rescue flat.map(&:to_f)
 
     if nums.empty?
@@ -474,7 +767,53 @@ class MultiStreamManager
   end
 
   # ------------------------------------------------------------
-  # Hungarian (min assignment)
+  # lifecycle helpers
+  # ------------------------------------------------------------
+  def presence_of_id(id)
+    c = @containers_by_id[id.to_i]
+    return 0.0 unless c
+    # track_presence がない manager でも動くように fallback を入れる
+    if @track_presence
+      c.presence_avg.to_f.clamp(0.0, 1.0)
+    else
+      v = c.last_value
+      v.is_a?(Array) ? 0.0 : v.to_f.clamp(0.0, 1.0)
+    end
+  end
+
+  def centered_targets(n, center, spread)
+    n = n.to_i
+    return [] if n <= 0
+    return [center.to_f.clamp(0.0, 1.0)] if n == 1
+
+    center = center.to_f.clamp(0.0, 1.0)
+    spread = spread.to_f.clamp(0.0, 1.0)
+
+    half_width = spread / 2.0
+    start_val = (center - half_width).clamp(0.0, 1.0)
+    end_val   = (center + half_width).clamp(0.0, 1.0)
+
+    (0...n).map do |i|
+      t = i.to_f / (n - 1)
+      (start_val + (end_val - start_val) * t).clamp(0.0, 1.0)
+    end
+  end
+
+  # candidates: [[id, presence], ...]
+  def pick_ids_by_targets_unique(candidates, targets)
+    pool = Array(candidates).map { |id, pv| [id.to_i, pv.to_f] }
+    out = []
+    targets.each do |t|
+      break if pool.empty?
+      best = pool.min_by { |(_id, pv)| (pv - t.to_f).abs }
+      out << best[0]
+      pool.delete(best)
+    end
+    out
+  end
+
+  # ------------------------------------------------------------
+  # Hungarian (min assignment) - 既存そのまま
   # ------------------------------------------------------------
   def hungarian_min_assignment(cost)
     n = cost.length
@@ -539,7 +878,7 @@ class MultiStreamManager
   end
 
   # ------------------------------------------------------------
-  # distance helpers (0..1)
+  # distance helpers (0..1) - 既存そのまま
   # ------------------------------------------------------------
   def set_distance01(a, b, width:, max_count:)
     a = a.is_a?(Array) ? a.compact : [a].compact
@@ -561,11 +900,7 @@ class MultiStreamManager
 
     count_norm = ((a.length - b.length).abs.to_f / max_count.to_f).clamp(0.0, 1.0)
 
-    if count_norm <= 0.0
-      pitch_norm
-    else
-      ((pitch_norm + count_norm) / 2.0).clamp(0.0, 1.0)
-    end
+    ((pitch_norm + count_norm) / 2.0).clamp(0.0, 1.0)
   end
 
   # ------------------------------------------------------------

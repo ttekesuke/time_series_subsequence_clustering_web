@@ -243,7 +243,8 @@ class Api::Web::TimeSeriesController < ApplicationController
         merge_threshold_ratio,
         min_window,
         dim[:range],
-        max_simultaneous_notes: max_simultaneous_notes
+        max_simultaneous_notes: max_simultaneous_notes,
+        track_presence: (key == 'vol') # ★ここだけ true
       )
     end
 
@@ -356,6 +357,17 @@ class Api::Web::TimeSeriesController < ApplicationController
       current_stream_count = stream_counts[step_idx].to_i
       current_stream_count = 1 if current_stream_count <= 0
 
+      st_target = (strength_targets[step_idx] || 0.5).to_f
+      st_spread = (strength_spreads[step_idx] || 0.0).to_f
+
+      vol_stream_mgr = managers.dig('vol', :stream)
+      if vol_stream_mgr
+        plan = vol_stream_mgr.build_stream_lifecycle_plan(current_stream_count, target: st_target, spread: st_spread)
+        managers.each do |_k, mgrs|
+          next unless mgrs && mgrs[:stream].respond_to?(:apply_stream_lifecycle_plan!)
+          mgrs[:stream].apply_stream_lifecycle_plan!(plan)
+        end
+      end
       current_step_values = Array.new(current_stream_count) { Array.new(6) }
       step_decisions = {}
 
@@ -626,8 +638,8 @@ class Api::Web::TimeSeriesController < ApplicationController
         # ----------------------------
         # note 以外（従来通り）
         # ----------------------------
-        stream_costs = mgrs[:stream].precalculate_costs(dim[:range], q_array)
-        mgrs[:stream].update_strengths! if key == 'vol'
+        stream_costs = mgrs[:stream].precalculate_costs(dim[:range], q_array, current_stream_count)
+
 
         candidates_set = dim[:range].repeated_combination(current_stream_count).to_a
 
@@ -845,7 +857,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     g_mgr
   end
 
-  def initialize_managers_for_dimension(history, ratio, min_window, value_range, max_simultaneous_notes: PolyphonicConfig::CHORD_SIZE_RANGE.max)
+  def initialize_managers_for_dimension(history, ratio, min_window, value_range, max_simultaneous_notes: PolyphonicConfig::CHORD_SIZE_RANGE.max, track_presence: false)
     g_mgr = initialize_global_manager(history, ratio, min_window, value_range, max_simultaneous_notes: max_simultaneous_notes)
 
     s_mgr = MultiStreamManager.new(
@@ -853,7 +865,8 @@ class Api::Web::TimeSeriesController < ApplicationController
       ratio,
       min_window,
       value_range: value_range,
-      max_set_size: max_simultaneous_notes
+      max_set_size: max_simultaneous_notes,
+      track_presence: track_presence # ★追加
     )
     s_mgr.initialize_caches
 
