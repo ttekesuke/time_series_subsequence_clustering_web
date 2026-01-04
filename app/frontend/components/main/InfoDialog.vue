@@ -48,6 +48,7 @@
             <li>System behavior may change without notice, and result correctness is not guaranteed.</li>
             <li>If the app has been idle, the first request may take additional time while services restart.</li>
             <li>Generated audio and previews are session-scoped and are cleared when you refresh the page.</li>
+            <li>Author: Takuya SHIMIZU <a href="https://tekesuke1986.tumblr.com/" target="_blank">https://tekesuke1986.tumblr.com/</a></li>
           </ul>
         </section>
       </v-card-text>
