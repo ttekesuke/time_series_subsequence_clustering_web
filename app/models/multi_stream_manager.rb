@@ -150,36 +150,25 @@ class MultiStreamManager
     if desired_count < cur_n
       k = cur_n - desired_count
 
-      # targetに基づいて削除するストリームを選択
-      # targetが高い → presence_avgが高いものを削除（メインストリーム削除）
-      # targetが低い → presence_avgが低いものを削除（背景ストリーム削除）
-      candidates = current_active.map { |id| [id, presence_of_id(id)] }
+      # generate_centered_targets を使って削除対象のターゲット値を生成
+      delete_targets = generate_centered_targets(k, target, spread)
 
-      # target値に基づいて重み付けスコアを計算
-      weighted_candidates = candidates.map do |id, presence|
-        # presence_avgとtargetの距離（targetが高いほど高presenceが選ばれやすい）
-        if target >= 0.5
-          # 高いtarget: presenceが高いほどscoreが低い（削除されやすい）
-          score = 1.0 - presence
-        else
-          # 低いtarget: presenceが低いほどscoreが低い（削除されやすい）
-          score = presence
+      # 現在のアクティブストリームと強度のリスト
+      active_with_strength = current_active.map { |id| [id, presence_of_id(id)] }
+
+      delete_targets.each do |t_val|
+        # まだ削除リストに入っていないストリームの中で、t_valに最も近い強度のストリームを探す
+        closest = active_with_strength.min_by do |id, strength|
+          next Float::INFINITY if plan[:deactivate_ids].include?(id)
+          (strength - t_val).abs
         end
 
-        # spreadによる確率的要素の追加（spreadが大きいほどランダム性が増す）
-        random_factor = spread * (rand - 0.5) * 2.0
-        adjusted_score = score + random_factor
-
-        [id, presence, adjusted_score]
+        if closest
+          plan[:deactivate_ids] << closest[0]
+        end
       end
 
-      # スコア順にソートして上位k個を削除対象に
-      sorted = weighted_candidates.sort_by { |_id, _presence, score| score }
-      deactivate_ids = sorted.first(k).map { |id, _, _| id }
-
-      plan[:deactivate_ids] = deactivate_ids
-      plan[:active_ids] = current_active - deactivate_ids
-
+      plan[:active_ids] = current_active - plan[:deactivate_ids]
       return plan
     end
 
@@ -188,66 +177,50 @@ class MultiStreamManager
       k = desired_count - cur_n
 
       # 1) 非アクティブストリームから復活させるものの選択
-      inactive_candidates = @inactive_ids.map { |id| [id, presence_of_id(id)] }
+      inactive_with_strength = @inactive_ids.map { |id| [id, presence_of_id(id)] }
 
-      if inactive_candidates.any?
-        # 復活候補をtargetに基づいて評価
-        revival_scores = inactive_candidates.map do |id, presence|
-          # targetに近いpresenceを持つものを優先
-          distance = (presence - target).abs
-          # spreadによる調整
-          random_factor = spread * (rand - 0.5)
-          score = distance + random_factor
-          [id, presence, score]
+      if inactive_with_strength.any?
+        # 復活させる数は最大k、ただし非アクティブストリーム数まで
+        revive_count = [k, inactive_with_strength.length].min
+        revive_targets = generate_centered_targets(revive_count, target, spread)
+
+        revive_targets.each do |t_val|
+          # まだ復活リストに入っていないストリームの中で最も近いものを探す
+          closest = inactive_with_strength.min_by do |id, strength|
+            next Float::INFINITY if plan[:revive_ids].include?(id)
+            (strength - t_val).abs
+          end
+
+          if closest
+            plan[:revive_ids] << closest[0]
+          end
         end
 
-        # スコア順にソート（低いスコアほどtargetに近い）
-        sorted_revivals = revival_scores.sort_by { |_id, _presence, score| score }
-
-        # 最大k個まで復活
-        max_revive = [k, sorted_revivals.length].min
-        revive_ids = sorted_revivals.first(max_revive).map { |id, _, _| id }
-        k -= revive_ids.length
-
-        plan[:revive_ids] = revive_ids
-        plan[:active_ids] = current_active + revive_ids
+        k -= plan[:revive_ids].length
+        plan[:active_ids] = current_active + plan[:revive_ids]
       end
 
       # 2) まだ増やす必要があれば、フォーク（複製）で対応
       if k > 0
-        # 複製元となるストリームを選択（targetに近いpresenceを持つものを優先）
-        active_candidates = current_active.map { |id| [id, presence_of_id(id)] }
+        # 複製元となるアクティブストリームの強度リスト
+        active_with_strength = current_active.map { |id| [id, presence_of_id(id)] }
+        fork_targets = generate_centered_targets(k, target, spread)
 
-        fork_sources = []
-        k.times do
-          if active_candidates.empty?
-            # 候補がない場合は最初のアクティブストリームを使用
-            source_id = current_active.first
-          else
-            # targetに近いpresenceを持つストリームを複製元に選択
-            scores = active_candidates.map do |id, presence|
-              distance = (presence - target).abs
-              random_factor = spread * (rand - 0.5) * 0.5  # 複製はランダム性を小さく
-              [id, distance + random_factor]
-            end
-
-            # 最もtargetに近いものを選択
-            source_id = scores.min_by { |_id, score| score }[0]
+        fork_targets.each do |t_val|
+          # 複製元は重複を許すので、毎回すべてのアクティブストリームから最も近いものを選ぶ
+          closest = active_with_strength.min_by do |id, strength|
+            (strength - t_val).abs
           end
 
-          fork_sources << source_id
+          if closest
+            source_id = closest[0]
+            new_id = @next_stream_id
+            @next_stream_id += 1
+            plan[:fork_pairs] << [source_id, new_id]
+          end
         end
 
-        # 新しいIDを割り当ててforkペアを作成
-        fork_pairs = []
-        fork_sources.each do |source_id|
-          new_id = @next_stream_id
-          @next_stream_id += 1
-          fork_pairs << [source_id, new_id]
-        end
-
-        plan[:fork_pairs] = fork_pairs
-        plan[:active_ids] = plan[:active_ids] + fork_pairs.map(&:last)
+        plan[:active_ids] = plan[:active_ids] + plan[:fork_pairs].map(&:last)
       end
 
       return plan
@@ -255,6 +228,25 @@ class MultiStreamManager
 
     # ストリーム数が変わらない場合
     plan
+  end
+
+  def generate_centered_targets(n, center, spread)
+    return [] if n <= 0
+    return [center.to_f.clamp(0.0, 1.0)] if n == 1
+
+    center = center.to_f.clamp(0.0, 1.0)
+    spread = spread.to_f.clamp(0.0, 1.0)
+
+    half_width = spread / 2.0
+    start_val = (center - half_width).clamp(0.0, 1.0)
+    end_val   = (center + half_width).clamp(0.0, 1.0)
+
+    targets = []
+    (0...n).each do |i|
+      t = i.to_f / (n - 1)
+      targets << (start_val + (end_val - start_val) * t).clamp(0.0, 1.0)
+    end
+    targets
   end
 
   def update_stream_strength(stream_id, volume_value)
@@ -295,20 +287,26 @@ class MultiStreamManager
     target = target.to_f.clamp(0.0, 1.0)
     spread = spread.to_f.clamp(0.0, 1.0)
 
-    # すべてのストリームをstrengthで評価
-    scored_streams = @stream_pool.map do |container|
-      strength = container.presence_avg.to_f
-      # targetとの距離 + spreadによる確率的要素
-      base_score = (strength - target).abs
-      random_factor = spread * (rand - 0.5) * 2.0
-      [container.id, strength, base_score + random_factor]
+    # generate_centered_targetsでターゲット値を生成
+    target_values = generate_centered_targets(count, target, spread)
+
+    # すべてのストリームをコピーして作業
+    available_streams = @stream_pool.map { |c| [c.id, c.presence_avg.to_f] }
+    selected = []
+
+    target_values.each do |t_val|
+      # まだ選ばれていないストリームの中で最も近い強度のものを探す
+      closest = available_streams.min_by do |id, strength|
+        next Float::INFINITY if selected.any? { |sel_id, _| sel_id == id }
+        (strength - t_val).abs
+      end
+
+      if closest
+        selected << closest
+      end
     end
 
-    # スコア順にソート（低いほどtargetに近い）
-    sorted = scored_streams.sort_by { |_id, _strength, score| score }
-
-    # 指定された数のストリームを選択
-    sorted.first(count).map { |id, strength, _| [id, strength] }
+    selected
   end
 
 
