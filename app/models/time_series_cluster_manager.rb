@@ -27,7 +27,7 @@ class TimeSeriesClusterManager
     @calculate_distance_when_added_subsequence_to_cluster = calculate_distance_when_added_subsequence_to_cluster
     @cluster_id_counter = 0
 
-    # ★fix: 代表列(as)は「最初の subseq」を入れる（インデックス配列 [0, min_window] はバグ）
+    # fix: 代表列(as)は「最初の subseq」を入れる（インデックス配列 [0, min_window] はバグ）
     seed_as =
       if @data.is_a?(Array) && @data.length >= @min_window_size
         deep_dup(@data[0, @min_window_size])
@@ -72,7 +72,7 @@ class TimeSeriesClusterManager
     clustering_subsequences_incremental(@data.length - 1)
   end
 
-  # ★永続キャッシュ更新
+  # 永続キャッシュ更新
   def update_caches_permanently(quadratic_integer_array)
     clusters_each_window_size = transform_clusters(@clusters, @min_window_size)
 
@@ -378,7 +378,7 @@ class TimeSeriesClusterManager
   end
 
   def process_existing_clusters(parent, latest_seq, _valid_si, max_distance, latest_start, new_length, keys_to_parent)
-    # ★fix: child[:si] を舐めて「最後の distance」になるのはバグ。
+    # fix: child[:si] を舐めて「最後の distance」になるのはバグ。
     # 基本は child[:as]（代表列）で比較。なければ min を取る。
     best_cluster_id = nil
     best_child = nil
@@ -477,7 +477,7 @@ class TimeSeriesClusterManager
     @clusters.each do |cluster_id, cluster|
       next if cluster[:si].include?(latest_start)
 
-      # ★fix: 代表列があればそれで比較（無ければ fallback）
+      # fix: 代表列があればそれで比較（無ければ fallback）
       compare_seq =
         if cluster[:as]
           cluster[:as]

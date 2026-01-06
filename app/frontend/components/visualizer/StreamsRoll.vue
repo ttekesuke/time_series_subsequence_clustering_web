@@ -45,7 +45,7 @@ const props = defineProps({
   // Optional background title (watermark-like). May be omitted.
   title: { type: String, default: '' },
 
-  // ★ここが「小数のステップ（0.1など）」に相当
+  // ここが「小数のステップ（0.1など）」に相当
   valueResolution: { type: Number, default: 1 }
 })
 
@@ -75,7 +75,7 @@ const onScroll = (e: Event) => emit('scroll', e)
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
 
 /**
- * ★小数ステップ対策:
+ * 小数ステップ対策:
  * valueResolution が整数になるまで 10倍して、整数世界で index 計算する
  * (0.1, 0.01, 0.25 などでも "だいたい整数" になるまで最大6桁)
  */
@@ -114,7 +114,7 @@ const draw = () => {
       : (scrollWrapper.value.clientHeight || 200)
 
   // =========================
-  // ★小数 valueResolution を安定処理
+  // 小数 valueResolution を安定処理
   // =========================
   const valueRes = Number(props.valueResolution)
   const safeValueRes = Number.isFinite(valueRes) && valueRes > 0 ? valueRes : 1
@@ -210,7 +210,7 @@ const draw = () => {
         // 値をレンジにクランプ
         const clampedVal = clamp(numVal, rangeMin, rangeMax)
 
-        // ★ここが重要：整数スケールで index を出す
+        // ここが重要：整数スケールで index を出す
         const scaledVal = Math.round(clampedVal * scale)
         const rawIndex = Math.round((scaledVal - scaledMin) / scaledRes)
         const normalizedIndex = clamp(rawIndex, 0, stepsY - 1)

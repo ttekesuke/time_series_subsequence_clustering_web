@@ -59,7 +59,7 @@ class PolyphonicClusterManager < TimeSeriesClusterManager
     Math.sqrt(squared_euclidean_distance(seq_a, seq_b))
   end
 
-  # ★scalar/array 両対応:
+  # scalar/array 両対応:
   # - scalar は [scalar] として扱う
   # - 配列はそのまま（順序は無視して距離化）
   def min_avg_distance(a, b)

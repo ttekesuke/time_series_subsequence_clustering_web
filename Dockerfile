@@ -14,7 +14,7 @@ WORKDIR /app
 # Gemfile のキャッシュを活用
 COPY Gemfile Gemfile.lock /app/
 
-# ★追加: gemのインストール先を vendor/bundle に設定
+# 追加: gemのインストール先を vendor/bundle に設定
 # これにより、gemが /app/vendor/bundle にインストールされます
 RUN bundle config set --local path 'vendor/bundle'
 

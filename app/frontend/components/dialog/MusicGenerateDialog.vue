@@ -900,12 +900,12 @@ const buildGenParamsFromRows = () => {
 
   result.stream_counts = get('stream_counts')
 
-  // ★追加
+  // 追加
   result.stream_strength_target = get('stream_strength_target')
   result.stream_strength_spread = get('stream_strength_spread')
   result.dissonance_target      = get('dissonance_target')
 
-  // ★追加 (chord_size)
+  // 追加 (chord_size)
   result.chord_size_global      = get('chord_size_global')
   result.chord_size_center       = get('chord_size_center')
   result.chord_size_spread   = get('chord_size_spread')
@@ -954,7 +954,7 @@ const handleGeneratePolyphonic = async () => {
     const genParams = buildGenParamsFromRows()
     const initialContext = buildInitialContext()
 
-    // ★重要: すべて generate_polyphonic 配下にネストする
+    // 重要: すべて generate_polyphonic 配下にネストする
     const payload: any = {
       generate_polyphonic: {
         job_id: jobId,

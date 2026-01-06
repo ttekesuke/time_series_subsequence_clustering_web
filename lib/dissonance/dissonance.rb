@@ -10,7 +10,7 @@ require_relative 'tuning'
 module Dissonance
   module_function
 
-  # ★fix: amps が全部 0 付近などで空になったとき transpose が nil になって落ちるのを防ぐ
+  # fix: amps が全部 0 付近などで空になったとき transpose が nil になって落ちるのを防ぐ
   def dissonance(freqs, amps, model: 'sethares1993', aggregation: ->(d) { d.sum })
     freqs = freqs.flatten
     amps  = amps.flatten
@@ -59,7 +59,7 @@ require_relative 'tuning'
 module Dissonance
   module_function
 
-  # ★fix: amps が全部 0 付近などで空になったとき transpose が nil になって落ちるのを防ぐ
+  # fix: amps が全部 0 付近などで空になったとき transpose が nil になって落ちるのを防ぐ
   def dissonance(freqs, amps, model: 'sethares1993', aggregation: ->(d) { d.sum })
     freqs = freqs.flatten
     amps  = amps.flatten

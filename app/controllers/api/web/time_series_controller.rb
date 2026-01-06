@@ -219,13 +219,12 @@ class Api::Web::TimeSeriesController < ApplicationController
       }
     }
 
-
     managers = {}
     merge_threshold_ratio = 0.1
     min_window = 2
     max_simultaneous_notes = PolyphonicConfig::CHORD_SIZE_RANGE.max.to_i
 
-    # --- octave/vol/bri/hrd/tex を通常初期化 ---
+    # --- マネージャー初期化（track_presence: true をvolマネージャーに設定） ---
     %w[octave vol bri hrd tex].each do |key|
       dim = dim_defs[key]
 
@@ -238,25 +237,24 @@ class Api::Web::TimeSeriesController < ApplicationController
         (min_window + 1 - dim_history.length).times { dim_history << deep_dup(last_val) }
       end
 
+      # volマネージャーのみtrack_presenceをtrueに
       managers[key] = initialize_managers_for_dimension(
         dim_history,
         merge_threshold_ratio,
         min_window,
         dim[:range],
         max_simultaneous_notes: max_simultaneous_notes,
-        track_presence: (key == 'vol') # ★ここだけ true
+        track_presence: (key == 'vol') # volのみストリーム強度をトラック
       )
     end
 
-    # --- note は chord（pcs配列）として stream クラスタリングしたい ---
-    # stream_history: step×stream の各セルが pcs配列
+    # --- note マネージャー初期化 ---
     note_stream_history = results.map do |step_streams|
       (step_streams || []).map do |s|
         normalize_pcs.call(s[note_idx])
       end
     end
 
-    # global_history: そのstepで鳴る pitch class 合併集合（ネスト配列を避ける）
     note_global_history = results.map do |step_streams|
       pcs =
         (step_streams || [])
@@ -285,18 +283,20 @@ class Api::Web::TimeSeriesController < ApplicationController
       max_simultaneous_notes: max_simultaneous_notes
     )
 
+    # noteマネージャーはtrack_presenceをfalse（音量ベースの強度はvolマネージャーでトラック）
     note_stream_mgr = MultiStreamManager.new(
       note_stream_history,
       merge_threshold_ratio,
       min_window,
       value_range: PolyphonicConfig::NOTE_RANGE.to_a,
-      max_set_size: max_simultaneous_notes
+      max_set_size: max_simultaneous_notes,
+      track_presence: false  # noteはtrack_presenceしない
     )
     note_stream_mgr.initialize_caches
 
     managers['note'] = { global: note_global_mgr, stream: note_stream_mgr }
 
-    # chord_size 履歴（notePCS.length ベース）※range外をclamp
+    # chord_size 履歴
     chord_history = results.map do |step_streams|
       (step_streams || []).map do |s|
         pcs = normalize_pcs.call(s[note_idx])
@@ -315,7 +315,8 @@ class Api::Web::TimeSeriesController < ApplicationController
       merge_threshold_ratio,
       min_window,
       dim_defs['chord_size'][:range],
-      max_simultaneous_notes: max_simultaneous_notes
+      max_simultaneous_notes: max_simultaneous_notes,
+      track_presence: false  # chord_sizeもtrack_presenceしない
     )
 
     # --- STM manager ---
@@ -326,7 +327,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       amp_profile: 0.88
     )
 
-    # initial_context を STM に投入（notePCS配列として扱う）
+    # initial_context を STM に投入
     step_duration = 0.25
     results.each_with_index do |step_streams, i|
       next if step_streams.nil? || step_streams.empty?
@@ -352,22 +353,44 @@ class Api::Web::TimeSeriesController < ApplicationController
       stm_mgr.commit!(midi_notes, amps, onset)
     end
 
+    # --- ストリーム強度レポート用の配列 ---
+    stream_strength_reports = []
+
     # --- 生成ループ ---
     steps_to_generate.times do |step_idx|
       current_stream_count = stream_counts[step_idx].to_i
       current_stream_count = 1 if current_stream_count <= 0
 
+      # 現在のステップのストリーム強度ターゲットを取得
       st_target = (strength_targets[step_idx] || 0.5).to_f
       st_spread = (strength_spreads[step_idx] || 0.0).to_f
 
+      # volマネージャーを使用してストリームライフサイクル計画を作成
       vol_stream_mgr = managers.dig('vol', :stream)
       if vol_stream_mgr
-        plan = vol_stream_mgr.build_stream_lifecycle_plan(current_stream_count, target: st_target, spread: st_spread)
+        # ストリーム強度ターゲットに基づいてライフサイクル計画を作成
+        plan = vol_stream_mgr.build_stream_lifecycle_plan(
+          current_stream_count,
+          target: st_target,
+          spread: st_spread
+        )
+
+        # デバッグ情報の収集
+        stream_strength_reports << {
+          step: step_idx,
+          target: st_target,
+          spread: st_spread,
+          plan: plan,
+          strengths_before: vol_stream_mgr.stream_strengths_report
+        }
+
+        # すべての次元のマネージャーに計画を適用
         managers.each do |_k, mgrs|
           next unless mgrs && mgrs[:stream].respond_to?(:apply_stream_lifecycle_plan!)
           mgrs[:stream].apply_stream_lifecycle_plan!(plan)
         end
       end
+
       current_step_values = Array.new(current_stream_count) { Array.new(6) }
       step_decisions = {}
 
@@ -389,8 +412,9 @@ class Api::Web::TimeSeriesController < ApplicationController
         width = 1.0 if width <= 0.0
 
         q_array = create_quadratic_integer_array(0, width * current_len, current_len)
+
         # ----------------------------
-        # note 特別処理（root廃止 / chordをクラスタリング対象に）
+        # note 特別処理
         # ----------------------------
         if key == 'note'
           chord_sizes = step_decisions.fetch('chord_size')
@@ -459,7 +483,7 @@ class Api::Web::TimeSeriesController < ApplicationController
 
           best_ordered = ordered_list_for_combo[best_i]
 
-          # --- B) shift を note(cost) で決める（rootは使わない） ---
+          # --- B) shift 探索 ---
           absolute_bases = octaves.map { |o| PolyphonicConfig.base_c_midi(o.to_i) }
           abs_width = compute_abs_width(absolute_bases)
 
@@ -489,7 +513,7 @@ class Api::Web::TimeSeriesController < ApplicationController
               shifted_ordered.first(cs)
             end
 
-            global_value = shifted_ordered # globalは合併集合（ネストを避ける）
+            global_value = shifted_ordered
 
             g_dist, g_qty, g_comp = mgrs[:global].simulate_add_and_calculate(global_value, q_array)
 
@@ -542,12 +566,12 @@ class Api::Web::TimeSeriesController < ApplicationController
             }
           end
 
-          # global 正規化（shift間で）
+          # global 正規化
           g_dists01, _ = normalize_scores(shift_metrics.map { |m| m[:global_dist] }, true)
           g_qtys01, _  = normalize_scores(shift_metrics.map { |m| m[:global_qty] }, false)
           g_comps01, _ = normalize_scores(shift_metrics.map { |m| m[:global_comp] }, true)
 
-          # stream complexity 正規化（streamごとに shift間で）
+          # stream complexity 正規化
           n_shifts = shift_metrics.length
           complexity01 = Array.new(current_stream_count) { Array.new(n_shifts, 0.5) }
 
@@ -599,7 +623,7 @@ class Api::Web::TimeSeriesController < ApplicationController
           best_chords_for_streams = best_m[:chords_for_streams]
           best_global_value = best_m[:global_value]
 
-          # shiftした後にSTMにcommit ===
+          # B段階決定後にSTMにcommit
           midi_notes = []
           amps = []
           best_chords_for_streams.each_with_index do |pcs, s|
@@ -610,16 +634,16 @@ class Api::Web::TimeSeriesController < ApplicationController
               amps << a_each
             end
           end
-          stm_mgr.commit!(midi_notes, amps, onset)          # =========================================
+          stm_mgr.commit!(midi_notes, amps, onset)
 
-          # managers 更新（note は chord を stream に、合併集合を global に入れる）
+          # managers 更新
           mgrs[:global].add_data_point_permanently(best_global_value)
           mgrs[:global].update_caches_permanently(q_array)
 
           mgrs[:stream].commit_state(best_chords_for_streams, q_array, absolute_bases: absolute_bases)
           mgrs[:stream].update_caches_permanently(q_array)
 
-          # timeSeries 出力は chord pcs 配列
+          # timeSeries 出力
           best_chords_for_streams.each_with_index do |pcs, s_i|
             current_step_values[s_i][note_idx] = normalize_pcs.call(pcs)
           end
@@ -632,7 +656,6 @@ class Api::Web::TimeSeriesController < ApplicationController
         # note 以外（従来通り）
         # ----------------------------
         stream_costs = mgrs[:stream].precalculate_costs(dim[:range], q_array, current_stream_count)
-
 
         candidates_set = dim[:range].repeated_combination(current_stream_count).to_a
 
@@ -654,6 +677,7 @@ class Api::Web::TimeSeriesController < ApplicationController
         mgrs[:global].update_caches_permanently(q_array)
 
         if key == 'vol'
+          # volのcommit時にストリーム強度を更新
           st_target = strength_targets[step_idx] || 0.5
           st_spread = strength_spreads[step_idx] || 0.0
           mgrs[:stream].commit_state(best_chord, q_array, strength_params: { target: st_target, spread: st_spread })
@@ -678,7 +702,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     broadcast_done(job_id)
 
-    # --- 最終正規化（型・範囲保証）---
+    # --- 最終正規化 ---
     results.each do |step_streams|
       next unless step_streams.is_a?(Array)
       step_streams.each do |vec|
@@ -718,7 +742,9 @@ class Api::Web::TimeSeriesController < ApplicationController
     render json: {
       timeSeries: results,
       clusters: cluster_payload,
-      processingTime: (end_time - start_time).round(2)
+      processingTime: (end_time - start_time).round(2),
+      # デバッグ用にストリーム強度レポートを追加（開発環境のみ）
+      streamStrengths: Rails.env.development? ? stream_strength_reports : nil
     }
   end
 
@@ -859,7 +885,7 @@ class Api::Web::TimeSeriesController < ApplicationController
       min_window,
       value_range: value_range,
       max_set_size: max_simultaneous_notes,
-      track_presence: track_presence # ★追加
+      track_presence: track_presence # 追加
     )
     s_mgr.initialize_caches
 
@@ -1114,7 +1140,7 @@ class Api::Web::TimeSeriesController < ApplicationController
     [normalized, weight]
   end
 
-  # ★NaN防止：count<=1 を必ず処理
+  # NaN防止：count<=1 を必ず処理
   def create_quadratic_integer_array(start_val, end_val, count)
     count = count.to_i
     return [start_val.to_f.ceil + 1] if count <= 1

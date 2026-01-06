@@ -112,7 +112,7 @@ const drawPianoRoll = (scrollTime: number) => {
 
       // 画面内にある場合のみ描画
       if (xPosition + width >= 0 && xPosition <= props.width) {
-        // ★修正: velocity を透明度に反映 (0.0 ~ 1.0)
+        // 修正: velocity を透明度に反映 (0.0 ~ 1.0)
         const velocity = note.velocity !== undefined ? note.velocity : 1.0
         const originalAlpha = ctx.globalAlpha
         ctx.globalAlpha = Math.max(0.2, velocity) // 最低でも少し見えるように

@@ -31,7 +31,7 @@ class MultiStreamManager
     use_complexity_mapping: true,
     value_range: nil,
     max_set_size: PolyphonicConfig::CHORD_SIZE_RANGE.max,
-    track_presence: false # ★追加：vol用だけ true
+    track_presence: false # 追加：vol用だけ true
   )
     @merge_threshold_ratio = merge_threshold_ratio
     @min_window_size = min_window_size
@@ -117,7 +117,7 @@ class MultiStreamManager
   end
 
   # ------------------------------------------------------------
-  # lifecycle planning / applying (★追加)
+  # lifecycle planning / applying (追加)
   # ------------------------------------------------------------
 
   # vol manager 側で呼ぶ。plan は全 dimension に適用する。
@@ -132,103 +132,185 @@ class MultiStreamManager
     desired_count = desired_count.to_i
     desired_count = 1 if desired_count <= 0
 
-    # 現在の active を確定
-    active_stream_containers(desired_count) if @active_ids.empty? # 初回互換
-
-    current_active = @active_ids.dup
+    # 現在のアクティブストリームを確定
+    current_active = active_stream_containers(desired_count).map(&:id)
     cur_n = current_active.length
 
     target = target.to_f.clamp(0.0, 1.0)
     spread = spread.to_f.clamp(0.0, 1.0)
 
-    deactivate_ids = []
-    revive_ids = []
-    fork_pairs = []
+    plan = {
+      deactivate_ids: [],
+      revive_ids: [],
+      fork_pairs: [],
+      active_ids: current_active.dup
+    }
 
-    # --- decrease ---
+    # --- ストリーム数減少の場合 ---
     if desired_count < cur_n
       k = cur_n - desired_count
-      targets = centered_targets(k, target, spread)
 
+      # targetに基づいて削除するストリームを選択
+      # targetが高い → presence_avgが高いものを削除（メインストリーム削除）
+      # targetが低い → presence_avgが低いものを削除（背景ストリーム削除）
       candidates = current_active.map { |id| [id, presence_of_id(id)] }
-      deactivate_ids = pick_ids_by_targets_unique(candidates, targets)
-      remaining = current_active - deactivate_ids
 
-      return {
-        deactivate_ids: deactivate_ids,
-        revive_ids: [],
-        fork_pairs: [],
-        active_ids: remaining
-      }
+      # target値に基づいて重み付けスコアを計算
+      weighted_candidates = candidates.map do |id, presence|
+        # presence_avgとtargetの距離（targetが高いほど高presenceが選ばれやすい）
+        if target >= 0.5
+          # 高いtarget: presenceが高いほどscoreが低い（削除されやすい）
+          score = 1.0 - presence
+        else
+          # 低いtarget: presenceが低いほどscoreが低い（削除されやすい）
+          score = presence
+        end
+
+        # spreadによる確率的要素の追加（spreadが大きいほどランダム性が増す）
+        random_factor = spread * (rand - 0.5) * 2.0
+        adjusted_score = score + random_factor
+
+        [id, presence, adjusted_score]
+      end
+
+      # スコア順にソートして上位k個を削除対象に
+      sorted = weighted_candidates.sort_by { |_id, _presence, score| score }
+      deactivate_ids = sorted.first(k).map { |id, _, _| id }
+
+      plan[:deactivate_ids] = deactivate_ids
+      plan[:active_ids] = current_active - deactivate_ids
+
+      return plan
     end
 
-    # --- increase ---
+    # --- ストリーム数増加の場合 ---
     if desired_count > cur_n
       k = desired_count - cur_n
-      targets = centered_targets(k, target, spread)
 
-      # 1) revive を優先
-      inactives = @inactive_ids.map { |id| [id, presence_of_id(id)] }
-      revive_ids = pick_ids_by_targets_unique(inactives, targets)
-      remaining_targets = targets.dup
-      # revive した分のターゲットを減らす（近い順に消費した扱いにする）
-      revive_ids.each do |rid|
-        pv = presence_of_id(rid)
-        idx = remaining_targets.each_with_index.min_by { |t, _i| (t.to_f - pv).abs }&.last
-        remaining_targets.delete_at(idx) if idx
+      # 1) 非アクティブストリームから復活させるものの選択
+      inactive_candidates = @inactive_ids.map { |id| [id, presence_of_id(id)] }
+
+      if inactive_candidates.any?
+        # 復活候補をtargetに基づいて評価
+        revival_scores = inactive_candidates.map do |id, presence|
+          # targetに近いpresenceを持つものを優先
+          distance = (presence - target).abs
+          # spreadによる調整
+          random_factor = spread * (rand - 0.5)
+          score = distance + random_factor
+          [id, presence, score]
+        end
+
+        # スコア順にソート（低いスコアほどtargetに近い）
+        sorted_revivals = revival_scores.sort_by { |_id, _presence, score| score }
+
+        # 最大k個まで復活
+        max_revive = [k, sorted_revivals.length].min
+        revive_ids = sorted_revivals.first(max_revive).map { |id, _, _| id }
+        k -= revive_ids.length
+
+        plan[:revive_ids] = revive_ids
+        plan[:active_ids] = current_active + revive_ids
       end
 
-      # 2) 足りない分は fork
-      fork_count = [0, k - revive_ids.length].max
-      if fork_count > 0
-        actives = current_active.map { |id| [id, presence_of_id(id)] }
+      # 2) まだ増やす必要があれば、フォーク（複製）で対応
+      if k > 0
+        # 複製元となるストリームを選択（targetに近いpresenceを持つものを優先）
+        active_candidates = current_active.map { |id| [id, presence_of_id(id)] }
 
-        # spread が小さいほど「同じソースを繰り返し fork」しやすくする
-        allow_duplicate_sources = (spread <= 0.001)
-
-        chosen_sources =
-          if allow_duplicate_sources
-            # 一番近いソースを fork_count 回
-            best = remaining_targets.first || target
-            src = actives.min_by { |(_id, pv)| (pv.to_f - best.to_f).abs }&.first || current_active.first
-            Array.new(fork_count, src)
+        fork_sources = []
+        k.times do
+          if active_candidates.empty?
+            # 候補がない場合は最初のアクティブストリームを使用
+            source_id = current_active.first
           else
-            # できるだけ distinct に
-            srcs = []
-            remaining_targets.first(fork_count).each do |t|
-              pick = (actives - srcs.map { |sid| [sid, nil] }).min_by { |(_id, pv)| (pv.to_f - t.to_f).abs }
-              srcs << (pick ? pick.first : current_active.first)
+            # targetに近いpresenceを持つストリームを複製元に選択
+            scores = active_candidates.map do |id, presence|
+              distance = (presence - target).abs
+              random_factor = spread * (rand - 0.5) * 0.5  # 複製はランダム性を小さく
+              [id, distance + random_factor]
             end
-            # 足りなければ最後は重複可で埋める
-            while srcs.length < fork_count
-              srcs << current_active.first
-            end
-            srcs
+
+            # 最もtargetに近いものを選択
+            source_id = scores.min_by { |_id, score| score }[0]
           end
 
-        # new_id を割り当て（apply 時に全 dimension で同じ new_id を作る）
-        next_id = @next_stream_id
-        chosen_sources.each do |src_id|
-          fork_pairs << [src_id, next_id]
-          next_id += 1
+          fork_sources << source_id
         end
+
+        # 新しいIDを割り当ててforkペアを作成
+        fork_pairs = []
+        fork_sources.each do |source_id|
+          new_id = @next_stream_id
+          @next_stream_id += 1
+          fork_pairs << [source_id, new_id]
+        end
+
+        plan[:fork_pairs] = fork_pairs
+        plan[:active_ids] = plan[:active_ids] + fork_pairs.map(&:last)
       end
 
-      # active_ids の並び：既存を維持し、revive を末尾に、fork を末尾に
-      new_ids = fork_pairs.map(&:last)
-      active_after = current_active + revive_ids + new_ids
-
-      return {
-        deactivate_ids: [],
-        revive_ids: revive_ids,
-        fork_pairs: fork_pairs,
-        active_ids: active_after
-      }
+      return plan
     end
 
-    # same count: no-op
-    { deactivate_ids: [], revive_ids: [], fork_pairs: [], active_ids: current_active }
+    # ストリーム数が変わらない場合
+    plan
   end
+
+  def update_stream_strength(stream_id, volume_value)
+    return unless @track_presence
+
+    container = @containers_by_id[stream_id.to_i]
+    return unless container
+
+    volume_value = volume_value.to_f.clamp(0.0, 1.0)
+
+    container.presence_sum = container.presence_sum.to_f + volume_value
+    container.presence_count = container.presence_count.to_i + 1
+
+    if container.presence_count.to_i > 0
+      container.presence_avg = container.presence_sum.to_f / container.presence_count.to_f
+      container.presence_avg = container.presence_avg.clamp(0.0, 1.0)
+    else
+      container.presence_avg = volume_value
+    end
+  end
+
+  def get_stream_strength(stream_id)
+    container = @containers_by_id[stream_id.to_i]
+    return 0.0 unless container
+
+    container.presence_avg.to_f.clamp(0.0, 1.0)
+  end
+
+  def streams_sorted_by_strength(ascending: false)
+    @stream_pool.sort_by do |container|
+      ascending ? container.presence_avg.to_f : -container.presence_avg.to_f
+    end
+  end
+
+  def select_streams_by_strength_target(target, count, spread: 0.0)
+    return [] if count <= 0
+
+    target = target.to_f.clamp(0.0, 1.0)
+    spread = spread.to_f.clamp(0.0, 1.0)
+
+    # すべてのストリームをstrengthで評価
+    scored_streams = @stream_pool.map do |container|
+      strength = container.presence_avg.to_f
+      # targetとの距離 + spreadによる確率的要素
+      base_score = (strength - target).abs
+      random_factor = spread * (rand - 0.5) * 2.0
+      [container.id, strength, base_score + random_factor]
+    end
+
+    # スコア順にソート（低いほどtargetに近い）
+    sorted = scored_streams.sort_by { |_id, _strength, score| score }
+
+    # 指定された数のストリームを選択
+    sorted.first(count).map { |id, strength, _| [id, strength] }
+  end
+
 
   def apply_stream_lifecycle_plan!(plan)
     plan ||= {}
@@ -539,7 +621,7 @@ class MultiStreamManager
           end
       end
 
-      # ★vol平均 tracking（scalar だけ）
+      # 音量値をストリーム強度として更新
       if @track_presence && !(v.is_a?(Array))
         vv = v.to_f.clamp(0.0, 1.0)
         stream.presence_sum = stream.presence_sum.to_f + vv
@@ -550,6 +632,9 @@ class MultiStreamManager
           else
             vv
           end
+      elsif strength_params && strength_params[:update_strength]
+        # 手動で強度を更新する場合
+        update_stream_strength(stream.id, strength_params[:update_strength])
       end
     end
 
@@ -561,6 +646,21 @@ class MultiStreamManager
       safe_update_caches_permanently!(c.manager, q_array)
     end
     @pending_absolute_bases = nil
+  end
+
+  def stream_strengths_report
+    report = {}
+
+    @stream_pool.each do |container|
+      report[container.id] = {
+        active: @active_ids.include?(container.id),
+        presence_avg: container.presence_avg.to_f,
+        presence_count: container.presence_count.to_i,
+        last_value: container.last_value
+      }
+    end
+
+    report
   end
 
   # ------------------------------------------------------------

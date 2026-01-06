@@ -296,7 +296,7 @@ const generate = ref({
   texture: [] as (number | null)[][],
 
   chordSizes: [] as (number | null)[][],                 // [step][stream] を alignして入れる
-  noteChordsPitchClasses: [] as (number[] | null)[][],    // ★ align済み: [step][stream] (pcs or null)
+  noteChordsPitchClasses: [] as (number[] | null)[][],    //  align済み: [step][stream] (pcs or null)
 
   clusters: {
     octave: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
@@ -339,7 +339,7 @@ const handleGenerated = (data: PolyphonicResponse) => {
 
   generate.value.rawTimeSeries = ts
   generate.value.octaves      = octs
-  generate.value.notes        = notes      // ★root（pcs[0]）だけ入れる互換用途
+  generate.value.notes        = notes      // root（pcs[0]）だけ入れる互換用途
   generate.value.velocities   = vels
   generate.value.brightness   = bris
   generate.value.hardness     = hrds
@@ -353,7 +353,7 @@ const handleGenerated = (data: PolyphonicResponse) => {
   generate.value.clusters.tex    = data.clusters.tex
 
   generate.value.chordSizes = data.chordSizes ?? []
-  renderPolyphonicAudio(ts) // ★tsだけでレンダできる
+  renderPolyphonicAudio(ts) // tsだけでレンダできる
 }
 
 // expandTimeSeries: noteは配列が来るので root を取る
