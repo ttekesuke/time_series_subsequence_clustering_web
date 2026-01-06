@@ -459,26 +459,6 @@ class Api::Web::TimeSeriesController < ApplicationController
 
           best_ordered = ordered_list_for_combo[best_i]
 
-          # A確定後だけ STM commit
-          best_chords_pcs_for_commit = chord_sizes.each_with_index.map do |cs, s|
-            cs = cs.to_i
-            cs = 1 if cs < 1
-            cs = best_ordered.length if cs > best_ordered.length
-            best_ordered.first(cs)
-          end
-
-          midi_notes = []
-          amps = []
-          best_chords_pcs_for_commit.each_with_index do |pcs, s|
-            base_c_midi = PolyphonicConfig.base_c_midi(octaves[s].to_i)
-            a_each = vols[s].to_f / pcs.length.to_f
-            pcs.each do |pc|
-              midi_notes << (base_c_midi + (pc.to_i % PolyphonicConfig.pitch_class_mod))
-              amps << a_each
-            end
-          end
-          stm_mgr.commit!(midi_notes, amps, onset)
-
           # --- B) shift を note(cost) で決める（rootは使わない） ---
           absolute_bases = octaves.map { |o| PolyphonicConfig.base_c_midi(o.to_i) }
           abs_width = compute_abs_width(absolute_bases)
@@ -618,6 +598,19 @@ class Api::Web::TimeSeriesController < ApplicationController
           best_m = shift_metrics[best_metric_idx]
           best_chords_for_streams = best_m[:chords_for_streams]
           best_global_value = best_m[:global_value]
+
+          # shiftした後にSTMにcommit ===
+          midi_notes = []
+          amps = []
+          best_chords_for_streams.each_with_index do |pcs, s|
+            base_c_midi = PolyphonicConfig.base_c_midi(octaves[s].to_i)
+            a_each = vols[s].to_f / pcs.length.to_f
+            pcs.each do |pc|
+              midi_notes << (base_c_midi + (pc.to_i % PolyphonicConfig.pitch_class_mod))
+              amps << a_each
+            end
+          end
+          stm_mgr.commit!(midi_notes, amps, onset)          # =========================================
 
           # managers 更新（note は chord を stream に、合併集合を global に入れる）
           mgrs[:global].add_data_point_permanently(best_global_value)
