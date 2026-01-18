@@ -49,7 +49,6 @@ class Api::Web::TimeSeriesController < ApplicationController
 
     user_set_results = generate_params[:first_elements].split(',').map(&:to_i)
 
-    complexity_transition_int =
     complexity_targets = generate_params[:complexity_transition].split(',').map(&:to_f)
 
     merge_threshold_ratio = generate_params[:merge_threshold_ratio].to_d
