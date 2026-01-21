@@ -40,6 +40,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY Project.toml Manifest.toml* /app/
 RUN julia --project=/app -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
+# ★ ここで package 本体のソースを先にコピーする（これが重要）
+COPY src/ /app/src/
+
 # アプリ本体
 COPY . /app
 
