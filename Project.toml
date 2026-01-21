@@ -1,0 +1,25 @@
+name = "TimeseriesClusteringAPI"
+uuid = "ad9de3f2-18bd-4e83-ae4f-3956c4a665ed"
+version = "0.1.0"
+authors = ["Unknown"]
+
+[deps]
+Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Genie = "c43c736e-a2d1-11e8-161f-af95117fbd1e"
+Inflector = "6d011eab-0732-4556-8808-e463c76bf3b6"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TestSetExtensions = "98d24dd4-01ad-11ea-1b02-c9a08f80db04"
+
+[targets]
+test = ["Test", "TestSetExtensions"]
+
+[compat]
+Genie = "5.35.5"
+Inflector = "1.1.0"
+julia = "1.12"

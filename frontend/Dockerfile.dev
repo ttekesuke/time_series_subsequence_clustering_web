@@ -1,0 +1,14 @@
+# Development container for Vite
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+# Install dependencies into image layer (will be re-used)
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+
+EXPOSE 5173
+
+CMD ["bash","-lc","npm run dev -- --host 0.0.0.0 --port 5173"]

@@ -1,0 +1,68 @@
+# Development container for Genie (Julia)
+#
+# Goals:
+# - predictable "idle" CPU usage (avoid Revise/AutoReload loops)
+# - fast startup by pre-instantiating/precompiling dependencies in the image layer
+# - works well with docker-compose + Vite
+#
+# References:
+# - Genie official Docker guide: https://genieframework.github.io/Genie.jl/dev/tutorials/16--Using_Genie_With_Docker.html
+
+FROM julia:1.12.4-bookworm
+
+# Use a non-root user at runtime (matches typical host UID/GID on WSL/Linux)
+ARG UID=1000
+ARG GID=1000
+
+WORKDIR /app
+
+# Common debug tools (ps), minimal init (tini) for proper signal handling
+# + SuperCollider
+# + Qt headless dependencies (for sclang stability in containers)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git procps tini \
+    supercollider-language supercollider-server \
+    libxkbcommon-x11-0 libx11-xcb1 \
+    libxcb-cursor0 libxcb-xinerama0 libxcb-icccm4 libxcb-keysyms1 \
+    libxcb-randr0 libxcb-render-util0 libxcb-xkb1 \
+    libgl1 libgl1-mesa-dri \
+  && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN groupadd -g ${GID} app \
+ && useradd -m -u ${UID} -g ${GID} -s /bin/bash app
+
+# Put depot in a writable location (NOT /usr/local)
+# NOTE: If you mount a volume on /julia_depot, it will override the image-layer cache.
+ENV JULIA_DEPOT_PATH=/julia_depot \
+    QTWEBENGINE_DISABLE_SANDBOX=1 \
+    QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox" \
+    QT_QPA_PLATFORM=minimal \
+    QT_OPENGL=software \
+    LIBGL_ALWAYS_SOFTWARE=1 \
+    XDG_RUNTIME_DIR=/tmp/runtime-root
+
+# Prepare writable dirs
+RUN mkdir -p /julia_depot /tmp/runtime-root \
+ && chown -R ${UID}:${GID} /julia_depot /tmp/runtime-root \
+ && chmod 700 /tmp/runtime-root
+
+# Pre-install deps for faster boot (cached in image layer)
+COPY Project.toml Manifest.toml* /app/
+RUN julia --project=/app -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()' \
+ && chown -R ${UID}:${GID} /julia_depot
+
+# App code (will be partially overridden by bind-mounts in compose.yml)
+COPY . /app
+
+# Ensure server script is executable (even if host loses exec bit on Windows)
+# Also ensure /app is writable for the non-root user
+RUN chmod +x /app/bin/server \
+ && chown -R ${UID}:${GID} /app
+
+USER app
+
+EXPOSE 9111
+
+ENTRYPOINT ["/usr/bin/tini","--"]
+CMD ["bash","-lc","exec /app/bin/server"]

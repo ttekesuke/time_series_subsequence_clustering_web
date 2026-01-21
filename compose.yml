@@ -1,0 +1,75 @@
+services:
+  api:
+    user: "1000:1000"
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    working_dir: /app
+    ports:
+      - "${PORT:-9111}:${PORT:-9111}"
+    environment:
+      # Genie
+      GENIE_ENV: "${GENIE_ENV:-dev}"
+      HOST: "${HOST:-0.0.0.0}"
+      PORT: "${PORT:-9111}"
+
+      # IMPORTANT: In Docker + bind-mount environments (especially on WSL/Windows),
+      # Revise/AutoReload can trigger continuous re-inference/recompile loops.
+      # This manifests as ~100% CPU burn even when the server is "idle".
+      JULIA_REVISE: "off"
+      GENIE_AUTORELOAD: "false"
+      GENIE_AUTO_RELOAD: "false"
+      JULIA_DEPOT_PATH: "/julia_depot"
+      # Optional: keep idle behavior predictable
+      JULIA_NUM_THREADS: "${JULIA_NUM_THREADS:-1}"
+      # supercollider
+      QTWEBENGINE_DISABLE_SANDBOX: "1"
+      QTWEBENGINE_CHROMIUM_FLAGS: "--no-sandbox"
+      QT_QPA_PLATFORM: "minimal"
+      QT_OPENGL: "software"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    # Mount ONLY backend sources to avoid unnecessary file scanning/invalidation.
+    # We do NOT mount bin/ to avoid Windows/WSL losing executable bits.
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./bootstrap.jl:/app/bootstrap.jl
+      - ./routes.jl:/app/routes.jl
+      - ./Project.toml:/app/Project.toml
+      - ./Manifest.toml:/app/Manifest.toml
+      - julia_depot:/julia_depot
+
+    command: ["bash","-lc","exec bin/server"]
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    working_dir: /app
+    depends_on:
+      - api
+    ports:
+      - "5173:5173"
+    environment:
+      # File watching in Docker/WSL is often unreliable without polling
+      CHOKIDAR_USEPOLLING: "true"
+
+      # If you use proxy in Vite config, this can be referenced
+      VITE_API_TARGET: "http://api:${PORT:-9111}"
+
+    volumes:
+      - ./frontend:/app
+      - web_node_modules:/app/node_modules
+
+    command:
+      - bash
+      - -lc
+      - |
+        if [ ! -d node_modules ] || [ -z "$(ls -A node_modules 2>/dev/null)" ]; then
+          npm ci
+        fi
+        exec npm run dev -- --host 0.0.0.0 --port 5173
+
+volumes:
+  web_node_modules:
+  julia_depot:

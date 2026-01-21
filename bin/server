@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec /usr/local/julia/bin/julia \
+  --project=/app \
+  --color=yes --depwarn=no --startup-file=no -q \
+  /app/bootstrap.jl -s=true "$@"

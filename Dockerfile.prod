@@ -1,0 +1,66 @@
+# --- Frontend build stage ---
+FROM node:20-bookworm-slim AS frontend
+WORKDIR /frontend
+
+# Render無料枠など低メモリ環境向けの Node メモリ上限（Vite build が落ちやすい対策）
+# 384 は Rails 版の値を踏襲（必要なら 256 / 512 などに調整可能）
+ARG NODE_MAX_OLD_SPACE=384
+ENV NODE_OPTIONS="--max_old_space_size=${NODE_MAX_OLD_SPACE}"
+
+# npm の無駄な処理を減らして軽量化（ログ/監査など）
+ENV npm_config_audit=false \
+    npm_config_fund=false \
+    npm_config_progress=false \
+    npm_config_loglevel=warn
+
+# 依存を先に入れてキャッシュを効かせる
+COPY frontend/package.json frontend/package-lock.json* /frontend/
+RUN npm ci --prefer-offline
+
+# フロントソース
+COPY frontend/ /frontend/
+
+# build（NODE_OPTIONS が効いた状態で実行される）
+RUN npm run build
+# => /frontend/dist が生成される（outDir 未指定なのでデフォルト dist）
+
+
+# --- Backend runtime stage (Julia + Nginx) ---
+FROM julia:1.12.4-bookworm
+
+WORKDIR /app
+
+# Nginx + envsubst（gettext-base） + git（Pkgが必要とする場合あり）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git nginx gettext-base \
+    supercollider-language supercollider-server \
+  && rm -rf /var/lib/apt/lists/*
+
+# Julia deps を先に入れてキャッシュを効かせる
+COPY Project.toml Manifest.toml* /app/
+RUN julia --project=/app -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+
+# アプリ本体
+COPY . /app
+
+RUN chmod +x /app/bin/server /app/bin/runtask /app/bin/repl || true
+
+# フロント dist を Nginx の配信先へ配置
+RUN mkdir -p /app/public
+COPY --from=frontend /frontend/dist/ /app/public/
+
+# Nginx template + entrypoint
+COPY deploy/nginx.conf.template /etc/nginx/templates/app.conf.template
+COPY deploy/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# （任意）supercollider 実行の都合で root を避けたい場合は Rails版同様にユーザーを作る
+# もし不要ならこのブロックは消してOKです
+RUN useradd -ms /bin/bash scuser && chown -R scuser:scuser /app
+USER scuser
+
+# Render は $PORT を外部公開ポートとして使う（Nginxがlisten）
+ENV PORT=10000
+EXPOSE 10000
+
+CMD ["/entrypoint.sh"]
