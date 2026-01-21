@@ -10,12 +10,13 @@ export GENIE_PORT="${GENIE_PORT:-9111}"
 # Nginx conf を確定（PORT を埋め込む）
 envsubst '${PORT}' < /etc/nginx/templates/app.conf.template > /etc/nginx/conf.d/default.conf
 
-# Genie 起動（バックグラウンド）: scuser がいれば scuser で起動
+# Genie 起動（バックグラウンド）: scuser で起動
 if id scuser >/dev/null 2>&1; then
-  su -s /bin/bash -c "/app/bin/server" scuser &
+  su -s /bin/bash -c "JULIA_DEPOT_PATH=/app/.julia /app/bin/server" scuser &
 else
-  /app/bin/server &
+  JULIA_DEPOT_PATH=/app/.julia /app/bin/server &
 fi
+
 
 # Nginx をフォアグラウンドで起動（Render がここに到達する）
 exec nginx -g 'daemon off;'

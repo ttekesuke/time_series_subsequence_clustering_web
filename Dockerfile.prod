@@ -26,6 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     supercollider-language supercollider-server \
   && rm -rf /var/lib/apt/lists/*
 
+ENV JULIA_DEPOT_PATH=/app/.julia
+RUN mkdir -p /app/.julia
+
 # Julia deps を先に入れてキャッシュを効かせる（★順番修正）
 COPY Project.toml Manifest.toml* /app/
 RUN julia --project=/app -e 'using Pkg; Pkg.instantiate()'
