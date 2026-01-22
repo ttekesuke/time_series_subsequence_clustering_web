@@ -2,6 +2,9 @@ server {
   listen ${PORT};
   server_name _;
 
+  client_header_buffer_size 16k;
+  large_client_header_buffers 8 64k;
+
   root /app/public;
   index index.html;
 
