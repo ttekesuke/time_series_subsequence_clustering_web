@@ -31,10 +31,11 @@ RUN mkdir -p /app/.julia
 
 # Julia deps を先に入れてキャッシュを効かせる（★順番修正）
 COPY Project.toml Manifest.toml* /app/
+COPY src/ /app/src/
+
 RUN julia --project=/app -e 'using Pkg; Pkg.instantiate()'
 
 # ★ precompile 前に src を入れる（TimeseriesClusteringAPI の source が必要）
-COPY src/ /app/src/
 RUN julia --project=/app -e 'using Pkg; Pkg.precompile()'
 
 # アプリ本体
