@@ -26,6 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     supercollider-language supercollider-server \
   && rm -rf /var/lib/apt/lists/*
 
+# nginx のデフォルト設定が残っていると 80 番を listen する等の事故が起きるので削除
+RUN rm -f /etc/nginx/sites-enabled/default \
+          /etc/nginx/sites-available/default \
+          /etc/nginx/conf.d/default.conf || true
+
 ENV JULIA_DEPOT_PATH=/app/.julia
 RUN mkdir -p /app/.julia
 
@@ -51,8 +56,5 @@ COPY deploy/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 RUN useradd -ms /bin/bash scuser && chown -R scuser:scuser /app
-
-ENV PORT=10000
-EXPOSE 10000
 
 CMD ["/entrypoint.sh"]

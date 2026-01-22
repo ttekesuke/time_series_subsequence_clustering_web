@@ -15,7 +15,7 @@ server {
 
   # API は Genie に転送（内部ポート）
   location /api/ {
-    proxy_pass http://127.0.0.1:9111;
+    proxy_pass http://127.0.0.1:${GENIE_PORT};
     proxy_http_version 1.1;
 
     proxy_set_header Host $host;
