@@ -22,4 +22,4 @@ test = ["Test", "TestSetExtensions"]
 [compat]
 Genie = "5.35.5"
 Inflector = "1.1.0"
-julia = "1.12"
+julia = "1.11"
