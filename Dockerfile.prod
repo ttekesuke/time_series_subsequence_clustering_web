@@ -48,18 +48,16 @@ RUN printf '%s\n' \
   'using TimeseriesClusteringAPI' \
   > /app/precompile_app.jl
 
-# PackageCompiler を temp 環境で入れて sysimage を生成（Project.toml を汚さない）
-RUN julia --project=/app -e '\
-  using Pkg; \
+# PackageCompiler を temp 環境で入れて sysimage を生成（まず確実に通す構成）
+RUN julia --project=/app -e 'using Pkg; \
   Pkg.activate(temp=true); \
   Pkg.add("PackageCompiler"); \
   using PackageCompiler; \
-  create_sysimage([:TimeseriesClusteringAPI, :Genie, :HTTP, :JSON]; \
+  create_sysimage([:TimeseriesClusteringAPI, :Genie]; \
     project="/app", \
     sysimage_path="/app/tsc_sysimage.so", \
-    precompile_execution_file="/app/precompile_app.jl" \
+    incremental=false \
   )'
-
 
 # ============================================================
 # Stage 2: Runtime (Julia + Nginx, single-container)
