@@ -8,7 +8,7 @@
 # References:
 # - Genie official Docker guide: https://genieframework.github.io/Genie.jl/dev/tutorials/16--Using_Genie_With_Docker.html
 
-FROM julia:1.12.4-bookworm
+FROM julia:1.11.6-bookworm
 
 # Use a non-root user at runtime (matches typical host UID/GID on WSL/Linux)
 ARG UID=1000

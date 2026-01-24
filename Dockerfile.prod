@@ -23,7 +23,7 @@ RUN npm run build
 # ============================================================
 # Stage 1: Sysimage build (PackageCompiler)
 # ============================================================
-FROM julia:1.12.4-bookworm AS sysimage_builder
+FROM julia:1.11.6-bookworm AS sysimage_builder
 WORKDIR /app
 
 # sysimage 作成には C/C++ toolchain が必要
@@ -62,7 +62,7 @@ RUN julia --project=/app -e 'using Pkg; \
 # ============================================================
 # Stage 2: Runtime (Julia + Nginx, single-container)
 # ============================================================
-FROM julia:1.12.4-bookworm
+FROM julia:1.11.6-bookworm
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
