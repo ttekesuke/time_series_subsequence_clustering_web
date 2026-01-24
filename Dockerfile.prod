@@ -44,11 +44,9 @@ COPY routes.jl bootstrap.jl /app/
 RUN julia --project=/app -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
 # precompile 実行ファイル（最低限：ロードだけでも効く）
-RUN bash -lc 'cat > /app/precompile_app.jl << "EOF"
-using TimeseriesClusteringAPI
-# ここに「よく使う処理」を1回実行するとさらに効きますが、
-# ビルド落ちを避けるため、まずはロードのみで固めます。
-EOF'
+RUN printf '%s\n' \
+  'using TimeseriesClusteringAPI' \
+  > /app/precompile_app.jl
 
 # PackageCompiler を temp 環境で入れて sysimage を生成（Project.toml を汚さない）
 RUN julia --project=/app -e '\
