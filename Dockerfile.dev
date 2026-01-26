@@ -49,7 +49,7 @@ RUN mkdir -p /julia_depot /tmp/runtime-root \
 
 # Pre-install deps for faster boot (cached in image layer)
 COPY Project.toml Manifest.toml* /app/
-RUN julia --project=/app -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()' \
+RUN julia --project=/app -e 'using Pkg; Pkg.instantiate()' \
  && chown -R ${UID}:${GID} /julia_depot
 
 # App code (will be partially overridden by bind-mounts in compose.yml)
