@@ -286,10 +286,8 @@ end
 # ------------------------------------------------------------
 # Actions
 # ------------------------------------------------------------
-function render_polyphonic()
-  payload = _payload()
-  time_series_any = get(payload, "time_series", Any[])
-  step_duration = _parse_float(get(payload, "step_duration", 0.25))
+function render_polyphonic_from_series(time_series_any, step_duration::Float64)
+  step_duration = float(step_duration)
   step_duration <= 0 && (step_duration = 0.25)
 
   scd_path = _safe_tmp_path("supercollider_render_polyphonic", ".scd")
@@ -303,7 +301,8 @@ function render_polyphonic()
 
     # Run sclang headless (QT offscreen)
     # NOTE: sclang の起動には Qt が絡むため offscreen を明示
-    cmd = `bash -lc $("QT_QPA_PLATFORM=offscreen sclang \"$(scd_path)\"")`
+    cmd_str = "QT_QPA_PLATFORM=offscreen sclang \"$(scd_path)\""
+    cmd = `bash -lc $cmd_str`
 
     # In case SuperCollider fails, we still want a readable error in logs.
     # We don't capture stdout to avoid memory bloat with long logs.
@@ -330,6 +329,13 @@ function render_polyphonic()
       "sound_file_path" => wav_path,
     )
   end
+end
+
+function render_polyphonic()
+  payload = _payload()
+  time_series_any = get(payload, "time_series", Any[])
+  step_duration = _parse_float(get(payload, "step_duration", 0.25))
+  return render_polyphonic_from_series(time_series_any, step_duration)
 end
 
 function cleanup()

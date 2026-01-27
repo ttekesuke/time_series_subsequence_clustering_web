@@ -283,6 +283,11 @@ type PolyphonicResponse = {
   chordSizes?: number[][];
   clusters: Record<string, { global: ClusterData[]; streams: Record<string, ClusterData[]> }>;
   processingTime: number;
+  // from SuperCollider rendering (embedded in generate_polyphonic response)
+  audio_data?: string;
+  sound_file_path?: string;
+  scd_file_path?: string;
+  error?: string;
 }
 
 // ===== state =====
@@ -353,8 +358,12 @@ const handleGenerated = (data: PolyphonicResponse) => {
   generate.value.clusters.tex    = data.clusters.tex
 
   generate.value.chordSizes = data.chordSizes ?? []
-  renderPolyphonicAudio(ts) // tsだけでレンダできる
+  // audio is now embedded in generate_polyphonic response
+  if (data.audio_data) {
+    setAudioFromGenerateResponse(data)
+  }
 }
+
 
 // expandTimeSeries: noteは配列が来るので root を取る
 const expandTimeSeries = (ts: any[]) => {
@@ -385,46 +394,32 @@ const expandTimeSeries = (ts: any[]) => {
   return { octs, notes, vels, bris, hrds, texs, maxStreams }
 }
 
-const renderPolyphonicAudio = (timeSeries: number[][][]) => {
-  progress.value.status = 'rendering'
-  const stepDuration = 1 / 4.0
+const setAudioFromGenerateResponse = (data: PolyphonicResponse) => {
+  const { sound_file_path, scd_file_path, audio_data } = data
+  if (!audio_data) return
 
-  axios.post('/api/web/supercolliders/render_polyphonic', {
-    time_series: timeSeries,
-    step_duration: stepDuration,
-    note_chords_pitch_classes: generate.value.noteChordsPitchClasses,
-  })
-    .then(response => {
-      const { sound_file_path, scd_file_path, audio_data } = response.data
-      soundFilePath.value = sound_file_path
-      scdFilePath.value = scd_file_path
+  if (sound_file_path) soundFilePath.value = sound_file_path
+  if (scd_file_path) scdFilePath.value = scd_file_path
 
-    const base64 = audio_data.includes(',') ? audio_data.split(',')[1] : audio_data
-    const binary = atob(base64)
-      const len = binary.length
-      const bytes = new Uint8Array(len)
-      for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
+  const base64 = audio_data.includes(',') ? audio_data.split(',')[1] : audio_data
+  const binary = atob(base64)
+  const len = binary.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
 
-      const blob = new Blob([bytes.buffer], { type: "audio/wav" })
-      const url = URL.createObjectURL(blob)
+  const blob = new Blob([bytes.buffer], { type: "audio/wav" })
+  const url = URL.createObjectURL(blob)
 
-      audio.value = new Audio(url)
-      audio.value.addEventListener('ended', () => nowPlaying.value = false)
+  audio.value = new Audio(url)
+  audio.value.addEventListener('ended', () => nowPlaying.value = false)
 
-      cleanup()
-    })
-    .catch(error => {
-      console.error("Rendering error:", error)
-      progress.value.status = 'idle'
-    })
+  cleanup()
 }
 
 const cleanup = () => {
   const data = {
-    cleanup: {
-      sound_file_path: soundFilePath.value,
-      scd_file_path: scdFilePath.value
-    }
+    sound_file_path: soundFilePath.value,
+    scd_file_path: scdFilePath.value
   }
   axios.delete("/api/web/supercolliders/cleanup", { data })
     .then(() => console.log('deleted temporary files'))

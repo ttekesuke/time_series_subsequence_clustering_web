@@ -21,6 +21,7 @@ import ..PolyphonicConfig
 import ..PolyphonicClusterManager
 import ..MultiStreamManager
 import ..DissonanceStmManager
+import ..SupercollidersController
 
 # ------------------------------------------------------------
 # Utilities
@@ -1383,12 +1384,25 @@ function generate_polyphonic()
     )
   end
 
-  return Dict(
+  resp = Dict(
     "timeSeries" => results,
     "clusters" => cluster_payload,
     "processingTime" => processing_time_s,
     "streamStrengths" => nothing
   )
+
+  # ----------------------------------------------------------
+  # SuperCollider rendering (same payload as render_polyphonic)
+  # ----------------------------------------------------------
+  # Optional override for tempo control (backward compatible):
+  #   generate_polyphonic: { render_step_duration: 0.25 }
+  render_step_duration = _parse_float(get(p, "render_step_duration", step_duration))
+  render_step_duration <= 0 && (render_step_duration = step_duration)
+
+  render_result = SupercollidersController.render_polyphonic_from_series(results, render_step_duration)
+  merge!(resp, render_result)
+
+  return resp
 end
 
 

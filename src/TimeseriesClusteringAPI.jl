@@ -19,9 +19,9 @@ include("polyphonic/dissonance_stm_manager.jl")
 include("polyphonic/polyphonic_cluster_manager.jl")
 include("polyphonic/multi_stream_manager.jl")
 
-include("controllers/time_series_controller.jl")
-include("controllers/supercolliders_controller.jl")
 
+include("controllers/supercolliders_controller.jl")
+include("controllers/time_series_controller.jl")
 const up = Genie.up
 export up
 
