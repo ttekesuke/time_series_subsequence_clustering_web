@@ -13,13 +13,22 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   generate:
     runs-on: ubuntu-latest
     env:
-      GENIE_ENV: dev
-      GENIE_HOST: 127.0.0.1
-      GENIE_PORT: "9111"
+      # Genie / bootstrap.jl が読む想定に寄せる
+      GENIE_ENV: prod
+      HOST: 127.0.0.1
+      PORT: "9111"
+
+      # precompile の再利用性を上げたい場合（compiled キャッシュが効きにくい時の保険）
+      JULIA_CPU_TARGET: generic
+
     steps:
       - uses: actions/checkout@v4
 
@@ -28,9 +37,22 @@ jobs:
         with:
           version: "1.11.6"
 
-      - name: Instantiate & precompile
+      # ★ Julia depot をキャッシュ（packages / artifacts / compiled 等）
+      - name: Cache Julia depot
+        id: julia-cache
+        uses: julia-actions/cache@v2
+        with:
+          cache-name: julia-${{ github.workflow }}-${{ github.job }}
+
+      - name: Instantiate
         run: |
-          julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+          julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      # ★ 初回（キャッシュミス）だけ precompile
+      - name: Precompile (cache miss only)
+        if: steps.julia-cache.outputs.cache-hit != 'true'
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.precompile()'
 
       - name: Install SuperCollider
         run: |
@@ -48,14 +70,11 @@ jobs:
         run: |
           set -euxo pipefail
 
-          export GENIE_ENV=prod
-          export GENIE_PORT=9111
-
-          # 起動
-          julia --project=. bootstrap.jl > server.log 2>&1 &
+          # 起動（ログを actions にも流す）
+          julia --project=. bootstrap.jl > >(tee server.log) 2>&1 &
           echo $! > server.pid
 
-          # ready待ち（プロセス生存チェック付き）
+          # ready待ち（120秒）
           for i in {1..120}; do
             if ! kill -0 "$(cat server.pid)" 2>/dev/null; then
               echo "Server process exited early"
@@ -64,25 +83,38 @@ jobs:
               exit 1
             fi
 
-            # 1) /api/health が無い可能性があるので、まずHTTP応答が返るかで判定する
-            code="$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${GENIE_PORT}/ || true)"
+            code="$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${PORT}/ || true)"
             if [ "$code" != "000" ]; then
               echo "Server is responding (HTTP $code)"
-              exit 0
+              break
+            fi
+
+            # 10秒ごとに状況だけ出す（ノイズ最小）
+            if (( i % 10 == 0 )); then
+              echo "waiting... ${i}s"
             fi
 
             sleep 1
           done
 
-          echo "Server did not become ready in time"
-          echo "==== server.log (tail) ===="
-          tail -n 200 server.log || true
-          exit 1
-
+          code="$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${PORT}/ || true)"
+          if [ "$code" = "000" ]; then
+            echo "Server did not become ready in time"
+            echo "==== server.log (tail) ===="
+            tail -n 200 server.log || true
+            exit 1
+          fi
 
       - name: Generate polyphonic result.json
+        shell: bash
         run: |
-          curl -sS -X POST             -H "Content-Type: application/json"             --data-binary @params.json             http://127.0.0.1:9111/api/web/time_series/generate_polyphonic             > result.json
+          set -euxo pipefail
+          curl -sS -X POST \
+            -H "Content-Type: application/json" \
+            --data-binary @params.json \
+            "http://127.0.0.1:${PORT}/api/web/time_series/generate_polyphonic" \
+            > result.json
+
           python3 - <<'PY'
           import json
           obj=json.load(open("result.json","r",encoding="utf-8"))
@@ -91,9 +123,13 @@ jobs:
           PY
 
       - name: Render wav (decode audio_data)
+        env:
+          PORT: ${{ env.PORT }}
         run: |
           python3 - <<'PY'
-          import json, base64, urllib.request
+          import json, base64, urllib.request, os
+
+          port = os.environ.get("PORT","9111")
           result = json.load(open("result.json","r",encoding="utf-8"))
           req = {
             "render_polyphonic": {
@@ -104,7 +140,7 @@ jobs:
           }
           data = json.dumps(req).encode("utf-8")
           http_req = urllib.request.Request(
-            "http://127.0.0.1:9111/api/web/supercolliders/render_polyphonic",
+            f"http://127.0.0.1:{port}/api/web/supercolliders/render_polyphonic",
             data=data,
             headers={"Content-Type": "application/json"},
             method="POST",
