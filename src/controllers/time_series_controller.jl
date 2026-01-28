@@ -3,7 +3,7 @@ module TimeSeriesController
 using Genie.Requests
 using Dates
 using HTTP
-using JSON
+using JSON3
 using Base64
 using UUIDs
 
@@ -1425,7 +1425,7 @@ function _github_dispatch_workflow!(; workflow::AbstractString, ref::AbstractStr
   owner = _env_required("GITHUB_OWNER")
   repo  = _env_required("GITHUB_REPO")
   url = "$(_github_repo_base(owner, repo))/actions/workflows/$(workflow)/dispatches"
-  body = JSON.json(Dict("ref" => ref, "inputs" => inputs))
+  body = JSON3.write(Dict("ref" => ref, "inputs" => inputs))
   res = HTTP.request("POST", url, _github_headers(); body=body)
   return res
 end
@@ -1437,7 +1437,7 @@ function _github_list_workflow_runs(; workflow::AbstractString, ref::AbstractStr
   url = "$(_github_repo_base(owner, repo))/actions/workflows/$(workflow)/runs?event=workflow_dispatch&branch=$(ref)&per_page=$(per_page)"
   res = HTTP.request("GET", url, _github_headers())
   res.status == 200 || return nothing
-  return JSON.parse(String(res.body))
+  return JSON3.read(String(res.body))
 end
 
 function _find_new_run_after(obj, dispatched_at_utc::DateTime)
@@ -1486,7 +1486,7 @@ function dispatch_generate_polyphonic()
   workflow = _env_required("GITHUB_WORKFLOW")
   ref = _env_required("GITHUB_REF")
 
-  params_json = JSON.json(payload_dict)
+  params_json = JSON3.write(payload_dict)
   params_b64 = base64encode(params_json)
 
   dispatched_at = now(UTC)
@@ -1508,7 +1508,7 @@ function dispatch_generate_polyphonic()
 
   if res.status == 200 && !isempty(String(res.body))
     try
-      body = JSON.parse(String(res.body))
+      body = JSON3.read(String(res.body))
       run_id = get(body, "workflow_run_id", nothing)
       run_url = get(body, "run_url", nothing)
       html_url = get(body, "html_url", nothing)
