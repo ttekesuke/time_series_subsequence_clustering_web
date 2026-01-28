@@ -1,5 +1,31 @@
 <template>
-  <div>
+  <div class="music-generate-root">
+
+<div class="actions-panel">
+  <button class="btn" @click="setDataDialog = true">Run (GitHub Actions)</button>
+  <span v-if="dispatchInfo && dispatchInfo.workflow_page_url" class="actions-links">
+    <a :href="dispatchInfo.workflow_page_url" target="_blank" rel="noopener">Workflow</a>
+    <template v-if="dispatchInfo.run_html_url">
+      <span> | </span>
+      <a :href="dispatchInfo.run_html_url" target="_blank" rel="noopener">Run</a>
+    </template>
+    <template v-if="dispatchInfo.request_id">
+      <span> | request_id: {{ dispatchInfo.request_id }}</span>
+    </template>
+  </span>
+
+  <div class="upload-panel">
+    <label class="upload-label">
+      Load result.json
+      <input type="file" accept=".json,application/json" @change="onSelectResultJson" />
+    </label>
+    <label class="upload-label">
+      Load wav
+      <input type="file" accept=".wav,audio/wav" @change="onSelectWav" />
+    </label>
+  </div>
+</div>
+
     <div class="viz-container" ref="containerRef">
       <div class="quadrant top-left">
         <StreamsRoll
@@ -139,6 +165,7 @@
       v-model="setDataDialog"
       :progress="progress"
       @generated-polyphonic="handleGenerated"
+      @dispatched-polyphonic="handleDispatched"
     />
   </div>
 </template>
@@ -148,8 +175,9 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr 1fr;
-  height: calc(100vh - 80px);
-  width: 100%;
+width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .quadrant {
   overflow: hidden;
@@ -173,6 +201,49 @@
   min-height: 0;
   overflow: auto;
 }
+.music-generate-root {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 80px);
+  width: 100%;
+  min-height: 0;
+}
+
+.actions-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid #ddd;
+}
+
+.upload-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.upload-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn {
+  padding: 6px 10px;
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 </style>
 
 <script setup lang="ts">
@@ -197,6 +268,12 @@ const texClustersRef = ref<any>(null)
 
 const containerRef = ref<HTMLElement | null>(null)
 const soundFilePath = ref('')
+const serverSoundFilePath = ref('')
+const dispatchInfo = ref<any | null>(null)
+const uploadedResultJsonFile = ref<File | null>(null)
+const uploadedWavFile = ref<File | null>(null)
+let uploadedWavObjectUrl: string | null = null
+let generatedAudioObjectUrl: string | null = null
 const scdFilePath = ref('')
 const audio = ref<HTMLAudioElement | null>(null)
 const nowPlaying = ref(false)
@@ -269,7 +346,11 @@ onMounted(() => {
   }
 })
 
-onUnmounted(() => { if (resizeObserver) resizeObserver.disconnect() })
+onUnmounted(() => {
+  if (resizeObserver) resizeObserver.disconnect()
+  if (uploadedWavObjectUrl) URL.revokeObjectURL(uploadedWavObjectUrl)
+  if (generatedAudioObjectUrl) URL.revokeObjectURL(generatedAudioObjectUrl)
+})
 
 // ===== types =====
 type ClusterData = {
@@ -283,11 +364,6 @@ type PolyphonicResponse = {
   chordSizes?: number[][];
   clusters: Record<string, { global: ClusterData[]; streams: Record<string, ClusterData[]> }>;
   processingTime: number;
-  // from SuperCollider rendering (embedded in generate_polyphonic response)
-  audio_data?: string;
-  sound_file_path?: string;
-  scd_file_path?: string;
-  error?: string;
 }
 
 // ===== state =====
@@ -338,7 +414,7 @@ const alignTailBySteps = <T>(fullSteps: number, partial: T[] | undefined | null)
 }
 
 // ===== handle response =====
-const handleGenerated = (data: PolyphonicResponse) => {
+const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   const ts = data.timeSeries
   const { octs, notes, vels, bris, hrds, texs } = expandTimeSeries(ts)
 
@@ -358,14 +434,53 @@ const handleGenerated = (data: PolyphonicResponse) => {
   generate.value.clusters.tex    = data.clusters.tex
 
   generate.value.chordSizes = data.chordSizes ?? []
-  // audio is now embedded in generate_polyphonic response
-  if (data.audio_data) {
-    setAudioFromGenerateResponse(data)
+  generate.value.noteChordsPitchClasses = (data.noteChordsPitchClasses ?? []) as any
+}
+
+const handleGenerated = (data: PolyphonicResponse) => {
+  applyPolyphonicResponse(data)
+  const ts = data.timeSeries
+  renderPolyphonicAudio(ts)
+}
+
+const handleDispatched = (info: any) => {
+  dispatchInfo.value = info
+}
+
+const onSelectResultJson = async (e: Event) => {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0] ?? null
+  uploadedResultJsonFile.value = file
+  if (!file) return
+  try {
+    const text = await file.text()
+    const obj = JSON.parse(text)
+    applyPolyphonicResponse(obj as PolyphonicResponse)
+  } catch (err) {
+    console.error('Failed to load result.json', err)
+  } finally {
+    input.value = ''
   }
 }
 
+const onSelectWav = async (e: Event) => {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0] ?? null
+  uploadedWavFile.value = file
+  if (!file) return
+  try {
+    if (uploadedWavObjectUrl) URL.revokeObjectURL(uploadedWavObjectUrl)
+    uploadedWavObjectUrl = URL.createObjectURL(file)
+    soundFilePath.value = uploadedWavObjectUrl
+    serverSoundFilePath.value = ''
+    scdFilePath.value = ''
+  } catch (err) {
+    console.error('Failed to load wav', err)
+  } finally {
+    input.value = ''
+  }
+}
 
-// expandTimeSeries: noteは配列が来るので root を取る
 const expandTimeSeries = (ts: any[]) => {
   stepCount.value = ts.length
   const maxStreams = Math.max(0, ...ts.map(step => step.length))
@@ -394,32 +509,47 @@ const expandTimeSeries = (ts: any[]) => {
   return { octs, notes, vels, bris, hrds, texs, maxStreams }
 }
 
-const setAudioFromGenerateResponse = (data: PolyphonicResponse) => {
-  const { sound_file_path, scd_file_path, audio_data } = data
-  if (!audio_data) return
+const renderPolyphonicAudio = (timeSeries: number[][][]) => {
+  progress.value.status = 'rendering'
+  const stepDuration = 1 / 4.0
 
-  if (sound_file_path) soundFilePath.value = sound_file_path
-  if (scd_file_path) scdFilePath.value = scd_file_path
+  axios.post('/api/web/supercolliders/render_polyphonic', {
+    time_series: timeSeries,
+    step_duration: stepDuration,
+    note_chords_pitch_classes: generate.value.noteChordsPitchClasses,
+  })
+    .then(response => {
+      const { sound_file_path, scd_file_path, audio_data } = response.data
+      serverSoundFilePath.value = sound_file_path
+      scdFilePath.value = scd_file_path
 
-  const base64 = audio_data.includes(',') ? audio_data.split(',')[1] : audio_data
-  const binary = atob(base64)
-  const len = binary.length
-  const bytes = new Uint8Array(len)
-  for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
+      // base64 wav -> Blob URL (browser playback)
+      const base64 = audio_data.includes(',') ? audio_data.split(',')[1] : audio_data
+      const binary = atob(base64)
+      const len = binary.length
+      const bytes = new Uint8Array(len)
+      for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
 
-  const blob = new Blob([bytes.buffer], { type: "audio/wav" })
-  const url = URL.createObjectURL(blob)
+      const blob = new Blob([bytes.buffer], { type: "audio/wav" })
+      if (generatedAudioObjectUrl) URL.revokeObjectURL(generatedAudioObjectUrl)
+      generatedAudioObjectUrl = URL.createObjectURL(blob)
+      soundFilePath.value = generatedAudioObjectUrl
 
-  audio.value = new Audio(url)
-  audio.value.addEventListener('ended', () => nowPlaying.value = false)
-
-  cleanup()
+      progress.value.status = 'idle'
+      cleanup()
+    })
+    .catch(error => {
+      console.error("Rendering error:", error)
+      progress.value.status = 'idle'
+    })
 }
 
 const cleanup = () => {
   const data = {
-    sound_file_path: soundFilePath.value,
-    scd_file_path: scdFilePath.value
+    cleanup: {
+      sound_file_path: serverSoundFilePath.value,
+      scd_file_path: scdFilePath.value
+    }
   }
   axios.delete("/api/web/supercolliders/cleanup", { data })
     .then(() => console.log('deleted temporary files'))

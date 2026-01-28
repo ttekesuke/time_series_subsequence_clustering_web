@@ -32,6 +32,10 @@ route("/api/web/time_series/generate_polyphonic", method=POST) do
   TimeSeriesController.generate_polyphonic() |> json
 end
 
+route("/api/web/time_series/dispatch_generate_polyphonic", method = POST) do
+  TimeSeriesController.dispatch_generate_polyphonic()
+end
+
 # ------------------------------------------------------------
 # SuperCollider endpoints (Rails compatible)
 #   POST   /api/web/supercolliders/render_polyphonic

@@ -24,7 +24,7 @@
             :disabled="isProcessing"
             @click="handleGeneratePolyphonic"
           >
-            GENERATE &amp; RENDER
+            RUN ON GITHUB ACTIONS
           </v-btn>
 
           <v-btn icon @click="open = false">
@@ -73,7 +73,7 @@ const props = defineProps({
   modelValue: Boolean,
   progress: { type: Object, required: false }
 })
-const emit = defineEmits(['update:modelValue', 'generated-polyphonic', 'progress-update'])
+const emit = defineEmits(['update:modelValue', 'generated-polyphonic', 'dispatched-polyphonic', 'progress-update'])
 
 const open = computed({
   get: () => props.modelValue,
@@ -948,8 +948,6 @@ const buildGenParamsFromRows = () => {
 const handleGeneratePolyphonic = async () => {
   try {
     const jobId = uuidv4()
-    startProgressTracking(jobId)
-
     const genParams = buildGenParamsFromRows()
     const initialContext = buildInitialContext()
 
@@ -973,8 +971,8 @@ const handleGeneratePolyphonic = async () => {
       payload.generate_polyphonic[`${k}_conc`]      = genParams[`${k}_conc`]
     })
 
-    const resp = await axios.post('/api/web/time_series/generate_polyphonic', payload)
-    emit('generated-polyphonic', resp.data)
+    const resp = await axios.post('/api/web/time_series/dispatch_generate_polyphonic', payload)
+    emit('dispatched-polyphonic', resp.data)
 
     open.value = false
   } catch (err) {
