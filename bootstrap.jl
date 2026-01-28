@@ -1,5 +1,3 @@
-# bootstrap.jl
-
 # --- local .env loader (kept out of git) ---
 function _load_dotenv(path::AbstractString)
   isfile(path) || return
@@ -25,26 +23,5 @@ end
 _load_dotenv(joinpath(@__DIR__, ".env"))
 (pwd() != @__DIR__) && cd(@__DIR__)
 
-# ★ここで必ずログを出す（Actionsで server.log が空になるのを防ぐ）
-println("[bootstrap] starting"); flush(stdout)
-println("[bootstrap] HOST=$(get(ENV,"HOST","(none)")) PORT=$(get(ENV,"PORT","(none)")) GENIE_PORT=$(get(ENV,"GENIE_PORT","(none)")) GENIE_ENV=$(get(ENV,"GENIE_ENV","(none)"))"); flush(stdout)
-
-using Genie
-
-# アプリ読み込み（起動しない）
-Genie.loadapp(".", autostart=false)
-
-# コントローラ定義等の確実なロード
+# NOTE: Genie.loadapp() がこのファイルを読む。ここでサーバ起動すると再帰/ハングするので絶対に起動しない。
 using TimeseriesClusteringAPI
-
-host = get(ENV, "HOST", "127.0.0.1")
-port = parse(Int, get(ENV, "PORT", get(ENV, "GENIE_PORT", "8000")))
-
-Genie.config.server_host = host
-Genie.config.server_port = port
-Genie.config.run_as_server = true
-
-println("[bootstrap] launching server on http://$host:$port"); flush(stdout)
-
-# ブロッキング起動（これでプロセスが落ちない）
-Genie.up(port, host; async=false)
