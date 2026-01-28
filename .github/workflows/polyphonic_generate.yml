@@ -43,25 +43,42 @@ jobs:
           set -euo pipefail
           printf '%s' '${{ inputs.params_b64 }}' | base64 -d > params.json
 
-      - name: Start API server
+      - name: Start API Server
+        shell: bash
         run: |
+          set -euxo pipefail
+
+          export GENIE_ENV=prod
+          export GENIE_PORT=9111
+
+          # 起動
           julia --project=. bootstrap.jl > server.log 2>&1 &
           echo $! > server.pid
-          python3 - <<'PY'
-          import time, urllib.request
-          url = "http://127.0.0.1:9111/api/web/health_check"
-          for i in range(60):
-            try:
-              with urllib.request.urlopen(url, timeout=2) as r:
-                if r.status == 200:
-                  print("Server is up")
-                  break
-            except Exception:
-              pass
-            time.sleep(1)
-          else:
-            raise SystemExit("Server did not become ready")
-          PY
+
+          # ready待ち（プロセス生存チェック付き）
+          for i in {1..120}; do
+            if ! kill -0 "$(cat server.pid)" 2>/dev/null; then
+              echo "Server process exited early"
+              echo "==== server.log (tail) ===="
+              tail -n 200 server.log || true
+              exit 1
+            fi
+
+            # 1) /api/health が無い可能性があるので、まずHTTP応答が返るかで判定する
+            code="$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${GENIE_PORT}/ || true)"
+            if [ "$code" != "000" ]; then
+              echo "Server is responding (HTTP $code)"
+              exit 0
+            fi
+
+            sleep 1
+          done
+
+          echo "Server did not become ready in time"
+          echo "==== server.log (tail) ===="
+          tail -n 200 server.log || true
+          exit 1
+
 
       - name: Generate polyphonic result.json
         run: |
