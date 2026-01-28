@@ -38,14 +38,10 @@ jobs:
           sudo apt-get install -y supercollider
 
       - name: Decode params
+        shell: bash
         run: |
-          python3 - <<'PY'
-          import base64, os, sys
-          b64 = os.environ["INPUT_PARAMS_B64"]
-          raw = base64.b64decode(b64.encode("utf-8"))
-          open("params.json", "wb").write(raw)
-          print("params.json written:", len(raw), "bytes")
-          PY
+          set -euo pipefail
+          printf '%s' '${{ inputs.params_b64 }}' | base64 -d > params.json
 
       - name: Start API server
         run: |
