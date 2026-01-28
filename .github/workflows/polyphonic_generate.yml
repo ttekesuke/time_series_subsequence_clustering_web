@@ -21,12 +21,9 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     env:
-      # Genie / bootstrap.jl が読む想定に寄せる
       GENIE_ENV: prod
       HOST: 127.0.0.1
       PORT: "9111"
-
-      # precompile の再利用性を上げたい場合（compiled キャッシュが効きにくい時の保険）
       JULIA_CPU_TARGET: generic
 
     steps:
@@ -37,7 +34,6 @@ jobs:
         with:
           version: "1.11.6"
 
-      # ★ Julia depot をキャッシュ（packages / artifacts / compiled 等）
       - name: Cache Julia depot
         id: julia-cache
         uses: julia-actions/cache@v2
@@ -48,11 +44,15 @@ jobs:
         run: |
           julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
-      # ★ 初回（キャッシュミス）だけ precompile
       - name: Precompile (cache miss only)
         if: steps.julia-cache.outputs.cache-hit != 'true'
         run: |
           julia --project=. -e 'using Pkg; Pkg.precompile()'
+
+      # ★ここが重要：サーバ起動前にアプリをimportして温める（ローカル並みに寄せる）
+      - name: Warm up app import
+        run: |
+          julia --project=. -e 'import TimeseriesClusteringAPI; println("TimeseriesClusteringAPI import OK")'
 
       - name: Install SuperCollider
         run: |
@@ -70,15 +70,13 @@ jobs:
         run: |
           set -euxo pipefail
 
-          # 起動（ログを actions にも流す）
+          # 起動（Actionsにもログを流す）
           julia --project=. bootstrap.jl > >(tee server.log) 2>&1 &
           echo $! > server.pid
 
-          # ready待ち（120秒）
           for i in {1..120}; do
             if ! kill -0 "$(cat server.pid)" 2>/dev/null; then
               echo "Server process exited early"
-              echo "==== server.log (tail) ===="
               tail -n 200 server.log || true
               exit 1
             fi
@@ -89,9 +87,11 @@ jobs:
               break
             fi
 
-            # 10秒ごとに状況だけ出す（ノイズ最小）
             if (( i % 10 == 0 )); then
               echo "waiting... ${i}s"
+              # ★listenしてるかを見える化（ここで :9111 が出なければ起動前で止まってる）
+              ss -ltnp || true
+              tail -n 50 server.log || true
             fi
 
             sleep 1
@@ -100,7 +100,7 @@ jobs:
           code="$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${PORT}/ || true)"
           if [ "$code" = "000" ]; then
             echo "Server did not become ready in time"
-            echo "==== server.log (tail) ===="
+            ss -ltnp || true
             tail -n 200 server.log || true
             exit 1
           fi
@@ -112,7 +112,7 @@ jobs:
           curl -sS -X POST \
             -H "Content-Type: application/json" \
             --data-binary @params.json \
-            "http://127.0.0.1:${PORT}/api/web/time_series/generate_polyphonic" \
+            http://127.0.0.1:${PORT}/api/web/time_series/generate_polyphonic \
             > result.json
 
           python3 - <<'PY'
@@ -123,26 +123,21 @@ jobs:
           PY
 
       - name: Render wav (decode audio_data)
-        env:
-          PORT: ${{ env.PORT }}
         run: |
           python3 - <<'PY'
           import json, base64, urllib.request, os
-
           port = os.environ.get("PORT","9111")
           result = json.load(open("result.json","r",encoding="utf-8"))
-          req = {
-            "render_polyphonic": {
-              "time_series": result["timeSeries"],
-              "note_chords_pitch_classes": result.get("noteChordsPitchClasses", []),
-              "step_duration": 0.25
-            }
-          }
+          req = {"render_polyphonic": {
+            "time_series": result["timeSeries"],
+            "note_chords_pitch_classes": result.get("noteChordsPitchClasses", []),
+            "step_duration": 0.25
+          }}
           data = json.dumps(req).encode("utf-8")
           http_req = urllib.request.Request(
             f"http://127.0.0.1:{port}/api/web/supercolliders/render_polyphonic",
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type":"application/json"},
             method="POST",
           )
           with urllib.request.urlopen(http_req, timeout=3600) as r:
