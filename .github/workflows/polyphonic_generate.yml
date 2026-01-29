@@ -119,7 +119,7 @@ jobs:
           req = {
             'time_series': result['timeSeries'],
             'note_chords_pitch_classes': result.get('noteChordsPitchClasses', []),
-            'step_duration': 0.25,
+            'step_duration': 0.125,
           }
           data = json.dumps(req).encode('utf-8')
           http_req = urllib.request.Request(

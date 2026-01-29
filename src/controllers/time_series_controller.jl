@@ -872,7 +872,7 @@ function generate_polyphonic()
     amp_profile=0.88
   )
 
-  step_duration = 0.25
+  step_duration = 0.125
   for (i, step) in enumerate(results)
     midi_notes = Int[]
     amps = Float64[]
