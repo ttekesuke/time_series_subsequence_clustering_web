@@ -37,8 +37,8 @@ services:
       - ./routes.jl:/app/routes.jl
       - ./Project.toml:/app/Project.toml
       - ./Manifest.toml:/app/Manifest.toml
-
-    command: ["bash","-lc","exec bin/server"]
+      - ./scripts/start_server.jl:/app/scripts/start_server.jl
+    command: ["julia", "--project=.", "scripts/start_server.jl"]
 
   web:
     build:

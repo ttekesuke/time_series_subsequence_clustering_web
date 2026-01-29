@@ -1,25 +1,47 @@
 # scripts/start_server.jl
 cd(joinpath(@__DIR__, ".."))  # repo root
 
-# Genie は ENV を見るので、なるべく先に確定
-ENV["GENIE_ENV"] = get(ENV, "GENIE_ENV", "prod")
+# --- local .env loader (optional) ---
+function _load_dotenv(path::AbstractString)
+  isfile(path) || return
+  for rawline in eachline(path)
+    line = strip(rawline)
+    isempty(line) && continue
+    startswith(line, "#") && continue
+    if startswith(lowercase(line), "export ")
+      line = strip(line[8:end])
+    end
+    occursin("=", line) || continue
+    k, v = split(line, "=", limit=2)
+    key = strip(k)
+    val = strip(v)
+    if (startswith(val, "\"") && endswith(val, "\"")) || (startswith(val, "'") && endswith(val, "'"))
+      val = val[2:end-1]
+    end
+    isempty(key) && continue
+    haskey(ENV, key) || (ENV[key] = val)
+  end
+end
 
-using Genie
+_load_dotenv(joinpath(pwd(), ".env"))
 
-# ブロッキングで動かす（=スクリプトが終わってもサーバが死なない）
-Genie.config.run_as_server = true
-Genie.config.server_host = get(ENV, "GENIE_HOST", "127.0.0.1")
-Genie.config.server_port = parse(Int, get(ENV, "GENIE_PORT", get(ENV, "PORT", "9111")))
-
-# ここが本命：routes を登録
-include(joinpath(pwd(), "routes.jl"))
-
-# ちゃんと /api/health が登録できたかログに出す（CIで超重要）
-using Genie.Router
-has_health = any(r -> getfield(r, :path) == "/api/health", Genie.Router.routes())
-println("[start_server] routes loaded: ", length(Genie.Router.routes()))
-println("[start_server] health route present: ", has_health)
-println("[start_server] starting on http://$(Genie.config.server_host):$(Genie.config.server_port)")
+println("[start_server] ENV HOST=$(get(ENV,"HOST","(none)")) PORT=$(get(ENV,"PORT","(none)")) GENIE_HOST=$(get(ENV,"GENIE_HOST","(none)")) GENIE_PORT=$(get(ENV,"GENIE_PORT","(none)")) GENIE_ENV=$(get(ENV,"GENIE_ENV","(none)"))")
 flush(stdout)
 
-Genie.up(Genie.config.server_port, Genie.config.server_host; async=false)
+using Genie
+using TimeseriesClusteringAPI
+
+# ここが重要：routes を明示ロード（/api/health 含む）
+include(joinpath(pwd(), "routes.jl"))
+
+host = get(ENV, "HOST", get(ENV, "GENIE_HOST", "127.0.0.1"))
+port = parse(Int, get(ENV, "PORT", get(ENV, "GENIE_PORT", "9111")))
+
+Genie.config.run_as_server = true
+Genie.config.server_host = host
+Genie.config.server_port = port
+
+println("[start_server] starting on http://$host:$port")
+flush(stdout)
+
+Genie.up(port, host; async=false)
