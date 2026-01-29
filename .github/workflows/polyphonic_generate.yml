@@ -117,11 +117,9 @@ jobs:
           import json, base64, urllib.request
           result = json.load(open('result.json','r',encoding='utf-8'))
           req = {
-            'render_polyphonic': {
-              'time_series': result['timeSeries'],
-              'note_chords_pitch_classes': result.get('noteChordsPitchClasses', []),
-              'step_duration': 0.25,
-            }
+            'time_series': result['timeSeries'],
+            'note_chords_pitch_classes': result.get('noteChordsPitchClasses', []),
+            'step_duration': 0.25,
           }
           data = json.dumps(req).encode('utf-8')
           http_req = urllib.request.Request(
