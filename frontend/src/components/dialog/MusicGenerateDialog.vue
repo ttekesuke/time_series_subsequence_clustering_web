@@ -24,7 +24,7 @@
             :disabled="isProcessing"
             @click="handleGeneratePolyphonic"
           >
-            RUN ON GITHUB ACTIONS
+            {{ runButtonLabel }}
           </v-btn>
 
           <v-btn icon @click="open = false">
@@ -73,12 +73,30 @@ const props = defineProps({
   modelValue: Boolean,
   progress: { type: Object, required: false }
 })
-const emit = defineEmits(['update:modelValue', 'generated-polyphonic', 'dispatched-polyphonic', 'progress-update'])
+const emit = defineEmits([
+  'update:modelValue',
+  'generated-polyphonic',
+  'dispatched-polyphonic',
+  'progress-update',
+  'params-built',
+  'params-updated'
+])
 
 const open = computed({
   get: () => props.modelValue,
   set: (v: boolean) => emit('update:modelValue', v)
 })
+
+
+/** ========== 実行先切り替え (GitHub Actions / Hosting Server) ========== */
+const runOnGithubActions = computed(() => {
+  const raw = (import.meta as any).env?.VITE_RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS ?? 'true'
+  return String(raw).toLowerCase() === 'true'
+})
+const runButtonLabel = computed(() =>
+  runOnGithubActions.value ? 'RUN ON GITHUB ACTIONS' : 'RUN ON HOSTING SERVER'
+)
+
 
 /** ========== 進捗管理 ========== */
 const progressState = ref<{ percent: number; status: string }>(
@@ -134,6 +152,7 @@ type GridRowData = {
     step?: number;
     isInt?: boolean;
   }
+  help?: any;
 }
 
 /** ========== 1. Initial Context 用の定義 ========== */
@@ -154,6 +173,7 @@ const defaultContextBase = [4, 0, 1, 0, 0, 0]
 const contextSteps = ref(5)
 const contextStreamCount = ref(1)
 const contextRows = ref<GridRowData[]>([])
+const suppressContextWatch = ref(false)
 
 const makeContextConfig = (dimKey: string) => {
   if (dimKey === 'octave') {
@@ -190,6 +210,7 @@ initContextRows()
 
 // Steps が増減したとき: 行データを合わせる
 watch(contextSteps, (len) => {
+  if (suppressContextWatch.value) return
   contextRows.value = contextRows.value.map((row) => {
     const data = [...row.data]
     while (data.length < len) {
@@ -204,6 +225,7 @@ watch(contextSteps, (len) => {
 watch(
   contextStreamCount,
   (newVal, oldVal) => {
+    if (suppressContextWatch.value) return
     if (oldVal == null) return
     const prev = oldVal as number
     const curr = newVal as number
@@ -309,6 +331,7 @@ const fill = (start: number, mid: number, end: number, len: number = stepsDefaul
 const constant = (val: number, len: number = stepsDefault) => Array(len).fill(val)
 
 const genSteps = ref<number>(stepsDefault)
+const suppressGenWatch = ref(false)
 
 const genRowMetas: GenRowMeta[] = [
   // =========================================================
@@ -851,6 +874,7 @@ const genRows = ref<GridRowData[]>(
 
 // steps 変更時に row.data を合わせる
 watch(genSteps, (len) => {
+  if (suppressGenWatch.value) return
   genRows.value = genRows.value.map((row, idx) => {
     const meta = genRowMetas[idx]
     const data = [...row.data]
@@ -944,35 +968,155 @@ const buildGenParamsFromRows = () => {
   return result
 }
 
+const normalizeNumber = (val: any, fallback: number) => {
+  const num = Number(val)
+  return Number.isFinite(num) ? num : fallback
+}
+
+const normalizeArray = (val: any) => {
+  if (Array.isArray(val)) return val
+  if (val == null) return []
+  return [val]
+}
+
+const applyInitialContextFromPayload = async (ctxRaw: any) => {
+  if (!Array.isArray(ctxRaw)) return
+  const steps = Math.max(1, ctxRaw.length)
+  const streamCount = Math.max(
+    1,
+    ...ctxRaw.map((step: any) => (Array.isArray(step) ? step.length : 0))
+  )
+
+  suppressContextWatch.value = true
+  contextSteps.value = steps
+  contextStreamCount.value = streamCount
+
+  const rows: GridRowData[] = []
+  for (let s = 0; s < streamCount; s++) {
+    for (let d = 0; d < dimensions.length; d++) {
+      const row = makeContextRow(s, d)
+      const base = defaultContextBase[d] ?? 0
+      const data: number[] = []
+      for (let step = 0; step < steps; step++) {
+        const stepArr = ctxRaw[step]
+        const streamArr = Array.isArray(stepArr) ? stepArr[s] : null
+        let rawVal = Array.isArray(streamArr) ? streamArr[d] : null
+        if (d === 1 && Array.isArray(rawVal)) rawVal = rawVal[0]
+        let v = normalizeNumber(rawVal, base)
+        const cfg = row.config
+        if (cfg) {
+          if (cfg.isInt) v = Math.round(v)
+          if (v < cfg.min) v = cfg.min
+          if (v > cfg.max) v = cfg.max
+        }
+        data.push(v)
+      }
+      row.data = data
+      rows.push(row)
+    }
+  }
+
+  contextRows.value = rows
+  await nextTick()
+  suppressContextWatch.value = false
+}
+
+const applyGenParamsFromPayload = async (payload: any) => {
+  const candidate = payload?.generate_polyphonic ?? payload ?? {}
+
+  const lengths = genRowMetas.map((meta) => {
+    const val = candidate[meta.key]
+    return Array.isArray(val) ? val.length : (val != null ? 1 : 0)
+  })
+  const steps = Math.max(1, ...lengths)
+
+  suppressGenWatch.value = true
+  genSteps.value = steps
+
+  genRows.value = genRowMetas.map((meta) => {
+    const arr = normalizeArray(candidate[meta.key]).map((v: any) => normalizeNumber(v, meta.isInt ? meta.min : 0))
+    const data: number[] = []
+    for (let i = 0; i < steps; i++) {
+      let v = arr[i]
+      if (v == null) {
+        v = meta.isInt ? meta.min : 0
+      }
+      if (meta.isInt) v = Math.round(v)
+      else v = Number(Number(v).toFixed(2))
+      if (v < meta.min) v = meta.min
+      if (v > meta.max) v = meta.max
+      data.push(v)
+    }
+
+    return {
+      name: meta.name,
+      shortName: meta.shortName,
+      data,
+      config: {
+        min: meta.min,
+        max: meta.max,
+        step: meta.step,
+        isInt: meta.isInt
+      },
+      help: meta.help
+    } as GridRowData
+  })
+
+  await nextTick()
+  suppressGenWatch.value = false
+}
+
+const buildParamsPayload = (jobIdOverride?: string) => {
+  const genParams = buildGenParamsFromRows()
+  const initialContext = buildInitialContext()
+  const jobId = jobIdOverride || uuidv4()
+
+  const payload: any = {
+    generate_polyphonic: {
+      job_id: jobId,
+      stream_counts: genParams.stream_counts,
+      initial_context: initialContext,
+      stream_strength_target: genParams.stream_strength_target,
+      stream_strength_spread: genParams.stream_strength_spread,
+      dissonance_target: genParams.dissonance_target
+    }
+  }
+
+  ;['octave', 'note', 'vol', 'bri', 'hrd', 'tex', 'chord_size'].forEach((k) => {
+    payload.generate_polyphonic[`${k}_global`] = genParams[`${k}_global`]
+    payload.generate_polyphonic[`${k}_center`] = genParams[`${k}_center`]
+    payload.generate_polyphonic[`${k}_spread`] = genParams[`${k}_spread`]
+    payload.generate_polyphonic[`${k}_conc`] = genParams[`${k}_conc`]
+  })
+
+  return payload
+}
+
+const applyParamsPayload = async (payload: any) => {
+  if (!payload || typeof payload !== 'object') return
+  const candidate = payload.generate_polyphonic ?? payload
+  await applyInitialContextFromPayload(candidate.initial_context)
+  await applyGenParamsFromPayload(candidate)
+}
+
 /** ========== サーバ呼び出し ========== */
 const handleGeneratePolyphonic = async () => {
   try {
     const jobId = uuidv4()
-    const genParams = buildGenParamsFromRows()
-    const initialContext = buildInitialContext()
+    const payload = buildParamsPayload(jobId)
+    emit('params-built', payload)
 
-    // 重要: すべて generate_polyphonic 配下にネストする
-    const payload: any = {
-      generate_polyphonic: {
-        job_id: jobId,
-        stream_counts: genParams.stream_counts,
-        initial_context: initialContext,
+    const endpoint = runOnGithubActions.value
+      ? '/api/web/time_series/dispatch_generate_polyphonic'
+      : '/api/web/time_series/generate_polyphonic'
 
-        stream_strength_target: genParams.stream_strength_target,
-        stream_strength_spread: genParams.stream_strength_spread,
-        dissonance_target:      genParams.dissonance_target,
-      }
+    const resp = await axios.post(endpoint, payload)
+
+    if (runOnGithubActions.value) {
+      emit('dispatched-polyphonic', resp.data)
+    } else {
+      emit('generated-polyphonic', resp.data)
     }
-
-    ;['octave', 'note', 'vol', 'bri', 'hrd', 'tex', 'chord_size'].forEach((k) => {
-      payload.generate_polyphonic[`${k}_global`]    = genParams[`${k}_global`]
-      payload.generate_polyphonic[`${k}_center`]     = genParams[`${k}_center`]
-      payload.generate_polyphonic[`${k}_spread`] = genParams[`${k}_spread`]
-      payload.generate_polyphonic[`${k}_conc`]      = genParams[`${k}_conc`]
-    })
-
-    const resp = await axios.post('/api/web/time_series/dispatch_generate_polyphonic', payload)
-    emit('dispatched-polyphonic', resp.data)
 
     open.value = false
   } catch (err) {
@@ -989,7 +1133,13 @@ onUnmounted(() => cleanupProgress())
 
 /** 親から open を操作したい場合用 */
 import { defineExpose } from 'vue'
-defineExpose({ open })
+defineExpose({ open, applyParamsPayload, buildParamsPayload })
+
+watch(open, (next, prev) => {
+  if (prev && !next) {
+    emit('params-updated', buildParamsPayload())
+  }
+})
 </script>
 
 <style scoped>

@@ -56,6 +56,9 @@ services:
       # If you use proxy in Vite config, this can be referenced
       VITE_API_TARGET: "http://api:${PORT:-9111}"
 
+      # Frontend toggle: run generate_polyphonic on GitHub Actions or hosting server
+      VITE_RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS: "${RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS:-true}"
+
     volumes:
       - ./frontend:/app
       - web_node_modules:/app/node_modules
