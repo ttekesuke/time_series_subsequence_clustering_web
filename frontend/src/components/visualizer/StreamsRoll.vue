@@ -8,7 +8,6 @@
     >
       <canvas
         ref="canvas"
-        :height="height"
         @mousemove="onMouseMove"
         @mouseleave="onMouseLeave"
       ></canvas>
@@ -38,7 +37,6 @@ const props = defineProps({
   minValue: { type: Number, default: 0 },
   maxValue: { type: Number, default: 127 },
   stepWidth: { type: Number, default: 10 },
-  height: { type: Number, default: null },
   highlightIndices: { type: Array as () => number[], default: () => [] },
   highlightWindowSize: { type: Number, default: 0 },
 
@@ -108,10 +106,7 @@ const draw = () => {
   const contentWidth = maxStep * props.stepWidth
   const width = Math.max(wrapperWidth, contentWidth)
 
-  const baseCanvasHeight =
-    props.height && props.height > 0
-      ? props.height
-      : (scrollWrapper.value.clientHeight || 200)
+  const baseCanvasHeight = scrollWrapper.value.clientHeight || 200
 
   // =========================
   // 小数 valueResolution を安定処理
@@ -136,13 +131,8 @@ const draw = () => {
   // Y方向の段数（整数で計算するのでズレない）
   const stepsY = Math.max(1, Math.floor((scaledMax - scaledMin) / scaledRes) + 1)
 
-  const minSlotHeight = 4
-  let slotHeight = Math.floor(baseCanvasHeight / stepsY)
-  let actualPlotHeight = baseCanvasHeight
-  if (slotHeight < minSlotHeight) {
-    slotHeight = minSlotHeight
-    actualPlotHeight = slotHeight * stepsY
-  }
+  const slotHeight = baseCanvasHeight / stepsY
+  const actualPlotHeight = baseCanvasHeight
 
   canvas.value.width = width
   canvas.value.height = actualPlotHeight
@@ -204,7 +194,7 @@ const draw = () => {
 
       const fullBarWidth = Math.max(1, props.stepWidth - 2)
       const rectX = xBase + 1
-      const barHeight = Math.max(2, Math.floor(slotHeight - 2))
+      const barHeight = Math.min(slotHeight, Math.max(0.5, slotHeight * 0.8))
 
       notes.forEach((numVal) => {
         // 値をレンジにクランプ
