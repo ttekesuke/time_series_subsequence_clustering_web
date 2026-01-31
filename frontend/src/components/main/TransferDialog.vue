@@ -47,8 +47,8 @@
               />
             </div>
           </div>
-          <div class="transfer-divider" v-if="!runOnGithubActions"></div>
-          <div class="transfer-block" v-if="!runOnGithubActions">
+          <div class="transfer-divider"></div>
+          <div class="transfer-block">
             <div class="transfer-label">Download</div>
             <div class="transfer-controls">
               <v-btn size="small" variant="outlined" @click="emitDownloadResultJson">result.json</v-btn>
