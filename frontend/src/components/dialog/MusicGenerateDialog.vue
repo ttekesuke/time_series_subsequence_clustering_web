@@ -457,19 +457,20 @@ const genRowMetas: GenRowMeta[] = [
   },
   {
     shortName: "CHORD Conc",
-    name: "Chord Size Concordance Weight",
+    name: "Chord Size Concordance Target",
     key: "chord_size_conc",
-    min: -1,
+    min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
-      { min: -1, max: 1, step: 0.01 },
-      "同時刻の値（和音数）の“幅”を罰則にする重みです（discordance×weight）。負の場合は無視します。",
-      "-1：同時刻の幅（最大-最小）を評価から外す（罰則なし）。",
-      "1：同時刻の幅が大きいほど強く罰する（揃った chord_size を好む）。"
+      { min: 0, max: 1, step: 0.01 },
+      "同時刻の chord_size のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
+      "0：一致度を低めにしたい（ストリーム間で chord_size をばらけさせやすい）。",
+      "1：一致度を高めにしたい（ストリーム間で chord_size を揃えやすい）。"
     )
   },
+
 
   // =========================================================
   // octave
@@ -521,19 +522,20 @@ const genRowMetas: GenRowMeta[] = [
   },
   {
     shortName: "OCT Conc",
-    name: "Octave Concordance Weight",
+    name: "Octave Concordance Target",
     key: "octave_conc",
-    min: -1,
+    min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
-      { min: -1, max: 1, step: 0.01 },
-      "同時刻の octave 幅（max-min）を罰則にする重みです。負なら無視。",
-      "-1：同時刻の octave 幅を評価から外す（罰則なし）。",
-      "1：同時刻の octave 幅を強く抑える（同じ帯域に集めやすい）。"
+      { min: 0, max: 1, step: 0.01 },
+      "同時刻の octave のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
+      "0：一致度を低めにしたい（ストリーム間で octave が離れやすい）。",
+      "1：一致度を高めにしたい（ストリーム間で octave が揃いやすい）。"
     )
   },
+
 
   // =========================================================
   // note
@@ -585,19 +587,20 @@ const genRowMetas: GenRowMeta[] = [
   },
   {
     shortName: "NOTE Conc",
-    name: "Note Concordance Weight",
+    name: "Note Concordance Target",
     key: "note_conc",
-    min: -1,
+    min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
-      { min: -1, max: 1, step: 0.01 },
-      "同時刻の root note 幅（max-min）を罰則にする重みです。負なら無視。",
-      "-1：同時刻の root note 幅を評価から外す（罰則なし）。",
-      "1：同時刻の root note 幅を強く抑える（同じ音付近に寄せやすい）。"
+      { min: 0, max: 1, step: 0.01 },
+      "同時刻の root note（pitch-class）のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
+      "0：一致度を低めにしたい（ストリーム間で root が散りやすい）。",
+      "1：一致度を高めにしたい（ストリーム間で root が揃いやすい）。"
     )
   },
+
 
   // =========================================================
   // volume
@@ -651,15 +654,15 @@ const genRowMetas: GenRowMeta[] = [
     shortName: "VOL Conc",
     name: "Volume Concordance Weight",
     key: "vol_conc",
-    min: -1,
+    min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
-      { min: -1, max: 1, step: 0.01 },
-      "同時刻の vol 幅（max-min）を罰則にする重みです。負なら無視。",
-      "-1：同時刻の vol 幅を評価から外す（罰則なし）。",
-      "1：同時刻の vol 幅を強く抑える（全ストリームの音量が揃いやすい）。"
+      { min: 0, max: 1, step: 0.01 },
+      "同時刻の vol のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
+      "0：一致度を低めにしたい（ストリーム間で vol がばらけやすい）。",
+      "1：一致度を高めにしたい（ストリーム間で vol が揃いやすい）。"
     )
   },
 
@@ -715,15 +718,15 @@ const genRowMetas: GenRowMeta[] = [
     shortName: "BRI Conc",
     name: "Brightness Concordance Weight",
     key: "bri_conc",
-    min: -1,
+    min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
-      { min: -1, max: 1, step: 0.01 },
-      "同時刻の bri 幅（max-min）を罰則にする重みです。負なら無視。",
-      "-1：同時刻の bri 幅を評価から外す（罰則なし）。",
-      "1：同時刻の bri 幅を強く抑える（同時に似た明るさに寄せやすい）。"
+      { min: 0, max: 1, step: 0.01 },
+      "同時刻の bri のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
+      "0：一致度を低めにしたい（ストリーム間で bri がばらけやすい）。",
+      "1：一致度を高めにしたい（ストリーム間で bri が揃いやすい）。"
     )
   },
 
@@ -779,15 +782,15 @@ const genRowMetas: GenRowMeta[] = [
     shortName: "HRD Conc",
     name: "Hardness Concordance Weight",
     key: "hrd_conc",
-    min: -1,
+    min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
-      { min: -1, max: 1, step: 0.01 },
-      "同時刻の hrd 幅（max-min）を罰則にする重みです。負なら無視。",
-      "-1：同時刻の hrd 幅を評価から外す。",
-      "1：同時刻の hrd 幅を強く抑える（同時に似た硬さに寄せやすい）。"
+      { min: 0, max: 1, step: 0.01 },
+      "同時刻の hrd のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
+      "0：一致度を低めにしたい（ストリーム間で hrd がばらけやすい）。",
+      "1：一致度を高めにしたい（ストリーム間で hrd が揃いやすい）。"
     )
   },
 
@@ -843,15 +846,15 @@ const genRowMetas: GenRowMeta[] = [
     shortName: "TEX Conc",
     name: "Texture Concordance Weight",
     key: "tex_conc",
-    min: -1,
+    min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
-      { min: -1, max: 1, step: 0.01 },
-      "同時刻の tex 幅（max-min）を罰則にする重みです。負なら無視。",
-      "-1：同時刻の tex 幅を評価から外す。",
-      "1：同時刻の tex 幅を強く抑える（同時に似た質感に寄せやすい）。"
+      { min: 0, max: 1, step: 0.01 },
+      "同時刻の tex のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
+      "0：一致度を低めにしたい（ストリーム間で tex がばらけやすい）。",
+      "1：一致度を高めにしたい（ストリーム間で tex が揃いやすい）。"
     )
   }
 ]

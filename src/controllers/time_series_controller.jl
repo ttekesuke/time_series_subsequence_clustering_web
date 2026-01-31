@@ -7,7 +7,6 @@ using JSON3
 using Base64
 using UUIDs
 
-
 # The manager is defined in the parent module (TimeseriesClusteringAPI)
 # after include("timeseries/time_series_cluster_manager.jl").
 import ..TimeSeriesClusterManager
@@ -44,8 +43,6 @@ function _to_string_dict(raw)
 end
 
 function _payload()
-  # Genie.Requests.jsonpayload() returns Dict-like object.
-  # We normalize keys to String for easier access.
   raw = Requests.jsonpayload()
   if raw === nothing || isempty(raw)
     raw = Requests.params()
@@ -152,7 +149,6 @@ function initial_calc_values!(manager, clusters_each_window_size, max_master::Re
   for (window_size, same_ws) in clusters_each_window_size
     all_ids = collect(keys(same_ws))
 
-    # distance cache
     cache = get!(manager.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
     for i in 1:length(all_ids)
       for j in (i+1):length(all_ids)
@@ -161,13 +157,10 @@ function initial_calc_values!(manager, clusters_each_window_size, max_master::Re
         as1 = same_ws[cid1]["as"]
         as2 = same_ws[cid2]["as"]
         key = cid1 < cid2 ? (cid1,cid2) : (cid2,cid1)
-
-        # ✅ manager.euclidean_distance ではなく関数呼び出し
         cache[key] = euclidean_distance(as1, as2)
       end
     end
 
-    # quantity & complexity cache
     q_cache = get!(manager.cluster_quantity_cache, window_size, Dict{Int,Float64}())
     c_cache = get!(manager.cluster_complexity_cache, window_size, Dict{Int,Float64}())
     for (cid, cluster) in same_ws
@@ -181,8 +174,6 @@ function initial_calc_values!(manager, clusters_each_window_size, max_master::Re
         end
       end
       q_cache[cid] = q
-
-      # ✅ manager.calculate_cluster_complexity ではなく関数呼び出し
       c_cache[cid] = calculate_cluster_complexity(cluster)
     end
   end
@@ -190,34 +181,22 @@ function initial_calc_values!(manager, clusters_each_window_size, max_master::Re
   return nothing
 end
 
-
 # ------------------------------------------------------------
 # Actions
 # ------------------------------------------------------------
 
-"""
-POST /api/web/time_series/analyse
-Rails compatible payload:
-  { analyse: { time_series: [...], merge_threshold_ratio: 0.3, job_id: "..." } }
-
-Returns:
-  clusteredSubsequences, timeSeries, clusters, processingTime
-"""
 function analyse()
   t0 = time()
 
   payload = _payload()
   p = _subhash(payload, "analyse")
 
-  # time_series: array of numbers
   raw_series = get(p, "time_series", Any[])
-
   data = Int[]
   for v in raw_series
     try
       push!(data, _parse_int(v))
     catch
-      # ignore non-parsable
     end
   end
 
@@ -247,26 +226,7 @@ function analyse()
   )
 end
 
-
-"""
-POST /api/web/time_series/generate
-Rails compatible payload:
-  { generate: {
-      first_elements: "0,1,2",
-      complexity_transition: "0.1,0.2,...",
-      merge_threshold_ratio: 0.3,
-      range_min: 0,
-      range_max: 12,
-      selected_use_musical_feature: "...",
-      job_id: "..."
-    }
-  }
-
-Returns:
-  clusteredSubsequences, timeSeries, complexityTransition, clusters, processingTime
-"""
 function generate()
-
   t0 = time()
 
   payload = _payload()
@@ -292,20 +252,16 @@ function generate()
     range_max = candidate_max_master
   )
 
-
   process_data!(manager)
 
   clusters_each = transform_clusters(manager.clusters, min_window_size)
   initial_calc_values!(manager, clusters_each, candidate_max_master, candidate_min_master, length(first_elements))
-
-  # reset updated ids (Rails does this before candidate loop)
   empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
 
   results = copy(first_elements)
 
-  for (rank_index, target_val) in enumerate(complexity_targets)
+  for target_val in complexity_targets
     candidates = collect(candidate_min_master:candidate_max_master)
-
     indexed_metrics = Vector{Dict{String,Any}}()
     current_len = length(results) + 1
 
@@ -340,7 +296,6 @@ function generate()
     ))
 
     result_index = find_complex_candidate_by_value(criteria, float(target_val))
-    # result_index is 0-based idx into candidates
     result_value = candidates[result_index + 1]
 
     push!(results, result_value)
@@ -351,7 +306,6 @@ function generate()
   timeline = clusters_to_timeline(manager.clusters, min_window_size)
   processing_time_s = round(time() - t0; digits=2)
 
-  # align to StreamsRoll: first_elements are missing, then targets
   complexity_transition_stream = Any[missing for _ in first_elements]
   append!(complexity_transition_stream, complexity_targets)
 
@@ -364,27 +318,17 @@ function generate()
   )
 end
 
-"""
-POST /api/web/time_series/generate_polyphonic
+# ------------------------------------------------------------
+# Polyphonic helpers
+# ------------------------------------------------------------
 
-Rails compatible payload (nested):
-  { generate_polyphonic: { job_id, stream_counts, initial_context, ... } }
-
-Stage5 scope:
-- Parse payload and normalize `initial_context` (step-major) to Rails-compatible structure.
-- Initialize polyphonic managers (global/stream) from the initial history.
-
-NOTE:
-The full generation loop (global/stream/conc scoring, STM roughness + shift search)
-is implemented in later stages to keep changes isolated to one file per delivery.
-"""
+# 0-based index read (Rails compatible)
 function array_param(raw::Dict{String,Any}, key::String, idx0::Int)
   raw === nothing && return nothing
   val = get(raw, key, nothing)
   val === nothing && return nothing
 
   if val isa AbstractVector
-    # idx0 is 0-based (Rails-compatible). Clamp to last.
     i = idx0 + 1
     if i < 1
       return val[1]
@@ -396,6 +340,11 @@ function array_param(raw::Dict{String,Any}, key::String, idx0::Int)
   else
     return val
   end
+end
+
+# Accept JSON3.Object / Dict{Symbol,Any} etc.
+function array_param(raw::AbstractDict, key::String, idx0::Int)
+  return array_param(_to_string_dict(raw), key, idx0)
 end
 
 function generate_centered_targets(n::Int, center::Real, spread::Real)::Vector{Float64}
@@ -419,7 +368,6 @@ function generate_centered_targets(n::Int, center::Real, spread::Real)::Vector{F
   return out
 end
 
-"""Rails-like repeated_combination(values, n) returning all non-decreasing length-n vectors."""
 function repeated_combinations(values::Vector{T}, n::Int) where {T}
   n <= 0 && return Vector{Vector{T}}()
   n == 1 && return [[v] for v in values]
@@ -450,28 +398,14 @@ function repeated_combinations(values::Vector{T}, n::Int) where {T}
 end
 
 struct CandidateMetric
-  ordered_cand::Vector{Float64}   # per-stream scalar values (already ordered)
+  ordered_cand::Vector{Float64}
   global_dist::Float64
   global_qty::Float64
   global_comp::Float64
-  stream_dists::Vector{Float64}   # Hungarian assignment distance (0..1)  ※ジャンプ量
-  stream_comps::Vector{Float64}   # Cluster-derived complexity01 (0..1)  ★これを追加
+  stream_dists::Vector{Float64}
+  stream_comps::Vector{Float64}
   discordance::Float64
 end
-
-struct NoteShiftMetric
-  shift::Int
-  global_dist::Float64
-  global_qty::Float64
-  global_comp::Float64
-  stream_dists01::Vector{Float64}
-  stream_complexities_raw::Vector{Float64}
-  discordance::Float64
-  chords_for_streams::Vector{Vector{Int}}
-  global_value::Vector{Int}
-end
-
-# Note shift metric (Rails generate_polyphonic note block)
 
 function select_best_polyphonic_candidate_unified_with_cost(
   metrics::Vector{CandidateMetric},
@@ -487,7 +421,6 @@ function select_best_polyphonic_candidate_unified_with_cost(
   g_qtys,  _ = normalize_scores([m.global_qty  for m in metrics], false)
   g_comps, _ = normalize_scores([m.global_comp for m in metrics], true)
 
-  # keep for backward compatibility (only used when stream_comps is empty)
   sdm = stream_dist_max
   sdm = (sdm <= 0.0) ? 1.0 : sdm
 
@@ -495,10 +428,8 @@ function select_best_polyphonic_candidate_unified_with_cost(
     current_global = (g_dists[i] + g_qtys[i] + g_comps[i]) / 3.0
     cost_a = abs(current_global - global_target)
 
-    # --- FIX: stream cost should be based on cluster-derived complexity01, not dist jump ---
     cost_b = 0.0
     if !isempty(stream_targets)
-      # Prefer stream_comps (complexity01). Fallback to stream_dists if comps not available.
       if !isempty(m.stream_comps)
         n = min(length(stream_targets), length(m.stream_comps))
         if n > 0
@@ -509,7 +440,6 @@ function select_best_polyphonic_candidate_unified_with_cost(
           cost_b /= float(n)
         end
       else
-        # fallback (legacy): dist-only
         n = min(length(stream_targets), length(m.stream_dists))
         if n > 0
           for s_idx in 1:n
@@ -522,7 +452,9 @@ function select_best_polyphonic_candidate_unified_with_cost(
       end
     end
 
-    cost_c = (concordance_weight < 0.0) ? 0.0 : (m.discordance * concordance_weight)
+    conc_t = clamp(concordance_weight, 0.0, 1.0)
+    concord01 = 1.0 - clamp(m.discordance, 0.0, 1.0)
+    cost_c = abs(concord01 - conc_t)
 
     total = cost_a + cost_b + cost_c
     if total < min_cost
@@ -533,7 +465,6 @@ function select_best_polyphonic_candidate_unified_with_cost(
 
   return best_i, min_cost
 end
-
 
 function select_best_chord_for_dimension_with_cost(
   mgrs::Dict{Symbol,Any},
@@ -577,7 +508,6 @@ function select_best_chord_for_dimension_with_cost(
       complexity_weight=assignment_complexity_weight,
     )
 
-    # ordered scalar values (for global manager)
     ordered_vals = Float64[]
     for v in ordered_polysets
       if v isa AbstractVector && !isempty(v)
@@ -588,7 +518,6 @@ function select_best_chord_for_dimension_with_cost(
     end
 
     g_dist, g_qty, g_comp = PolyphonicClusterManager.simulate_add_and_calculate(mgrs[:global], ordered_vals, q_array)
-
     disc = (maximum(ordered_vals) - minimum(ordered_vals)) / range_width
 
     stream_dists = Float64[]
@@ -608,7 +537,6 @@ function select_best_chord_for_dimension_with_cost(
 
   isempty(metrics) && return (Float64[], Inf)
 
-  # stream_dist_max selection (Rails behavior)
   max_raw_dist = 0.0
   for m in metrics
     for d in m.stream_dists
@@ -631,14 +559,16 @@ function select_best_chord_for_dimension_with_cost(
   return best.ordered_cand, best_cost
 end
 
+# ------------------------------------------------------------
+# generate_polyphonic (main)
+# ------------------------------------------------------------
 function generate_polyphonic()
   t0 = time()
 
   payload = _payload()
-  p = _subhash(payload, "generate_polyphonic")
+  gp = _subhash(payload, "generate_polyphonic")   # ← params辞書は gp に統一（p をやめる）
 
-  # --- basic params ---
-  stream_counts_raw = get(p, "stream_counts", Any[])
+  stream_counts_raw = get(gp, "stream_counts", Any[])
   stream_counts = Int[]
   if stream_counts_raw isa AbstractVector
     for x in stream_counts_raw
@@ -649,8 +579,8 @@ function generate_polyphonic()
   end
   isempty(stream_counts) && push!(stream_counts, 1)
 
-  strength_targets_raw = get(p, "stream_strength_target", Any[])
-  strength_spreads_raw = get(p, "stream_strength_spread", Any[])
+  strength_targets_raw = get(gp, "stream_strength_target", Any[])
+  strength_spreads_raw = get(gp, "stream_strength_spread", Any[])
 
   strength_targets = Float64[]
   if strength_targets_raw isa AbstractVector
@@ -666,8 +596,7 @@ function generate_polyphonic()
     end
   end
 
-  # dissonance_target (for note / roughness)
-  dissonance_targets_raw = get(p, "dissonance_target", nothing)
+  dissonance_targets_raw = get(gp, "dissonance_target", nothing)
   dissonance_targets = Float64[]
   if dissonance_targets_raw isa AbstractVector
     for x in dissonance_targets_raw
@@ -677,10 +606,8 @@ function generate_polyphonic()
     push!(dissonance_targets, _parse_float(dissonance_targets_raw))
   end
 
-  # --- initial_context (step-major) ---
-  ctx_raw = get(p, "initial_context", Any[])
+  ctx_raw = get(gp, "initial_context", Any[])
 
-  # JSON-facing structure is kept as Vector{Vector{Vector{Any}}}
   results = Vector{Vector{Vector{Any}}}()
   if ctx_raw isa AbstractVector
     for step in ctx_raw
@@ -702,10 +629,9 @@ function generate_polyphonic()
     push!(results, [Any[4, [0], 1.0, 0.0, 0.0, 0.0]])
   end
 
-  # Normalize NOTE field to Vector{Int} pitch classes (Rails exact: compact + mod, no sort/uniq)
   normalize_pcs = function (x)
+    pcs = Int[]
     if x isa AbstractVector
-      pcs = Int[]
       for v in x
         v === nothing && continue
         push!(pcs, (_parse_int(v) % 12))
@@ -713,9 +639,7 @@ function generate_polyphonic()
     else
       pcs = Int[(_parse_int(x) % 12)]
     end
-    if isempty(pcs)
-      pcs = Int[PolyphonicConfig.NOTE_RANGE.start]
-    end
+    isempty(pcs) && (pcs = Int[PolyphonicConfig.NOTE_RANGE.start])
     return pcs
   end
 
@@ -726,12 +650,10 @@ function generate_polyphonic()
     end
   end
 
-  # Fixed parameters (Rails exact)
   merge_threshold_ratio = 0.1
   min_window = 2
   max_simultaneous_notes = last(PolyphonicConfig.CHORD_SIZE_RANGE)
 
-  # Indices in result vectors
   oct_idx  = 1
   note_idx = 2
   vol_idx  = 3
@@ -739,7 +661,6 @@ function generate_polyphonic()
   hrd_idx  = 5
   tex_idx  = 6
 
-  # --- Build history matrices for scalar dims ---
   function matrix_for_idx(idx::Int)
     return [ [ (length(st) >= idx ? st[idx] : 0) for st in step ] for step in results ]
   end
@@ -750,7 +671,6 @@ function generate_polyphonic()
   hist_hrd = matrix_for_idx(hrd_idx)
   hist_tex = matrix_for_idx(tex_idx)
 
-  # Ensure at least min_window + 1 rows (Rails padding)
   function pad_history!(mat, fallback_row)
     if length(mat) < (min_window + 1)
       last_row = !isempty(mat) ? deepcopy(mat[end]) : deepcopy(fallback_row)
@@ -769,7 +689,6 @@ function generate_polyphonic()
   pad_history!(hist_hrd, [PolyphonicConfig.FLOAT_STEPS[1] for _ in 1:first_streams])
   pad_history!(hist_tex, [PolyphonicConfig.FLOAT_STEPS[1] for _ in 1:first_streams])
 
-  # --- note histories (for placeholder output + lifecycle) ---
   note_stream_history = [ [ normalize_pcs(st[note_idx]) for st in step ] for step in results ]
 
   note_global_history = Vector{Vector{Int}}()
@@ -787,7 +706,6 @@ function generate_polyphonic()
   pad_history!(note_stream_history, [ [PolyphonicConfig.NOTE_RANGE.start] for _ in 1:first_streams ])
   pad_history!(note_global_history, [PolyphonicConfig.NOTE_RANGE.start])
 
-  # --- chord_size history (not generated yet; for lifecycle parity) ---
   chord_history = Vector{Vector{Int}}()
   for step in results
     row = Int[]
@@ -800,7 +718,6 @@ function generate_polyphonic()
   end
   pad_history!(chord_history, [1 for _ in 1:first_streams])
 
-  # --- init managers dict (Rails-like structure) ---
   managers = Dict{String,Dict{Symbol,Any}}()
 
   function global_series_from_matrix(mat)
@@ -811,42 +728,36 @@ function generate_polyphonic()
     return series
   end
 
-  # octave
   s_oct = MultiStreamManager.Manager(hist_oct, merge_threshold_ratio, min_window; use_complexity_mapping=true, value_range=collect(PolyphonicConfig.OCTAVE_RANGE))
   g_oct = PolyphonicClusterManager.Manager(global_series_from_matrix(hist_oct), merge_threshold_ratio, min_window; value_min=first(PolyphonicConfig.OCTAVE_RANGE), value_max=last(PolyphonicConfig.OCTAVE_RANGE))
   PolyphonicClusterManager.process_data!(g_oct)
   PolyphonicClusterManager.update_caches_permanently(g_oct, create_quadratic_integer_array(0, float(last(PolyphonicConfig.OCTAVE_RANGE)-first(PolyphonicConfig.OCTAVE_RANGE)) * length(g_oct.data), length(g_oct.data)))
   managers["octave"] = Dict(:global => g_oct, :stream => s_oct)
 
-  # vol (track_presence)
   s_vol = MultiStreamManager.Manager(hist_vol, merge_threshold_ratio, min_window; use_complexity_mapping=true, value_range=PolyphonicConfig.FLOAT_STEPS, track_presence=true)
   g_vol = PolyphonicClusterManager.Manager(global_series_from_matrix(hist_vol), merge_threshold_ratio, min_window; value_min=0.0, value_max=1.0)
   PolyphonicClusterManager.process_data!(g_vol)
   PolyphonicClusterManager.update_caches_permanently(g_vol, create_quadratic_integer_array(0, 1.0 * length(g_vol.data), length(g_vol.data)))
   managers["vol"] = Dict(:global => g_vol, :stream => s_vol)
 
-  # bri
   s_bri = MultiStreamManager.Manager(hist_bri, merge_threshold_ratio, min_window; use_complexity_mapping=true, value_range=PolyphonicConfig.FLOAT_STEPS)
   g_bri = PolyphonicClusterManager.Manager(global_series_from_matrix(hist_bri), merge_threshold_ratio, min_window; value_min=0.0, value_max=1.0)
   PolyphonicClusterManager.process_data!(g_bri)
   PolyphonicClusterManager.update_caches_permanently(g_bri, create_quadratic_integer_array(0, 1.0 * length(g_bri.data), length(g_bri.data)))
   managers["bri"] = Dict(:global => g_bri, :stream => s_bri)
 
-  # hrd
   s_hrd = MultiStreamManager.Manager(hist_hrd, merge_threshold_ratio, min_window; use_complexity_mapping=true, value_range=PolyphonicConfig.FLOAT_STEPS)
   g_hrd = PolyphonicClusterManager.Manager(global_series_from_matrix(hist_hrd), merge_threshold_ratio, min_window; value_min=0.0, value_max=1.0)
   PolyphonicClusterManager.process_data!(g_hrd)
   PolyphonicClusterManager.update_caches_permanently(g_hrd, create_quadratic_integer_array(0, 1.0 * length(g_hrd.data), length(g_hrd.data)))
   managers["hrd"] = Dict(:global => g_hrd, :stream => s_hrd)
 
-  # tex
   s_tex = MultiStreamManager.Manager(hist_tex, merge_threshold_ratio, min_window; use_complexity_mapping=true, value_range=PolyphonicConfig.FLOAT_STEPS)
   g_tex = PolyphonicClusterManager.Manager(global_series_from_matrix(hist_tex), merge_threshold_ratio, min_window; value_min=0.0, value_max=1.0)
   PolyphonicClusterManager.process_data!(g_tex)
   PolyphonicClusterManager.update_caches_permanently(g_tex, create_quadratic_integer_array(0, 1.0 * length(g_tex.data), length(g_tex.data)))
   managers["tex"] = Dict(:global => g_tex, :stream => s_tex)
 
-  # note
   s_note = MultiStreamManager.Manager(note_stream_history, merge_threshold_ratio, min_window; use_complexity_mapping=true, value_range=collect(PolyphonicConfig.NOTE_RANGE), max_set_size=max_simultaneous_notes)
   g_note_series = Vector{Vector{Float64}}()
   for pcs in note_global_history
@@ -857,14 +768,12 @@ function generate_polyphonic()
   PolyphonicClusterManager.update_caches_permanently(g_note, create_quadratic_integer_array(0, 11.0 * length(g_note.data), length(g_note.data)))
   managers["note"] = Dict(:global => g_note, :stream => s_note)
 
-  # chord_size
   s_cs = MultiStreamManager.Manager(chord_history, merge_threshold_ratio, min_window; use_complexity_mapping=true, value_range=collect(PolyphonicConfig.CHORD_SIZE_RANGE))
   g_cs = PolyphonicClusterManager.Manager(global_series_from_matrix(chord_history), merge_threshold_ratio, min_window; value_min=float(first(PolyphonicConfig.CHORD_SIZE_RANGE)), value_max=float(last(PolyphonicConfig.CHORD_SIZE_RANGE)), max_set_size=max_simultaneous_notes)
   PolyphonicClusterManager.process_data!(g_cs)
   PolyphonicClusterManager.update_caches_permanently(g_cs, create_quadratic_integer_array(0, float(last(PolyphonicConfig.CHORD_SIZE_RANGE)-first(PolyphonicConfig.CHORD_SIZE_RANGE)) * length(g_cs.data), length(g_cs.data)))
   managers["chord_size"] = Dict(:global => g_cs, :stream => s_cs)
 
-  # --- STM manager ---
   stm_mgr = DissonanceStmManager.Manager(
     memory_span=1.5,
     memory_weight=1.0,
@@ -893,7 +802,6 @@ function generate_polyphonic()
     DissonanceStmManager.commit!(stm_mgr, midi_notes, amps, onset)
   end
 
-  # --- generation loop (Rails) ---
   steps_to_generate = length(stream_counts)
   base_step_index = length(results)
 
@@ -903,7 +811,6 @@ function generate_polyphonic()
     st_target = step_idx <= length(strength_targets) ? strength_targets[step_idx] : 0.5
     st_spread = step_idx <= length(strength_spreads) ? strength_spreads[step_idx] : 0.0
 
-    # lifecycle plan derived from vol
     vol_mgr = managers["vol"][:stream]
     plan = MultiStreamManager.build_stream_lifecycle_plan(vol_mgr, desired_stream_count; target=st_target, spread=st_spread)
 
@@ -911,13 +818,11 @@ function generate_polyphonic()
       MultiStreamManager.apply_stream_lifecycle_plan!(mgrs[:stream], plan)
     end
 
-    # output step scaffold
     current_step_values = [ Any[0, Int[], 0.0, 0.0, 0.0, 0.0] for _ in 1:desired_stream_count ]
     step_decisions = Dict{String,Any}()
 
     idx0 = step_idx - 1
 
-    # dimension order (Rails)
     dim_order = [
       ("vol",        PolyphonicConfig.FLOAT_STEPS,                 vol_idx, true),
       ("octave",     collect(PolyphonicConfig.OCTAVE_RANGE),       oct_idx, false),
@@ -932,14 +837,13 @@ function generate_polyphonic()
     for (key, range_vec, out_idx, is_float_dim) in dim_order
       mgrs = managers[key]
 
-      g_target = clamp(_parse_float(array_param(p, "$(key)_global", idx0)), 0.0, 1.0)
-      s_center = clamp(_parse_float(array_param(p, "$(key)_center", idx0)), 0.0, 1.0)
-      s_spread = clamp(_parse_float(array_param(p, "$(key)_spread", idx0)), 0.0, 1.0)
-      conc_w  = _parse_float(array_param(p, "$(key)_conc", idx0))
+      g_target = clamp(_parse_float(array_param(gp, "$(key)_global", idx0)), 0.0, 1.0)
+      s_center = clamp(_parse_float(array_param(gp, "$(key)_center", idx0)), 0.0, 1.0)
+      s_spread = clamp(_parse_float(array_param(gp, "$(key)_spread", idx0)), 0.0, 1.0)
+      conc_w  = _parse_float(array_param(gp, "$(key)_conc", idx0))
 
       stream_targets = generate_centered_targets(desired_stream_count, s_center, s_spread)
 
-      # q_array length depends on current global history length + 1
       gl = mgrs[:global]
       vmin = float(minimum(range_vec))
       vmax = float(maximum(range_vec))
@@ -964,7 +868,6 @@ function generate_polyphonic()
         max_simultaneous_notes=max_simultaneous_notes
       )
 
-      # commit
       PolyphonicClusterManager.add_data_point_permanently(mgrs[:global], Float64[float(x) for x in best_chord])
       PolyphonicClusterManager.update_caches_permanently(mgrs[:global], q_array)
 
@@ -975,7 +878,6 @@ function generate_polyphonic()
       end
       MultiStreamManager.update_caches_permanently!(mgrs[:stream], q_array)
 
-      # output
       if key == "chord_size"
         chord_sizes_for_step = [clamp(Int(trunc(best_chord[i])), 1, max_simultaneous_notes) for i in 1:desired_stream_count]
         step_decisions[key] = chord_sizes_for_step
@@ -992,20 +894,17 @@ function generate_polyphonic()
     end
 
     # =============================================================================
-    # NOTE generation (方式1: A=roughnessで幅を作る → その候補内でB=複雑度コスト最小化)
+    # NOTE generation
     # =============================================================================
-
     note_mgrs = managers["note"]
 
-    # targets
-    note_global_target = clamp(_parse_float(array_param(p, "note_global", idx0)), 0.0, 1.0)
-    note_stream_center = clamp(_parse_float(array_param(p, "note_center", idx0)), 0.0, 1.0)
-    note_stream_spread = clamp(_parse_float(array_param(p, "note_spread", idx0)), 0.0, 1.0)
-    note_conc_w        = _parse_float(array_param(p, "note_conc", idx0))
+    note_global_target = clamp(_parse_float(array_param(gp, "note_global", idx0)), 0.0, 1.0)
+    note_stream_center = clamp(_parse_float(array_param(gp, "note_center", idx0)), 0.0, 1.0)
+    note_stream_spread = clamp(_parse_float(array_param(gp, "note_spread", idx0)), 0.0, 1.0)
+    note_conc_w        = _parse_float(array_param(gp, "note_conc", idx0))
 
     note_stream_targets = generate_centered_targets(desired_stream_count, note_stream_center, note_stream_spread)
 
-    # q_array
     note_range_vec = collect(PolyphonicConfig.NOTE_RANGE)
     note_vmin = float(minimum(note_range_vec))
     note_vmax = float(maximum(note_range_vec))
@@ -1014,7 +913,6 @@ function generate_polyphonic()
     note_len_next = length(note_mgrs[:global].data) + 1
     note_q_array = create_quadratic_integer_array(0, note_width * note_len_next, note_len_next)
 
-    # chord_size / octave / vol already decided
     chord_sizes_int = Int[clamp(Int(chord_sizes_for_step[i]), 1, max_simultaneous_notes) for i in 1:desired_stream_count]
 
     oct_vals = get(step_decisions, "octave", Float64[])
@@ -1023,15 +921,16 @@ function generate_polyphonic()
     vol_vals = get(step_decisions, "vol", Float64[])
     vols_float = Float64[clamp(float(vol_vals[i]), 0.0, 1.0) for i in 1:desired_stream_count]
 
-    # k = maximum chord size in this step
-    k = maximum(chord_sizes_int)
-    k = k < 1 ? 1 : k
-    k = k > PolyphonicConfig.STEPS_PER_OCTAVE ? PolyphonicConfig.STEPS_PER_OCTAVE : k
+    # --- IMPORTANT FIX ---
+    # pool size must be > chord_size to allow different streams to pick different subsets.
+    cs_max = maximum(chord_sizes_int)
+    POOL_EXTRA = 3
+    pool_k = clamp(cs_max + POOL_EXTRA, 2, 8)  # 2..8 (safe)
+    # ---------------------
 
     onset = float(base_step_index + idx0) * step_duration
 
-    # dissonance target in 0..1
-    dis_target_raw = array_param(p, "dissonance_target", idx0)
+    dis_target_raw = array_param(gp, "dissonance_target", idx0)
     target01 = dis_target_raw === nothing ? 0.5 : clamp(_parse_float(dis_target_raw), 0.0, 1.0)
 
     pitch_classes = Int[pc for pc in note_range_vec]
@@ -1058,9 +957,8 @@ function generate_polyphonic()
       return out
     end
 
-    combos = _combinations(pitch_classes, k)
+    combos = _combinations(pitch_classes, pool_k)
 
-    # --- A1: combo roughnessを全列挙して評価 ---
     combo_roughness = Float64[]
     combo_candidates = Vector{Any}()
     sizehint!(combo_roughness, length(combos))
@@ -1075,7 +973,7 @@ function generate_polyphonic()
         onset=onset
       )
 
-      # streamごとのchord作成（貢献順の先頭からcs個）
+      # roughness approx: use top cs from ordered for each stream (cheap proxy)
       chords_pcs = Vector{Vector{Int}}(undef, desired_stream_count)
       for s in 1:desired_stream_count
         cs = chord_sizes_int[s]
@@ -1097,7 +995,6 @@ function generate_polyphonic()
       push!(combo_candidates, (; ordered=ordered, rough=float(d)))
     end
 
-    # combo roughness を0..1正規化して target に近い順
     min_cd = isempty(combo_roughness) ? 0.0 : minimum(combo_roughness)
     max_cd = isempty(combo_roughness) ? 0.0 : maximum(combo_roughness)
     cspan  = (max_cd - min_cd)
@@ -1110,15 +1007,11 @@ function generate_polyphonic()
       push!(combo_cost, abs(norm - target01))
     end
 
-    # chord_size * K で幅（TopK）
-    # ※必要ならここをパラメータ化してください
-    ROUGH_TOPK_BASE = 8
-    topk_combo = clamp(k * ROUGH_TOPK_BASE, 1, max(1, length(combo_candidates)))
-
-    combo_perm = sortperm(combo_cost)  # 小さい方が良い
+    ROUGH_TOPK_BASE = 4
+    topk_combo = clamp(pool_k * ROUGH_TOPK_BASE, 1, max(1, length(combo_candidates)))
+    combo_perm = sortperm(combo_cost)
     selected_combo_idxs = combo_perm[1:topk_combo]
 
-    # --- A2: selected combo のみ shift(0..11)展開し、roughnessを再評価して幅を作る ---
     absolute_bases = Int[PolyphonicConfig.base_c_midi(o) for o in octaves_int]
 
     function _compute_abs_width(bases::Vector{Int})::Float64
@@ -1135,20 +1028,6 @@ function generate_polyphonic()
       return MultiStreamManager.set_distance01(a_raw, b_raw; width=width, max_count=max_count)
     end
 
-    function _average_pairwise_distance(chords::Vector{Vector{Int}}; width::Real, max_count::Int)::Float64
-      n = length(chords)
-      n < 2 && return 0.0
-      sumv = 0.0
-      cnt = 0
-      for i in 1:(n-1)
-        for j in (i+1):n
-          sumv += _set_distance01(chords[i], chords[j]; width=width, max_count=max_count)
-          cnt += 1
-        end
-      end
-      return cnt > 0 ? (sumv / float(cnt)) : 0.0
-    end
-
     active_total_notes = sum(chord_sizes_int)
     density01 = desired_stream_count <= 0 ? 0.0 : clamp(active_total_notes / float(max_simultaneous_notes * desired_stream_count), 0.0, 1.0)
     distance_weight = density01
@@ -1159,57 +1038,60 @@ function generate_polyphonic()
     note_pc_width = abs(float(last(PolyphonicConfig.NOTE_RANGE)) - float(first(PolyphonicConfig.NOTE_RANGE)))
     note_pc_width = note_pc_width <= 0.0 ? 1.0 : note_pc_width
 
-    # shift候補（selected combos × 12 shifts）
     shift_candidates = Vector{Any}()
     shift_roughness = Float64[]
 
+    JOINT_TOPK_PER_SHIFT = 4
+    PER_STREAM_TOPK      = 12
+    BEAM_WIDTH           = 24
+
+    function _pcs_mask(pcs::Vector{Int})::UInt16
+      m::UInt16 = 0
+      for pc in pcs
+        pc2 = Int(pc % PolyphonicConfig.STEPS_PER_OCTAVE)
+        m |= (UInt16(1) << UInt16(pc2))
+      end
+      return m
+    end
+
+    function _mask_to_pcs(mask::UInt16)::Vector{Int}
+      out = Int[]
+      for pc in 0:(PolyphonicConfig.STEPS_PER_OCTAVE - 1)
+        if (mask & (UInt16(1) << UInt16(pc))) != 0
+          push!(out, pc)
+        end
+      end
+      return out
+    end
+
     for ci in selected_combo_idxs
-      ordered = combo_candidates[ci].ordered
+      ordered0 = combo_candidates[ci].ordered
 
       for shift in 0:(PolyphonicConfig.STEPS_PER_OCTAVE - 1)
-        # 貢献順を保持したまま shift
-        shifted_contrib = Int[(pc + shift) % PolyphonicConfig.STEPS_PER_OCTAVE for pc in ordered]
+        pool = Int[(pc + shift) % PolyphonicConfig.STEPS_PER_OCTAVE for pc in ordered0]
+        pool_len = length(pool)
+        pool_len == 0 && continue
 
-        # streamごとのchord作成（貢献順先頭からcs個）
-        chords_for_streams = Vector{Vector{Int}}(undef, desired_stream_count)
+        per_stream_opts = Vector{Any}(undef, desired_stream_count)
+
         for s in 1:desired_stream_count
           cs = chord_sizes_int[s]
           cs = cs < 1 ? 1 : cs
-          cs = cs > length(shifted_contrib) ? length(shifted_contrib) : cs
-          chords_for_streams[s] = shifted_contrib[1:cs]
-        end
+          cs = cs > pool_len ? pool_len : cs
 
-        # global_value は set表現として安定のため sort/uniq
-        global_value = unique(copy(shifted_contrib))
-        sort!(global_value)
+          subsets = _combinations(pool, cs)
 
-        # このshift候補のroughness（Aの本体）
-        midi_notes_r, amps_r = DissonanceStmManager.build_chord_midi_and_amps_for_all_streams(
-          octaves_int,
-          vols_float,
-          nothing,
-          chord_sizes_int;
-          chords_pcs=chords_for_streams
-        )
-        d_shift = float(DissonanceStmManager.evaluate(stm_mgr, midi_notes_r, amps_r, onset))
-        push!(shift_roughness, d_shift)
+          pcs_list = Vector{Vector{Int}}()
+          dist_list = Float64[]
+          comp_raw_list = Float64[]
+          mask_list = UInt16[]
 
-        # Bに必要な複雑度情報もここで計算して保持（決定論）
-        g_dist, g_qty, g_comp = PolyphonicClusterManager.simulate_add_and_calculate(
-          note_mgrs[:global],
-          Float64[float(x) for x in global_value],
-          note_q_array
-        )
+          sizehint!(pcs_list, length(subsets))
+          sizehint!(dist_list, length(subsets))
+          sizehint!(comp_raw_list, length(subsets))
+          sizehint!(mask_list, length(subsets))
 
-        stream_dists01 = Float64[]
-        stream_complexities_raw = Float64[]
-        sizehint!(stream_dists01, desired_stream_count)
-        sizehint!(stream_complexities_raw, desired_stream_count)
-
-        for s in 1:desired_stream_count
-          pcs = chords_for_streams[s]
           base = absolute_bases[s]
-          cand_abs = Int[base + (pc % PolyphonicConfig.STEPS_PER_OCTAVE) for pc in pcs]
 
           last_abs = containers[s].last_abs_pitch
           if last_abs === nothing
@@ -1218,36 +1100,167 @@ function generate_polyphonic()
             last_abs = Int[base + pc for pc in last_pcs]
           end
 
-          dist01 = _set_distance01(cand_abs, last_abs; width=abs_width, max_count=max_simultaneous_notes)
-          push!(stream_dists01, dist01)
+          for pcs in subsets
+            cand_abs = Int[base + (pc % PolyphonicConfig.STEPS_PER_OCTAVE) for pc in pcs]
+            dist01 = _set_distance01(cand_abs, last_abs; width=abs_width, max_count=max_simultaneous_notes)
 
-          d_s, _q_s, c_s = PolyphonicClusterManager.simulate_add_and_calculate(
-            containers[s].manager,
-            Float64[float(x) for x in pcs],
-            note_q_array
-          )
-          raw = isfinite(c_s) ? c_s : (isfinite(d_s) ? d_s : 0.0)
-          push!(stream_complexities_raw, float(raw))
+            d_s, _q_s, c_s = PolyphonicClusterManager.simulate_add_and_calculate(
+              containers[s].manager,
+              Float64[float(x) for x in pcs],
+              note_q_array
+            )
+            raw = isfinite(c_s) ? c_s : (isfinite(d_s) ? d_s : 0.0)
+
+            push!(pcs_list, pcs)
+            push!(dist_list, dist01)
+            push!(comp_raw_list, float(raw))
+            push!(mask_list, _pcs_mask(pcs))
+          end
+
+          min_r = isempty(comp_raw_list) ? 0.0 : minimum(comp_raw_list)
+          max_r = isempty(comp_raw_list) ? 0.0 : maximum(comp_raw_list)
+          span_r = abs(max_r - min_r)
+          span_r = span_r <= 0.0 ? 1.0 : span_r
+
+          costs = Float64[]
+          sizehint!(costs, length(comp_raw_list))
+
+          target_s = s <= length(note_stream_targets) ? note_stream_targets[s] : note_global_target
+
+          for raw in comp_raw_list
+            comp01 = clamp((raw - min_r) / span_r, 0.0, 1.0)
+            push!(costs, abs(comp01 - target_s))
+          end
+
+          perm = sortperm(costs)
+          topk = min(PER_STREAM_TOPK, length(perm))
+
+          opts = Vector{Any}()
+          sizehint!(opts, topk)
+
+          for j in 1:topk
+            ii = perm[j]
+            push!(opts, (;
+              pcs=pcs_list[ii],
+              mask=mask_list[ii],
+              dist01=dist_list[ii],
+              comp_raw=comp_raw_list[ii],
+              cost=float(costs[ii])
+            ))
+          end
+          per_stream_opts[s] = opts
         end
 
-        discordance = _average_pairwise_distance(chords_for_streams; width=note_pc_width, max_count=max_simultaneous_notes)
+        conc_target = clamp(note_conc_w, 0.0, 1.0)
 
-        push!(shift_candidates, (;
-          shift=shift,
-          rough=d_shift,
-          global_dist=float(g_dist),
-          global_qty=float(g_qty),
-          global_comp=float(g_comp),
-          stream_dists01=stream_dists01,
-          stream_comps_raw=stream_complexities_raw,
-          discordance=float(discordance),
-          chords_for_streams=chords_for_streams,
-          global_value=global_value
+        beam = Vector{Any}()
+        push!(beam, (;
+          score=0.0,
+          chords=Vector{Vector{Int}}(),
+          mask=UInt16(0),
+          sum_cost=0.0,
+          sum_pair=0.0,
+          pair_cnt=0,
+          stream_dists01=Float64[],
+          stream_comps_raw=Float64[]
         ))
+
+        for s in 1:desired_stream_count
+          opts = per_stream_opts[s]
+          isempty(opts) && continue
+
+          new_beam = Vector{Any}()
+
+          for b in beam
+            for opt in opts
+              sum_pair = b.sum_pair
+              pair_cnt = b.pair_cnt
+              for prev in b.chords
+                sum_pair += _set_distance01(prev, opt.pcs; width=note_pc_width, max_count=max_simultaneous_notes)
+                pair_cnt += 1
+              end
+
+              chords2 = copy(b.chords)
+              push!(chords2, opt.pcs)
+
+              sd2 = copy(b.stream_dists01)
+              push!(sd2, opt.dist01)
+
+              sc2 = copy(b.stream_comps_raw)
+              push!(sc2, opt.comp_raw)
+
+              sum_cost2 = b.sum_cost + opt.cost
+              disc = pair_cnt > 0 ? (sum_pair / float(pair_cnt)) : 0.0
+              concord01 = 1.0 - clamp(disc, 0.0, 1.0)
+              cost_conc = abs(concord01 - conc_target)
+
+              score = (sum_cost2 / float(s)) + cost_conc
+
+              push!(new_beam, (;
+                score=score,
+                chords=chords2,
+                mask=(b.mask | opt.mask),
+                sum_cost=sum_cost2,
+                sum_pair=sum_pair,
+                pair_cnt=pair_cnt,
+                stream_dists01=sd2,
+                stream_comps_raw=sc2
+              ))
+            end
+          end
+
+          isempty(new_beam) && break
+          perm2 = sortperm([x.score for x in new_beam])
+          keep = min(BEAM_WIDTH, length(perm2))
+          beam = [new_beam[perm2[i]] for i in 1:keep]
+        end
+
+        isempty(beam) && continue
+
+        perm_beam = sortperm([x.score for x in beam])
+        take = min(JOINT_TOPK_PER_SHIFT, length(perm_beam))
+
+        for jj in 1:take
+          b = beam[perm_beam[jj]]
+          chords_for_streams = b.chords
+
+          global_value = _mask_to_pcs(b.mask)
+          sort!(global_value)
+
+          midi_notes_r, amps_r = DissonanceStmManager.build_chord_midi_and_amps_for_all_streams(
+            octaves_int,
+            vols_float,
+            nothing,
+            chord_sizes_int;
+            chords_pcs=chords_for_streams
+          )
+          d_shift = float(DissonanceStmManager.evaluate(stm_mgr, midi_notes_r, amps_r, onset))
+          push!(shift_roughness, d_shift)
+
+          g_dist, g_qty, g_comp = PolyphonicClusterManager.simulate_add_and_calculate(
+            note_mgrs[:global],
+            Float64[float(x) for x in global_value],
+            note_q_array
+          )
+
+          discordance = b.pair_cnt > 0 ? (b.sum_pair / float(b.pair_cnt)) : 0.0
+
+          push!(shift_candidates, (;
+            shift=shift,
+            rough=d_shift,
+            global_dist=float(g_dist),
+            global_qty=float(g_qty),
+            global_comp=float(g_comp),
+            stream_dists01=b.stream_dists01,
+            stream_comps_raw=b.stream_comps_raw,
+            discordance=float(discordance),
+            chords_for_streams=chords_for_streams,
+            global_value=global_value
+          ))
+        end
       end
     end
 
-    # shift roughness 正規化 → target に近い順で TopK
     min_sd = isempty(shift_roughness) ? 0.0 : minimum(shift_roughness)
     max_sd = isempty(shift_roughness) ? 0.0 : maximum(shift_roughness)
     sspan  = (max_sd - min_sd)
@@ -1260,12 +1273,10 @@ function generate_polyphonic()
       push!(shift_cost, abs(norm - target01))
     end
 
-    topk_shift = clamp(k * ROUGH_TOPK_BASE, 1, max(1, length(shift_candidates)))
+    topk_shift = clamp(pool_k * ROUGH_TOPK_BASE, 1, max(1, length(shift_candidates)))
     shift_perm = sortperm(shift_cost)
     allowed_shift_idxs = shift_perm[1:topk_shift]
 
-    # --- B: allowed の中だけで複雑度コスト最小（global + stream + discordance） ---
-    # stream complexity の 0..1 正規化（全shift候補を母集団にする）
     n_shifts_all = length(shift_candidates)
     complexity01 = Array{Float64}(undef, desired_stream_count, n_shifts_all)
 
@@ -1286,7 +1297,6 @@ function generate_polyphonic()
     for idx in allowed_shift_idxs
       cand = shift_candidates[idx]
 
-      # streamスコアは dist01 と complexity01 を混合（密度で重み変化）
       stream_mixed = Float64[]
       sizehint!(stream_mixed, desired_stream_count)
       for s in 1:desired_stream_count
@@ -1296,8 +1306,7 @@ function generate_polyphonic()
         push!(stream_mixed, clamp(mixed01, 0.0, 1.0))
       end
 
-      # ★追加：ordered_vals と stream_comps を用意して 7引数にする
-      ordered_vals = Float64[float(x) for x in cand.global_value]   # shift後のglobal音群
+      ordered_vals = Float64[float(x) for x in cand.global_value]
       stream_comps = Float64[]
       sizehint!(stream_comps, desired_stream_count)
       for s in 1:desired_stream_count
@@ -1315,7 +1324,6 @@ function generate_polyphonic()
       ))
     end
 
-
     best_local_i, _best_cost = select_best_polyphonic_candidate_unified_with_cost(
       allowed_metrics,
       note_global_target,
@@ -1327,7 +1335,6 @@ function generate_polyphonic()
     best_shift_idx = allowed_shift_idxs[best_local_i]
     best_cand = shift_candidates[best_shift_idx]
 
-    # commit STM
     midi_notes, amps = DissonanceStmManager.build_chord_midi_and_amps_for_all_streams(
       octaves_int,
       vols_float,
@@ -1337,14 +1344,12 @@ function generate_polyphonic()
     )
     DissonanceStmManager.commit!(stm_mgr, midi_notes, amps, onset)
 
-    # update managers
     PolyphonicClusterManager.add_data_point_permanently(note_mgrs[:global], Float64[float(x) for x in best_cand.global_value])
     PolyphonicClusterManager.update_caches_permanently(note_mgrs[:global], note_q_array)
 
     MultiStreamManager.commit_state!(note_mgrs[:stream], best_cand.chords_for_streams, note_q_array; absolute_bases=absolute_bases)
     MultiStreamManager.update_caches_permanently!(note_mgrs[:stream], note_q_array)
 
-    # output
     for s_i in 1:desired_stream_count
       current_step_values[s_i][note_idx] = normalize_pcs(best_cand.chords_for_streams[s_i])
     end
@@ -1352,7 +1357,6 @@ function generate_polyphonic()
     push!(results, current_step_values)
   end
 
-  # --- final normalization (Rails) ---
   for step in results
     for vec in step
       vec[oct_idx] = clamp(_parse_int(vec[oct_idx]), first(PolyphonicConfig.OCTAVE_RANGE), last(PolyphonicConfig.OCTAVE_RANGE))
@@ -1366,7 +1370,6 @@ function generate_polyphonic()
 
   processing_time_s = round(time() - t0; digits=2)
 
-  # --- cluster payload (Rails-compatible) ---
   cluster_payload = Dict{String,Any}()
   for key in ["octave", "note", "vol", "bri", "hrd", "tex", "chord_size"]
     mgrs = get(managers, key, nothing)
@@ -1395,7 +1398,6 @@ function generate_polyphonic()
     "streamStrengths" => nothing
   )
 end
-
 
 # ------------------------------------------------------------
 # GitHub Actions workflow_dispatch integration
@@ -1433,7 +1435,6 @@ end
 function _github_list_workflow_runs(; workflow::AbstractString, ref::AbstractString, per_page::Int=10)
   owner = _env_required("GITHUB_OWNER")
   repo  = _env_required("GITHUB_REPO")
-  # NOTE: event filter keeps noise down; branch further narrows.
   url = "$(_github_repo_base(owner, repo))/actions/workflows/$(workflow)/runs?event=workflow_dispatch&branch=$(ref)&per_page=$(per_page)"
   res = HTTP.request("GET", url, _github_headers())
   res.status == 200 || return nothing
@@ -1446,13 +1447,11 @@ function _find_new_run_after(obj, dispatched_at_utc::DateTime)
   for r in runs
     created = get(r, "created_at", "")
     isempty(created) && continue
-    # created_at: 2026-01-28T01:23:45Z
     created_dt = try
       DateTime(created[1:19], dateformat"yyyy-mm-ddTHH:MM:SS")
     catch
       continue
     end
-    # allow a few seconds skew
     if created_dt >= (dispatched_at_utc - Dates.Second(5))
       return r
     end
@@ -1460,18 +1459,6 @@ function _find_new_run_after(obj, dispatched_at_utc::DateTime)
   return nothing
 end
 
-"""
-POST /api/web/time_series/dispatch_generate_polyphonic
-
-Receives the same JSON payload as /generate_polyphonic, and forwards it to GitHub Actions via workflow_dispatch.
-
-Required ENV (local only; keep in .env and out of git):
-  - GITHUB_TOKEN
-  - GITHUB_OWNER
-  - GITHUB_REPO
-  - GITHUB_WORKFLOW   (workflow filename, e.g. polyphonic_generate.yml)
-  - GITHUB_REF        (branch, e.g. main)
-"""
 function dispatch_generate_polyphonic()
   payload = _payload()
   payload_dict = _to_string_dict(payload)
@@ -1479,7 +1466,6 @@ function dispatch_generate_polyphonic()
   gp_dict = _to_string_dict(gp)
 
   request_id = string(get(gp_dict, "job_id", uuid4()))
-  # ensure job_id exists (useful for run naming)
   gp_dict["job_id"] = request_id
   payload_dict["generate_polyphonic"] = gp_dict
 
@@ -1491,7 +1477,6 @@ function dispatch_generate_polyphonic()
 
   dispatched_at = now(UTC)
 
-  # 1) dispatch
   res = try
     _github_dispatch_workflow!(workflow=workflow, ref=ref, inputs=Dict(
       "request_id" => request_id,
@@ -1501,7 +1486,6 @@ function dispatch_generate_polyphonic()
     return Dict("ok" => false, "error" => string(e))
   end
 
-  # GitHub documents 204; some environments return 200 with a body.
   run_id = nothing
   run_url = nothing
   html_url = nothing
@@ -1513,13 +1497,11 @@ function dispatch_generate_polyphonic()
       run_url = get(body, "run_url", nothing)
       html_url = get(body, "html_url", nothing)
     catch
-      # ignore and fall back to polling
     end
   end
 
   workflow_page_url = "https://github.com/$(_env_required("GITHUB_OWNER"))/$(_env_required("GITHUB_REPO"))/actions/workflows/$(workflow)"
 
-  # 2) best-effort: poll latest runs to find the one we just dispatched
   if html_url === nothing
     for _ in 1:8
       obj = _github_list_workflow_runs(workflow=workflow, ref=ref, per_page=10)

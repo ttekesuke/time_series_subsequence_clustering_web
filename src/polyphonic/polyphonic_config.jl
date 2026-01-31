@@ -21,7 +21,7 @@ const AMP_EPS::Float64 = 1e-6
 const OCTAVE_RANGE = 0:7
 const NOTE_RANGE = 0:11
 const FLOAT_STEPS::Vector{Float64} = [round(i / 10.0, digits=1) for i in 0:10]
-const CHORD_SIZE_RANGE = 1:8
+const CHORD_SIZE_RANGE = 1:4
 
 # safety caps
 const MAX_NOTE_CANDIDATES::Int = 8_000
