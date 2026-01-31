@@ -774,6 +774,54 @@ function generate_polyphonic()
   PolyphonicClusterManager.update_caches_permanently(g_cs, create_quadratic_integer_array(0, float(last(PolyphonicConfig.CHORD_SIZE_RANGE)-first(PolyphonicConfig.CHORD_SIZE_RANGE)) * length(g_cs.data), length(g_cs.data)))
   managers["chord_size"] = Dict(:global => g_cs, :stream => s_cs)
 
+  result_path = get(ENV, "POLYPHONIC_RESULT_PATH", "result.json")
+
+  function _build_cluster_payload()
+    cluster_payload = Dict{String,Any}()
+    for key in ["octave", "note", "vol", "bri", "hrd", "tex", "chord_size"]
+      mgrs = get(managers, key, nothing)
+      mgrs === nothing && continue
+
+      g_mgr = mgrs[:global]
+      s_mgr = mgrs[:stream]
+
+      global_timeline = PolyphonicClusterManager.clusters_to_timeline(g_mgr.clusters, min_window)
+
+      streams_hash = Dict{Int,Any}()
+      for container in s_mgr.stream_pool
+        streams_hash[container.id] = PolyphonicClusterManager.clusters_to_timeline(container.manager.clusters, min_window)
+      end
+
+      cluster_payload[key] = Dict(
+        "global" => global_timeline,
+        "streams" => streams_hash,
+      )
+    end
+    return cluster_payload
+  end
+
+  function _build_result_payload(processing_time_s::Float64)
+    return Dict(
+      "timeSeries" => results,
+      "clusters" => _build_cluster_payload(),
+      "processingTime" => processing_time_s,
+      "streamStrengths" => nothing
+    )
+  end
+
+  function _write_result_json_payload!(payload::Dict{String,Any})
+    isempty(result_path) && return
+    try
+      tmp_path = result_path * ".tmp"
+      open(tmp_path, "w") do io
+        write(io, JSON3.write(payload))
+      end
+      mv(tmp_path, result_path; force=true)
+    catch e
+      println("[generate_polyphonic] warning: failed to write $(result_path): $(e)")
+    end
+  end
+
   stm_mgr = DissonanceStmManager.Manager(
     memory_span=1.5,
     memory_weight=1.0,
@@ -1355,6 +1403,8 @@ function generate_polyphonic()
     end
     step_decisions["note"] = best_cand.global_value
     push!(results, current_step_values)
+
+    _write_result_json_payload!(_build_result_payload(round(time() - t0; digits=2)))
   end
 
   for step in results
@@ -1369,34 +1419,9 @@ function generate_polyphonic()
   end
 
   processing_time_s = round(time() - t0; digits=2)
-
-  cluster_payload = Dict{String,Any}()
-  for key in ["octave", "note", "vol", "bri", "hrd", "tex", "chord_size"]
-    mgrs = get(managers, key, nothing)
-    mgrs === nothing && continue
-
-    g_mgr = mgrs[:global]
-    s_mgr = mgrs[:stream]
-
-    global_timeline = PolyphonicClusterManager.clusters_to_timeline(g_mgr.clusters, min_window)
-
-    streams_hash = Dict{Int,Any}()
-    for container in s_mgr.stream_pool
-      streams_hash[container.id] = PolyphonicClusterManager.clusters_to_timeline(container.manager.clusters, min_window)
-    end
-
-    cluster_payload[key] = Dict(
-      "global" => global_timeline,
-      "streams" => streams_hash,
-    )
-  end
-
-  return Dict(
-    "timeSeries" => results,
-    "clusters" => cluster_payload,
-    "processingTime" => processing_time_s,
-    "streamStrengths" => nothing
-  )
+  payload = _build_result_payload(processing_time_s)
+  _write_result_json_payload!(payload)
+  return payload
 end
 
 # ------------------------------------------------------------
