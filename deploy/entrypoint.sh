@@ -27,11 +27,11 @@ envsubst '${PORT} ${GENIE_PORT}' \
 nginx -t
 
 # ---- Genie 起動（バックグラウンド）----
-# Genie は PORT 環境変数を見るので、ここで PORT=9111 を明示して固定
+# start_server.jl は routes を読み込み、Genie を明示起動する
 if id scuser >/dev/null 2>&1; then
-  su -s /bin/bash -c "PORT=${GENIE_PORT} HOST=${GENIE_HOST} GENIE_ENV=${GENIE_ENV} JULIA_DEPOT_PATH=${JULIA_DEPOT_PATH} /app/bin/server" scuser &
+  su -s /bin/bash -c "PORT=${GENIE_PORT} HOST=${GENIE_HOST} GENIE_ENV=${GENIE_ENV} JULIA_DEPOT_PATH=${JULIA_DEPOT_PATH} julia --project=/app /app/scripts/start_server.jl" scuser &
 else
-  PORT="${GENIE_PORT}" HOST="${GENIE_HOST}" GENIE_ENV="${GENIE_ENV}" JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH}" /app/bin/server &
+  PORT="${GENIE_PORT}" HOST="${GENIE_HOST}" GENIE_ENV="${GENIE_ENV}" JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH}" julia --project=/app /app/scripts/start_server.jl &
 fi
 GENIE_PID=$!
 
