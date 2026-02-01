@@ -16,7 +16,7 @@ on:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 360
     env:
       GENIE_ENV: prod
       GENIE_HOST: 127.0.0.1
