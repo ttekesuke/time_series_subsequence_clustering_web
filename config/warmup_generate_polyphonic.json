@@ -1,0 +1,43 @@
+{
+  "generate_polyphonic": {
+    "initial_context": [
+      [[4, 0, 1, 0, 0, 0]],
+      [[4, 0, 1, 0, 0, 0]],
+      [[4, 0, 1, 0, 0, 0]],
+      [[4, 0, 1, 0, 0, 0]],
+      [[4, 0, 1, 0, 0, 0]]
+    ],
+    "stream_counts": [1, 1, 1],
+    "stream_strength_target": [0, 0, 0],
+    "stream_strength_spread": [0, 0, 0],
+    "dissonance_target": [0, 0, 0],
+    "vol_global": [0, 0, 0],
+    "vol_center": [0, 0, 0],
+    "vol_spread": [0, 0, 0],
+    "vol_conc": [0, 0, 0],
+    "octave_global": [0, 0, 0],
+    "octave_center": [0, 0, 0],
+    "octave_spread": [0, 0, 0],
+    "octave_conc": [0, 0, 0],
+    "chord_size_global": [0, 0, 0],
+    "chord_size_center": [0, 0, 0],
+    "chord_size_spread": [0, 0, 0],
+    "chord_size_conc": [0, 0, 0],
+    "bri_global": [0, 0, 0],
+    "bri_center": [0, 0, 0],
+    "bri_spread": [0, 0, 0],
+    "bri_conc": [0, 0, 0],
+    "hrd_global": [0, 0, 0],
+    "hrd_center": [0, 0, 0],
+    "hrd_spread": [0, 0, 0],
+    "hrd_conc": [0, 0, 0],
+    "tex_global": [0, 0, 0],
+    "tex_center": [0, 0, 0],
+    "tex_spread": [0, 0, 0],
+    "tex_conc": [0, 0, 0],
+    "note_global": [0, 0, 0],
+    "note_center": [0, 0, 0],
+    "note_spread": [0, 0, 0],
+    "note_conc": [0, 0, 0]
+  }
+}

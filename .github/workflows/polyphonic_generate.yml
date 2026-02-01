@@ -93,6 +93,16 @@ jobs:
             exit 1
           fi
 
+      - name: Warmup generate_polyphonic (short params)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -sS -X POST \
+            -H "Content-Type: application/json" \
+            --data-binary @config/warmup_generate_polyphonic.json \
+            http://127.0.0.1:${GENIE_PORT}/api/web/time_series/generate_polyphonic \
+            > /tmp/warmup_result.json
+
       - name: Generate polyphonic result.json
         shell: bash
         run: |
