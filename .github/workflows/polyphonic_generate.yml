@@ -16,7 +16,7 @@ on:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 90
     env:
       GENIE_ENV: prod
       GENIE_HOST: 127.0.0.1
@@ -101,13 +101,10 @@ jobs:
             -H "Content-Type: application/json" \
             --data-binary @params.json \
             http://127.0.0.1:${GENIE_PORT}/api/web/time_series/generate_polyphonic \
-            -o result.response.json
+            > result.json
           python3 - <<'PY'
-          import json, os
-          path = 'result.json'
-          if not os.path.isfile(path):
-            raise SystemExit('result.json not found (server-side progress write failed)')
-          obj=json.load(open(path,'r',encoding='utf-8'))
+          import json
+          obj=json.load(open('result.json','r',encoding='utf-8'))
           assert 'timeSeries' in obj, 'missing timeSeries in response'
           print('timeSeries length:', len(obj['timeSeries']))
           PY
