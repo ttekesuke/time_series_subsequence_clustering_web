@@ -804,6 +804,8 @@ function generate_polyphonic()
 
   steps_to_generate = length(stream_counts)
   base_step_index = length(results)
+  println("[generate_polyphonic] start steps=$(steps_to_generate) base_steps=$(base_step_index)")
+  flush(stdout)
 
   for step_idx in 1:steps_to_generate
     desired_stream_count = max(stream_counts[step_idx], 1)
@@ -1355,6 +1357,9 @@ function generate_polyphonic()
     end
     step_decisions["note"] = best_cand.global_value
     push!(results, current_step_values)
+    elapsed = round(time() - t0; digits=2)
+    println("[generate_polyphonic] step $(step_idx)/$(steps_to_generate) elapsed=$(elapsed)s")
+    flush(stdout)
   end
 
   for step in results

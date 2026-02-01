@@ -97,11 +97,20 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          touch server.log
+          tail -n 0 -f server.log &
+          tail_pid=$!
+          cleanup() { kill "$tail_pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+
           curl -sS -X POST \
             -H "Content-Type: application/json" \
             --data-binary @params.json \
             http://127.0.0.1:${GENIE_PORT}/api/web/time_series/generate_polyphonic \
             > result.json
+          cleanup
+          trap - EXIT
+
           python3 - <<'PY'
           import json
           obj=json.load(open('result.json','r',encoding='utf-8'))
