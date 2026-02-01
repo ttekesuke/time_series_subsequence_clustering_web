@@ -470,6 +470,38 @@ const genRowMetas: GenRowMeta[] = [
       "1：一致度を高めにしたい（ストリーム間で chord_size を揃えやすい）。"
     )
   },
+  {
+    shortName: "CHORD CenterV",
+    name: "Chord Size Value Center",
+    key: "chord_size_value_center",
+    min: 1,
+    max: 4,
+    step: 1,
+    isInt: true,
+    defaultFactory: (len) => constant(2, len),
+    help: H(
+      { min: 1, max: 4, step: 1, isInt: true },
+      "候補となる chord_size の中心値です（この値±幅に制限）。",
+      "1：小さめ（密度低め）。",
+      "4：大きめ（密度高め）。"
+    )
+  },
+  {
+    shortName: "CHORD Width",
+    name: "Chord Size Value Width",
+    key: "chord_size_value_width",
+    min: 0,
+    max: 4,
+    step: 1,
+    isInt: true,
+    defaultFactory: (len) => constant(4, len),
+    help: H(
+      { min: 0, max: 4, step: 1, isInt: true },
+      "中心値からの上下幅です（0で固定、4で全域に近い）。",
+      "0：中心値のみ。",
+      "4：範囲が最大（実質制限なし）。"
+    )
+  },
 
 
   // =========================================================
@@ -663,6 +695,36 @@ const genRowMetas: GenRowMeta[] = [
       "同時刻の vol のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
       "0：一致度を低めにしたい（ストリーム間で vol がばらけやすい）。",
       "1：一致度を高めにしたい（ストリーム間で vol が揃いやすい）。"
+    )
+  },
+  {
+    shortName: "VOL CenterV",
+    name: "Volume Value Center",
+    key: "vol_value_center",
+    min: 0,
+    max: 1,
+    step: 0.1,
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: 0, max: 1, step: 0.1 },
+      "候補となる vol の中心値です（この値±幅に制限）。",
+      "0：小さめ。",
+      "1：大きめ。"
+    )
+  },
+  {
+    shortName: "VOL Width",
+    name: "Volume Value Width",
+    key: "vol_value_width",
+    min: 0,
+    max: 1,
+    step: 0.1,
+    defaultFactory: (len) => constant(1, len),
+    help: H(
+      { min: 0, max: 1, step: 0.1 },
+      "中心値からの上下幅です（0で固定、1で全域に近い）。",
+      "0：中心値のみ。",
+      "1：範囲が最大（実質制限なし）。"
     )
   },
 
@@ -936,6 +998,8 @@ const buildGenParamsFromRows = () => {
   result.chord_size_center       = get('chord_size_center')
   result.chord_size_spread   = get('chord_size_spread')
   result.chord_size_conc        = get('chord_size_conc')
+  result.chord_size_value_center = get('chord_size_value_center')
+  result.chord_size_value_width = get('chord_size_value_width')
 
   // 既存6次元
   result.octave_global    = get('octave_global')
@@ -952,6 +1016,8 @@ const buildGenParamsFromRows = () => {
   result.vol_center        = get('vol_center')
   result.vol_spread    = get('vol_spread')
   result.vol_conc         = get('vol_conc')
+  result.vol_value_center = get('vol_value_center')
+  result.vol_value_width = get('vol_value_width')
 
   result.bri_global       = get('bri_global')
   result.bri_center        = get('bri_center')
@@ -1091,6 +1157,10 @@ const buildParamsPayload = (jobIdOverride?: string) => {
     payload.generate_polyphonic[`${k}_spread`] = genParams[`${k}_spread`]
     payload.generate_polyphonic[`${k}_conc`] = genParams[`${k}_conc`]
   })
+  payload.generate_polyphonic.chord_size_value_center = genParams.chord_size_value_center
+  payload.generate_polyphonic.chord_size_value_width = genParams.chord_size_value_width
+  payload.generate_polyphonic.vol_value_center = genParams.vol_value_center
+  payload.generate_polyphonic.vol_value_width = genParams.vol_value_width
 
   return payload
 }

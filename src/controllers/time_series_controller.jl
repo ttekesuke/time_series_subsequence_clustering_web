@@ -807,6 +807,37 @@ function generate_polyphonic()
   println("[generate_polyphonic] start steps=$(steps_to_generate) base_steps=$(base_step_index)")
   flush(stdout)
 
+  function _restrict_range_for_vol(raw_range::Vector{Float64}, idx0::Int)
+    center_raw = array_param(gp, "vol_value_center", idx0)
+    width_raw = array_param(gp, "vol_value_width", idx0)
+    center_raw === nothing && width_raw === nothing && return raw_range
+
+    center = clamp(_parse_float(center_raw), 0.0, 1.0)
+    width = clamp(_parse_float(width_raw), 0.0, 1.0)
+    vmin = clamp(center - width, 0.0, 1.0)
+    vmax = clamp(center + width, 0.0, 1.0)
+
+    filtered = [v for v in raw_range if v >= (vmin - 1e-9) && v <= (vmax + 1e-9)]
+    return isempty(filtered) ? raw_range : filtered
+  end
+
+  function _restrict_range_for_chord_size(raw_range::Vector{Int}, idx0::Int)
+    center_raw = array_param(gp, "chord_size_value_center", idx0)
+    width_raw = array_param(gp, "chord_size_value_width", idx0)
+    center_raw === nothing && width_raw === nothing && return raw_range
+
+    min_cs = first(PolyphonicConfig.CHORD_SIZE_RANGE)
+    max_cs = last(PolyphonicConfig.CHORD_SIZE_RANGE)
+
+    center = clamp(_parse_int(center_raw), min_cs, max_cs)
+    width = clamp(_parse_int(width_raw), 0, max_cs - min_cs)
+    vmin = clamp(center - width, min_cs, max_cs)
+    vmax = clamp(center + width, min_cs, max_cs)
+
+    filtered = [v for v in raw_range if v >= vmin && v <= vmax]
+    return isempty(filtered) ? raw_range : filtered
+  end
+
   for step_idx in 1:steps_to_generate
     desired_stream_count = max(stream_counts[step_idx], 1)
 
@@ -837,6 +868,12 @@ function generate_polyphonic()
     chord_sizes_for_step = fill(1, desired_stream_count)
 
     for (key, range_vec, out_idx, is_float_dim) in dim_order
+      if key == "vol"
+        range_vec = _restrict_range_for_vol(range_vec, idx0)
+      elseif key == "chord_size"
+        range_vec = _restrict_range_for_chord_size(range_vec, idx0)
+      end
+
       mgrs = managers[key]
 
       g_target = clamp(_parse_float(array_param(gp, "$(key)_global", idx0)), 0.0, 1.0)
