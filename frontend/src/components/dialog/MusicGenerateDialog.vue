@@ -94,7 +94,7 @@ const runOnGithubActions = computed(() => {
   return String(raw).toLowerCase() === 'true'
 })
 const runButtonLabel = computed(() =>
-  runOnGithubActions.value ? 'RUN ON GITHUB ACTIONS' : 'RUN ON HOSTING SERVER'
+  runOnGithubActions.value ? 'RUN ON GITHUB ACTIONS' : 'RUN'
 )
 
 
