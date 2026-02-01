@@ -26,6 +26,7 @@ end
 _load_dotenv(joinpath(pwd(), ".env"))
 
 println("[start_server] ENV HOST=$(get(ENV,"HOST","(none)")) PORT=$(get(ENV,"PORT","(none)")) GENIE_HOST=$(get(ENV,"GENIE_HOST","(none)")) GENIE_PORT=$(get(ENV,"GENIE_PORT","(none)")) GENIE_ENV=$(get(ENV,"GENIE_ENV","(none)"))")
+println("[start_server] ENV RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS=$(get(ENV,"RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS","(none)"))")
 flush(stdout)
 
 using Genie
