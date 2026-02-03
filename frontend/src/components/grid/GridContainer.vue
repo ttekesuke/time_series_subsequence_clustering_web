@@ -60,6 +60,8 @@
         >
       </div>
 
+      <slot name="toolbar-extra"></slot>
+
       <!-- パラメータ生成ボタン -->
       <v-btn
         color="secondary"

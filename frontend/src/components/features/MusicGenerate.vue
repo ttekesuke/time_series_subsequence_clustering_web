@@ -102,7 +102,7 @@
             <StreamsRoll
               ref="velClustersRef"
               :streamValues="complexityStreams.vol"
-              :minValue="-1"
+              :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
               :stepWidth="computedStepWidth"
@@ -114,7 +114,7 @@
             <StreamsRoll
               ref="octClustersRef"
               :streamValues="complexityStreams.oct"
-              :minValue="-1"
+              :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
               :stepWidth="computedStepWidth"
@@ -126,7 +126,7 @@
             <StreamsRoll
               ref="noteClustersRef"
               :streamValues="complexityStreams.note"
-              :minValue="-1"
+              :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
               :stepWidth="computedStepWidth"

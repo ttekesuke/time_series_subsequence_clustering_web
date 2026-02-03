@@ -23,6 +23,10 @@ const NOTE_RANGE = 0:11
 const FLOAT_STEPS::Vector{Float64} = [round(i / 10.0, digits=1) for i in 0:10]
 const CHORD_SIZE_RANGE = 1:4
 
+# --- cluster forgetting (importance score) ---
+const CLUSTER_IMPORTANCE_DECAY_TAU::Float64 = 100.0
+const CLUSTER_IMPORTANCE_THRESHOLD::Float64 = 0
+
 # safety caps
 const MAX_NOTE_CANDIDATES::Int = 8_000
 

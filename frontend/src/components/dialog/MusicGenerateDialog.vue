@@ -55,7 +55,22 @@
             v-model:steps="genSteps"
             :showRowsLength="false"
             :showColsLength="true"
-          />
+          >
+            <template #toolbar-extra>
+              <div class="d-flex align-center mr-4" style="font-size: 0.9rem;">
+                <span class="mr-2">MergeThresholdRatio:</span>
+                <input
+                  type="number"
+                  :value="mergeThresholdRatio"
+                  @input="onMergeThresholdInput"
+                  min="0"
+                  max="1"
+                  step="0.001"
+                  class="step-input mr-1"
+                >
+              </div>
+            </template>
+          </GridContainer>
         </v-card>
       </v-card-text>
     </v-card>
@@ -170,7 +185,7 @@ const dimensions = [
 // 各次元のデフォルト値 (1ストリーム分) [oct, note, vol, bri, hrd, tex]
 const defaultContextBase = [4, 0, 1, 0, 0, 0]
 
-const contextSteps = ref(5)
+const contextSteps = ref(3)
 const contextStreamCount = ref(1)
 const contextRows = ref<GridRowData[]>([])
 const suppressContextWatch = ref(false)
@@ -332,6 +347,16 @@ const constant = (val: number, len: number = stepsDefault) => Array(len).fill(va
 
 const genSteps = ref<number>(stepsDefault)
 const suppressGenWatch = ref(false)
+const mergeThresholdRatio = ref(0.02)
+
+const onMergeThresholdInput = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  const raw = target.value
+  if (raw === '') return
+  const v = Number(raw)
+  if (!Number.isFinite(v)) return
+  mergeThresholdRatio.value = Math.min(1, Math.max(0, v))
+}
 
 const genRowMetas: GenRowMeta[] = [
   // =========================================================
@@ -1092,6 +1117,10 @@ const applyInitialContextFromPayload = async (ctxRaw: any) => {
 
 const applyGenParamsFromPayload = async (payload: any) => {
   const candidate = payload?.generate_polyphonic ?? payload ?? {}
+  if (candidate.merge_threshold_ratio != null) {
+    const v = normalizeNumber(candidate.merge_threshold_ratio, mergeThresholdRatio.value)
+    mergeThresholdRatio.value = Math.min(1, Math.max(0, Number(v)))
+  }
 
   const lengths = genRowMetas.map((meta) => {
     const val = candidate[meta.key]
@@ -1145,6 +1174,7 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       job_id: jobId,
       stream_counts: genParams.stream_counts,
       initial_context: initialContext,
+      merge_threshold_ratio: mergeThresholdRatio.value,
       stream_strength_target: genParams.stream_strength_target,
       stream_strength_spread: genParams.stream_strength_spread,
       dissonance_target: genParams.dissonance_target

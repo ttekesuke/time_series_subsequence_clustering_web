@@ -124,7 +124,7 @@ const infoDialog = ref(false)
 const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'MusicGenerate'])
 const selectedMode = ref('ClusteringAnalyse')
 const analysedViewModes = ref(['Cluster', 'Complexity'])
-const analysedViewMode = ref('Cluster')
+const analysedViewMode = ref('Complexity')
 const transferDialog = ref(false)
 
 const runOnGithubActions = computed(() => {

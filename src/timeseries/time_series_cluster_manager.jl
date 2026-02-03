@@ -162,42 +162,89 @@ function update_caches_permanently!(mgr::TimeSeriesClusterManager, quadratic_int
   for (window_size, same_ws) in clusters_each
     all_ids = collect(keys(same_ws))
 
-    # distance cache
+    # ----------------------------------------------------------
+    # Distance cache
+    #   - Seed full cache only when this window_size cache is empty
+    #   - Otherwise update only updated clusters (incremental)
+    # ----------------------------------------------------------
     cache = get!(mgr.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
-    # compute all pair distances
-    for i in 1:length(all_ids)
-      for j in (i+1):length(all_ids)
+    updated_ids_set = get(mgr.updated_cluster_ids_per_window_for_calculate_distance, window_size, nothing)
+
+    if isempty(cache)
+      # First-time (or reset) seeding: compute all pairs once.
+      for i in 1:length(all_ids)
         cid1 = all_ids[i]
-        cid2 = all_ids[j]
-        as1 = same_ws[cid1]["as"]
-        as2 = same_ws[cid2]["as"]
-        key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
-        cache[key] = euclidean_distance(as1, as2)
-      end
-    end
-
-    # quantity & complexity cache
-    q_cache = get!(mgr.cluster_quantity_cache, window_size, Dict{Int,Float64}())
-    c_cache = get!(mgr.cluster_complexity_cache, window_size, Dict{Int,Float64}())
-
-    for (cid, cluster) in same_ws
-      si = cluster["si"]
-      if length(si) <= 1
-        continue
-      end
-      # quantity = product(quadratic_integer_array[start_index])
-      q = 1.0
-      for s in si
-        # s is [start, end]
-        idx = s[1] + 1
-        if 1 <= idx <= length(quadratic_integer_array)
-          q *= quadratic_integer_array[idx]
+        for j in (i+1):length(all_ids)
+          cid2 = all_ids[j]
+          as1 = same_ws[cid1]["as"]
+          as2 = same_ws[cid2]["as"]
+          key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
+          cache[key] = euclidean_distance(as1, as2)
         end
       end
-      q_cache[cid] = q
-      c_cache[cid] = calculate_cluster_complexity(cluster)
+    elseif updated_ids_set !== nothing && !isempty(updated_ids_set)
+      # Incremental update: only clusters whose representative subsequence changed / was created.
+      for cid1 in updated_ids_set
+        cluster1 = get(same_ws, cid1, nothing)
+        cluster1 === nothing && continue
+        as1 = cluster1["as"]
+        @inbounds for cid2 in all_ids
+          cid1 == cid2 && continue
+          as2 = same_ws[cid2]["as"]
+          key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
+          cache[key] = euclidean_distance(as1, as2)
+        end
+      end
+    end
+
+    # ----------------------------------------------------------
+    # Quantity / complexity cache
+    #   - Seed full cache only when this window_size cache is empty
+    #   - Otherwise update only updated clusters (incremental)
+    # ----------------------------------------------------------
+    q_cache = get!(mgr.cluster_quantity_cache, window_size, Dict{Int,Float64}())
+    c_cache = get!(mgr.cluster_complexity_cache, window_size, Dict{Int,Float64}())
+    updated_quant_set = get(mgr.updated_cluster_ids_per_window_for_calculate_quantities, window_size, nothing)
+
+    if isempty(q_cache) || isempty(c_cache)
+      for (cid, cluster) in same_ws
+        si = cluster["si"]
+        length(si) <= 1 && continue
+
+        q = 1.0
+        for s in si
+          idx = s[1] + 1
+          if 1 <= idx <= length(quadratic_integer_array)
+            q *= quadratic_integer_array[idx]
+          end
+        end
+        q_cache[cid] = q
+        c_cache[cid] = calculate_cluster_complexity(cluster)
+      end
+    elseif updated_quant_set !== nothing && !isempty(updated_quant_set)
+      for cid in updated_quant_set
+        cluster = get(same_ws, cid, nothing)
+        cluster === nothing && continue
+        si = cluster["si"]
+        length(si) > 1 || continue
+
+        q = 1.0
+        for s in si
+          idx = s[1] + 1
+          if 1 <= idx <= length(quadratic_integer_array)
+            q *= quadratic_integer_array[idx]
+          end
+        end
+        q_cache[cid] = q
+        c_cache[cid] = calculate_cluster_complexity(cluster)
+      end
     end
   end
+
+  # consume deltas
+  empty!(mgr.updated_cluster_ids_per_window_for_calculate_distance)
+  empty!(mgr.updated_cluster_ids_per_window_for_calculate_quantities)
+  return nothing
 end
 
 # --- simulation with rollback ---
