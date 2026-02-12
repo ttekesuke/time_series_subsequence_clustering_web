@@ -833,20 +833,65 @@ function generate_polyphonic()
     isempty(out) && push!(out, Int(PolyphonicConfig.abs_pitch_min()))
     return out
   end
+  function _normalize_pcs(x)::Vector{Int}
+    pcs = Int[]
+    if x isa AbstractVector
+      for v in x
+        v === nothing && continue
+        push!(pcs, ((_parse_int(v) % 12) + 12) % 12)
+      end
+    elseif x === nothing
+      # noop
+    else
+      push!(pcs, ((_parse_int(x) % 12) + 12) % 12)
+    end
+    isempty(pcs) && push!(pcs, 0)
+    sort!(pcs)
+    return pcs
+  end
   function _normalize_stream!(st::Vector{Any})
-    # Enforce NEW format only:
-    #   [abs_notes::Vector{Int}, vol, bri, hrd, tex, chord_range::Int, density::Float64, sustain::Float64]
-    length(st) >= 7 || error("generate_polyphonic.initial_context stream record must be [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain].")
-    (st[1] isa AbstractVector) || error("generate_polyphonic.initial_context: abs_notes must be an Array of absolute MIDI note numbers ($(ABS_MIN)..$(ABS_MAX)).")
+    # Accept both:
+    # - strict: [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain]
+    # - legacy: [octave, pcs, vol, bri, hrd, tex, (optional sustain)]
+    length(st) >= 6 || error("generate_polyphonic.initial_context stream record must be strict [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain] or legacy [octave, pcs, vol, bri, hrd, tex, sustain?].")
 
-    abs_notes = _normalize_abs_notes(st[1])
-    vol = clamp(_parse_float(st[2]), 0.0, 1.0)
-    bri = clamp(_parse_float(st[3]), 0.0, 1.0)
-    hrd = clamp(_parse_float(st[4]), 0.0, 1.0)
-    tex = clamp(_parse_float(st[5]), 0.0, 1.0)
-    cr  = max(_parse_int(st[6]), 0)
-    den = clamp(_parse_float(st[7]), 0.0, 1.0)
-    sus = length(st) >= 8 ? _quantize_sustain(st[8]) : 0.5
+    abs_notes = Int[]
+    vol = 1.0
+    bri = 0.0
+    hrd = 0.0
+    tex = 0.0
+    cr  = 0
+    den = 0.0
+    sus = 0.5
+
+    if st[1] isa AbstractVector
+      # strict
+      abs_notes = _normalize_abs_notes(st[1])
+      vol = clamp(_parse_float(length(st) >= 2 ? st[2] : 1.0), 0.0, 1.0)
+      bri = clamp(_parse_float(length(st) >= 3 ? st[3] : 0.0), 0.0, 1.0)
+      hrd = clamp(_parse_float(length(st) >= 4 ? st[4] : 0.0), 0.0, 1.0)
+      tex = clamp(_parse_float(length(st) >= 5 ? st[5] : 0.0), 0.0, 1.0)
+      cr  = max(_parse_int(length(st) >= 6 ? st[6] : 0), 0)
+      den = clamp(_parse_float(length(st) >= 7 ? st[7] : 0.0), 0.0, 1.0)
+      sus = length(st) >= 8 ? _quantize_sustain(st[8]) : 0.5
+    else
+      # legacy
+      oct = _parse_int(st[1])
+      pcs = _normalize_pcs(st[2])
+      base_c = PolyphonicConfig.base_c_midi(oct)
+      abs_notes = _normalize_abs_notes(Int[base_c + pc for pc in pcs])
+      vol = clamp(_parse_float(length(st) >= 3 ? st[3] : 1.0), 0.0, 1.0)
+      bri = clamp(_parse_float(length(st) >= 4 ? st[4] : 0.0), 0.0, 1.0)
+      hrd = clamp(_parse_float(length(st) >= 5 ? st[5] : 0.0), 0.0, 1.0)
+      tex = clamp(_parse_float(length(st) >= 6 ? st[6] : 0.0), 0.0, 1.0)
+      # legacy slot 7 is treated as sustain when in [0,1], otherwise ignored
+      if length(st) >= 7
+        v7 = _parse_float(st[7])
+        if 0.0 <= v7 <= 1.0
+          sus = _quantize_sustain(v7)
+        end
+      end
+    end
 
     empty!(st)
     push!(st, abs_notes, vol, bri, hrd, tex, cr, den, sus)
