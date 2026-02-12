@@ -1911,7 +1911,7 @@ end
 
     push!(results, current_step_values)
     elapsed = round(time() - t0; digits=2)
-    # println("[generate_polyphonic] step $(step_idx)/$(steps_to_generate) elapsed=$(elapsed)s")
+    println("[generate_polyphonic] step $(step_idx)/$(steps_to_generate) elapsed=$(elapsed)s")
     flush(stdout)
   end
 
