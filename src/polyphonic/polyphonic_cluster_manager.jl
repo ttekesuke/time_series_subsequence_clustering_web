@@ -971,19 +971,9 @@ function simulate_add_and_calculate(mgr::Manager, candidate::PolySet, quadratic_
 end
 
 # Incremental clustering core (polyphonic override)
+@inline max_distance_for_length(len::Int)::Float64 = sqrt(float(max(len, 1)))
 
 function clustering_subsequences_incremental!(mgr::Manager, data_index::Int)
-  current_slice = mgr.data[1:(data_index+1)]
-  centroid = calculate_vector_mean(current_slice)
-
-  max_dist_sq = 0.0
-  for point in current_slice
-    d2 = simple_squared_euclidean(mgr, point, centroid)
-    max_dist_sq = d2 > max_dist_sq ? d2 : max_dist_sq
-  end
-
-  max_distance = sqrt(max_dist_sq) * 2.0
-
   current_tasks = copy(mgr.tasks)
   empty!(mgr.tasks)
 
@@ -1001,6 +991,9 @@ function clustering_subsequences_incremental!(mgr::Manager, data_index::Int)
     valid_si = [s for s in parent.si if (s + new_length <= data_index + 1) && (s != latest_start)]
     isempty(valid_si) && continue
 
+    # ★ここがポイント：距離関数の上限スケールに合わせる
+    max_distance = max_distance_for_length(new_length)
+
     if !isempty(parent.cc)
       process_existing_clusters!(mgr, parent, latest_seq, max_distance, latest_start, new_length, keys_to_parent)
     else
@@ -1008,8 +1001,11 @@ function clustering_subsequences_incremental!(mgr::Manager, data_index::Int)
     end
   end
 
-  process_root_clusters!(mgr, data_index, max_distance)
+  # root（min_window_size）も同様
+  root_max_distance = max_distance_for_length(mgr.min_window_size)
+  process_root_clusters!(mgr, data_index, root_max_distance)
 end
+
 
 function process_existing_clusters!(
   mgr::Manager,

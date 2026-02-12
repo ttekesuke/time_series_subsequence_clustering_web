@@ -2,7 +2,7 @@
   <!-- フォーカス監視ラッパ -->
   <div class="grid-wrapper" ref="wrapperRef" @focusout="onFocusOut">
     <!-- ツールバー -->
-    <v-toolbar density="compact" color="grey-lighten-4" class="px-2 mb-2 rounded">
+    <v-toolbar density="compact" color="grey-lighten-4" class="px-2 mb-2 rounded sticky-toolbar">
       <v-toolbar-title class="text-subtitle-1 font-weight-bold">
         {{ title }}
       </v-toolbar-title>
@@ -323,6 +323,13 @@ const applyGeneratedParams = (params: any) => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.sticky-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
 .step-input {
   width: 60px;
@@ -332,13 +339,17 @@ const applyGeneratedParams = (params: any) => {
   background: white;
 }
 .grid-card {
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 .grid-scroll-container {
-  overflow: auto;
-  flex-grow: 1;
+  overflow-x: auto;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .param-grid {
   border-collapse: separate;

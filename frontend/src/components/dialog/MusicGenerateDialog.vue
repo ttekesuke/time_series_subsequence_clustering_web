@@ -33,9 +33,9 @@
         </div>
       </v-card-title>
 
-      <v-card-text class="pa-4" style="height: 80vh;">
+      <v-card-text class="pa-4 dialog-body">
         <!-- ===== 1. Initial Context (Past Context) ===== -->
-        <v-card variant="outlined" class="mb-4 grid-card">
+        <v-card variant="outlined" class="grid-card context-card">
           <GridContainer
             title="1. Initial Context (Past Context)"
             v-model:rows="contextRows"
@@ -48,7 +48,7 @@
         </v-card>
 
         <!-- ===== 2. Generation Parameters (Future Targets) ===== -->
-        <v-card variant="outlined" class="grid-card">
+        <v-card variant="outlined" class="grid-card generation-card">
           <GridContainer
             title="2. Generation Parameters (Future Targets)"
             v-model:rows="genRows"
@@ -73,6 +73,7 @@
           </GridContainer>
         </v-card>
       </v-card-text>
+      <v-card-footer></v-card-footer>
     </v-card>
   </v-dialog>
 </template>
@@ -92,6 +93,9 @@ const emit = defineEmits([
   'update:modelValue',
   'generated-polyphonic',
   'dispatched-polyphonic',
+  // alias for newer feature component
+  'generated',
+  'dispatched',
   'progress-update',
   'params-built',
   'params-updated'
@@ -172,18 +176,21 @@ type GridRowData = {
 
 /** ========== 1. Initial Context 用の定義 ========== */
 
-// 次元(6D): [oct, note, vol, bri, hrd, tex]
+// 次元(8D): [abs_note(midi), vol, bri, hrd, tex, chord_range(semitones), density, sustain]
 const dimensions = [
-  { key: 'octave', shortName: 'OCTAVE', name: 'OCTAVE' },
-  { key: 'note', shortName: 'NOTE', name: 'NOTE' },
+  { key: 'abs_note', shortName: 'NOTE_ABS', name: 'NOTE (Abs MIDI)' },
   { key: 'vol', shortName: 'VOLUME', name: 'VOLUME' },
   { key: 'bri', shortName: 'BRIGHTNESS', name: 'BRIGHTNESS' },
   { key: 'hrd', shortName: 'HARDNESS', name: 'HARDNESS' },
-  { key: 'tex', shortName: 'TEXTURE', name: 'TEXTURE' }
+  { key: 'tex', shortName: 'TEXTURE', name: 'TEXTURE' },
+  { key: 'chord_range', shortName: 'CHORD_RANGE', name: 'CHORD RANGE (semitones)' },
+  { key: 'density', shortName: 'DENSITY', name: 'DENSITY' },
+  { key: 'sustain', shortName: 'SUSTAIN', name: 'SUSTAIN' }
 ]
 
-// 各次元のデフォルト値 (1ストリーム分) [oct, note, vol, bri, hrd, tex]
-const defaultContextBase = [4, 0, 1, 0, 0, 0]
+
+// 各次元のデフォルト値 (1ストリーム分) [abs_note, vol, bri, hrd, tex, chord_range, density, sustain]
+const defaultContextBase = [60, 1, 0, 0, 0, 0, 0, 0.5]
 
 const contextSteps = ref(3)
 const contextStreamCount = ref(1)
@@ -191,11 +198,16 @@ const contextRows = ref<GridRowData[]>([])
 const suppressContextWatch = ref(false)
 
 const makeContextConfig = (dimKey: string) => {
-  if (dimKey === 'octave') {
-    return { min: 0, max: 10, isInt: true, step: 1 }
-  } else if (dimKey === 'note') {
-    return { min: 0, max: 11, isInt: true, step: 1 }
+  if (dimKey === 'abs_note') {
+    return { min: 0, max: 127, isInt: true, step: 1 }
+  } else if (dimKey === 'chord_range') {
+    return { min: 0, max: 127, isInt: true, step: 1 }
+  } else if (dimKey === 'density') {
+    return { min: 0, max: 1, isInt: false, step: 0.01 }
+  } else if (dimKey === 'sustain') {
+    return { min: 0, max: 1, isInt: false, step: 0.25 }
   } else {
+    // vol/bri/hrd/tex
     return { min: 0, max: 1, isInt: false, step: 0.01 }
   }
 }
@@ -260,17 +272,18 @@ watch(
 )
 
 /** 初期コンテキストを [step][stream][dim] に再構成 */
+/** 初期コンテキストを [step][stream][dim] に再構成（strict） */
 const buildInitialContext = () => {
   const steps = contextSteps.value
   const streams = contextStreamCount.value
   const dimsLen = dimensions.length
 
-  const initial: number[][][] = []
+  const initial: any[] = []
 
   for (let step = 0; step < steps; step++) {
-    const stepArr: number[][] = []
+    const stepArr: any[] = []
     for (let s = 0; s < streams; s++) {
-      const dimVals: number[] = []
+      const vals: number[] = []
       for (let d = 0; d < dimsLen; d++) {
         const rowIndex = s * dimsLen + d
         const row = contextRows.value[rowIndex]
@@ -281,15 +294,28 @@ const buildInitialContext = () => {
           if (v < cfg.min) v = cfg.min
           if (v > cfg.max) v = cfg.max
         }
-        dimVals.push(v)
+        vals.push(v)
       }
-      stepArr.push(dimVals)
+
+      // vals: [abs_note, vol, bri, hrd, tex, chord_range, density, sustain]
+      const absNote = Math.round(vals[0] ?? 0)
+      const vol = vals[1] ?? 0
+      const bri = vals[2] ?? 0
+      const hrd = vals[3] ?? 0
+      const tex = vals[4] ?? 0
+      const chordRange = Math.round(vals[5] ?? 0)
+      const density = vals[6] ?? 0
+      const sustain = vals[7] ?? 0.5
+
+      // server strict: [abs_notes(Int[]), vol, bri, hrd, tex, chord_range(Int), density, sustain]
+      stepArr.push([[absNote], vol, bri, hrd, tex, chordRange, density, sustain])
     }
     initial.push(stepArr)
   }
 
   return initial
 }
+
 
 /** ========== 2. Generation Parameters 用定義 ========== */
 type RowHelp = {
@@ -373,14 +399,14 @@ const genRowMetas: GenRowMeta[] = [
     defaultFactory: (len) => Array(len).fill(1),
     help: H(
       { min: 1, max: 16, step: 1, isInt: true },
-      "各stepで同時に扱うストリーム（声部）の本数を指定します。以降の全パラメータは、この本数に応じて「同時発音の並び（和音/配置）」が決まります。",
-      "1：単一ストリーム。配置・クラスタリングが単純で追跡しやすい（モノフォニック寄り）。",
-      "16：最大16ストリーム。多層化しやすいが、探索空間と評価の負荷が増える（ただしアルゴリズムは決定論）。"
+      "各stepで同時に扱うストリーム（声部）の本数を指定します。",
+      "1：単一ストリーム（モノフォニック寄り）。",
+      "16：最大16ストリーム。探索空間と評価の負荷が増える。"
     )
   },
 
   // =========================================================
-  // stream strength control
+  // stream strength control (vol side)
   // =========================================================
   {
     shortName: "STR Target",
@@ -408,8 +434,8 @@ const genRowMetas: GenRowMeta[] = [
     help: H(
       { min: 0, max: 1, step: 0.01 },
       "Stream Strength Target を中心に、ストリームごとの強度ターゲットをどのくらい広げるかです（中心±幅）。",
-      "0：全ストリームがほぼ同じ強度ターゲットになる（差を作りにくい）。",
-      "1：強度ターゲットの幅が最大（強い/弱いの役割が分かれやすい）。"
+      "0：全ストリームがほぼ同じ強度ターゲット。",
+      "1：強度ターゲットの幅が最大。"
     )
   },
 
@@ -417,533 +443,357 @@ const genRowMetas: GenRowMeta[] = [
   // dissonance target (0..1)
   // =========================================================
   {
-    shortName: "DISSON Target",
-    name: "Dissonance Target (STM Roughness Target)",
+    shortName: "DIS Target",
+    name: "Dissonance Target",
     key: "dissonance_target",
     min: 0,
     max: 1,
     step: 0.01,
-    defaultFactory: (len) => constant(0, len),
+    defaultFactory: (len) => constant(0.3, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "STM roughness（不協和度）で、12Ck候補の中から「そのstepで使う pitch-class 集合」を選ぶための目標です。今の実装では octave/volume/chord_size を仮置きして roughness を測り、targetに最も近い集合を選びます。",
-      "0：より協和寄り（roughnessが低い候補を選びやすい）。",
-      "1：より不協和寄り（roughnessが高い候補を選びやすい）。"
+      "最終段の和音詳細化で、roughness（不協和度）をどれくらいに寄せたいかの目標値です。",
+      "0：協和寄り（濁りが少ない）。",
+      "1：不協和寄り（濁りが強い）。"
     )
   },
 
   // =========================================================
-  // chord_size params (7th concept)
+  // AREA (macro pitch movement) : global / center / spread / conc
   // =========================================================
   {
-    shortName: "CHORD Global",
-    name: "Chord Size Global Target",
-    key: "chord_size_global",
+    shortName: "AREA G",
+    name: "AREA Global Complexity",
+    key: "area_global",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "各streamの chord_size（和音構成音数）の「同時刻パターン（全ストリームまとめた並び）」の時系列的な複雑度を、global側でどれくらい目標にするかです。",
-      "0：和音数パターンが単純・反復しやすい（似た並びが続く）。",
-      "1：和音数パターンが複雑・変化しやすい（並びが揺れやすい）。"
+      "音高の大まかな動き（エリア遷移）の global 複雑度ターゲットです。",
+      "0：同じエリアに留まりやすい。",
+      "1：エリアがよく変わる。"
     )
   },
   {
-    shortName: "CHORD Center",
-    name: "Chord Size Stream Center",
-    key: "chord_size_center",
+    shortName: "AREA C",
+    name: "AREA Center",
+    key: "area_center",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+  },
+  {
+    shortName: "AREA S",
+    name: "AREA Spread",
+    key: "area_spread",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+  },
+  {
+    shortName: "AREA Conc",
+    name: "AREA Conformity (Conc)",
+    key: "area_conc",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+  },
+
+  // =========================================================
+  // CHORD_RANGE : global / center / spread / conc
+  // =========================================================
+  {
+    shortName: "CR G",
+    name: "CHORD_RANGE Global Complexity",
+    key: "chord_range_global",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "各streamの chord_size を stream側でどう分布させるかの中心位置です（stream_targets の中心）。",
-      "0：stream_targets の中心が低め（全体的に小さめの chord_size を狙いやすい）。",
-      "1：stream_targets の中心が高め（全体的に大きめの chord_size を狙いやすい）。"
+      "和音の幅（最低音〜最高音の半音幅）をどう動かすかの複雑度ターゲットです。",
+      "0：幅が変わりにくい。",
+      "1：幅がよく変わる。"
     )
   },
   {
-    shortName: "CHORD Spread",
-    name: "Chord Size Stream Spread",
-    key: "chord_size_spread",
+    shortName: "CR C",
+    name: "CHORD_RANGE Center",
+    key: "chord_range_center",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "stream_targets の広がり（spread）の強さです。高いほどストリーム間のばらつきを抑え、低いほどばらけやすくします。",
-      "0：ストリーム間で chord_size がばらけやすい（役割分担が出やすい）。",
-      "1：ストリーム間で chord_size が揃いやすい（均質になりやすい）。"
-    )
   },
   {
-    shortName: "CHORD Conc",
-    name: "Chord Size Concordance Target",
-    key: "chord_size_conc",
+    shortName: "CR S",
+    name: "CHORD_RANGE Spread",
+    key: "chord_range_spread",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "同時刻の chord_size のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
-      "0：一致度を低めにしたい（ストリーム間で chord_size をばらけさせやすい）。",
-      "1：一致度を高めにしたい（ストリーム間で chord_size を揃えやすい）。"
-    )
   },
   {
-    shortName: "CHORD CenterV",
-    name: "Chord Size Value Center",
-    key: "chord_size_value_center",
-    min: 1,
-    max: 4,
+    shortName: "CR Conc",
+    name: "CHORD_RANGE Conformity (Conc)",
+    key: "chord_range_conc",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+  },
+  {
+    shortName: "CR Target",
+    name: "CHORD_RANGE Target",
+    key: "chord_range_target",
+    min: 0,
+    max: 12,
     step: 1,
     isInt: true,
-    defaultFactory: (len) => constant(2, len),
+    defaultFactory: (len) => constant(6, len),
     help: H(
-      { min: 1, max: 4, step: 1, isInt: true },
-      "候補となる chord_size の中心値です（この値±幅に制限）。",
-      "1：小さめ（密度低め）。",
-      "4：大きめ（密度高め）。"
+      { min: 0, max: 12, step: 1, isInt: true },
+      "CHORD_RANGE の探索中心値です。",
+      "0：狭い幅を中心に探索。",
+      "12：広い幅を中心に探索。"
     )
   },
   {
-    shortName: "CHORD Width",
-    name: "Chord Size Value Width",
-    key: "chord_size_value_width",
+    shortName: "CR Spread",
+    name: "CHORD_RANGE Spread (Target Window)",
+    key: "chord_range_target_spread",
     min: 0,
-    max: 4,
+    max: 12,
     step: 1,
     isInt: true,
-    defaultFactory: (len) => constant(4, len),
+    defaultFactory: (len) => constant(12, len),
     help: H(
-      { min: 0, max: 4, step: 1, isInt: true },
-      "中心値からの上下幅です（0で固定、4で全域に近い）。",
-      "0：中心値のみ。",
-      "4：範囲が最大（実質制限なし）。"
+      { min: 0, max: 12, step: 1, isInt: true },
+      "CHORD_RANGE の探索許容幅（中心±幅）です。",
+      "0：中心値のみ探索。",
+      "12：ほぼ全域を探索。"
     )
   },
 
-
   // =========================================================
-  // octave
-  // =========================================================
-  {
-    shortName: "OCT Global",
-    name: "Octave Global Target",
-    key: "octave_global",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "octave（各streamのオクターブ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
-      "0：オクターブ配置の変化が単純・反復しやすい。",
-      "1：オクターブ配置の変化が複雑・揺れやすい。"
-    )
-  },
-  {
-    shortName: "OCT Center",
-    name: "Octave Stream Center",
-    key: "octave_center",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "stream側での octave ターゲット分布の中心です（低域寄り/高域寄り）。",
-      "0：低域寄りの octave を狙いやすい。",
-      "1：高域寄りの octave を狙いやすい。"
-    )
-  },
-  {
-    shortName: "OCT Spread",
-    name: "Octave Stream Spread",
-    key: "octave_spread",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "octave の stream_targets のばらつき抑制です。",
-      "0：ストリーム間で octave がばらけやすい（上下に広がりやすい）。",
-      "1：ストリーム間で octave が揃いやすい（密集しやすい）。"
-    )
-  },
-  {
-    shortName: "OCT Conc",
-    name: "Octave Concordance Target",
-    key: "octave_conc",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "同時刻の octave のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
-      "0：一致度を低めにしたい（ストリーム間で octave が離れやすい）。",
-      "1：一致度を高めにしたい（ストリーム間で octave が揃いやすい）。"
-    )
-  },
-
-
-  // =========================================================
-  // note
+  // DENSITY : global / center / spread / conc
   // =========================================================
   {
-    shortName: "NOTE Global",
-    name: "Note Global Target (Root Notes Only)",
-    key: "note_global",
+    shortName: "DEN G",
+    name: "DENSITY Global Complexity",
+    key: "density_global",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "note（root note; 0..11）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。※実体の和音 pitch-class 集合は dissonance + chord_size で別決定し、ここは root の配置最適化（shift後の候補から選択）に使います。",
-      "0：root配置が単純・反復しやすい（似たroot並びが続く）。",
-      "1：root配置が複雑・変化しやすい（root並びが揺れやすい）。"
+      "和音内にどれだけ音を詰めるか（密度）をどう動かすかの複雑度ターゲットです。",
+      "0：密度が変わりにくい。",
+      "1：密度がよく変わる。"
     )
   },
   {
-    shortName: "NOTE Center",
-    name: "Note Stream Center",
-    key: "note_center",
+    shortName: "DEN C",
+    name: "DENSITY Center",
+    key: "density_center",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "stream側での root note ターゲット分布の中心です（低いpitch-class寄り/高いpitch-class寄り）。",
-      "0：低めの pitch-class を狙いやすい。",
-      "1：高めの pitch-class を狙いやすい。"
-    )
   },
   {
-    shortName: "NOTE Spread",
-    name: "Note Stream Spread",
-    key: "note_spread",
+    shortName: "DEN S",
+    name: "DENSITY Spread",
+    key: "density_spread",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "root note の stream_targets のばらつき抑制です。",
-      "0：ストリーム間で root note がばらけやすい（分散しやすい）。",
-      "1：ストリーム間で root note が揃いやすい（同じ/近い音に寄りやすい）。"
-    )
   },
   {
-    shortName: "NOTE Conc",
-    name: "Note Concordance Target",
-    key: "note_conc",
-    min: 0,
+    shortName: "DEN Conc",
+    name: "DENSITY Conformity (Conc)",
+    key: "density_conc",
+    min: -1,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "同時刻の root note（pitch-class）のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
-      "0：一致度を低めにしたい（ストリーム間で root が散りやすい）。",
-      "1：一致度を高めにしたい（ストリーム間で root が揃いやすい）。"
-    )
-  },
-
-
-  // =========================================================
-  // volume
-  // =========================================================
-  {
-    shortName: "VOL Global",
-    name: "Volume Global Target",
-    key: "vol_global",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "vol（音量）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
-      "0：音量パターンが単純・反復しやすい。",
-      "1：音量パターンが複雑・変化しやすい。"
-    )
   },
   {
-    shortName: "VOL Center",
-    name: "Volume Stream Center",
-    key: "vol_center",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "stream側での vol ターゲット分布の中心です（全体的に小さめ/大きめ）。",
-      "0：全体的に小さめの vol を狙いやすい。",
-      "1：全体的に大きめの vol を狙いやすい。"
-    )
-  },
-  {
-    shortName: "VOL Spread",
-    name: "Volume Stream Spread",
-    key: "vol_spread",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "vol の stream_targets のばらつき抑制です。",
-      "0：ストリーム間で vol がばらけやすい（強弱差が出やすい）。",
-      "1：ストリーム間で vol が揃いやすい（均質になりやすい）。"
-    )
-  },
-  {
-    shortName: "VOL Conc",
-    name: "Volume Concordance Weight",
-    key: "vol_conc",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "同時刻の vol のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
-      "0：一致度を低めにしたい（ストリーム間で vol がばらけやすい）。",
-      "1：一致度を高めにしたい（ストリーム間で vol が揃いやすい）。"
-    )
-  },
-  {
-    shortName: "VOL CenterV",
-    name: "Volume Value Center",
-    key: "vol_value_center",
+    shortName: "DEN Target",
+    name: "DENSITY Target",
+    key: "density_target",
     min: 0,
     max: 1,
     step: 0.1,
     defaultFactory: (len) => constant(0.5, len),
     help: H(
       { min: 0, max: 1, step: 0.1 },
-      "候補となる vol の中心値です（この値±幅に制限）。",
-      "0：小さめ。",
-      "1：大きめ。"
+      "DENSITY の探索中心値です（0.1刻み）。",
+      "0：低密度中心。",
+      "1：高密度中心。"
     )
   },
   {
-    shortName: "VOL Width",
-    name: "Volume Value Width",
-    key: "vol_value_width",
+    shortName: "DEN Spread",
+    name: "DENSITY Spread (Target Window)",
+    key: "density_target_spread",
     min: 0,
     max: 1,
     step: 0.1,
     defaultFactory: (len) => constant(1, len),
     help: H(
       { min: 0, max: 1, step: 0.1 },
-      "中心値からの上下幅です（0で固定、1で全域に近い）。",
-      "0：中心値のみ。",
-      "1：範囲が最大（実質制限なし）。"
+      "DENSITY の探索許容幅（中心±幅、0.1刻み）です。",
+      "0：中心値のみ探索。",
+      "1：ほぼ全域を探索。"
     )
   },
 
   // =========================================================
-  // brightness
+  // SUSTAIN : global / center / spread / conc (+ target window)
   // =========================================================
   {
-    shortName: "BRI Global",
-    name: "Brightness Global Target",
-    key: "bri_global",
+    shortName: "SUS G",
+    name: "SUSTAIN Global Complexity",
+    key: "sustain_global",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "bri（明るさ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
-      "0：明るさパターンが単純・反復しやすい。",
-      "1：明るさパターンが複雑・変化しやすい。"
+      "音を次の発音へどれだけ滑らかにつなぐか（サステイン感）の変化複雑度です。",
+      "0：サステイン感が変わりにくい。",
+      "1：サステイン感がよく変わる。"
     )
   },
   {
-    shortName: "BRI Center",
-    name: "Brightness Stream Center",
-    key: "bri_center",
+    shortName: "SUS C",
+    name: "SUSTAIN Center",
+    key: "sustain_center",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0.5, len),
+  },
+  {
+    shortName: "SUS S",
+    name: "SUSTAIN Spread",
+    key: "sustain_spread",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
+  },
+  {
+    shortName: "SUS Conc",
+    name: "SUSTAIN Conformity (Conc)",
+    key: "sustain_conc",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+  },
+  {
+    shortName: "SUS Target",
+    name: "SUSTAIN Target",
+    key: "sustain_target",
+    min: 0,
+    max: 1,
+    step: 0.25,
+    defaultFactory: (len) => constant(0.5, len),
     help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "stream側での bri ターゲット分布の中心です。",
-      "0：暗め（bri低め）を狙いやすい。",
-      "1：明るめ（bri高め）を狙いやすい。"
+      { min: 0, max: 1, step: 0.25 },
+      "SUSTAIN の探索中心値です（0.0/0.25/0.5/0.75/1.0）。",
+      "0：切れやすい。",
+      "1：つながりやすい。"
     )
   },
   {
-    shortName: "BRI Spread",
-    name: "Brightness Stream Spread",
-    key: "bri_spread",
+    shortName: "SUS Spread",
+    name: "SUSTAIN Spread (Target Window)",
+    key: "sustain_target_spread",
     min: 0,
     max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
+    step: 0.25,
+    defaultFactory: (len) => constant(1, len),
     help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "bri の stream_targets のばらつき抑制です。",
-      "0：ストリーム間で bri がばらけやすい（役割差が出やすい）。",
-      "1：ストリーム間で bri が揃いやすい（均質になりやすい）。"
-    )
-  },
-  {
-    shortName: "BRI Conc",
-    name: "Brightness Concordance Weight",
-    key: "bri_conc",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "同時刻の bri のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
-      "0：一致度を低めにしたい（ストリーム間で bri がばらけやすい）。",
-      "1：一致度を高めにしたい（ストリーム間で bri が揃いやすい）。"
+      { min: 0, max: 1, step: 0.25 },
+      "SUSTAIN の探索許容幅（中心±幅）です。",
+      "0：中心値のみ探索。",
+      "1：5候補を広く探索。"
     )
   },
 
   // =========================================================
-  // hardness
+  // vol/bri/hrd/tex : global / center / spread / conc
   // =========================================================
   {
-    shortName: "HRD Global",
-    name: "Hardness Global Target",
-    key: "hrd_global",
+    shortName: "VOL G",
+    name: "VOLUME Global Complexity",
+    key: "vol_global",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
+  },
+  { shortName: "VOL C", name: "VOLUME Center", key: "vol_center", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: "VOL S", name: "VOLUME Spread", key: "vol_spread", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: "VOL Conc", name: "VOLUME Conformity (Conc)", key: "vol_conc", min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  {
+    shortName: "VOL Target",
+    name: "VOLUME Target",
+    key: "vol_target",
+    min: 0,
+    max: 1,
+    step: 0.1,
+    defaultFactory: (len) => constant(0.5, len),
     help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "hrd（硬さ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
-      "0：硬さパターンが単純・反復しやすい。",
-      "1：硬さパターンが複雑・変化しやすい。"
+      { min: 0, max: 1, step: 0.1 },
+      "VOLUME の探索中心値です（0.1刻み）。",
+      "0：小さめ音量中心。",
+      "1：大きめ音量中心。"
     )
   },
   {
-    shortName: "HRD Center",
-    name: "Hardness Stream Center",
-    key: "hrd_center",
+    shortName: "VOL Spread",
+    name: "VOLUME Spread (Target Window)",
+    key: "vol_target_spread",
     min: 0,
     max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
+    step: 0.1,
+    defaultFactory: (len) => constant(1, len),
     help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "stream側での hrd ターゲット分布の中心です。",
-      "0：柔らかめ（hrd低め）を狙いやすい。",
-      "1：硬め（hrd高め）を狙いやすい。"
-    )
-  },
-  {
-    shortName: "HRD Spread",
-    name: "Hardness Stream Spread",
-    key: "hrd_spread",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "hrd の stream_targets のばらつき抑制です。",
-      "0：ストリーム間で hrd がばらけやすい。",
-      "1：ストリーム間で hrd が揃いやすい。"
-    )
-  },
-  {
-    shortName: "HRD Conc",
-    name: "Hardness Concordance Weight",
-    key: "hrd_conc",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "同時刻の hrd のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
-      "0：一致度を低めにしたい（ストリーム間で hrd がばらけやすい）。",
-      "1：一致度を高めにしたい（ストリーム間で hrd が揃いやすい）。"
+      { min: 0, max: 1, step: 0.1 },
+      "VOLUME の探索許容幅（中心±幅、0.1刻み）です。",
+      "0：中心値のみ探索。",
+      "1：ほぼ全域を探索。"
     )
   },
 
-  // =========================================================
-  // texture
-  // =========================================================
-  {
-    shortName: "TEX Global",
-    name: "Texture Global Target",
-    key: "tex_global",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "tex（テクスチャ/粗さ）の同時刻パターンの時系列的複雑度を global 側でどれくらい目標にするかです。",
-      "0：テクスチャ変化が単純・反復しやすい。",
-      "1：テクスチャ変化が複雑・変化しやすい。"
-    )
-  },
-  {
-    shortName: "TEX Center",
-    name: "Texture Stream Center",
-    key: "tex_center",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "stream側での tex ターゲット分布の中心です。",
-      "0：tex低めを狙いやすい。",
-      "1：tex高めを狙いやすい。"
-    )
-  },
-  {
-    shortName: "TEX Spread",
-    name: "Texture Stream Spread",
-    key: "tex_spread",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "tex の stream_targets のばらつき抑制です。",
-      "0：ストリーム間で tex がばらけやすい。",
-      "1：ストリーム間で tex が揃いやすい。"
-    )
-  },
-  {
-    shortName: "TEX Conc",
-    name: "Texture Concordance Weight",
-    key: "tex_conc",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "同時刻の tex のストリーム間一致度（concordance=1-discordance）の目標値です。discordance は「同時刻の幅（max-min）」に相当します。",
-      "0：一致度を低めにしたい（ストリーム間で tex がばらけやすい）。",
-      "1：一致度を高めにしたい（ストリーム間で tex が揃いやすい）。"
-    )
-  }
+  { shortName: "BRI G", name: "BRIGHTNESS Global Complexity", key: "bri_global", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: "BRI C", name: "BRIGHTNESS Center", key: "bri_center", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: "BRI S", name: "BRIGHTNESS Spread", key: "bri_spread", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: "BRI Conc", name: "BRIGHTNESS Conformity (Conc)", key: "bri_conc", min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+
+  { shortName: "HRD G", name: "HARDNESS Global Complexity", key: "hrd_global", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: "HRD C", name: "HARDNESS Center", key: "hrd_center", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: "HRD S", name: "HARDNESS Spread", key: "hrd_spread", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: "HRD Conc", name: "HARDNESS Conformity (Conc)", key: "hrd_conc", min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+
+  { shortName: "TEX G", name: "TEXTURE Global Complexity", key: "tex_global", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: "TEX C", name: "TEXTURE Center", key: "tex_center", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: "TEX S", name: "TEXTURE Spread", key: "tex_spread", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: "TEX Conc", name: "TEXTURE Conformity (Conc)", key: "tex_conc", min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
 ]
 
 // rows 実体
@@ -1013,51 +863,60 @@ const buildGenParamsFromRows = () => {
 
   result.stream_counts = get('stream_counts')
 
-  // 追加
   result.stream_strength_target = get('stream_strength_target')
   result.stream_strength_spread = get('stream_strength_spread')
   result.dissonance_target      = get('dissonance_target')
 
-  // 追加 (chord_size)
-  result.chord_size_global      = get('chord_size_global')
-  result.chord_size_center       = get('chord_size_center')
-  result.chord_size_spread   = get('chord_size_spread')
-  result.chord_size_conc        = get('chord_size_conc')
-  result.chord_size_value_center = get('chord_size_value_center')
-  result.chord_size_value_width = get('chord_size_value_width')
+  // macro pitch movement
+  result.area_global  = get('area_global')
+  result.area_center  = get('area_center')
+  result.area_spread  = get('area_spread')
+  result.area_conc    = get('area_conc')
 
-  // 既存6次元
-  result.octave_global    = get('octave_global')
-  result.octave_center     = get('octave_center')
-  result.octave_spread = get('octave_spread')
-  result.octave_conc      = get('octave_conc')
+  // chord controls
+  result.chord_range_global = get('chord_range_global')
+  result.chord_range_center = get('chord_range_center')
+  result.chord_range_spread = get('chord_range_spread')
+  result.chord_range_conc   = get('chord_range_conc')
+  result.chord_range_target = get('chord_range_target')
+  result.chord_range_target_spread = get('chord_range_target_spread')
 
-  result.note_global      = get('note_global')
-  result.note_center       = get('note_center')
-  result.note_spread   = get('note_spread')
-  result.note_conc        = get('note_conc')
+  result.density_global = get('density_global')
+  result.density_center = get('density_center')
+  result.density_spread = get('density_spread')
+  result.density_conc   = get('density_conc')
+  result.density_target = get('density_target')
+  result.density_target_spread = get('density_target_spread')
 
-  result.vol_global       = get('vol_global')
-  result.vol_center        = get('vol_center')
-  result.vol_spread    = get('vol_spread')
-  result.vol_conc         = get('vol_conc')
-  result.vol_value_center = get('vol_value_center')
-  result.vol_value_width = get('vol_value_width')
+  result.sustain_global = get('sustain_global')
+  result.sustain_center = get('sustain_center')
+  result.sustain_spread = get('sustain_spread')
+  result.sustain_conc   = get('sustain_conc')
+  result.sustain_target = get('sustain_target')
+  result.sustain_target_spread = get('sustain_target_spread')
 
-  result.bri_global       = get('bri_global')
-  result.bri_center        = get('bri_center')
-  result.bri_spread    = get('bri_spread')
-  result.bri_conc         = get('bri_conc')
+  // timbre-ish controls
+  result.vol_global = get('vol_global')
+  result.vol_center = get('vol_center')
+  result.vol_spread = get('vol_spread')
+  result.vol_conc   = get('vol_conc')
+  result.vol_target = get('vol_target')
+  result.vol_target_spread = get('vol_target_spread')
 
-  result.hrd_global       = get('hrd_global')
-  result.hrd_center        = get('hrd_center')
-  result.hrd_spread    = get('hrd_spread')
-  result.hrd_conc         = get('hrd_conc')
+  result.bri_global = get('bri_global')
+  result.bri_center = get('bri_center')
+  result.bri_spread = get('bri_spread')
+  result.bri_conc   = get('bri_conc')
 
-  result.tex_global       = get('tex_global')
-  result.tex_center        = get('tex_center')
-  result.tex_spread    = get('tex_spread')
-  result.tex_conc         = get('tex_conc')
+  result.hrd_global = get('hrd_global')
+  result.hrd_center = get('hrd_center')
+  result.hrd_spread = get('hrd_spread')
+  result.hrd_conc   = get('hrd_conc')
+
+  result.tex_global = get('tex_global')
+  result.tex_center = get('tex_center')
+  result.tex_spread = get('tex_spread')
+  result.tex_conc   = get('tex_conc')
 
   return result
 }
@@ -1095,7 +954,7 @@ const applyInitialContextFromPayload = async (ctxRaw: any) => {
         const stepArr = ctxRaw[step]
         const streamArr = Array.isArray(stepArr) ? stepArr[s] : null
         let rawVal = Array.isArray(streamArr) ? streamArr[d] : null
-        if (d === 1 && Array.isArray(rawVal)) rawVal = rawVal[0]
+        if (d === 0 && Array.isArray(rawVal)) rawVal = rawVal[0]
         let v = normalizeNumber(rawVal, base)
         const cfg = row.config
         if (cfg) {
@@ -1181,16 +1040,16 @@ const buildParamsPayload = (jobIdOverride?: string) => {
     }
   }
 
-  ;['octave', 'note', 'vol', 'bri', 'hrd', 'tex', 'chord_size'].forEach((k) => {
+  ;['area', 'chord_range', 'density', 'sustain', 'vol', 'bri', 'hrd', 'tex'].forEach((k) => {
     payload.generate_polyphonic[`${k}_global`] = genParams[`${k}_global`]
     payload.generate_polyphonic[`${k}_center`] = genParams[`${k}_center`]
     payload.generate_polyphonic[`${k}_spread`] = genParams[`${k}_spread`]
     payload.generate_polyphonic[`${k}_conc`] = genParams[`${k}_conc`]
   })
-  payload.generate_polyphonic.chord_size_value_center = genParams.chord_size_value_center
-  payload.generate_polyphonic.chord_size_value_width = genParams.chord_size_value_width
-  payload.generate_polyphonic.vol_value_center = genParams.vol_value_center
-  payload.generate_polyphonic.vol_value_width = genParams.vol_value_width
+  ;['vol', 'chord_range', 'density', 'sustain'].forEach((k) => {
+    payload.generate_polyphonic[`${k}_target`] = genParams[`${k}_target`]
+    payload.generate_polyphonic[`${k}_target_spread`] = genParams[`${k}_target_spread`]
+  })
 
   return payload
 }
@@ -1217,8 +1076,10 @@ const handleGeneratePolyphonic = async () => {
 
     if (runOnGithubActions.value) {
       emit('dispatched-polyphonic', resp.data)
+      emit('dispatched', resp.data)
     } else {
       emit('generated-polyphonic', resp.data)
+      emit('generated', resp.data)
     }
 
     open.value = false
@@ -1246,10 +1107,22 @@ watch(open, (next, prev) => {
 </script>
 
 <style scoped>
+.dialog-body {
+  max-height: 80vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
 .grid-card {
-  overflow-x: auto;
-  overflow-y: hidden;
+  min-height: 0;
+  overflow: hidden;
   margin-bottom: 16px;
+}
+.context-card {
+  height: clamp(260px, 36vh, 420px);
+}
+.generation-card {
+  height: clamp(420px, 78vh, 900px);
+  margin-bottom: 0;
 }
 .step-input {
   width: 60px;

@@ -5,132 +5,156 @@
         <StreamsRoll
           ref="pianoRollRef"
           :streamValues="chordPitchStreams"
-          :streamVelocities="generate.velocities"
+          :stepWidth="computedStepWidth"
           :minValue="minPitch"
           :maxValue="maxPitch"
           :valueResolution="1"
-          :highlightIndices="leftHighlightedIndices"
-          :highlightWindowSize="leftHighlightedWindowSize"
-          :stepWidth="computedStepWidth"
           title="Piano Roll(octaves, notes, volumes)"
           @scroll="onScroll"
         />
       </div>
 
       <div class="quadrant top-right">
-        <div class="in-quadrant">
-          <div class="row-in-quadrant">
-            <StreamsRoll
-              ref="briRollRef"
-              :streamValues="generate.brightness"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.1"
-              :stepWidth="computedStepWidth"
-              :highlightIndices="rightHighlightedIndices"
-              :highlightWindowSize="rightHighlightedWindowSize"
-              title="Brightness"
-              @scroll="onScroll"
-            />
-          </div>
-          <div class="row-in-quadrant">
-            <StreamsRoll
-              ref="hrdRollRef"
-              :streamValues="generate.hardness"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.1"
-              :stepWidth="computedStepWidth"
-              :highlightIndices="rightHighlightedIndices"
-              :highlightWindowSize="rightHighlightedWindowSize"
-              title="Hardness"
-              @scroll="onScroll"
-            />
-          </div>
-          <div class="row-in-quadrant">
-            <StreamsRoll
-              ref="texRollRef"
-              :streamValues="generate.texture"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.1"
-              :stepWidth="computedStepWidth"
-              :highlightIndices="rightHighlightedIndices"
-              :highlightWindowSize="rightHighlightedWindowSize"
-              title="Texture"
-              @scroll="onScroll"
-            />
-          </div>
-        </div>
+        <StreamsRoll
+          ref="briRollRef"
+          :streamValues="generate.brightness"
+          :stepWidth="computedStepWidth"
+          :minValue="0"
+          :maxValue="1"
+          :valueResolution="0.01"
+          title="BRI"
+          @scroll="onScroll"
+        />
       </div>
 
       <div class="quadrant bottom-left">
-        <div class="in-quadrant" v-if="analysedViewMode === 'Cluster'">
+        <div class="in-quadrant">
           <div class="row-in-quadrant">
             <ClustersRoll
+              v-if="analysedViewMode === 'Cluster'"
               ref="velClustersRef"
               :clustersData="velocityClustersForView"
               :stepWidth="computedStepWidth"
               :maxSteps="stepCount"
-              @scroll="onScroll"
+              title="VOL Clusters"
+              :highlightedIndices="leftHighlightedIndices"
+              :highlightedWindowSize="leftHighlightedWindowSize"
               @hover-cluster="onHoverClusterLeft"
-            />
-          </div>
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              ref="octClustersRef"
-              :clustersData="octaveClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
               @scroll="onScroll"
-              @hover-cluster="onHoverClusterLeft"
             />
-          </div>
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              ref="noteClustersRef"
-              :clustersData="noteClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              @scroll="onScroll"
-              @hover-cluster="onHoverClusterLeft"
-            />
-          </div>
-        </div>
-        <div class="in-quadrant" v-else>
-          <div class="row-in-quadrant">
             <StreamsRoll
+              v-else
               ref="velClustersRef"
               :streamValues="complexityStreams.vol"
+              :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              :stepWidth="computedStepWidth"
               title="VOL (global/conc/spread/center)"
               @scroll="onScroll"
             />
           </div>
+
           <div class="row-in-quadrant">
+            <ClustersRoll
+              v-if="analysedViewMode === 'Cluster'"
+              ref="chordRangeClustersRef"
+              :clustersData="chordRangeClustersForView"
+              :stepWidth="computedStepWidth"
+              :maxSteps="stepCount"
+              title="CHORD_RANGE Clusters"
+              :highlightedIndices="leftHighlightedIndices"
+              :highlightedWindowSize="leftHighlightedWindowSize"
+              @hover-cluster="onHoverClusterLeft"
+              @scroll="onScroll"
+            />
             <StreamsRoll
-              ref="octClustersRef"
-              :streamValues="complexityStreams.oct"
+              v-else
+              ref="chordRangeClustersRef"
+              :streamValues="complexityStreams.chordRange"
+              :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              :stepWidth="computedStepWidth"
-              title="OCT (global/conc/spread/center)"
+              title="CHORD_RANGE (global/conc/spread/center)"
               @scroll="onScroll"
             />
           </div>
+
           <div class="row-in-quadrant">
+            <ClustersRoll
+              v-if="analysedViewMode === 'Cluster'"
+              ref="areaClustersRef"
+              :clustersData="areaClustersForView"
+              :stepWidth="computedStepWidth"
+              :maxSteps="stepCount"
+              title="AREA Clusters"
+              :highlightedIndices="leftHighlightedIndices"
+              :highlightedWindowSize="leftHighlightedWindowSize"
+              @hover-cluster="onHoverClusterLeft"
+              @scroll="onScroll"
+            />
             <StreamsRoll
-              ref="noteClustersRef"
-              :streamValues="complexityStreams.note"
+              v-else
+              ref="areaClustersRef"
+              :streamValues="complexityStreams.area"
+              :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
+              title="AREA (global/conc/spread/center)"
+              @scroll="onScroll"
+            />
+          </div>
+
+          <div class="row-in-quadrant">
+            <ClustersRoll
+              v-if="analysedViewMode === 'Cluster'"
+              ref="densityClustersRef"
+              :clustersData="densityClustersForView"
               :stepWidth="computedStepWidth"
-              title="NOTE (global/conc/spread/center)"
+              :maxSteps="stepCount"
+              title="DENSITY Clusters"
+              :highlightedIndices="leftHighlightedIndices"
+              :highlightedWindowSize="leftHighlightedWindowSize"
+              @hover-cluster="onHoverClusterLeft"
+              @scroll="onScroll"
+            />
+            <StreamsRoll
+              v-else
+              ref="densityClustersRef"
+              :streamValues="complexityStreams.density"
+              :stepWidth="computedStepWidth"
+              :minValue="0"
+              :maxValue="1"
+              :valueResolution="0.01"
+              title="DENSITY (global/conc/spread/center)"
+              @scroll="onScroll"
+            />
+          </div>
+
+          <div class="row-in-quadrant">
+            <ClustersRoll
+              v-if="analysedViewMode === 'Cluster'"
+              ref="sustainClustersRef"
+              :clustersData="sustainClustersForView"
+              :stepWidth="computedStepWidth"
+              :maxSteps="stepCount"
+              title="SUSTAIN Clusters"
+              :highlightedIndices="leftHighlightedIndices"
+              :highlightedWindowSize="leftHighlightedWindowSize"
+              @hover-cluster="onHoverClusterLeft"
+              @scroll="onScroll"
+            />
+            <StreamsRoll
+              v-else
+              ref="sustainClustersRef"
+              :streamValues="complexityStreams.sustain"
+              :stepWidth="computedStepWidth"
+              :minValue="0"
+              :maxValue="1"
+              :valueResolution="0.25"
+              title="SUSTAIN (global/conc/spread/center)"
               @scroll="onScroll"
             />
           </div>
@@ -138,71 +162,80 @@
       </div>
 
       <div class="quadrant bottom-right">
-        <div class="in-quadrant" v-if="analysedViewMode === 'Cluster'">
+        <div class="in-quadrant">
           <div class="row-in-quadrant">
             <ClustersRoll
+              v-if="analysedViewMode === 'Cluster'"
               ref="briClustersRef"
               :clustersData="briClustersForView"
               :stepWidth="computedStepWidth"
               :maxSteps="stepCount"
-              @scroll="onScroll"
+              title="BRI Clusters"
+              :highlightedIndices="rightHighlightedIndices"
+              :highlightedWindowSize="rightHighlightedWindowSize"
               @hover-cluster="onHoverClusterRight"
-            />
-          </div>
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              ref="hrdClustersRef"
-              :clustersData="hrdClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
               @scroll="onScroll"
-              @hover-cluster="onHoverClusterRight"
             />
-          </div>
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              ref="texClustersRef"
-              :clustersData="texClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              @scroll="onScroll"
-              @hover-cluster="onHoverClusterRight"
-            />
-          </div>
-        </div>
-        <div class="in-quadrant" v-else>
-          <div class="row-in-quadrant">
             <StreamsRoll
+              v-else
               ref="briClustersRef"
               :streamValues="complexityStreams.bri"
-              :minValue="-1"
+              :stepWidth="computedStepWidth"
+              :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              :stepWidth="computedStepWidth"
               title="BRI (global/conc/spread/center)"
               @scroll="onScroll"
             />
           </div>
+
           <div class="row-in-quadrant">
+            <ClustersRoll
+              v-if="analysedViewMode === 'Cluster'"
+              ref="hrdClustersRef"
+              :clustersData="hrdClustersForView"
+              :stepWidth="computedStepWidth"
+              :maxSteps="stepCount"
+              title="HRD Clusters"
+              :highlightedIndices="rightHighlightedIndices"
+              :highlightedWindowSize="rightHighlightedWindowSize"
+              @hover-cluster="onHoverClusterRight"
+              @scroll="onScroll"
+            />
             <StreamsRoll
+              v-else
               ref="hrdClustersRef"
               :streamValues="complexityStreams.hrd"
-              :minValue="-1"
+              :stepWidth="computedStepWidth"
+              :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              :stepWidth="computedStepWidth"
               title="HRD (global/conc/spread/center)"
               @scroll="onScroll"
             />
           </div>
+
           <div class="row-in-quadrant">
+            <ClustersRoll
+              v-if="analysedViewMode === 'Cluster'"
+              ref="texClustersRef"
+              :clustersData="texClustersForView"
+              :stepWidth="computedStepWidth"
+              :maxSteps="stepCount"
+              title="TEX Clusters"
+              :highlightedIndices="rightHighlightedIndices"
+              :highlightedWindowSize="rightHighlightedWindowSize"
+              @hover-cluster="onHoverClusterRight"
+              @scroll="onScroll"
+            />
             <StreamsRoll
+              v-else
               ref="texClustersRef"
               :streamValues="complexityStreams.tex"
-              :minValue="-1"
+              :stepWidth="computedStepWidth"
+              :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              :stepWidth="computedStepWidth"
               title="TEX (global/conc/spread/center)"
               @scroll="onScroll"
             />
@@ -214,9 +247,8 @@
     <MusicGenerateDialog
       ref="dialogRef"
       v-model="setDataDialog"
-      :progress="progress"
-      @generated-polyphonic="handleGenerated"
-      @dispatched-polyphonic="handleDispatched"
+      @generated="handleGenerated"
+      @dispatched="handleDispatched"
       @params-built="handleParamsBuilt"
       @params-updated="handleParamsUpdated"
     />
@@ -228,7 +260,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr 1fr;
-width: 100%;
+  width: 100%;
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -261,8 +293,6 @@ width: 100%;
   width: 100%;
   min-height: 0;
 }
-
-
 </style>
 
 <script setup lang="ts">
@@ -272,6 +302,7 @@ import MusicGenerateDialog from '../dialog/MusicGenerateDialog.vue'
 import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
 import { useScrollSync } from '../../composables/useScrollSync'
+import { defineExpose } from 'vue'
 
 // ===== refs =====
 const pianoRollRef = ref<any>(null)
@@ -279,8 +310,10 @@ const briRollRef = ref<any>(null)
 const hrdRollRef = ref<any>(null)
 const texRollRef = ref<any>(null)
 const velClustersRef = ref<any>(null)
-const octClustersRef = ref<any>(null)
-const noteClustersRef = ref<any>(null)
+const chordRangeClustersRef = ref<any>(null)
+const areaClustersRef = ref<any>(null)
+const densityClustersRef = ref<any>(null)
+const sustainClustersRef = ref<any>(null)
 const briClustersRef = ref<any>(null)
 const hrdClustersRef = ref<any>(null)
 const texClustersRef = ref<any>(null)
@@ -324,7 +357,6 @@ const startPlayingSound = () => {
 
 // Keep audio element in sync with the latest soundFilePath (generated or uploaded)
 watch(soundFilePath, (url) => {
-  // stop current
   nowPlaying.value = false
   try { audio.value?.pause() } catch {}
   audio.value = null
@@ -334,7 +366,6 @@ watch(soundFilePath, (url) => {
   a.addEventListener('ended', () => { nowPlaying.value = false })
   audio.value = a
 })
-import { defineExpose } from 'vue'
 
 // ===== scroll sync =====
 const { syncScroll } = useScrollSync([
@@ -343,8 +374,10 @@ const { syncScroll } = useScrollSync([
   hrdRollRef,
   texRollRef,
   velClustersRef,
-  octClustersRef,
-  noteClustersRef,
+  chordRangeClustersRef,
+  areaClustersRef,
+  densityClustersRef,
+  sustainClustersRef,
   briClustersRef,
   hrdClustersRef,
   texClustersRef
@@ -394,34 +427,35 @@ type ClusterData = {
   cluster_id: string
   indices: number[]
 }
-type StepVec = [number, number[] | number, number, number, number, number]
+type StepVecLegacy = [number, number[] | number, number, number, number, number]
+// strict server: [abs_notes(Int[]), vol, bri, hrd, tex, chord_range(Int), density, sustain]
+type StepVecStrict = [number[], number, number, number, number, number, number, number]
+type StepVec = StepVecLegacy | StepVecStrict
 type PolyphonicResponse = {
-  timeSeries: StepVec[][];   // [step][stream][6]
-  chordSizes?: number[][];
+  timeSeries: StepVec[][];
   clusters: Record<string, { global: ClusterData[]; streams: Record<string, ClusterData[]> }>;
   processingTime: number;
 }
 
 // ===== state =====
 const generate = ref({
-  rawTimeSeries: [] as number[][][],
-  octaves: [] as (number | null)[][],
+  rawTimeSeries: [] as any[],
   notes: [] as (number | null)[][],
   velocities: [] as (number | null)[][],
   brightness: [] as (number | null)[][],
   hardness: [] as (number | null)[][],
   texture: [] as (number | null)[][],
 
-  chordSizes: [] as (number | null)[][],                 // [step][stream] を alignして入れる
-  noteChordsPitchClasses: [] as (number[] | null)[][],    //  align済み: [step][stream] (pcs or null)
-
   clusters: {
-    octave: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    area: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    chord_range: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    density: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     note:   { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     vol:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     bri:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     hrd:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     tex:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    sustain:{ global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
   },
 })
 
@@ -434,44 +468,29 @@ const DIM = {
   TEX: 5,
 } as const
 
-// ===== helpers =====
-
-
-/**
- * noteChordsPitchClasses / chordSizes は「生成step分だけ」返る想定が多いので
- * timeSeries の step数に合わせて「末尾寄せ」で align する
- */
-const alignTailBySteps = <T>(fullSteps: number, partial: T[] | undefined | null): (T | null)[] => {
-  const out: (T | null)[] = Array(fullSteps).fill(null)
-  if (!partial || partial.length === 0) return out
-  const offset = Math.max(0, fullSteps - partial.length)
-  for (let i = 0; i < partial.length; i++) out[offset + i] = partial[i]
-  return out
-}
-
 // ===== handle response =====
 const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   lastResultJson.value = data
-  const ts = data.timeSeries
-  const { octs, notes, vels, bris, hrds, texs } = expandTimeSeries(ts)
+  const ts = (data as any).timeSeries as any[]
+  const { notes, vels, bris, hrds, texs } = expandTimeSeries(ts)
 
-  generate.value.rawTimeSeries = ts
-  generate.value.octaves      = octs
-  generate.value.notes        = notes      // root（pcs[0]）だけ入れる互換用途
+  generate.value.rawTimeSeries = ts as any
+  generate.value.notes        = notes      // root（abs_notes[0] or pcs[0]）互換用途
   generate.value.velocities   = vels
   generate.value.brightness   = bris
   generate.value.hardness     = hrds
   generate.value.texture      = texs
 
-  generate.value.clusters.octave = data.clusters.octave
-  generate.value.clusters.note   = data.clusters.note
-  generate.value.clusters.vol    = data.clusters.vol
-  generate.value.clusters.bri    = data.clusters.bri
-  generate.value.clusters.hrd    = data.clusters.hrd
-  generate.value.clusters.tex    = data.clusters.tex
-
-  generate.value.chordSizes = data.chordSizes ?? []
-  generate.value.noteChordsPitchClasses = (data.noteChordsPitchClasses ?? []) as any
+  const clusters = ((data as any).clusters ?? {}) as any
+  generate.value.clusters.vol         = clusters.vol         ?? { global: [], streams: {} }
+  generate.value.clusters.area        = clusters.area        ?? { global: [], streams: {} }
+  generate.value.clusters.chord_range = clusters.chord_range ?? { global: [], streams: {} }
+  generate.value.clusters.density     = clusters.density     ?? { global: [], streams: {} }
+  generate.value.clusters.note        = clusters.note        ?? { global: [], streams: {} }
+  generate.value.clusters.bri         = clusters.bri         ?? { global: [], streams: {} }
+  generate.value.clusters.hrd         = clusters.hrd         ?? { global: [], streams: {} }
+  generate.value.clusters.tex         = clusters.tex         ?? { global: [], streams: {} }
+  generate.value.clusters.sustain     = clusters.sustain     ?? { global: [], streams: {} }
 }
 
 const handleGenerated = (data: PolyphonicResponse) => {
@@ -491,7 +510,6 @@ const handleParamsBuilt = (payload: any) => {
 const handleParamsUpdated = (payload: any) => {
   latestParamsPayload.value = payload
 }
-
 
 async function loadResultJsonFile(file: File | null) {
   uploadedResultJsonFile.value = file
@@ -538,8 +556,7 @@ const expandTimeSeries = (ts: any[]) => {
   const maxStreams = Math.max(0, ...ts.map(step => step.length))
   const make2D = () => Array.from({ length: maxStreams }, () => Array(stepCount.value).fill(null))
 
-  const octs = make2D()
-  const notes = make2D()
+  const notes = make2D()  // root互換: abs_notes[0] or pcs[0]
   const vels = make2D()
   const bris = make2D()
   const hrds = make2D()
@@ -547,28 +564,94 @@ const expandTimeSeries = (ts: any[]) => {
 
   ts.forEach((stepStreams, stepIdx) => {
     stepStreams.forEach((vec, streamIdx) => {
-      octs[streamIdx][stepIdx] = vec[0]
-      const noteVal = vec[1]
-      const pcs = Array.isArray(noteVal) ? noteVal : [noteVal]
-      notes[streamIdx][stepIdx] = (pcs[0] ?? 0) // root互換
-      vels[streamIdx][stepIdx] = vec[2]
-      bris[streamIdx][stepIdx] = vec[3]
-      hrds[streamIdx][stepIdx] = vec[4]
-      texs[streamIdx][stepIdx] = vec[5]
+      if (!vec) return
+
+      // Strict: [abs_notes(Int[]), vol, bri, hrd, tex, chord_range, density, sustain]
+      // Legacy: [oct(Int), pcs(Int|Int[]), vol, bri, hrd, tex]
+      if (Array.isArray(vec[0])) {
+        const absNotes = (vec[0] as any[]).map(n => Number(n)).filter(n => Number.isFinite(n))
+        notes[streamIdx][stepIdx] = absNotes.length ? absNotes[0] : null
+        vels[streamIdx][stepIdx]  = vec[1]
+        bris[streamIdx][stepIdx]  = vec[2]
+        hrds[streamIdx][stepIdx]  = vec[3]
+        texs[streamIdx][stepIdx]  = vec[4]
+      } else {
+        const noteVal = vec[1]
+        const pcs = Array.isArray(noteVal) ? noteVal : [noteVal]
+        notes[streamIdx][stepIdx] = (pcs[0] ?? null)
+        vels[streamIdx][stepIdx]  = vec[2]
+        bris[streamIdx][stepIdx]  = vec[3]
+        hrds[streamIdx][stepIdx]  = vec[4]
+        texs[streamIdx][stepIdx]  = vec[5]
+      }
     })
   })
 
-  return { octs, notes, vels, bris, hrds, texs, maxStreams }
+  return { notes, vels, bris, hrds, texs, maxStreams }
 }
 
-const renderPolyphonicAudio = (timeSeries: number[][][]) => {
+const renderPolyphonicAudio = (timeSeries: any[][]) => {
   progress.value.status = 'rendering'
   const stepDuration = 1 / 4.0
 
+  // renderer は legacy 形式を想定していることが多いので、strict(abs_notes) の場合は変換して投げる
+  const toLegacyForRender = (ts: any[][]) => {
+    const out: any[] = []
+    const chords: any[] = []
+
+    const normAbs = (arr: any): number[] => {
+      if (!Array.isArray(arr)) return []
+      return arr.map(n => Number(n)).filter(n => Number.isFinite(n)).map(n => Math.round(n))
+    }
+
+    for (const step of ts) {
+      const stepOut: any[] = []
+      const stepChords: any[] = []
+
+      for (const vec of step) {
+        if (!vec) continue
+
+        // Strict: [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain]
+        if (Array.isArray(vec[0])) {
+          const absNotes = normAbs(vec[0])
+          const vol = vec[1]
+          const bri = vec[2]
+          const hrd = vec[3]
+          const tex = vec[4]
+          const chordRange = Number(vec[5] ?? 0)
+          const density = Number(vec[6] ?? 0)
+          const sustain = Number(vec[7] ?? 0.0)
+
+          // Keep strict stream shape so backend can tie by stream index reliably.
+          stepOut.push([absNotes, vol, bri, hrd, tex, chordRange, density, sustain])
+
+          const pcs = absNotes
+            .map(n => ((n % 12) + 12) % 12)
+            .sort((a, b) => a - b)
+          stepChords.push(pcs)
+        } else {
+          // Legacy: [oct, pcs, vol, bri, hrd, tex, sustain?]
+          const oct = vec[0]
+          const pcs = Array.isArray(vec[1]) ? vec[1] : [vec[1]]
+          const sustain = Number(vec[6] ?? 0.0)
+          stepOut.push([oct, pcs, vec[2], vec[3], vec[4], vec[5], sustain])
+          stepChords.push(pcs)
+        }
+      }
+
+      out.push(stepOut)
+      chords.push(stepChords)
+    }
+
+    return { out, chords }
+  }
+
+  const { out, chords } = toLegacyForRender(timeSeries)
+
   axios.post('/api/web/supercolliders/render_polyphonic', {
-    time_series: timeSeries,
+    time_series: out,
     step_duration: stepDuration,
-    note_chords_pitch_classes: generate.value.noteChordsPitchClasses,
+    note_chords_pitch_classes: chords,
   })
     .then(response => {
       const { sound_file_path, scd_file_path, audio_data } = response.data
@@ -652,6 +735,84 @@ const downloadParamsJson = () => {
   }
 }
 
+const normalizeParamArray = (val: any): number[] => {
+  if (Array.isArray(val)) {
+    return val.map(v => Number(v)).filter(v => Number.isFinite(v))
+  }
+  if (val == null) return []
+  const num = Number(val)
+  return Number.isFinite(num) ? [num] : []
+}
+
+const buildComplexityStreams = (prefix: string) => {
+  const payload = latestParamsPayload.value
+  if (!payload || typeof payload !== 'object') return []
+  const gp = (payload as any).generate_polyphonic ?? payload
+  const ctx = gp?.initial_context
+  const padLen = Array.isArray(ctx) ? ctx.length : 0
+  const order = ['global', 'conc', 'spread', 'center'] as const
+
+  const streams = order.map((suffix) => {
+    const key = `${prefix}_${suffix}`
+    const arr = normalizeParamArray(gp?.[key])
+    const padded = Array(padLen).fill(null).concat(arr)
+    return padded
+  })
+
+  const maxLen = Math.max(0, ...streams.map(s => s.length))
+  return streams.map(s => {
+    if (s.length >= maxLen) return s
+    return s.concat(Array(maxLen - s.length).fill(null))
+  })
+}
+
+const complexityStreams = computed(() => ({
+  vol: buildComplexityStreams('vol'),
+  chordRange: buildComplexityStreams('chord_range'),
+  area: buildComplexityStreams('area'),
+  bri: buildComplexityStreams('bri'),
+  hrd: buildComplexityStreams('hrd'),
+  tex: buildComplexityStreams('tex'),
+  density: buildComplexityStreams('density'),
+  sustain: buildComplexityStreams('sustain'),
+}))
+
+// ===== pitch streams (chord) =====
+const chordPitchStreams = computed(() => {
+  const ts = generate.value.rawTimeSeries as any[]
+  if (!ts.length) return []
+
+  const streamCount = Math.max(0, ...ts.map(step => step.length))
+  const stepLen = ts.length
+
+  return Array.from({ length: streamCount }, (_, sIdx) =>
+    Array.from({ length: stepLen }, (_, stepIdx) => {
+      const vec = ts[stepIdx]?.[sIdx]
+      if (!vec) return null
+
+      // Strict: abs MIDI note numbers
+      if (Array.isArray(vec[0])) {
+        const absNotes = (vec[0] as any[])
+          .map(n => Number(n))
+          .filter(n => Number.isFinite(n))
+          .map(n => Math.round(n))
+        return absNotes.length ? absNotes : null
+      }
+
+      // Legacy: (oct + pcs) -> abs MIDI
+      const oct = Number(vec[0])
+      const noteVal = vec[1]
+      const pcs = Array.isArray(noteVal) ? noteVal : [noteVal]
+      const pcsSafe = pcs.filter(n => Number.isFinite(Number(n))).map(n => Number(n))
+
+      if (!Number.isFinite(oct) || pcsSafe.length === 0) return null
+
+      const baseC = (oct + 1) * 12
+      return pcsSafe.map(pc => baseC + ((pc % 12) + 12) % 12)
+    })
+  )
+})
+
 // ===== cluster view switch =====
 const velocityMode = ref<'global' | 'stream'>('global')
 const velocityStreamId = ref<number>(0)
@@ -662,22 +823,40 @@ const velocityClustersForView = computed<ClusterData[]>(() => {
   return src.streams[String(velocityStreamId.value)] || []
 })
 
-const octaveMode = ref<'global' | 'stream'>('global')
-const octaveStreamId = ref<number>(0)
-const octaveClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.octave
+const chordRangeMode = ref<'global' | 'stream'>('global')
+const chordRangeStreamId = ref<number>(0)
+const chordRangeClustersForView = computed<ClusterData[]>(() => {
+  const src = (generate.value.clusters as any).chord_range
   if (!src) return []
-  if (octaveMode.value === 'global') return src.global
-  return src.streams[String(octaveStreamId.value)] || []
+  if (chordRangeMode.value === 'global') return src.global
+  return src.streams[String(chordRangeStreamId.value)] || []
 })
 
-const noteMode = ref<'global' | 'stream'>('global')
-const noteStreamId = ref<number>(0)
-const noteClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.note
+const areaMode = ref<'global' | 'stream'>('global')
+const areaStreamId = ref<number>(0)
+const areaClustersForView = computed<ClusterData[]>(() => {
+  const src = (generate.value.clusters as any).area
   if (!src) return []
-  if (noteMode.value === 'global') return src.global
-  return src.streams[String(noteStreamId.value)] || []
+  if (areaMode.value === 'global') return src.global
+  return src.streams[String(areaStreamId.value)] || []
+})
+
+const densityMode = ref<'global' | 'stream'>('global')
+const densityStreamId = ref<number>(0)
+const densityClustersForView = computed<ClusterData[]>(() => {
+  const src = (generate.value.clusters as any).density
+  if (!src) return []
+  if (densityMode.value === 'global') return src.global
+  return src.streams[String(densityStreamId.value)] || []
+})
+
+const sustainMode = ref<'global' | 'stream'>('global')
+const sustainStreamId = ref<number>(0)
+const sustainClustersForView = computed<ClusterData[]>(() => {
+  const src = (generate.value.clusters as any).sustain
+  if (!src) return []
+  if (sustainMode.value === 'global') return src.global
+  return src.streams[String(sustainStreamId.value)] || []
 })
 
 const briMode = ref<'global' | 'stream'>('global')
@@ -732,80 +911,10 @@ const onHoverClusterRight = (payload: { indices: number[]; windowSize: number } 
   }
 }
 
-// ===== pitch streams (chord) =====
-// StreamsRoll に渡す値: [stream][step] だが、step要素は number | number[] | null を許す
-const chordPitchStreams = computed(() => {
-  const ts = generate.value.rawTimeSeries as any[]
-  if (!ts.length) return []
-
-  const streamCount = Math.max(0, ...ts.map(step => step.length))
-  const stepLen = ts.length
-
-  return Array.from({ length: streamCount }, (_, sIdx) =>
-    Array.from({ length: stepLen }, (_, stepIdx) => {
-      const vec = ts[stepIdx]?.[sIdx]
-      if (!vec) return null
-
-      const oct = Number(vec[0])
-      const noteVal = vec[1]
-      const pcs = Array.isArray(noteVal) ? noteVal : [noteVal]
-      const pcsSafe = pcs.filter(n => Number.isFinite(Number(n))).map(n => Number(n))
-
-      if (!Number.isFinite(oct) || pcsSafe.length === 0) return null
-
-      const baseC = (oct + 1) * 12
-      return pcsSafe.map(pc => baseC + ((pc % 12) + 12) % 12)
-    })
-  )
-})
-
-const normalizeParamArray = (val: any): number[] => {
-  if (Array.isArray(val)) {
-    return val.map(v => Number(v)).filter(v => Number.isFinite(v))
-  }
-  if (val == null) return []
-  const num = Number(val)
-  return Number.isFinite(num) ? [num] : []
-}
-
-const buildComplexityStreams = (prefix: string) => {
-  const payload = latestParamsPayload.value
-  if (!payload || typeof payload !== 'object') return []
-  const gp = payload.generate_polyphonic ?? payload
-  const ctx = gp?.initial_context
-  const padLen = Array.isArray(ctx) ? ctx.length : 0
-  const order = ['global', 'conc', 'spread', 'center'] as const
-
-  const streams = order.map((suffix) => {
-    const key = `${prefix}_${suffix}`
-    const arr = normalizeParamArray(gp?.[key])
-    const padded = Array(padLen).fill(null).concat(arr)
-    return padded
-  })
-
-  const maxLen = Math.max(0, ...streams.map(s => s.length))
-  return streams.map(s => {
-    if (s.length >= maxLen) return s
-    return s.concat(Array(maxLen - s.length).fill(null))
-  })
-}
-
-const complexityStreams = computed(() => ({
-  vol: buildComplexityStreams('vol'),
-  oct: buildComplexityStreams('octave'),
-  note: buildComplexityStreams('note'),
-  bri: buildComplexityStreams('bri'),
-  hrd: buildComplexityStreams('hrd'),
-  tex: buildComplexityStreams('tex'),
-}))
 // ====== PianoRoll 用の固定レンジ ======
-// octave が 0..7 なら 8オクターブ = 96段
-const OCTAVE_MIN = 0
-const OCTAVE_MAX = 7
-const OCTAVE_COUNT = (OCTAVE_MAX - OCTAVE_MIN + 1)
-
-const minPitch = computed(() => OCTAVE_MIN * 12)
-const maxPitch = computed(() => (OCTAVE_MIN + OCTAVE_COUNT) * 12 - 1) // 95
+// strict(abs MIDI) を前提に 0..127 を表示レンジにする
+const minPitch = computed(() => 0)
+const maxPitch = computed(() => 127)
 
 defineExpose({
   openParams,

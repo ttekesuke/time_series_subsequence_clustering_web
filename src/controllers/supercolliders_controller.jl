@@ -25,8 +25,9 @@ function build_score_events_scd(
   outfile::String
 )::String
 
-  # time_series: [step][stream] = [oct, notePCS(Array or scalar), vol, bri, hrd, tex]
-  # Rails版の構造をそのまま踏襲する
+  # time_series supports:
+  # - legacy: [oct, notePCS(Array or scalar), vol, bri, hrd, tex, sustain?]
+  # - strict: [abs_notes(Int[]), vol, bri, hrd, tex, chord_range, density, sustain]
 
   io = IOBuffer()
 
@@ -42,14 +43,20 @@ function build_score_events_scd(
   println(io, "  [0.0, ['/d_recv',")
   println(io, "    SynthDef(\\polySynth, {")
   println(io, "        |out=0, freq=440, dur=0.125, amp=0.5,")
-  println(io, "         brightness=0.5, hardness=0.5, texture=0.0, resonance=0.2|")
+  println(io, "         brightness=0.5, hardness=0.5, texture=0.0, sustain=0.0, resonance=0.2|")
   println(io, "")
   println(io, "        var sig, env, core, sub;")
-  println(io, "        var attackTime, releaseTime, cutoff, rq, feedback, pulseWidth, noiseSig;")
+  println(io, "        var attackTime, holdTime, releaseTime, cutoff, rq, feedback, pulseWidth, noiseSig, legato, fullLegato;")
   println(io, "")
-  println(io, "        attackTime = (1.0 - hardness).linexp(0.0, 1.0, 0.001, 0.2).min(dur * 0.5);")
-  println(io, "        releaseTime = dur * (1.0 + (resonance * 2.0));")
-  println(io, "        env = EnvGen.ar(Env.perc(attackTime, releaseTime, 1.0, -4), doneAction: 2);")
+  println(io, "        legato = sustain.clip(0.0, 1.0);")
+  println(io, "        fullLegato = (legato >= 0.999);")
+  println(io, "        attackTime = (1.0 - hardness).linexp(0.0, 1.0, 0.001, 0.16);")
+  println(io, "        attackTime = attackTime.min((dur * (0.35 - (legato * 0.15))).max(0.002));")
+  println(io, "        attackTime = (attackTime * (1 - fullLegato)) + (((dur * 0.20).clip(0.01, 0.06)) * fullLegato);")
+  println(io, "        holdTime = (dur - attackTime).max(0.002);")
+  println(io, "        releaseTime = (dur * (0.45 + (legato * 1.10) + (resonance * 0.35))).max(0.01);")
+  println(io, "        releaseTime = (releaseTime * (1 - fullLegato)) + (((dur * 0.08).max(0.02)) * fullLegato);")
+  println(io, "        env = EnvGen.ar(Env.linen(attackTime, holdTime, releaseTime, 1.0, -4), doneAction: 2);")
   println(io, "")
   println(io, "        feedback = texture.linlin(0.0, 1.0, 0.0, 2.5);")
   println(io, "        core = SinOscFB.ar(freq, feedback);")
@@ -84,46 +91,141 @@ function build_score_events_scd(
   # SCに直接渡すので Julia側で計算する
   midi_to_freq(m) = 440.0 * 2.0^((m - 69.0) / 12.0)
 
-  for step_streams in time_series
-    step_streams === nothing && continue
+  function _parse_stream_legacy_or_strict(s)::Tuple{Vector{Int},Float64,Float64,Float64,Float64,Float64}
+    s isa AbstractVector || return (Int[], 0.0, 0.0, 0.0, 0.0, 0.0)
+    isempty(s) && return (Int[], 0.0, 0.0, 0.0, 0.0, 0.0)
 
-    for s in step_streams
-      s === nothing && continue
-
-      oct = Int(s[1])  # 1-basedに見える場合は調整
-      note_val = s[2]
-
-      pcs = if note_val isa AbstractVector
-        [Int(x) % 12 for x in note_val if x !== nothing]
-      else
-        [Int(note_val) % 12]
+    # strict: [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain]
+    if s[1] isa AbstractVector
+      abs_notes = Int[]
+      for v in s[1]
+        v === nothing && continue
+        push!(abs_notes, clamp(_parse_int(v), 0, 127))
       end
-      isempty(pcs) && (pcs = [0])
+      sort!(abs_notes)
+      unique!(abs_notes)
 
-      vol = Float64(s[3])
-      bri = Float64(s[4])
-      hrd = Float64(s[5])
-      tex = Float64(s[6])
+      vol = clamp(length(s) >= 2 ? _parse_float(s[2]) : 0.0, 0.0, 1.0)
+      bri = clamp(length(s) >= 3 ? _parse_float(s[3]) : 0.0, 0.0, 1.0)
+      hrd = clamp(length(s) >= 4 ? _parse_float(s[4]) : 0.0, 0.0, 1.0)
+      tex = clamp(length(s) >= 5 ? _parse_float(s[5]) : 0.0, 0.0, 1.0)
+      sus = clamp(length(s) >= 8 ? _parse_float(s[8]) : 0.0, 0.0, 1.0)
+      sus = clamp(round(sus * 4.0) / 4.0, 0.0, 1.0)
+      return (abs_notes, vol, bri, hrd, tex, sus)
+    end
 
-      base_c_midi = (oct + 1) * 12
-      amp_each = (vol / length(pcs)) * 0.5
+    # legacy: [oct, pcs, vol, bri, hrd, tex, sustain?]
+    oct = _parse_int(length(s) >= 1 ? s[1] : 4)
+    note_val = length(s) >= 2 ? s[2] : 0
 
-      if vol > 0.01
-        for pc in pcs
-          midi_note = base_c_midi + pc
-          freq = midi_to_freq(midi_note)
+    pcs = if note_val isa AbstractVector
+      [_parse_int(x) % 12 for x in note_val if x !== nothing]
+    else
+      [_parse_int(note_val) % 12]
+    end
+    isempty(pcs) && (pcs = [0])
 
-          println(io, @sprintf(
-            "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\hardness, %.6f, \\texture, %.6f, \\resonance, 0.2]],",
-            current_time, node_id, freq, step_duration, amp_each, bri, hrd, tex
-          ))
+    base_c_midi = (oct + 1) * 12
+    abs_notes = Int[clamp(base_c_midi + pc, 0, 127) for pc in pcs]
+    sort!(abs_notes)
+    unique!(abs_notes)
 
-          node_id += 1
+    vol = clamp(length(s) >= 3 ? _parse_float(s[3]) : 0.0, 0.0, 1.0)
+    bri = clamp(length(s) >= 4 ? _parse_float(s[4]) : 0.0, 0.0, 1.0)
+    hrd = clamp(length(s) >= 5 ? _parse_float(s[5]) : 0.0, 0.0, 1.0)
+    tex = clamp(length(s) >= 6 ? _parse_float(s[6]) : 0.0, 0.0, 1.0)
+    sus = clamp(length(s) >= 7 ? _parse_float(s[7]) : 0.0, 0.0, 1.0)
+    sus = clamp(round(sus * 4.0) / 4.0, 0.0, 1.0)
+
+    return (abs_notes, vol, bri, hrd, tex, sus)
+  end
+
+  Event = NamedTuple{
+    (:time, :freq, :dur, :amp, :bri, :hrd, :tex, :sus),
+    Tuple{Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64}
+  }
+  events = Event[]
+
+  # key: (stream_index, midi_note) => index in `events`
+  active_ties = Dict{Tuple{Int,Int},Int}()
+
+  for step_streams in (time_series isa AbstractVector ? time_series : Any[])
+    next_active_ties = Dict{Tuple{Int,Int},Int}()
+
+    if step_streams isa AbstractVector
+      for (stream_idx, s) in enumerate(step_streams)
+        s === nothing && continue
+
+        abs_notes, vol, bri, hrd, tex, sustain = _parse_stream_legacy_or_strict(s)
+        (vol > 0.01 && !isempty(abs_notes)) || continue
+
+        # sustain=1.0: tie mode (no retrigger on same stream+pitch between steps)
+        tie_mode = sustain >= 0.999
+        amp_each = (vol / length(abs_notes)) * (0.5 / (1.0 + (0.35 * sustain)))
+
+        if tie_mode
+          for midi_note in abs_notes
+            key = (stream_idx, midi_note)
+
+            if haskey(active_ties, key)
+              ev_idx = active_ties[key]
+              ev = events[ev_idx]
+              events[ev_idx] = (
+                time = ev.time,
+                freq = ev.freq,
+                dur  = ev.dur + step_duration,
+                amp  = ev.amp,
+                bri  = ev.bri,
+                hrd  = ev.hrd,
+                tex  = ev.tex,
+                sus  = 1.0
+              )
+              next_active_ties[key] = ev_idx
+            else
+              freq = midi_to_freq(midi_note)
+              push!(events, (
+                time = current_time,
+                freq = freq,
+                dur  = step_duration,
+                amp  = amp_each,
+                bri  = bri,
+                hrd  = hrd,
+                tex  = tex,
+                sus  = 1.0
+              ))
+              next_active_ties[key] = length(events)
+            end
+          end
+        else
+          # sustain<1.0: normal per-step note events
+          note_dur = step_duration * (0.98 + (1.22 * sustain))
+          for midi_note in abs_notes
+            freq = midi_to_freq(midi_note)
+            push!(events, (
+              time = current_time,
+              freq = freq,
+              dur  = note_dur,
+              amp  = amp_each,
+              bri  = bri,
+              hrd  = hrd,
+              tex  = tex,
+              sus  = sustain
+            ))
+          end
         end
       end
     end
 
+    active_ties = next_active_ties
     current_time += step_duration
+  end
+
+  for ev in events
+    println(io, @sprintf(
+      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\hardness, %.6f, \\texture, %.6f, \\sustain, %.6f, \\resonance, 0.2]],",
+      ev.time, node_id, ev.freq, ev.dur, ev.amp, ev.bri, ev.hrd, ev.tex, ev.sus
+    ))
+    node_id += 1
   end
 
   total_duration = current_time
