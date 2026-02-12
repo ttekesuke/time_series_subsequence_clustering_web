@@ -725,14 +725,22 @@ const downloadResultWav = () => {
 }
 
 const downloadParamsJson = () => {
-  if (uploadedParamsJsonFile.value) {
-    triggerDownload(uploadedParamsJsonFile.value, 'params.json')
+  // Always prefer the latest values currently in the dialog UI.
+  const fresh = dialogRef.value?.buildParamsPayload?.()
+  if (fresh) {
+    latestParamsPayload.value = fresh
+  }
+
+  const payload = latestParamsPayload.value
+  if (!payload) {
+    if (uploadedParamsJsonFile.value) {
+      triggerDownload(uploadedParamsJsonFile.value, 'params.json')
+    }
     return
   }
-  if (latestParamsPayload.value) {
-    const blob = new Blob([JSON.stringify(latestParamsPayload.value, null, 2)], { type: 'application/json' })
-    triggerDownload(blob, 'params.json')
-  }
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  triggerDownload(blob, 'params.json')
 }
 
 const normalizeParamArray = (val: any): number[] => {
