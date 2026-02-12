@@ -55,7 +55,7 @@
           @input="onStepsInput"
           @blur="onStepsBlur"
           min="1"
-          max="200"
+          max="400"
           class="step-input mr-1"
         >
       </div>
