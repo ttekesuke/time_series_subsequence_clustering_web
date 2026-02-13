@@ -9,26 +9,29 @@
           :minValue="minPitch"
           :maxValue="maxPitch"
           :valueResolution="1"
-          title="Piano Roll(octaves, notes, volumes)"
-          @scroll="onScroll"
-        />
-      </div>
-
-      <div class="quadrant top-right">
-        <StreamsRoll
-          ref="briRollRef"
-          :streamValues="generate.brightness"
-          :stepWidth="computedStepWidth"
-          :minValue="0"
-          :maxValue="1"
-          :valueResolution="0.01"
-          title="BRI"
+          :highlightIndices="pianoHighlightedIndices"
+          :highlightWindowSize="pianoHighlightedWindowSize"
+          title="Piano Roll"
           @scroll="onScroll"
         />
       </div>
 
       <div class="quadrant bottom-left">
         <div class="in-quadrant">
+          <div v-if="analysedViewMode === 'Complexity'" class="row-in-quadrant">
+            <StreamsRoll
+              ref="dissonanceRollRef"
+              :streamValues="dissonanceTargetStreams"
+              :streamLabels="singleValueStreamLabel"
+              :stepWidth="computedStepWidth"
+              :minValue="0"
+              :maxValue="1"
+              :valueResolution="0.01"
+              title="DISSONANCE Params"
+              @scroll="onScroll"
+            />
+          </div>
+
           <div class="row-in-quadrant">
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
@@ -39,18 +42,19 @@
               title="VOL Clusters"
               :highlightedIndices="leftHighlightedIndices"
               :highlightedWindowSize="leftHighlightedWindowSize"
-              @hover-cluster="onHoverClusterLeft"
+              @hover-cluster="onHoverClusterLeftAndPiano"
               @scroll="onScroll"
             />
             <StreamsRoll
               v-else
               ref="velClustersRef"
               :streamValues="complexityStreams.vol"
+              :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              title="VOL (global/conc/spread/center)"
+              title="VOL Params"
               @scroll="onScroll"
             />
           </div>
@@ -65,18 +69,19 @@
               title="CHORD_RANGE Clusters"
               :highlightedIndices="leftHighlightedIndices"
               :highlightedWindowSize="leftHighlightedWindowSize"
-              @hover-cluster="onHoverClusterLeft"
+              @hover-cluster="onHoverClusterLeftAndPiano"
               @scroll="onScroll"
             />
             <StreamsRoll
               v-else
               ref="chordRangeClustersRef"
               :streamValues="complexityStreams.chordRange"
+              :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              title="CHORD_RANGE (global/conc/spread/center)"
+              title="CHORD_RANGE Params"
               @scroll="onScroll"
             />
           </div>
@@ -91,18 +96,19 @@
               title="AREA Clusters"
               :highlightedIndices="leftHighlightedIndices"
               :highlightedWindowSize="leftHighlightedWindowSize"
-              @hover-cluster="onHoverClusterLeft"
+              @hover-cluster="onHoverClusterLeftAndPiano"
               @scroll="onScroll"
             />
             <StreamsRoll
               v-else
               ref="areaClustersRef"
               :streamValues="complexityStreams.area"
+              :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              title="AREA (global/conc/spread/center)"
+              title="AREA Params"
               @scroll="onScroll"
             />
           </div>
@@ -117,18 +123,19 @@
               title="DENSITY Clusters"
               :highlightedIndices="leftHighlightedIndices"
               :highlightedWindowSize="leftHighlightedWindowSize"
-              @hover-cluster="onHoverClusterLeft"
+              @hover-cluster="onHoverClusterLeftAndPiano"
               @scroll="onScroll"
             />
             <StreamsRoll
               v-else
               ref="densityClustersRef"
               :streamValues="complexityStreams.density"
+              :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              title="DENSITY (global/conc/spread/center)"
+              title="DENSITY Params"
               @scroll="onScroll"
             />
           </div>
@@ -150,19 +157,16 @@
               v-else
               ref="sustainClustersRef"
               :streamValues="complexityStreams.sustain"
+              :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.25"
-              title="SUSTAIN (global/conc/spread/center)"
+              title="SUSTAIN Params"
               @scroll="onScroll"
             />
           </div>
-        </div>
-      </div>
 
-      <div class="quadrant bottom-right">
-        <div class="in-quadrant">
           <div class="row-in-quadrant">
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
@@ -180,11 +184,12 @@
               v-else
               ref="briClustersRef"
               :streamValues="complexityStreams.bri"
+              :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              title="BRI (global/conc/spread/center)"
+              title="BRI Params"
               @scroll="onScroll"
             />
           </div>
@@ -206,11 +211,12 @@
               v-else
               ref="hrdClustersRef"
               :streamValues="complexityStreams.hrd"
+              :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              title="HRD (global/conc/spread/center)"
+              title="HRD Params"
               @scroll="onScroll"
             />
           </div>
@@ -232,16 +238,21 @@
               v-else
               ref="texClustersRef"
               :streamValues="complexityStreams.tex"
+              :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              title="TEX (global/conc/spread/center)"
+              title="TEX Params"
               @scroll="onScroll"
             />
           </div>
         </div>
       </div>
+    </div>
+
+    <div class="bottom-scrollbar" ref="bottomScrollRef" @scroll="onScroll">
+      <div class="bottom-scrollbar-track" :style="{ width: `${globalScrollTrackWidth}px` }"></div>
     </div>
 
     <MusicGenerateDialog
@@ -258,8 +269,8 @@
 <style scoped>
 .viz-container {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  grid-template-columns: 1fr;
+  grid-template-rows: 0.7fr 1.3fr;
   width: 100%;
   flex: 1 1 auto;
   min-height: 0;
@@ -272,7 +283,7 @@
   height: 100%;
   min-height: 0;
 }
-.top-left, .top-right, .bottom-left, .bottom-right {
+.top-left, .bottom-left {
   padding: 0;
 }
 .in-quadrant {
@@ -293,6 +304,18 @@
   width: 100%;
   min-height: 0;
 }
+.bottom-scrollbar {
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+  min-height: 14px;
+  max-height: 14px;
+  border-top: 1px solid #ccc;
+  background: #fff;
+}
+.bottom-scrollbar-track {
+  height: 1px;
+}
 </style>
 
 <script setup lang="ts">
@@ -306,9 +329,7 @@ import { defineExpose } from 'vue'
 
 // ===== refs =====
 const pianoRollRef = ref<any>(null)
-const briRollRef = ref<any>(null)
-const hrdRollRef = ref<any>(null)
-const texRollRef = ref<any>(null)
+const dissonanceRollRef = ref<any>(null)
 const velClustersRef = ref<any>(null)
 const chordRangeClustersRef = ref<any>(null)
 const areaClustersRef = ref<any>(null)
@@ -317,6 +338,7 @@ const sustainClustersRef = ref<any>(null)
 const briClustersRef = ref<any>(null)
 const hrdClustersRef = ref<any>(null)
 const texClustersRef = ref<any>(null)
+const bottomScrollRef = ref<HTMLElement | null>(null)
 const dialogRef = ref<any>(null)
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -341,6 +363,8 @@ let resizeObserver: ResizeObserver | null = null
 
 const progress = ref({ percent: 0, status: 'idle' })
 const setDataDialog = ref(false)
+const complexityParamStreamLabels = ['global', 'conc', 'spread', 'center']
+const singleValueStreamLabel = ['value']
 
 const openParams = () => { setDataDialog.value = true }
 const setAnalysedViewMode = (mode: 'Cluster' | 'Complexity') => { analysedViewMode.value = mode }
@@ -370,9 +394,7 @@ watch(soundFilePath, (url) => {
 // ===== scroll sync =====
 const { syncScroll } = useScrollSync([
   pianoRollRef,
-  briRollRef,
-  hrdRollRef,
-  texRollRef,
+  dissonanceRollRef,
   velClustersRef,
   chordRangeClustersRef,
   areaClustersRef,
@@ -380,7 +402,8 @@ const { syncScroll } = useScrollSync([
   sustainClustersRef,
   briClustersRef,
   hrdClustersRef,
-  texClustersRef
+  texClustersRef,
+  bottomScrollRef
 ])
 const onScroll = (e: Event) => syncScroll(e)
 
@@ -389,7 +412,7 @@ const stepCount = ref(0)
 const maxSteps = computed(() => (stepCount.value > 0 ? stepCount.value : 100))
 
 const computedStepWidth = computed(() => {
-  const widthPerStep = containerWidth.value / 2 / maxSteps.value
+  const widthPerStep = containerWidth.value / maxSteps.value
   return Math.max(4, widthPerStep)
 })
 
@@ -785,6 +808,35 @@ const complexityStreams = computed(() => ({
   sustain: buildComplexityStreams('sustain'),
 }))
 
+const dissonanceTargetStreams = computed(() => {
+  const payload = latestParamsPayload.value
+  if (!payload || typeof payload !== 'object') return []
+  const gp = (payload as any).generate_polyphonic ?? payload
+  const ctx = gp?.initial_context
+  const padLen = Array.isArray(ctx) ? ctx.length : 0
+  const arr = normalizeParamArray(gp?.dissonance_target)
+  const padded = Array(padLen).fill(null).concat(arr)
+  return [padded]
+})
+
+const maxSeriesLength = (series: unknown[][]) =>
+  Math.max(0, ...series.map(stream => (Array.isArray(stream) ? stream.length : 0)))
+
+const complexityMaxSteps = computed(() => {
+  const byDimension = [
+    ...(Object.values(complexityStreams.value) as unknown[][][]),
+    dissonanceTargetStreams.value as unknown[][]
+  ]
+  return Math.max(0, ...byDimension.map(maxSeriesLength))
+})
+
+const globalScrollTrackWidth = computed(() => {
+  const activeSteps = analysedViewMode.value === 'Cluster'
+    ? Math.max(1, stepCount.value)
+    : Math.max(1, stepCount.value, complexityMaxSteps.value)
+  return Math.max(containerWidth.value, activeSteps * computedStepWidth.value)
+})
+
 // ===== pitch streams (chord) =====
 const chordPitchStreams = computed(() => {
   const ts = generate.value.rawTimeSeries as any[]
@@ -897,6 +949,8 @@ const texClustersForView = computed<ClusterData[]>(() => {
 // ===== highlight =====
 const leftHighlightedIndices = ref<number[]>([])
 const leftHighlightedWindowSize = ref(0)
+const pianoHighlightedIndices = ref<number[]>([])
+const pianoHighlightedWindowSize = ref(0)
 const rightHighlightedIndices = ref<number[]>([])
 const rightHighlightedWindowSize = ref(0)
 
@@ -907,6 +961,19 @@ const onHoverClusterLeft = (payload: { indices: number[]; windowSize: number } |
   } else {
     leftHighlightedIndices.value = payload.indices
     leftHighlightedWindowSize.value = payload.windowSize
+  }
+}
+const onHoverClusterLeftAndPiano = (payload: { indices: number[]; windowSize: number } | null) => {
+  if (!payload) {
+    leftHighlightedIndices.value = []
+    leftHighlightedWindowSize.value = 0
+    pianoHighlightedIndices.value = []
+    pianoHighlightedWindowSize.value = 0
+  } else {
+    leftHighlightedIndices.value = payload.indices
+    leftHighlightedWindowSize.value = payload.windowSize
+    pianoHighlightedIndices.value = payload.indices
+    pianoHighlightedWindowSize.value = payload.windowSize
   }
 }
 const onHoverClusterRight = (payload: { indices: number[]; windowSize: number } | null) => {

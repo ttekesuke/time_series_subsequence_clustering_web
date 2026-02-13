@@ -1,5 +1,6 @@
 <template>
   <div class="roll-container" ref="container">
+    <span class="title-label" :title="props.title">{{ props.title }}</span>
     <div
       class="scroll-wrapper"
       ref="scrollWrapper"
@@ -19,7 +20,7 @@
       class="tooltip"
       :style="{ left: hoverInfo.x + 'px', top: hoverInfo.y + 'px' }"
     >
-      <div>Stream: S{{ hoverInfo.streamIndex + 1 }}</div>
+      <div>Stream: {{ getStreamLabel(hoverInfo.streamIndex) }}</div>
       <div>Step: {{ hoverInfo.step }}</div>
       <div>Value: {{ hoverInfo.value }}</div>
     </div>
@@ -39,8 +40,9 @@ const props = defineProps({
   stepWidth: { type: Number, default: 10 },
   highlightIndices: { type: Array as () => number[], default: () => [] },
   highlightWindowSize: { type: Number, default: 0 },
+  streamLabels: { type: Array as () => string[], default: () => [] },
 
-  // Optional background title (watermark-like). May be omitted.
+  // Left label text
   title: { type: String, default: '' },
 
   // ここが「小数のステップ（0.1など）」に相当
@@ -69,6 +71,10 @@ const hoverInfo = ref<null | { x: number; y: number; step: number; value: number
 const cursorStyle = ref<string>('default')
 
 const onScroll = (e: Event) => emit('scroll', e)
+const getStreamLabel = (streamIndex: number) => {
+  const label = props.streamLabels?.[streamIndex]
+  return (typeof label === 'string' && label.length > 0) ? label : `S${streamIndex + 1}`
+}
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
 
@@ -151,19 +157,6 @@ const draw = () => {
     ctx.moveTo(x, 0)
     ctx.lineTo(x, canvasHeight)
     ctx.stroke()
-  }
-
-  // 背景テキスト（キャンバス左端から開始。矩形の背面に描画）
-  if (props.title) {
-    ctx.save()
-    const text = String(props.title)
-    const fontSize = 30
-    ctx.font = `${fontSize}px sans-serif`
-    ctx.textAlign = 'left'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'
-    ctx.fillText(text, 0, canvasHeight / 2)
-    ctx.restore()
   }
 
   // 矩形描画（val が number[] の場合は複数描画）
@@ -320,10 +313,36 @@ defineExpose({ scrollWrapper, redraw: draw })
   height: 100%;
 }
 
+.title-label {
+  width: 80px;
+  min-width: 80px;
+  max-width: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 4px;
+  border-right: 1px solid #eee;
+  color: #666;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+  user-select: none;
+}
+
 .scroll-wrapper {
   flex-grow: 1;
   overflow-x: auto;
   overflow-y: auto;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scroll-wrapper::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .tooltip {

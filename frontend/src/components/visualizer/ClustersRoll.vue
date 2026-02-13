@@ -1,13 +1,14 @@
 <template>
   <div class="roll-container">
+    <span class="title-label" :title="props.title">{{ props.title }}</span>
     <div class="scroll-wrapper" ref="scrollWrapper" @scroll="onScroll">
-      <canvas ref="canvas" :height="computedHeight"></canvas>
+      <canvas ref="canvas"></canvas>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 
 type ClusterData = {
   window_size: number;
@@ -17,6 +18,7 @@ type ClusterData = {
 
 const props = defineProps({
   clustersData: { type: Array as () => ClusterData[], required: true },
+  title: { type: String, default: '' },
   stepWidth: { type: Number, default: 10 },
   rowHeight: { type: Number, default: 12 },
   maxSteps: { type: Number, default: 100 }
@@ -27,6 +29,8 @@ const emit = defineEmits(['scroll', 'hover-cluster'])
 const scrollWrapper = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const computedHeight = ref(200)
+let resizeObserver: ResizeObserver | null = null
+let rafId: number | null = null
 // 現在のスクロール位置を保持 (ラベルの追従用)
 const scrollLeft = ref(0)
 
@@ -126,19 +130,20 @@ const calculateLayout = () => {
 }
 
 const draw = () => {
-  if (!canvas.value) return
+  if (!canvas.value || !scrollWrapper.value) return
   const ctx = canvas.value.getContext('2d')
   if (!ctx) return
 
   // 幅はコンテナ幅より大きくないとスクロールしないので、データ量に合わせる
   const contentWidth = props.maxSteps * props.stepWidth
-  // 最低でもラッパーと同じ幅にする
-  const wrapperWidth = scrollWrapper.value ? scrollWrapper.value.clientWidth : 1000
-  const width = Math.max(wrapperWidth, contentWidth)
+  const wrapperWidth = scrollWrapper.value.clientWidth
+  const width = Math.max(1, wrapperWidth, contentWidth)
+  const height = Math.max(1, computedHeight.value)
 
   canvas.value.width = width
+  canvas.value.height = height
 
-  ctx.clearRect(0, 0, width, computedHeight.value)
+  ctx.clearRect(0, 0, width, height)
 
   // 1. バーの描画
   ctx.fillStyle = 'rgba(100, 181, 246, 0.3)' // 薄い青
@@ -183,7 +188,7 @@ const onScroll = (e: Event) => {
   scrollLeft.value = target.scrollLeft
   emit('scroll', e)
   // スクロール時に再描画してラベル位置を更新(アニメーションフレームで同期)
-  requestAnimationFrame(draw)
+  scheduleDraw()
 }
 
 const onMouseMove = (e: MouseEvent) => {
@@ -206,20 +211,43 @@ const onMouseMove = (e: MouseEvent) => {
   }
 }
 
-watch(() => [props.clustersData, props.stepWidth], () => {
+const scheduleDraw = () => {
+  if (rafId != null) cancelAnimationFrame(rafId)
+  rafId = requestAnimationFrame(() => {
+    rafId = null
+    draw()
+  })
+}
+
+watch(() => [props.clustersData, props.stepWidth, props.rowHeight, props.maxSteps], () => {
   calculateLayout()
-  nextTick(draw)
-}, { deep: true })
+  nextTick(scheduleDraw)
+}, { deep: true, immediate: true })
+
+const onMouseLeave = () => emit('hover-cluster', null)
 
 onMounted(() => {
-  if(canvas.value) {
+  if (canvas.value) {
     canvas.value.addEventListener('mousemove', onMouseMove)
-    canvas.value.addEventListener('mouseleave', () => emit('hover-cluster', null))
+    canvas.value.addEventListener('mouseleave', onMouseLeave)
   }
-  setTimeout(() => {
-      calculateLayout()
-      draw()
-  }, 100)
+  nextTick(() => {
+    calculateLayout()
+    scheduleDraw()
+    if (scrollWrapper.value) {
+      resizeObserver = new ResizeObserver(() => scheduleDraw())
+      resizeObserver.observe(scrollWrapper.value)
+    }
+  })
+})
+
+onUnmounted(() => {
+  if (canvas.value) {
+    canvas.value.removeEventListener('mousemove', onMouseMove)
+    canvas.value.removeEventListener('mouseleave', onMouseLeave)
+  }
+  if (resizeObserver) resizeObserver.disconnect()
+  if (rafId != null) cancelAnimationFrame(rafId)
 })
 
 defineExpose({ scrollWrapper })
@@ -233,9 +261,38 @@ defineExpose({ scrollWrapper })
   height: 100%;
   position: relative;
 }
+
+.title-label {
+  width: 80px;
+  min-width: 80px;
+  max-width: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 4px;
+  border-right: 1px solid #eee;
+  color: #666;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+  user-select: none;
+}
+
 .scroll-wrapper {
   flex-grow: 1;
+  min-width: 0;
+  min-height: 0;
   overflow-x: auto;
   overflow-y: auto;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scroll-wrapper::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 </style>
