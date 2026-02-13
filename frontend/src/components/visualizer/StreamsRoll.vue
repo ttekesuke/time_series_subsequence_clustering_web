@@ -40,6 +40,7 @@ const props = defineProps({
   stepWidth: { type: Number, default: 10 },
   highlightIndices: { type: Array as () => number[], default: () => [] },
   highlightWindowSize: { type: Number, default: 0 },
+  playheadStep: { type: Number, default: -1 },
   streamLabels: { type: Array as () => string[], default: () => [] },
 
   // Left label text
@@ -229,6 +230,19 @@ const draw = () => {
       ctx.fillRect(x, 0, w, canvasHeight)
     })
   }
+
+  // Playback step cursor (discrete per-step)
+  if (props.playheadStep >= 0) {
+    const x = props.playheadStep * props.stepWidth
+    ctx.save()
+    ctx.beginPath()
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, canvasHeight)
+    ctx.strokeStyle = 'rgba(20, 20, 20, 0.9)'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.restore()
+  }
 }
 
 /** マウス移動 → ヒットテスト + ツールチップ位置 */
@@ -287,6 +301,7 @@ watch(
     props.streamValues,
     props.streamVelocities,
     props.highlightIndices,
+    props.playheadStep,
     props.stepWidth,
     props.minValue,
     props.maxValue,

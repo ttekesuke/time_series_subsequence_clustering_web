@@ -76,6 +76,16 @@
               <v-icon v-else>mdi-play</v-icon>
               <span>{{ isNowPlaying ? 'STOP' : 'PLAY' }}</span>
             </v-btn>
+            <v-text-field
+              v-model.number="playbackBpm"
+              label="BPM"
+              type="number"
+              min="1"
+              density="compact"
+              hide-details
+              variant="outlined"
+              class="ml-2 bpm-input"
+            />
             <v-select
               label="AnalysedViewMode"
               :items="analysedViewModes"
@@ -126,6 +136,7 @@ const selectedMode = ref('ClusteringAnalyse')
 const analysedViewModes = ref(['Cluster', 'Complexity'])
 const analysedViewMode = ref('Complexity')
 const transferDialog = ref(false)
+const playbackBpm = ref<number>(240)
 
 const runOnGithubActions = computed(() => {
   const raw = (import.meta as any).env?.VITE_RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS ?? 'true'
@@ -171,10 +182,11 @@ const canPlay = computed(() => {
   const val = inst?.soundFilePath
   return !!unwrapMaybeRef<string>(val)
 })
+const headerNowPlaying = ref(false)
 const isNowPlaying = computed(() => {
+  if (selectedMode.value === 'MusicGenerate') return headerNowPlaying.value
   const inst = activeFeatureRef.value as any
-  const val = inst?.nowPlaying
-  return !!unwrapMaybeRef<boolean>(val)
+  return !!unwrapMaybeRef<boolean>(inst?.nowPlaying)
 })
 
 const selectedComponent = computed(() => {
@@ -186,6 +198,7 @@ const selectedComponent = computed(() => {
 
 
 const audio = ref<HTMLAudioElement | null>(null)
+const currentAudioSrc = ref('')
 
 const progress = ref({
   percent: 0,
@@ -225,12 +238,49 @@ const switchStartOrStopSound = () =>{
 }
 
 const stopPlayingSound = () => {
-  (activeFeatureRef.value as any)?.stopPlayingSound?.()
-
+  const inst = activeFeatureRef.value as any
+  try { audio.value?.pause() } catch {}
+  if (audio.value) audio.value.currentTime = 0
+  headerNowPlaying.value = false
+  inst?.stopPlaybackVisual?.()
 }
 const startPlayingSound = () => {
-  (activeFeatureRef.value as any)?.startPlayingSound?.()
+  const inst = activeFeatureRef.value as any
+  const source = unwrapMaybeRef<string>(inst?.soundFilePath)
+  if (!source) return
 
+  const bpm = Number(playbackBpm.value)
+  const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 240
+
+  if (!audio.value || currentAudioSrc.value !== source) {
+    try { audio.value?.pause() } catch {}
+    const a = new Audio(source)
+    a.preload = 'auto'
+    a.addEventListener('ended', () => {
+      headerNowPlaying.value = false
+      inst?.stopPlaybackVisual?.()
+    })
+    a.addEventListener('error', () => {
+      headerNowPlaying.value = false
+      inst?.stopPlaybackVisual?.()
+    })
+    audio.value = a
+    currentAudioSrc.value = source
+  }
+
+  if (!audio.value) return
+
+  audio.value.currentTime = 0
+  headerNowPlaying.value = true
+  inst?.startPlaybackVisual?.(safeBpm)
+
+  const result = audio.value.play()
+  if (result && typeof (result as Promise<void>).catch === 'function') {
+    ;(result as Promise<void>).catch(() => {
+      headerNowPlaying.value = false
+      inst?.stopPlaybackVisual?.()
+    })
+  }
 }
 
 const renderPolyphonicAudio = (timeSeries) => {
@@ -300,6 +350,26 @@ watch(activeFeatureRef, () => {
   inst?.setAnalysedViewMode?.(analysedViewMode.value)
 })
 
+watch(selectedMode, (mode) => {
+  if (mode === 'MusicGenerate') return
+  try { audio.value?.pause() } catch {}
+  if (audio.value) audio.value.currentTime = 0
+  headerNowPlaying.value = false
+})
+
+watch([activeFeatureRef, selectedMode], () => {
+  if (selectedMode.value !== 'MusicGenerate') return
+  const inst = activeFeatureRef.value as any
+  const source = unwrapMaybeRef<string>(inst?.soundFilePath) || ''
+  if (source !== currentAudioSrc.value) {
+    try { audio.value?.pause() } catch {}
+    if (audio.value) audio.value.currentTime = 0
+    audio.value = null
+    currentAudioSrc.value = source
+    headerNowPlaying.value = false
+  }
+})
+
 </script>
 
 <style scoped>
@@ -310,6 +380,9 @@ watch(activeFeatureRef, () => {
 }
 .header-row > .v-col {
   padding: 0;
+}
+.bpm-input {
+  width: 92px;
 }
   h3 + h3,
   h5 + h5 {

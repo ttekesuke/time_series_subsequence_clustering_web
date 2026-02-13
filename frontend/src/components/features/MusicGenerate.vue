@@ -11,6 +11,7 @@
           :valueResolution="1"
           :highlightIndices="pianoHighlightedIndices"
           :highlightWindowSize="pianoHighlightedWindowSize"
+          :playheadStep="playheadStepForRoll"
           title="Piano Roll"
           @scroll="onScroll"
         />
@@ -27,6 +28,7 @@
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
+              :playheadStep="playheadStepForRoll"
               title="DISSONANCE Params"
               @scroll="onScroll"
             />
@@ -54,6 +56,7 @@
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
+              :playheadStep="playheadStepForRoll"
               title="VOL Params"
               @scroll="onScroll"
             />
@@ -81,6 +84,7 @@
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
+              :playheadStep="playheadStepForRoll"
               title="CHORD_RANGE Params"
               @scroll="onScroll"
             />
@@ -108,6 +112,7 @@
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
+              :playheadStep="playheadStepForRoll"
               title="AREA Params"
               @scroll="onScroll"
             />
@@ -135,6 +140,7 @@
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
+              :playheadStep="playheadStepForRoll"
               title="DENSITY Params"
               @scroll="onScroll"
             />
@@ -162,6 +168,7 @@
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.25"
+              :playheadStep="playheadStepForRoll"
               title="SUSTAIN Params"
               @scroll="onScroll"
             />
@@ -189,6 +196,7 @@
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
+              :playheadStep="playheadStepForRoll"
               title="BRI Params"
               @scroll="onScroll"
             />
@@ -216,6 +224,7 @@
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
+              :playheadStep="playheadStepForRoll"
               title="HRD Params"
               @scroll="onScroll"
             />
@@ -243,6 +252,7 @@
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
+              :playheadStep="playheadStepForRoll"
               title="TEX Params"
               @scroll="onScroll"
             />
@@ -365,6 +375,56 @@ const progress = ref({ percent: 0, status: 'idle' })
 const setDataDialog = ref(false)
 const complexityParamStreamLabels = ['global', 'conc', 'spread', 'center']
 const singleValueStreamLabel = ['value']
+const playheadStep = ref(-1)
+let playheadTimerId: ReturnType<typeof setInterval> | null = null
+const playheadStepForRoll = computed(() => (nowPlaying.value ? playheadStep.value : -1))
+const currentPlaybackBpm = ref(240)
+
+const clearPlayheadTimer = () => {
+  if (playheadTimerId) {
+    clearInterval(playheadTimerId)
+    playheadTimerId = null
+  }
+}
+
+const stopPlayhead = () => {
+  clearPlayheadTimer()
+  playheadStep.value = -1
+}
+
+const startPlayhead = (bpm: number) => {
+  const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 240
+  const stepMs = Math.max(20, Math.round((60 * 1000) / safeBpm))
+  const totalSteps = Math.max(1, stepCount.value)
+
+  playheadStep.value = 0
+  clearPlayheadTimer()
+  playheadTimerId = setInterval(() => {
+    if (!nowPlaying.value) return
+    playheadStep.value = Math.min(playheadStep.value + 1, totalSteps - 1)
+  }, stepMs)
+}
+
+const startPlaybackVisual = (bpm = 240) => {
+  nowPlaying.value = true
+  startPlayhead(bpm)
+}
+
+const stopPlaybackVisual = () => {
+  nowPlaying.value = false
+  stopPlayhead()
+}
+
+const createAudioElement = (url: string) => {
+  const a = new Audio(url)
+  a.preload = 'auto'
+  a.addEventListener('ended', () => { nowPlaying.value = false })
+  a.addEventListener('error', () => {
+    nowPlaying.value = false
+    stopPlayhead()
+  })
+  return a
+}
 
 const openParams = () => { setDataDialog.value = true }
 const setAnalysedViewMode = (mode: 'Cluster' | 'Complexity') => { analysedViewMode.value = mode }
@@ -372,23 +432,59 @@ const stopPlayingSound = () => {
   nowPlaying.value = false
   audio.value?.pause()
   if (audio.value) audio.value.currentTime = 0
+  stopPlayhead()
 }
-const startPlayingSound = () => {
+const startPlayingSound = (bpm = 240) => {
+  const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 240
+  currentPlaybackBpm.value = safeBpm
+
+  const sourceUrl = soundFilePath.value
+  if (!sourceUrl) return
+
+  if (!audio.value || audio.value.src !== sourceUrl) {
+    audio.value = createAudioElement(sourceUrl)
+  }
   if (!audio.value) return
+
+  const a = audio.value
+  a.currentTime = 0
   nowPlaying.value = true
-  audio.value.play()
+  startPlayhead(currentPlaybackBpm.value)
+
+  const tryPlay = (target: HTMLAudioElement, allowRetry: boolean) => {
+    const playResult = target.play()
+    if (!playResult || typeof (playResult as Promise<void>).catch !== 'function') return
+    ;(playResult as Promise<void>).catch((err) => {
+      if (allowRetry) {
+        try { target.pause() } catch {}
+        const retried = createAudioElement(sourceUrl)
+        audio.value = retried
+        retried.currentTime = 0
+        tryPlay(retried, false)
+        return
+      }
+      console.error('Audio play failed', err)
+      nowPlaying.value = false
+      stopPlayhead()
+    })
+  }
+
+  tryPlay(a, true)
 }
+
+watch(nowPlaying, (playing) => {
+  if (!playing) stopPlayhead()
+})
 
 // Keep audio element in sync with the latest soundFilePath (generated or uploaded)
 watch(soundFilePath, (url) => {
   nowPlaying.value = false
+  stopPlayhead()
   try { audio.value?.pause() } catch {}
   audio.value = null
 
   if (!url) return
-  const a = new Audio(url)
-  a.addEventListener('ended', () => { nowPlaying.value = false })
-  audio.value = a
+  audio.value = createAudioElement(url)
 })
 
 // ===== scroll sync =====
@@ -440,6 +536,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (resizeObserver) resizeObserver.disconnect()
+  clearPlayheadTimer()
   if (uploadedWavObjectUrl) URL.revokeObjectURL(uploadedWavObjectUrl)
   if (generatedAudioObjectUrl) URL.revokeObjectURL(generatedAudioObjectUrl)
 })
@@ -995,6 +1092,8 @@ defineExpose({
   openParams,
   stopPlayingSound,
   startPlayingSound,
+  stopPlaybackVisual,
+  startPlaybackVisual,
   soundFilePath,
   nowPlaying,
   dispatchInfo,

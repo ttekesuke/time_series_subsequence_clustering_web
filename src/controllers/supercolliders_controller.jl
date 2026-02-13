@@ -39,10 +39,13 @@ function build_score_events_scd(
   println(io, ");")
   println(io, "")
 
+  mix_bus = 16
+  master_node_id = 900
+
   println(io, "a = Score([")
   println(io, "  [0.0, ['/d_recv',")
   println(io, "    SynthDef(\\polySynth, {")
-  println(io, "        |out=0, freq=440, dur=0.125, amp=0.5,")
+  println(io, @sprintf("        |outBus=%d, freq=440, dur=0.125, amp=0.18,", mix_bus))
   println(io, "         brightness=0.5, hardness=0.5, texture=0.0, sustain=0.0, resonance=0.2|")
   println(io, "")
   println(io, "        var sig, env, core, sub;")
@@ -76,12 +79,25 @@ function build_score_events_scd(
   println(io, "        sig = RLPF.ar(sig, cutoff, rq);")
   println(io, "        sig = BHiShelf.ar(sig, 3000, 1.0, (brightness - 0.5) * 12);")
   println(io, "")
+  println(io, "        sig = LeakDC.ar(sig);")
   println(io, "        sig = sig * env * amp;")
-  println(io, "        sig = sig.tanh;")
   println(io, "")
-  println(io, "        Out.ar(out, sig ! 2);")
+  println(io, "        Out.ar(outBus, sig ! 2);")
   println(io, "    }).asBytes;")
   println(io, "  ]],")
+  println(io, "")
+  println(io, "  [0.0, ['/d_recv',")
+  println(io, "    SynthDef(\\masterOut, {")
+  println(io, @sprintf("        |inBus=%d, out=0, masterGain=0.92|", mix_bus))
+  println(io, "        var sig;")
+  println(io, "        sig = In.ar(inBus, 2);")
+  println(io, "        sig = LeakDC.ar(sig);")
+  println(io, "        sig = CompanderD.ar(sig, thresh: 0.65, slopeBelow: 1.0, slopeAbove: 0.5, clampTime: 0.003, relaxTime: 0.10);")
+  println(io, "        sig = Limiter.ar(sig, 0.92, 0.005);")
+  println(io, "        Out.ar(out, sig * masterGain);")
+  println(io, "    }).asBytes;")
+  println(io, "  ]],")
+  println(io, @sprintf("  [0.0, ['/s_new', \\masterOut, %d, 1, 0, \\inBus, %d, \\out, 0, \\masterGain, 0.92]],", master_node_id, mix_bus))
   println(io, "")
 
   current_time = 0.0
@@ -144,13 +160,19 @@ function build_score_events_scd(
     (:time, :freq, :dur, :amp, :bri, :hrd, :tex, :sus),
     Tuple{Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64}
   }
+  StepVoice = NamedTuple{
+    (:stream_idx, :abs_notes, :vol, :bri, :hrd, :tex, :sustain),
+    Tuple{Int,Vector{Int},Float64,Float64,Float64,Float64,Float64}
+  }
   events = Event[]
+  base_voice_gain = 0.22
 
   # key: (stream_index, midi_note) => index in `events`
   active_ties = Dict{Tuple{Int,Int},Int}()
 
   for step_streams in (time_series isa AbstractVector ? time_series : Any[])
     next_active_ties = Dict{Tuple{Int,Int},Int}()
+    step_voices = StepVoice[]
 
     if step_streams isa AbstractVector
       for (stream_idx, s) in enumerate(step_streams)
@@ -158,14 +180,30 @@ function build_score_events_scd(
 
         abs_notes, vol, bri, hrd, tex, sustain = _parse_stream_legacy_or_strict(s)
         (vol > 0.01 && !isempty(abs_notes)) || continue
+        push!(step_voices, (
+          stream_idx = stream_idx,
+          abs_notes = abs_notes,
+          vol = vol,
+          bri = bri,
+          hrd = hrd,
+          tex = tex,
+          sustain = sustain
+        ))
+      end
 
-        # sustain=1.0: tie mode (no retrigger on same stream+pitch between steps)
-        tie_mode = sustain >= 0.999
-        amp_each = (vol / length(abs_notes)) * (0.5 / (1.0 + (0.35 * sustain)))
+      step_note_mass = sum(v.vol * length(v.abs_notes) for v in step_voices)
+      # Dense chords/streams get automatic attenuation to avoid clipping.
+      step_gain = step_note_mass > 0 ? (1.0 / sqrt(step_note_mass)) : 1.0
+      step_gain = clamp(step_gain, 0.20, 1.0)
+
+      for voice in step_voices
+        tie_mode = voice.sustain >= 0.999
+        legato_gain = 1.0 - (0.25 * voice.sustain)
+        amp_each = (voice.vol / length(voice.abs_notes)) * base_voice_gain * step_gain * legato_gain
 
         if tie_mode
-          for midi_note in abs_notes
-            key = (stream_idx, midi_note)
+          for midi_note in voice.abs_notes
+            key = (voice.stream_idx, midi_note)
 
             if haskey(active_ties, key)
               ev_idx = active_ties[key]
@@ -188,9 +226,9 @@ function build_score_events_scd(
                 freq = freq,
                 dur  = step_duration,
                 amp  = amp_each,
-                bri  = bri,
-                hrd  = hrd,
-                tex  = tex,
+                bri  = voice.bri,
+                hrd  = voice.hrd,
+                tex  = voice.tex,
                 sus  = 1.0
               ))
               next_active_ties[key] = length(events)
@@ -198,18 +236,18 @@ function build_score_events_scd(
           end
         else
           # sustain<1.0: normal per-step note events
-          note_dur = step_duration * (0.98 + (1.22 * sustain))
-          for midi_note in abs_notes
+          note_dur = step_duration * (0.98 + (1.22 * voice.sustain))
+          for midi_note in voice.abs_notes
             freq = midi_to_freq(midi_note)
             push!(events, (
               time = current_time,
               freq = freq,
               dur  = note_dur,
               amp  = amp_each,
-              bri  = bri,
-              hrd  = hrd,
-              tex  = tex,
-              sus  = sustain
+              bri  = voice.bri,
+              hrd  = voice.hrd,
+              tex  = voice.tex,
+              sus  = voice.sustain
             ))
           end
         end
@@ -222,8 +260,8 @@ function build_score_events_scd(
 
   for ev in events
     println(io, @sprintf(
-      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\hardness, %.6f, \\texture, %.6f, \\sustain, %.6f, \\resonance, 0.2]],",
-      ev.time, node_id, ev.freq, ev.dur, ev.amp, ev.bri, ev.hrd, ev.tex, ev.sus
+      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\hardness, %.6f, \\texture, %.6f, \\sustain, %.6f, \\resonance, 0.2, \\outBus, %d]],",
+      ev.time, node_id, ev.freq, ev.dur, ev.amp, ev.bri, ev.hrd, ev.tex, ev.sus, mix_bus
     ))
     node_id += 1
   end
