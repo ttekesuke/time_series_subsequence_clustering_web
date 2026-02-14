@@ -126,17 +126,19 @@ const onHoverCluster = (clusterInfo) => {
 
 // 最大ステップ数の計算
 const maxSteps = computed(() => {
-  if (!analyse.value.timeseries) return 100
-
-
-  return analyse.value.timeseries.length
+  const ts = Array.isArray(analyse.value.timeseries) ? analyse.value.timeseries : []
+  return Math.max(1, ts.length)
 })
 
 const minValue = computed(() => {
-  return Math.min(...analyse.value.timeseries)
+  const ts = Array.isArray(analyse.value.timeseries) ? analyse.value.timeseries : []
+  if (ts.length === 0) return 0
+  return Math.min(...ts)
 })
 const maxValue = computed(() => {
-  return Math.max(...analyse.value.timeseries)
+  const ts = Array.isArray(analyse.value.timeseries) ? analyse.value.timeseries : []
+  if (ts.length === 0) return 127
+  return Math.max(...ts)
 })
 // 画面幅に合わせてステップ幅を計算
 const computedStepWidth = computed(() => {

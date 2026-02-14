@@ -221,12 +221,35 @@ function analyse()
   p = _subhash(payload, "analyse")
 
   raw_series = get(p, "time_series", Any[])
+  skip_empty = _parse_bool(get(p, "skip_empty", true), true)
   data = Int[]
   for v in raw_series
+    if v === nothing || v === missing || (v isa AbstractString && isempty(strip(v)))
+      if skip_empty
+        continue
+      else
+        push!(data, 0)
+        continue
+      end
+    end
     try
       push!(data, _parse_int(v))
     catch
+      if !skip_empty
+        push!(data, 0)
+      end
     end
+  end
+
+  if isempty(data)
+    processing_time_s = round(time() - t0; digits=2)
+    return Dict(
+      "clusteredSubsequences" => Any[],
+      "timeSeries" => Int[],
+      "clusters" => Dict{String,Any}(),
+      "processingTime" => processing_time_s,
+      "skippedEmpty" => true
+    )
   end
 
   merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", 0.3))
