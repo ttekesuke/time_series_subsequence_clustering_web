@@ -116,7 +116,7 @@ function build_score_events_scd(
       abs_notes = Int[]
       for v in s[1]
         v === nothing && continue
-        push!(abs_notes, clamp(_parse_int(v), 0, 127))
+        push!(abs_notes, clamp(_parse_int(v), PolyphonicConfig.abs_pitch_min(), PolyphonicConfig.abs_pitch_max()))
       end
       sort!(abs_notes)
       unique!(abs_notes)
@@ -142,7 +142,7 @@ function build_score_events_scd(
     isempty(pcs) && (pcs = [0])
 
     base_c_midi = (oct + 1) * 12
-    abs_notes = Int[clamp(base_c_midi + pc, 0, 127) for pc in pcs]
+    abs_notes = Int[clamp(base_c_midi + pc, PolyphonicConfig.abs_pitch_min(), PolyphonicConfig.abs_pitch_max()) for pc in pcs]
     sort!(abs_notes)
     unique!(abs_notes)
 
@@ -331,7 +331,8 @@ end
 # ------------------------------------------------------------
 """Convert a (octave, pitchclass) pair to MIDI note in this project"""
 @inline function _to_midi_note(octave::Int, pc::Int)::Int
-  return PolyphonicConfig.base_c_midi(octave) + (pc % PolyphonicConfig.STEPS_PER_OCTAVE)
+  raw = PolyphonicConfig.base_c_midi(octave) + (pc % PolyphonicConfig.STEPS_PER_OCTAVE)
+  return clamp(raw, PolyphonicConfig.abs_pitch_min(), PolyphonicConfig.abs_pitch_max())
 end
 
 @inline function _midi_to_freq(midi::Int)::Float64

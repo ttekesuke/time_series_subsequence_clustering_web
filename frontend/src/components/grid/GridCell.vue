@@ -8,6 +8,7 @@
     :step="config.step || (config.isInt ? 1 : 0.1)"
     @input="onInput"
     @focus="onFocus"
+    @dblclick="onDblClick"
     @paste="onPaste"
   >
 </template>
@@ -23,7 +24,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:modelValue', 'focus', 'paste'])
+const emit = defineEmits(['update:modelValue', 'focus', 'dblclick', 'paste'])
 
 const onInput = (e: Event) => {
   const target = e.target as HTMLInputElement
@@ -34,6 +35,14 @@ const onInput = (e: Event) => {
 
 const onFocus = () => {
   emit('focus', {
+    rowIndex: props.rowIndex,
+    colIndex: props.colIndex,
+    config: props.config
+  })
+}
+
+const onDblClick = () => {
+  emit('dblclick', {
     rowIndex: props.rowIndex,
     colIndex: props.colIndex,
     config: props.config

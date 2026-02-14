@@ -1663,6 +1663,8 @@ end
 
     # vols for amplitude (already decided in dim_order)
     vols = Float64[clamp(_parse_float(current_step_values[s][vol_idx]), 0.0, 1.0) for s in 1:desired_stream_count]
+    stream_chord_candidates = Vector{Vector{Vector{Int}}}(undef, desired_stream_count)
+    selected_chords = Vector{Vector{Int}}(undef, desired_stream_count)
 
     for s in 1:desired_stream_count
       band_low  = chosen_area[s]
@@ -1678,42 +1680,96 @@ end
       n_notes = clamp(Int(round(density_val * float(slot_count))), 1, slot_count)
 
       chords = _iter_combinations_range(low, high, n_notes)
-
       if isempty(chords)
-        current_step_values[s][note_abs_idx] = Int[band_low]
-        continue
+        chords = Vector{Vector{Int}}([Int[band_low]])
       end
 
-      roughs = Float64[]
-      sizehint!(roughs, length(chords))
+      stream_chord_candidates[s] = chords
+      selected_chords[s] = copy(chords[1])
+    end
 
-      v = vols[s]
-      for chord in chords
-        # dissonance evaluated per-stream (as requested)
+    function _build_global_notes(chords_per_stream::Vector{Vector{Int}})
+      midi_notes_all = Int[]
+      amps_all = Float64[]
+      for s in 1:desired_stream_count
+        chord = chords_per_stream[s]
+        v = vols[s]
         a_each = isempty(chord) ? v : (v / float(length(chord)))
-        midi_notes = Int[chord...]
-        amps = Float64[fill(a_each, length(midi_notes))...]
-        d = DissonanceStmManager.evaluate(stm_mgr, midi_notes, amps, onset)
-        push!(roughs, float(d))
-      end
-
-      min_r = minimum(roughs)
-      max_r = maximum(roughs)
-      span = (max_r - min_r)
-      span = span == 0.0 ? 1.0 : span
-
-      best_i = 1
-      best_cost = Inf
-      for i in 1:length(roughs)
-        norm = clamp((roughs[i] - min_r) / span, 0.0, 1.0)
-        c = abs(norm - target01)
-        if c < best_cost - 1e-12
-          best_cost = c
-          best_i = i
+        for n in chord
+          push!(midi_notes_all, n)
+          push!(amps_all, a_each)
         end
       end
+      return midi_notes_all, amps_all
+    end
 
-      best_chord = chords[best_i]
+    # Dissonance selection is done on pitch-class-normalized MIDI notes so octave distance
+    # does not dominate roughness ranking (e.g. 12 vs 60 are treated as same pitch class).
+    function _pc_normalized_notes(midi_notes::Vector{Int})
+      out = Int[]
+      sizehint!(out, length(midi_notes))
+      for n in midi_notes
+        pc = mod(n, 12)
+        push!(out, 60 + pc)  # C4 + pitch class
+      end
+      return out
+    end
+
+    # Evaluate global dissonance on full cartesian product of stream candidates.
+    current_combo = Vector{Vector{Int}}(undef, desired_stream_count)
+    best_combo = Vector{Vector{Int}}(undef, desired_stream_count)
+    for s in 1:desired_stream_count
+      best_combo[s] = copy(selected_chords[s])
+    end
+
+    function _enumerate_combinations!(s::Int, visitor)
+      if s > desired_stream_count
+        visitor(current_combo)
+        return
+      end
+      cands = stream_chord_candidates[s]
+      isempty(cands) && return
+      for cand in cands
+        current_combo[s] = cand
+        _enumerate_combinations!(s + 1, visitor)
+      end
+    end
+
+    min_r = Inf
+    max_r = -Inf
+    _enumerate_combinations!(1, combo -> begin
+      midi_notes_all, amps_all = _build_global_notes(combo)
+      eval_notes = _pc_normalized_notes(midi_notes_all)
+      d = float(DissonanceStmManager.evaluate(stm_mgr, eval_notes, amps_all, onset))
+      if d < min_r
+        min_r = d
+      end
+      if d > max_r
+        max_r = d
+      end
+    end)
+
+    span = max_r - min_r
+    span = span == 0.0 ? 1.0 : span
+    best_cost = Inf
+
+    _enumerate_combinations!(1, combo -> begin
+      midi_notes_all, amps_all = _build_global_notes(combo)
+      eval_notes = _pc_normalized_notes(midi_notes_all)
+      d = float(DissonanceStmManager.evaluate(stm_mgr, eval_notes, amps_all, onset))
+      norm = clamp((d - min_r) / span, 0.0, 1.0)
+      c = abs(norm - target01)
+      if c < best_cost - 1e-12
+        best_cost = c
+        for i in 1:desired_stream_count
+          best_combo[i] = copy(combo[i])
+        end
+      end
+    end)
+
+    for s in 1:desired_stream_count
+      selected_chords[s] = best_combo[s]
+      best_chord = copy(selected_chords[s])
       sort!(best_chord)
       current_step_values[s][note_abs_idx] = best_chord
     end

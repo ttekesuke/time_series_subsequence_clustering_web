@@ -29,6 +29,7 @@
         :colIndex="i-1"
         :config="row.config"
         @focus="$emit('focus-cell', $event)"
+        @dblclick="$emit('dblclick-cell', $event)"
         @paste="$emit('paste-cell', $event)"
       />
     </td>
@@ -48,7 +49,7 @@ const props = defineProps({
   steps: { type: Number, required: true }
 })
 
-const emit = defineEmits(['update:row', 'focus-cell', 'paste-cell'])
+const emit = defineEmits(['update:row', 'focus-cell', 'dblclick-cell', 'paste-cell'])
 
 const updateCell = (idx: number, val: number) => {
   // 配列の特定要素だけ更新するため、コピーして置換

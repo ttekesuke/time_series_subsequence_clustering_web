@@ -199,7 +199,7 @@ const suppressContextWatch = ref(false)
 
 const makeContextConfig = (dimKey: string) => {
   if (dimKey === 'abs_note') {
-    return { min: 0, max: 127, isInt: true, step: 1 }
+    return { min: 12, max: 120, isInt: true, step: 1 }
   } else if (dimKey === 'chord_range') {
     return { min: 0, max: 127, isInt: true, step: 1 }
   } else if (dimKey === 'density') {

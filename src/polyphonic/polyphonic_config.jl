@@ -14,6 +14,8 @@ const OCTAVE_TO_MIDI_C_OFFSET::Int = 1  # oct=4 -> baseC=60 (C4)
 
 const MIDI_A4::Int = 69
 const A4_FREQ::Float64 = 440.0
+const MIDI_NOTE_MIN::Int = 12
+const MIDI_NOTE_MAX::Int = 120
 
 const AMP_EPS::Float64 = 1e-6
 
@@ -67,8 +69,8 @@ const MAX_NOTE_CANDIDATES::Int = 8_000
 """base C (MIDI) for given octave index in this system"""
 base_c_midi(octave::Integer)::Int = (Int(octave) + OCTAVE_TO_MIDI_C_OFFSET) * STEPS_PER_OCTAVE
 
-abs_pitch_min()::Int = base_c_midi(first(OCTAVE_RANGE)) + first(NOTE_RANGE)
-abs_pitch_max()::Int = base_c_midi(last(OCTAVE_RANGE)) + last(NOTE_RANGE)
+abs_pitch_min()::Int = MIDI_NOTE_MIN
+abs_pitch_max()::Int = MIDI_NOTE_MAX
 
 function abs_pitch_width()::Float64
   w = abs(abs_pitch_max() - abs_pitch_min())
@@ -87,12 +89,12 @@ end
 
 function area_band_low_min()::Int
   amin = abs_pitch_min()
-  return clamp(Int(fld(amin, AREA_BAND_SIZE) * AREA_BAND_SIZE), 0, 127)
+  return clamp(Int(fld(amin, AREA_BAND_SIZE) * AREA_BAND_SIZE), MIDI_NOTE_MIN, MIDI_NOTE_MAX)
 end
 
 function area_band_low_max()::Int
   amax = abs_pitch_max()
-  return clamp(Int(fld(amax, AREA_BAND_SIZE) * AREA_BAND_SIZE), 0, 127)
+  return clamp(Int(fld(amax, AREA_BAND_SIZE) * AREA_BAND_SIZE), MIDI_NOTE_MIN, MIDI_NOTE_MAX)
 end
 
 function area_band_low(abs_note::Integer)::Int

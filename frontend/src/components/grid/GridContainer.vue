@@ -17,8 +17,9 @@
         <span class="mr-2">Streams:</span>
         <input
           type="number"
-          :value="streamCount"
+          :value="streamCountDraft"
           @input="onStreamInput"
+          @blur="onStreamBlur"
           min="1"
           max="16"
           class="step-input mr-1"
@@ -51,7 +52,7 @@
         <span class="mr-2">Steps:</span>
         <input
           type="number"
-          :value="steps"
+          :value="stepsDraft"
           @input="onStepsInput"
           @blur="onStepsBlur"
           min="1"
@@ -98,6 +99,7 @@
               :steps="steps"
               @update:row="updateRow(idx, $event)"
               @focus-cell="onCellFocus"
+              @dblclick-cell="onCellDblClick"
               @paste-cell="onCellPaste"
             />
           </tbody>
@@ -115,7 +117,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import GridRow from './GridRow.vue'
 import ParamGenDialog from './ParamGenDialog.vue'
 
@@ -153,34 +155,70 @@ const wrapperRef = ref<HTMLElement | null>(null)
 const focusedCell = ref<any>(null) // { rowIndex, colIndex, config }
 const paramGenDialog = ref(false)
 const paramGenInit = ref<any>({})
+const stepsDraft = ref(String(props.steps))
+const streamCountDraft = ref(String(props.streamCount))
+
+watch(
+  () => props.steps,
+  (v) => { stepsDraft.value = String(v) }
+)
+watch(
+  () => props.streamCount,
+  (v) => { streamCountDraft.value = String(v) }
+)
 
 // --- Methods ---
 
 // Steps 入力変更
 const onStepsInput = (e: Event) => {
   const target = e.target as HTMLInputElement
-  const raw = target.value
-  if (raw === '') return
-
-  const v = parseInt(raw, 10)
-  if (Number.isNaN(v) || v < 0) return
-
-  emit('update:steps', v)
+  stepsDraft.value = target.value
 }
 
 const onStepsBlur = (e: Event) => {
   const target = e.target as HTMLInputElement
-  if (target.value.trim() === '') {
-    target.value = String(props.steps)
+  const raw = target.value.trim()
+  if (raw === '') {
+    stepsDraft.value = String(props.steps)
+    target.value = stepsDraft.value
+    return
   }
+
+  const v = parseInt(raw, 10)
+  if (Number.isNaN(v) || v < 1) {
+    stepsDraft.value = String(props.steps)
+    target.value = stepsDraft.value
+    return
+  }
+  if (v !== props.steps) emit('update:steps', v)
+  stepsDraft.value = String(v)
+  target.value = stepsDraft.value
 }
 
 // Streams 入力変更
 const onStreamInput = (e: Event) => {
   const target = e.target as HTMLInputElement
-  const v = parseInt(target.value)
-  if (isNaN(v) || v < 1) return
-  emit('update:streamCount', v)
+  streamCountDraft.value = target.value
+}
+
+const onStreamBlur = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  const raw = target.value.trim()
+  if (raw === '') {
+    streamCountDraft.value = String(props.streamCount)
+    target.value = streamCountDraft.value
+    return
+  }
+
+  const v = parseInt(raw, 10)
+  if (Number.isNaN(v) || v < 1) {
+    streamCountDraft.value = String(props.streamCount)
+    target.value = streamCountDraft.value
+    return
+  }
+  if (v !== props.streamCount) emit('update:streamCount', v)
+  streamCountDraft.value = String(v)
+  target.value = streamCountDraft.value
 }
 
 // フォーカスアウト時: コンポーネント外に出たら選択解除
@@ -229,6 +267,11 @@ const onCellFocus = (payload: any) => {
   focusedCell.value = payload
 }
 
+// ダブルクリックで即 ParamGen を開く
+const onCellDblClick = (payload: any) => {
+  openParamGenDialogAt(payload)
+}
+
 // ペースト
 const onCellPaste = (payload: any) => {
   const { text, rowIndex, colIndex, config } = payload
@@ -256,11 +299,10 @@ const onCellPaste = (payload: any) => {
   updateRow(rowIndex, targetRow)
 }
 
-// ParamGen ダイアログオープン
-const openParamGenDialog = () => {
-  if (!focusedCell.value) return
-
-  const { rowIndex, colIndex, config } = focusedCell.value
+const openParamGenDialogAt = (cell: any) => {
+  if (!cell) return
+  focusedCell.value = cell
+  const { rowIndex, colIndex, config } = cell
   const currentVal = props.rows[rowIndex].data[colIndex] ?? 0
 
   paramGenInit.value = {
@@ -276,8 +318,36 @@ const openParamGenDialog = () => {
   paramGenDialog.value = true
 }
 
+// ParamGen ダイアログオープン
+const openParamGenDialog = () => {
+  if (!focusedCell.value) return
+  openParamGenDialogAt(focusedCell.value)
+}
+
+const getInputAt = (rowIndex: number, colIndex: number): HTMLInputElement | null => {
+  const root = wrapperRef.value
+  if (!root) return null
+  const rows = root.querySelectorAll('.param-grid tbody tr')
+  const rowEl = rows.item(rowIndex) as HTMLElement | null
+  if (!rowEl) return null
+  const inputs = rowEl.querySelectorAll('td.data-col input.grid-input')
+  return (inputs.item(colIndex) as HTMLInputElement | null) ?? null
+}
+
+const focusCellAndScroll = async (rowIndex: number, colIndex: number, config: any) => {
+  await nextTick()
+  await nextTick()
+  const input = getInputAt(rowIndex, colIndex)
+  if (!input) return
+  input.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' })
+  input.focus()
+  if (typeof input.select === 'function') input.select()
+  focusedCell.value = { rowIndex, colIndex, config }
+}
+
 // 生成データ適用
-const applyGeneratedParams = (params: any) => {
+const applyGeneratedParams = async (params: any) => {
+  if (!focusedCell.value) return
   const { steps, mode, start, end, curve, randMin, randMax } = params
   const { rowIndex, colIndex, config } = focusedCell.value
 
@@ -315,6 +385,11 @@ const applyGeneratedParams = (params: any) => {
   targetRow.data = newData
   updateRow(rowIndex, targetRow)
   paramGenDialog.value = false
+
+  const nextColIndex = colIndex + steps
+  const currentMaxSteps = Math.max(props.steps, requiredLen)
+  if (nextColIndex >= currentMaxSteps) return
+  await focusCellAndScroll(rowIndex, nextColIndex, config)
 }
 </script>
 

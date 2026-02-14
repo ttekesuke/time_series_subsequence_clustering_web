@@ -1084,9 +1084,9 @@ const onHoverClusterRight = (payload: { indices: number[]; windowSize: number } 
 }
 
 // ====== PianoRoll 用の固定レンジ ======
-// strict(abs MIDI) を前提に 0..127 を表示レンジにする
-const minPitch = computed(() => 0)
-const maxPitch = computed(() => 127)
+// strict(abs MIDI) を前提に 12..120 を表示レンジにする
+const minPitch = computed(() => 12)
+const maxPitch = computed(() => 120)
 
 defineExpose({
   openParams,

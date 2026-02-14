@@ -20,6 +20,8 @@ module MultiStreamManager
 using ..PolyphonicConfig
 using ..PolyphonicClusterManager
 
+const INACTIVE_STRENGTH_DECAY::Float64 = 0.98
+
 # ============================================================
 # Types
 # ============================================================
@@ -243,6 +245,14 @@ function build_stream_manager(
   return mgr
 end
 
+@inline function scalar_to_strength01(m::Manager, x::Real)::Float64
+  xv = float(x)
+  if m.value_width > 0.0 && isfinite(m.value_width)
+    return clamp((xv - m.value_min) / m.value_width, 0.0, 1.0)
+  end
+  return clamp(xv, 0.0, 1.0)
+end
+
 """Build initial streams from history."""
 function build_initial_streams_from_history!(m::Manager)::Nothing
   steps = length(m.history_matrix)
@@ -274,12 +284,12 @@ function build_initial_streams_from_history!(m::Manager)::Nothing
     if m.track_presence
       for v in series
         if length(v) == 1
-          vv = clamp(v[1], 0.0, 1.0)
+          vv = scalar_to_strength01(m, v[1])
           pres_sum += vv
           pres_cnt += 1
         end
       end
-      pres_avg = pres_cnt > 0 ? clamp(pres_sum / pres_cnt, 0.0, 1.0) : clamp(series[end][1], 0.0, 1.0)
+      pres_avg = pres_cnt > 0 ? clamp(pres_sum / pres_cnt, 0.0, 1.0) : scalar_to_strength01(m, series[end][1])
     end
 
     container = StreamContainer(
@@ -584,8 +594,20 @@ function presence_of_id(m::Manager, id::Int)::Float64
     return clamp(c.presence_avg, 0.0, 1.0)
   else
     # fallback: use last scalar value if singleton
-    return length(c.last_value) == 1 ? clamp(c.last_value[1], 0.0, 1.0) : 0.0
+    return length(c.last_value) == 1 ? scalar_to_strength01(m, c.last_value[1]) : 0.0
   end
+end
+
+function decay_inactive_strengths!(m::Manager; factor::Float64=INACTIVE_STRENGTH_DECAY)::Nothing
+  f = clamp(float(factor), 0.0, 1.0)
+  for id in m.inactive_ids
+    c = get(m.containers_by_id, id, nothing)
+    c === nothing && continue
+    c.presence_sum *= f
+    c.presence_avg *= f
+    c.presence_avg = clamp(c.presence_avg, 0.0, 1.0)
+  end
+  return nothing
 end
 
 """Streams sorted by strength."""
@@ -664,8 +686,16 @@ end
 """Build stream lifecycle plan (Rails build_stream_lifecycle_plan)."""
 function build_stream_lifecycle_plan(m::Manager, desired_count::Int; target::Real, spread::Real)
   dc = max(Int(desired_count), 1)
+  # Decay inactive stream strengths each planning step so long-idle streams become less likely.
+  decay_inactive_strengths!(m)
 
-  current_active = [c.id for c in active_stream_containers(m, dc)]
+  if isempty(m.active_ids)
+    ensure_stream_count_min!(m, 1)
+    if !isempty(m.stream_pool)
+      m.active_ids = [m.stream_pool[1].id]
+    end
+  end
+  current_active = copy(m.active_ids)
   cur_n = length(current_active)
 
   t = clamp(float(target), 0.0, 1.0)
@@ -702,58 +732,49 @@ function build_stream_lifecycle_plan(m::Manager, desired_count::Int; target::Rea
   if dc > cur_n
     k = dc - cur_n
 
+    active_ids = copy(current_active)
     revive_ids = Int[]
-
-    # revive from inactive
-    if !isempty(m.inactive_ids)
-      inactive_with_strength = [(id, presence_of_id(m, id)) for id in m.inactive_ids]
-      revive_count = min(k, length(inactive_with_strength))
-      revive_targets = generate_centered_targets(revive_count, t, s)
-
-      for tv in revive_targets
-        best_id = 0
-        best_dist = Inf
-        for (id, strength) in inactive_with_strength
-          (id in revive_ids) && continue
-          d = abs(strength - tv)
-          if d < best_dist
-            best_dist = d
-            best_id = id
-          end
-        end
-        best_id != 0 && push!(revive_ids, best_id)
-      end
-
-      k -= length(revive_ids)
-    end
-
-    active_ids = vcat(current_active, revive_ids)
-
     fork_pairs = Tuple{Int,Int}[]
-    if k > 0
-      active_with_strength = [(id, presence_of_id(m, id)) for id in current_active]
-      fork_targets = generate_centered_targets(k, t, s)
 
-      for tv in fork_targets
-        # duplicates allowed
-        best_id = 0
-        best_dist = Inf
-        for (id, strength) in active_with_strength
-          d = abs(strength - tv)
-          if d < best_dist
-            best_dist = d
-            best_id = id
-          end
-        end
+    active_with_strength = [(id, presence_of_id(m, id)) for id in current_active]
+    inactive_with_strength = [(id, presence_of_id(m, id)) for id in m.inactive_ids]
+    add_targets = generate_centered_targets(k, t, s)
 
-        if best_id != 0
-          new_id = m.next_stream_id
-          m.next_stream_id += 1
-          push!(fork_pairs, (best_id, new_id))
+    for tv in add_targets
+      best_src_type = :none
+      best_src_id = 0
+      best_dist = Inf
+
+      # Active candidates can be selected repeatedly (fork from the same stream multiple times).
+      for (id, strength) in active_with_strength
+        d = abs(strength - tv)
+        if d < best_dist
+          best_dist = d
+          best_src_id = id
+          best_src_type = :active
         end
       end
 
-      active_ids = vcat(active_ids, [p[2] for p in fork_pairs])
+      # Inactive candidates can be selected once (revive once).
+      for (id, strength) in inactive_with_strength
+        (id in revive_ids) && continue
+        d = abs(strength - tv)
+        if d < best_dist
+          best_dist = d
+          best_src_id = id
+          best_src_type = :inactive
+        end
+      end
+
+      if best_src_type == :inactive && best_src_id != 0
+        push!(revive_ids, best_src_id)
+        push!(active_ids, best_src_id)
+      elseif best_src_type == :active && best_src_id != 0
+        new_id = m.next_stream_id
+        m.next_stream_id += 1
+        push!(fork_pairs, (best_src_id, new_id))
+        push!(active_ids, new_id)
+      end
     end
 
     return LifecyclePlan(Int[], revive_ids, fork_pairs, active_ids)
@@ -1211,7 +1232,7 @@ function commit_state!(
     end
 
     if m.track_presence && length(v) == 1
-      vv = clamp(v[1], 0.0, 1.0)
+      vv = scalar_to_strength01(m, v[1])
       stream.presence_sum += vv
       stream.presence_count += 1
       stream.presence_avg = stream.presence_count > 0 ? clamp(stream.presence_sum / stream.presence_count, 0.0, 1.0) : vv
