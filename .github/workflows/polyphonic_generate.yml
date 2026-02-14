@@ -133,13 +133,23 @@ jobs:
         run: |
           set -euxo pipefail
           python3 - <<'PY'
-          import json, base64, urllib.request
+          import json, base64, math, urllib.request
           result = json.load(open('result.json','r',encoding='utf-8'))
+          params = json.load(open('params.json','r',encoding='utf-8'))
+          gp = params.get('generate_polyphonic', params)
+          bpm_raw = result.get('bpm', gp.get('bpm', 240))
+          try:
+            bpm = float(bpm_raw)
+          except Exception:
+            bpm = 240.0
+          if (not math.isfinite(bpm)) or bpm <= 0:
+            bpm = 240.0
           req = {
             'time_series': result['timeSeries'],
             'note_chords_pitch_classes': result.get('noteChordsPitchClasses', []),
-            'step_duration': 0.125,
+            'bpm': bpm,
           }
+          print('render bpm:', bpm)
           data = json.dumps(req).encode('utf-8')
           http_req = urllib.request.Request(
             'http://127.0.0.1:9111/api/web/supercolliders/render_polyphonic',

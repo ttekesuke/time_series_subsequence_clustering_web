@@ -379,6 +379,23 @@ const playheadStep = ref(-1)
 let playheadTimerId: ReturnType<typeof setInterval> | null = null
 const playheadStepForRoll = computed(() => (nowPlaying.value ? playheadStep.value : -1))
 const currentPlaybackBpm = ref(240)
+const normalizeBpm = (val: any): number => {
+  const bpm = Number(val)
+  return Number.isFinite(bpm) && bpm > 0 ? bpm : 240
+}
+
+const resolveGenerationBpm = (): number => {
+  const payload = latestParamsPayload.value
+  if (payload && typeof payload === 'object') {
+    const gp = (payload as any).generate_polyphonic ?? payload
+    if (gp?.bpm != null) return normalizeBpm(gp.bpm)
+  }
+
+  const result = lastResultJson.value as any
+  if (result?.bpm != null) return normalizeBpm(result.bpm)
+
+  return 240
+}
 
 const clearPlayheadTimer = () => {
   if (playheadTimerId) {
@@ -434,8 +451,8 @@ const stopPlayingSound = () => {
   if (audio.value) audio.value.currentTime = 0
   stopPlayhead()
 }
-const startPlayingSound = (bpm = 240) => {
-  const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 240
+const startPlayingSound = (bpm?: number) => {
+  const safeBpm = normalizeBpm(bpm ?? resolveGenerationBpm())
   currentPlaybackBpm.value = safeBpm
 
   const sourceUrl = soundFilePath.value
@@ -506,9 +523,11 @@ const onScroll = (e: Event) => syncScroll(e)
 // ===== sizing =====
 const stepCount = ref(0)
 const maxSteps = computed(() => (stepCount.value > 0 ? stepCount.value : 100))
+const rollTitleWidth = 80
+const plotAreaWidth = computed(() => Math.max(1, containerWidth.value - rollTitleWidth))
 
 const computedStepWidth = computed(() => {
-  const widthPerStep = containerWidth.value / maxSteps.value
+  const widthPerStep = plotAreaWidth.value / maxSteps.value
   return Math.max(4, widthPerStep)
 })
 
@@ -616,7 +635,8 @@ const applyPolyphonicResponse = (data: PolyphonicResponse) => {
 const handleGenerated = (data: PolyphonicResponse) => {
   applyPolyphonicResponse(data)
   const ts = data.timeSeries
-  renderPolyphonicAudio(ts)
+  const responseBpm = Number((data as any)?.bpm)
+  renderPolyphonicAudio(ts, Number.isFinite(responseBpm) && responseBpm > 0 ? responseBpm : undefined)
 }
 
 const handleDispatched = (info: any) => {
@@ -710,9 +730,9 @@ const expandTimeSeries = (ts: any[]) => {
   return { notes, vels, bris, hrds, texs, maxStreams }
 }
 
-const renderPolyphonicAudio = (timeSeries: any[][]) => {
+const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: number) => {
   progress.value.status = 'rendering'
-  const stepDuration = 1 / 4.0
+  const bpm = normalizeBpm(bpmArg ?? resolveGenerationBpm())
 
   // renderer は legacy 形式を想定していることが多いので、strict(abs_notes) の場合は変換して投げる
   const toLegacyForRender = (ts: any[][]) => {
@@ -770,7 +790,7 @@ const renderPolyphonicAudio = (timeSeries: any[][]) => {
 
   axios.post('/api/web/supercolliders/render_polyphonic', {
     time_series: out,
-    step_duration: stepDuration,
+    bpm,
     note_chords_pitch_classes: chords,
   })
     .then(response => {
@@ -1087,11 +1107,13 @@ const onHoverClusterRight = (payload: { indices: number[]; windowSize: number } 
 // strict(abs MIDI) を前提に 12..120 を表示レンジにする
 const minPitch = computed(() => 12)
 const maxPitch = computed(() => 120)
+const getPlaybackBpm = () => resolveGenerationBpm()
 
 defineExpose({
   openParams,
   stopPlayingSound,
   startPlayingSound,
+  getPlaybackBpm,
   stopPlaybackVisual,
   startPlaybackVisual,
   soundFilePath,

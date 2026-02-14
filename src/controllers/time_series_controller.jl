@@ -640,6 +640,9 @@ function generate_polyphonic()
     end
   end
 
+  bpm = PolyphonicConfig.sanitize_bpm(_parse_float(get(gp, "bpm", PolyphonicConfig.POLYPHONIC_BPM)))
+  step_duration = PolyphonicConfig.step_duration_from_bpm(bpm)
+
   ctx_raw = get(gp, "initial_context", Any[])
 
   # Stream record (REQUIRED):
@@ -1147,7 +1150,6 @@ function generate_polyphonic()
     amp_profile=PolyphonicConfig.DISSONANCE_STM_AMP_PROFILE
   )
 
-  step_duration = PolyphonicConfig.POLYPHONIC_STEP_DURATION
   for (i, step) in enumerate(results)
     midi_notes = Int[]
     amps = Float64[]
@@ -1857,7 +1859,9 @@ end
     "timeSeries" => results,
     "clusters" => cluster_payload,
     "processingTime" => processing_time_s,
-    "streamStrengths" => nothing
+    "streamStrengths" => nothing,
+    "bpm" => bpm,
+    "stepDuration" => step_duration
   )
 end
 

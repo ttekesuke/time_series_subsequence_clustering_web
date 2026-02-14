@@ -17,6 +17,17 @@
             </span>
           </div>
 
+          <v-text-field
+            v-model.number="generationBpm"
+            label="BPM"
+            type="number"
+            min="1"
+            density="compact"
+            hide-details
+            variant="outlined"
+            class="mr-2 bpm-input-dialog"
+          />
+
           <v-btn
             color="success"
             class="mr-2"
@@ -159,6 +170,7 @@ const isProcessing = computed(
 
 /** ========== 音源側ステート(必要最低限) ========== */
 const music = ref({ loading: false, setDataDialog: false, tracks: [] as any[], midiData: null })
+const generationBpm = ref<number>(240)
 
 /** 共通型 */
 type GridRowData = {
@@ -926,6 +938,12 @@ const normalizeNumber = (val: any, fallback: number) => {
   return Number.isFinite(num) ? num : fallback
 }
 
+const normalizeBpm = (val: any) => {
+  const bpm = normalizeNumber(val, 240)
+  if (!Number.isFinite(bpm) || bpm < 1) return 240
+  return Math.round(bpm)
+}
+
 const normalizeArray = (val: any) => {
   if (Array.isArray(val)) return val
   if (val == null) return []
@@ -976,6 +994,7 @@ const applyInitialContextFromPayload = async (ctxRaw: any) => {
 
 const applyGenParamsFromPayload = async (payload: any) => {
   const candidate = payload?.generate_polyphonic ?? payload ?? {}
+  generationBpm.value = normalizeBpm(candidate.bpm)
   if (candidate.merge_threshold_ratio != null) {
     const v = normalizeNumber(candidate.merge_threshold_ratio, mergeThresholdRatio.value)
     mergeThresholdRatio.value = Math.min(1, Math.max(0, Number(v)))
@@ -1031,6 +1050,7 @@ const buildParamsPayload = (jobIdOverride?: string) => {
   const payload: any = {
     generate_polyphonic: {
       job_id: jobId,
+      bpm: normalizeBpm(generationBpm.value),
       stream_counts: genParams.stream_counts,
       initial_context: initialContext,
       merge_threshold_ratio: mergeThresholdRatio.value,
@@ -1130,5 +1150,8 @@ watch(open, (next, prev) => {
   padding: 2px 5px;
   border-radius: 4px;
   background: white;
+}
+.bpm-input-dialog {
+  width: 88px;
 }
 </style>

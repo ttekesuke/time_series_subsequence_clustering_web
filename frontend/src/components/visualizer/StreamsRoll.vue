@@ -110,8 +110,8 @@ const draw = () => {
   const maxStep = Math.max(0, ...values.map(s => (Array.isArray(s) ? s.length : 0)))
 
   const wrapperWidth = scrollWrapper.value.clientWidth
-  const contentWidth = maxStep * props.stepWidth
-  const width = Math.max(wrapperWidth, contentWidth)
+  const contentWidth = Math.max(1, maxStep * props.stepWidth)
+  const width = Math.max(1, wrapperWidth, contentWidth)
 
   const baseCanvasHeight = scrollWrapper.value.clientHeight || 200
 
@@ -348,6 +348,8 @@ defineExpose({ scrollWrapper, redraw: draw })
 
 .scroll-wrapper {
   flex-grow: 1;
+  min-width: 0;
+  min-height: 0;
   overflow-x: auto;
   overflow-y: auto;
   -ms-overflow-style: none;

@@ -45,7 +45,11 @@ function build_score_events_scd(
   println(io, "a = Score([")
   println(io, "  [0.0, ['/d_recv',")
   println(io, "    SynthDef(\\polySynth, {")
-  println(io, @sprintf("        |outBus=%d, freq=440, dur=0.125, amp=0.18,", mix_bus))
+  println(io, @sprintf(
+    "        |outBus=%d, freq=440, dur=%.6f, amp=0.18,",
+    mix_bus,
+    step_duration
+  ))
   println(io, "         brightness=0.5, hardness=0.5, texture=0.0, sustain=0.0, resonance=0.2|")
   println(io, "")
   println(io, "        var sig, env, core, sub;")
@@ -430,8 +434,13 @@ end
 function render_polyphonic()
   payload = _payload()
   time_series_any = get(payload, "time_series", Any[])
-  step_duration = _parse_float(get(payload, "step_duration", 0.125))
-  step_duration <= 0 && (step_duration = 0.125)
+  raw_bpm = get(payload, "bpm", nothing)
+  if raw_bpm === nothing
+    gp = _to_string_dict(get(payload, "generate_polyphonic", nothing))
+    raw_bpm = get(gp, "bpm", nothing)
+  end
+  bpm = PolyphonicConfig.sanitize_bpm(_parse_float(raw_bpm === nothing ? PolyphonicConfig.POLYPHONIC_BPM : raw_bpm))
+  step_duration = PolyphonicConfig.step_duration_from_bpm(bpm)
 
   scd_path = _safe_tmp_path("supercollider_render_polyphonic", ".scd")
   wav_path = _safe_tmp_path("supercollider_render_polyphonic", ".wav")
@@ -463,12 +472,16 @@ function render_polyphonic()
       "audio_data" => "data:audio/wav;base64,$audio_b64",
       "scd_file_path" => scd_path,
       "sound_file_path" => wav_path,
+      "bpm" => bpm,
+      "stepDuration" => step_duration,
     )
   catch e
     return Dict(
       "error" => string(e),
       "scd_file_path" => scd_path,
       "sound_file_path" => wav_path,
+      "bpm" => bpm,
+      "stepDuration" => step_duration,
     )
   end
 end

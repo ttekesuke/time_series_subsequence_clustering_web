@@ -76,16 +76,6 @@
               <v-icon v-else>mdi-play</v-icon>
               <span>{{ isNowPlaying ? 'STOP' : 'PLAY' }}</span>
             </v-btn>
-            <v-text-field
-              v-model.number="playbackBpm"
-              label="BPM"
-              type="number"
-              min="1"
-              density="compact"
-              hide-details
-              variant="outlined"
-              class="ml-2 bpm-input"
-            />
             <v-select
               label="AnalysedViewMode"
               :items="analysedViewModes"
@@ -136,7 +126,6 @@ const selectedMode = ref('ClusteringAnalyse')
 const analysedViewModes = ref(['Cluster', 'Complexity'])
 const analysedViewMode = ref('Complexity')
 const transferDialog = ref(false)
-const playbackBpm = ref<number>(240)
 
 const runOnGithubActions = computed(() => {
   const raw = (import.meta as any).env?.VITE_RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS ?? 'true'
@@ -249,7 +238,7 @@ const startPlayingSound = () => {
   const source = unwrapMaybeRef<string>(inst?.soundFilePath)
   if (!source) return
 
-  const bpm = Number(playbackBpm.value)
+  const bpm = Number(inst?.getPlaybackBpm?.())
   const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 240
 
   if (!audio.value || currentAudioSrc.value !== source) {
@@ -285,9 +274,8 @@ const startPlayingSound = () => {
 
 const renderPolyphonicAudio = (timeSeries) => {
   progress.value.status = 'rendering'
-  const stepDuration = 60.0 / music.value.bpm / 4.0
   axios.post('/api/web/supercolliders/render_polyphonic', {
-    time_series: timeSeries, step_duration: stepDuration
+    time_series: timeSeries
   }).then(response => {
     const { sound_file_path, scd_file_path, audio_data } = response.data
     music.value.soundFilePath = sound_file_path
@@ -380,9 +368,6 @@ watch([activeFeatureRef, selectedMode], () => {
 }
 .header-row > .v-col {
   padding: 0;
-}
-.bpm-input {
-  width: 92px;
 }
   h3 + h3,
   h5 + h5 {

@@ -14,7 +14,7 @@ const OCTAVE_TO_MIDI_C_OFFSET::Int = 1  # oct=4 -> baseC=60 (C4)
 
 const MIDI_A4::Int = 69
 const A4_FREQ::Float64 = 440.0
-const MIDI_NOTE_MIN::Int = 12
+const MIDI_NOTE_MIN::Int = 24
 const MIDI_NOTE_MAX::Int = 120
 
 const AMP_EPS::Float64 = 1e-6
@@ -48,7 +48,9 @@ const AREA_MOVE_BINS::Vector{Tuple{Int,Int}} = [
 const AREA_TOP_BINS_PER_STREAM_SINGLE::Int = 1
 const AREA_TOP_BINS_PER_STREAM_MULTI::Int = 3
 
-const POLYPHONIC_STEP_DURATION::Float64 = 0.125
+const POLYPHONIC_BPM::Float64 = 240.0
+const POLYPHONIC_STEP_DURATION::Float64 = 60.0 / POLYPHONIC_BPM
+const POLYPHONIC_BPM_MIN::Float64 = 1.0
 const DEFAULT_TARGET_01::Float64 = 0.5
 const DEFAULT_SPREAD_01::Float64 = 0.0
 const POLYPHONIC_MIN_WINDOW_SIZE::Int = 2
@@ -71,6 +73,15 @@ base_c_midi(octave::Integer)::Int = (Int(octave) + OCTAVE_TO_MIDI_C_OFFSET) * ST
 
 abs_pitch_min()::Int = MIDI_NOTE_MIN
 abs_pitch_max()::Int = MIDI_NOTE_MAX
+
+function sanitize_bpm(bpm)::Float64
+  b = float(bpm)
+  return (isfinite(b) && b >= POLYPHONIC_BPM_MIN) ? b : POLYPHONIC_BPM
+end
+
+function step_duration_from_bpm(bpm)::Float64
+  return 60.0 / sanitize_bpm(bpm)
+end
 
 function abs_pitch_width()::Float64
   w = abs(abs_pitch_max() - abs_pitch_min())
