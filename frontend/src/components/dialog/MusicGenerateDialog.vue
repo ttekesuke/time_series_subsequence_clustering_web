@@ -747,7 +747,7 @@ const genRowMetas: GenRowMeta[] = [
   },
 
   // =========================================================
-  // vol/bri/hrd/tex : global / center / spread / conc
+  // vol/bri/hrd/tex : global / center / spread / conc (+ target window)
   // =========================================================
   {
     shortName: "VOL G",
@@ -796,16 +796,106 @@ const genRowMetas: GenRowMeta[] = [
   { shortName: "BRI C", name: "BRIGHTNESS Center", key: "bri_center", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
   { shortName: "BRI S", name: "BRIGHTNESS Spread", key: "bri_spread", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
   { shortName: "BRI Conc", name: "BRIGHTNESS Conformity (Conc)", key: "bri_conc", min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  {
+    shortName: "BRI Target",
+    name: "BRIGHTNESS Target",
+    key: "bri_target",
+    min: 0,
+    max: 1,
+    step: 0.1,
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: 0, max: 1, step: 0.1 },
+      "BRIGHTNESS の探索中心値です（0.1刻み）。",
+      "0：暗め中心。",
+      "1：明るめ中心。"
+    )
+  },
+  {
+    shortName: "BRI Spread",
+    name: "BRIGHTNESS Spread (Target Window)",
+    key: "bri_target_spread",
+    min: 0,
+    max: 1,
+    step: 0.1,
+    defaultFactory: (len) => constant(1, len),
+    help: H(
+      { min: 0, max: 1, step: 0.1 },
+      "BRIGHTNESS の探索許容幅（中心±幅、0.1刻み）です。",
+      "0：中心値のみ探索。",
+      "1：ほぼ全域を探索。"
+    )
+  },
 
   { shortName: "HRD G", name: "HARDNESS Global Complexity", key: "hrd_global", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
   { shortName: "HRD C", name: "HARDNESS Center", key: "hrd_center", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
   { shortName: "HRD S", name: "HARDNESS Spread", key: "hrd_spread", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
   { shortName: "HRD Conc", name: "HARDNESS Conformity (Conc)", key: "hrd_conc", min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  {
+    shortName: "HRD Target",
+    name: "HARDNESS Target",
+    key: "hrd_target",
+    min: 0,
+    max: 1,
+    step: 0.1,
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: 0, max: 1, step: 0.1 },
+      "HARDNESS の探索中心値です（0.1刻み）。",
+      "0：柔らかめ中心。",
+      "1：硬め中心。"
+    )
+  },
+  {
+    shortName: "HRD Spread",
+    name: "HARDNESS Spread (Target Window)",
+    key: "hrd_target_spread",
+    min: 0,
+    max: 1,
+    step: 0.1,
+    defaultFactory: (len) => constant(1, len),
+    help: H(
+      { min: 0, max: 1, step: 0.1 },
+      "HARDNESS の探索許容幅（中心±幅、0.1刻み）です。",
+      "0：中心値のみ探索。",
+      "1：ほぼ全域を探索。"
+    )
+  },
 
   { shortName: "TEX G", name: "TEXTURE Global Complexity", key: "tex_global", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
   { shortName: "TEX C", name: "TEXTURE Center", key: "tex_center", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
   { shortName: "TEX S", name: "TEXTURE Spread", key: "tex_spread", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
   { shortName: "TEX Conc", name: "TEXTURE Conformity (Conc)", key: "tex_conc", min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  {
+    shortName: "TEX Target",
+    name: "TEXTURE Target",
+    key: "tex_target",
+    min: 0,
+    max: 1,
+    step: 0.1,
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: 0, max: 1, step: 0.1 },
+      "TEXTURE の探索中心値です（0.1刻み）。",
+      "0：滑らかめ中心。",
+      "1：粗め中心。"
+    )
+  },
+  {
+    shortName: "TEX Spread",
+    name: "TEXTURE Spread (Target Window)",
+    key: "tex_target_spread",
+    min: 0,
+    max: 1,
+    step: 0.1,
+    defaultFactory: (len) => constant(1, len),
+    help: H(
+      { min: 0, max: 1, step: 0.1 },
+      "TEXTURE の探索許容幅（中心±幅、0.1刻み）です。",
+      "0：中心値のみ探索。",
+      "1：ほぼ全域を探索。"
+    )
+  },
 ]
 
 // rows 実体
@@ -847,11 +937,12 @@ const buildGenParamsFromRows = () => {
   const len = genSteps.value
 
   const ensureLen = (arr: number[] | undefined, meta: GenRowMeta) => {
+    const fallback = meta.defaultFactory(len)
     const out: number[] = []
     for (let i = 0; i < len; i++) {
       let v = (arr && i < arr.length && arr[i] != null)
         ? Number(arr[i])
-        : (meta.isInt ? meta.min : 0)
+        : Number(fallback[i])
 
       if (meta.isInt) v = Math.round(v)
       else v = Number(v.toFixed(2))
@@ -919,16 +1010,22 @@ const buildGenParamsFromRows = () => {
   result.bri_center = get('bri_center')
   result.bri_spread = get('bri_spread')
   result.bri_conc   = get('bri_conc')
+  result.bri_target = get('bri_target')
+  result.bri_target_spread = get('bri_target_spread')
 
   result.hrd_global = get('hrd_global')
   result.hrd_center = get('hrd_center')
   result.hrd_spread = get('hrd_spread')
   result.hrd_conc   = get('hrd_conc')
+  result.hrd_target = get('hrd_target')
+  result.hrd_target_spread = get('hrd_target_spread')
 
   result.tex_global = get('tex_global')
   result.tex_center = get('tex_center')
   result.tex_spread = get('tex_spread')
   result.tex_conc   = get('tex_conc')
+  result.tex_target = get('tex_target')
+  result.tex_target_spread = get('tex_target_spread')
 
   return result
 }
@@ -1011,11 +1108,12 @@ const applyGenParamsFromPayload = async (payload: any) => {
 
   genRows.value = genRowMetas.map((meta) => {
     const arr = normalizeArray(candidate[meta.key]).map((v: any) => normalizeNumber(v, meta.isInt ? meta.min : 0))
+    const defaults = meta.defaultFactory(steps)
     const data: number[] = []
     for (let i = 0; i < steps; i++) {
       let v = arr[i]
       if (v == null) {
-        v = meta.isInt ? meta.min : 0
+        v = defaults[i]
       }
       if (meta.isInt) v = Math.round(v)
       else v = Number(Number(v).toFixed(2))
@@ -1066,7 +1164,7 @@ const buildParamsPayload = (jobIdOverride?: string) => {
     payload.generate_polyphonic[`${k}_spread`] = genParams[`${k}_spread`]
     payload.generate_polyphonic[`${k}_conc`] = genParams[`${k}_conc`]
   })
-  ;['vol', 'chord_range', 'density', 'sustain'].forEach((k) => {
+  ;['vol', 'chord_range', 'density', 'sustain', 'bri', 'hrd', 'tex'].forEach((k) => {
     payload.generate_polyphonic[`${k}_target`] = genParams[`${k}_target`]
     payload.generate_polyphonic[`${k}_target_spread`] = genParams[`${k}_target_spread`]
   })

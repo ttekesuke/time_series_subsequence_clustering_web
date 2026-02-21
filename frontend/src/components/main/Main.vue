@@ -83,6 +83,13 @@
               @update:modelValue="onAnalysedViewModeChange"
               class="hide-details"
             />
+            <v-select
+              label="ResultViewMode"
+              :items="resultViewModes"
+              :model-value="resultViewMode"
+              @update:modelValue="onResultViewModeChange"
+              class="hide-details"
+            />
           </div>
         </v-col>
         <v-col class="v-col-auto">
@@ -125,6 +132,8 @@ const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'MusicGenerate'])
 const selectedMode = ref('ClusteringAnalyse')
 const analysedViewModes = ref(['Cluster', 'Complexity'])
 const analysedViewMode = ref('Complexity')
+const resultViewModes = ref(['pianoRoll', 'timbreRoll'])
+const resultViewMode = ref('pianoRoll')
 const transferDialog = ref(false)
 
 const runOnGithubActions = computed(() => {
@@ -218,6 +227,12 @@ const onAnalysedViewModeChange = (val: string) => {
   analysedViewMode.value = val
   const inst = activeFeatureRef.value as any
   inst?.setAnalysedViewMode?.(val)
+}
+
+const onResultViewModeChange = (val: string) => {
+  resultViewMode.value = val === 'timbreRoll' ? 'timbreRoll' : 'pianoRoll'
+  const inst = activeFeatureRef.value as any
+  inst?.setResultViewMode?.(resultViewMode.value)
 }
 
 
@@ -336,6 +351,7 @@ watch(activeFeatureRef, () => {
   if (selectedMode.value !== 'MusicGenerate') return
   const inst = activeFeatureRef.value as any
   inst?.setAnalysedViewMode?.(analysedViewMode.value)
+  inst?.setResultViewMode?.(resultViewMode.value)
 })
 
 watch(selectedMode, (mode) => {

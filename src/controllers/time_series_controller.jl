@@ -756,10 +756,10 @@ function generate_polyphonic()
     "chord_range" => Dict("accept_params" => true, "fixed_value" => 0.0),
     "density" => Dict("accept_params" => true, "fixed_value" => 0.0),
     "sustain" => Dict("accept_params" => true, "fixed_value" => 0.5),
-    "vol" => Dict("accept_params" => false, "fixed_value" => 1.0),
-    "bri" => Dict("accept_params" => false, "fixed_value" => 0.0),
-    "hrd" => Dict("accept_params" => false, "fixed_value" => 0.0),
-    "tex" => Dict("accept_params" => false, "fixed_value" => 0.0),
+    "vol" => Dict("accept_params" => true, "fixed_value" => 1.0),
+    "bri" => Dict("accept_params" => true, "fixed_value" => 0.0),
+    "hrd" => Dict("accept_params" => true, "fixed_value" => 0.0),
+    "tex" => Dict("accept_params" => true, "fixed_value" => 0.0),
   )
   for key in managed_dims
     d = default_dim_policy[key]
@@ -1221,7 +1221,7 @@ function generate_polyphonic()
     search_values::Vector{Float64},
     idx0::Int
   )::Vector{Float64}
-    if !(key == "vol" || key == "chord_range" || key == "density" || key == "sustain")
+    if !(key == "vol" || key == "bri" || key == "hrd" || key == "tex" || key == "chord_range" || key == "density" || key == "sustain")
       return search_values
     end
 
@@ -1857,6 +1857,21 @@ end
 
   processing_time_s = round(time() - t0; digits=2)
 
+  timbre_series = Dict(
+    "bri" => Any[
+      Float64[clamp(_parse_float(st[bri_idx]), 0.0, 1.0) for st in step]
+      for step in results
+    ],
+    "hrd" => Any[
+      Float64[clamp(_parse_float(st[hrd_idx]), 0.0, 1.0) for st in step]
+      for step in results
+    ],
+    "tex" => Any[
+      Float64[clamp(_parse_float(st[tex_idx]), 0.0, 1.0) for st in step]
+      for step in results
+    ]
+  )
+
   cluster_payload = Dict{String,Any}()
   for key in ["note", "area", "vol", "bri", "hrd", "tex", "chord_range", "density", "sustain"]
     mgrs = get(managers, key, nothing)
@@ -1883,6 +1898,7 @@ end
     "clusters" => cluster_payload,
     "processingTime" => processing_time_s,
     "streamStrengths" => nothing,
+    "timbreSeries" => timbre_series,
     "bpm" => bpm,
     "stepDuration" => step_duration
   )

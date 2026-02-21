@@ -1,16 +1,5 @@
 module SupercollidersController
 
-"""SuperCollider (audio rendering) controller
-
-Rails 旧システムの `Api::Web::SupercollidersController` と互換の API を提供する。
-
-- POST   /api/web/supercolliders/render_polyphonic
-- DELETE /api/web/supercolliders/cleanup
-
-このコントローラは `sclang` を外部プロセスとして起動し、
-一時ファイルに生成した .scd を実行して .wav を生成する。
-"""
-
 using Genie.Requests
 using UUIDs
 using Base64
@@ -18,19 +7,14 @@ using Dates
 using Printf
 import ..PolyphonicConfig
 
-using Printf
-
 function build_score_events_scd(
   time_series, step_duration::Float64,
   outfile::String
 )::String
 
-  # time_series supports:
-  # - legacy: [oct, notePCS(Array or scalar), vol, bri, hrd, tex, sustain?]
-  # - strict: [abs_notes(Int[]), vol, bri, hrd, tex, chord_range, density, sustain]
-
   io = IOBuffer()
 
+  # ---------- Server definition ----------
   println(io, "var server = Server(\\nrt,")
   println(io, "    options: ServerOptions.new")
   println(io, "    .numOutputBusChannels_(2)")
@@ -42,6 +26,7 @@ function build_score_events_scd(
   mix_bus = 16
   master_node_id = 900
 
+  # ---------- SynthDef (polySynth) with only brightness, hardness, texture ----------
   println(io, "a = Score([")
   println(io, "  [0.0, ['/d_recv',")
   println(io, "    SynthDef(\\polySynth, {")
@@ -50,46 +35,104 @@ function build_score_events_scd(
     mix_bus,
     step_duration
   ))
-  println(io, "         brightness=0.5, hardness=0.5, texture=0.0, sustain=0.0, resonance=0.2|")
+  println(io, "         brightness=0.5, hardness=0.5, texture=0.0, sustain=0.0|")
   println(io, "")
-  println(io, "        var sig, env, core, sub;")
-  println(io, "        var attackTime, holdTime, releaseTime, cutoff, rq, feedback, pulseWidth, noiseSig, legato, fullLegato;")
+  println(io, "        var sig, env, transientEnv, body, tone, sub, noise, click;")
+  println(io, "        var legato, fullLegato, attack, hold, release;")
+  println(io, "        var bri, hrd, tex, f0, vibRate, vibDepth, vibrato;")
+  println(io, "        var stringOsc, brassOsc, fmOsc, shimmerOsc, percNoise;")
+  println(io, "        var stringAmt, brassAmt, fmAmt, percAmt, den;")
+  println(io, "        var cutoff, rq, drive, left, right, air, safeGain;")
   println(io, "")
+  println(io, "        // --- controls ---")
+  println(io, "        bri = brightness.clip(0.0, 1.0);")
+  println(io, "        hrd = hardness.clip(0.0, 1.0);")
+  println(io, "        tex = texture.clip(0.0, 1.0);")
+  println(io, "")
+  println(io, "        // --- envelope (hardness controls attack / body) ---")
   println(io, "        legato = sustain.clip(0.0, 1.0);")
   println(io, "        fullLegato = (legato >= 0.999);")
-  println(io, "        attackTime = (1.0 - hardness).linexp(0.0, 1.0, 0.001, 0.16);")
-  println(io, "        attackTime = attackTime.min((dur * (0.35 - (legato * 0.15))).max(0.002));")
-  println(io, "        attackTime = (attackTime * (1 - fullLegato)) + (((dur * 0.20).clip(0.01, 0.06)) * fullLegato);")
-  println(io, "        holdTime = (dur - attackTime).max(0.002);")
-  println(io, "        releaseTime = (dur * (0.45 + (legato * 1.10) + (resonance * 0.35))).max(0.01);")
-  println(io, "        releaseTime = (releaseTime * (1 - fullLegato)) + (((dur * 0.08).max(0.02)) * fullLegato);")
-  println(io, "        env = EnvGen.ar(Env.linen(attackTime, holdTime, releaseTime, 1.0, -4), doneAction: 2);")
+  println(io, "        attack = (1.0 - hrd).linexp(0.0, 1.0, 0.001, 0.2);")
+  println(io, "        attack = attack.min((dur * (0.34 - (legato * 0.14))).max(0.0015));")
+  println(io, "        attack = (attack * (1 - fullLegato)) + (((dur * (0.18 + tex * 0.08)).clip(0.008, 0.07)) * fullLegato);")
+  println(io, "        hold = (dur - attack).max(0.002);")
+  println(io, "        release = (dur * (0.35 + (legato * 1.20) + ((1.0 - hrd) * 0.30) + (tex * 0.15))).max(0.01);")
+  println(io, "        release = (release * (1 - fullLegato)) + (((dur * 0.08).max(0.02)) * fullLegato);")
+  println(io, "        env = EnvGen.ar(Env.linen(attack, hold, release, 1.0, -4), doneAction: 2);")
+  println(io, "        transientEnv = EnvGen.ar(Env.perc(0.0008, (0.012 + (1.0 - hrd) * 0.05), curve: -6));")
   println(io, "")
-  println(io, "        feedback = texture.linlin(0.0, 1.0, 0.0, 2.5);")
-  println(io, "        core = SinOscFB.ar(freq, feedback);")
+  println(io, "        // --- subtle movement (string-like softness at low hardness/texture) ---")
+  println(io, "        vibRate = 4.0 + (1.0 - hrd) * 1.5 + (1.0 - tex) * 1.0;")
+  println(io, "        vibDepth = (1.0 - hrd) * (1.0 - tex * 0.7) * 0.012;")
+  println(io, "        vibrato = SinOsc.kr(vibRate, 0, vibDepth, 1.0);")
+  println(io, "        f0 = freq * vibrato * (1.0 + Rand(-0.003, 0.003));")
   println(io, "")
-  println(io, "        pulseWidth = 0.5 + (texture * 0.4);")
-  println(io, "        core = core * (1.0 - (texture * 0.5)) + (Pulse.ar(freq, pulseWidth) * (texture * 0.5));")
+  println(io, "        // --- source A: string-ish (detuned saw stack) ---")
+  println(io, "        stringOsc = Mix([Saw.ar(f0 * 0.997), Saw.ar(f0), Saw.ar(f0 * 1.003)]) * 0.33;")
+  println(io, "        stringOsc = LPF.ar(stringOsc, (800 + (bri * 5200) + ((1.0 - tex) * 1600)).clip(120, 12000));")
+  println(io, "        stringOsc = stringOsc * (0.75 + (1.0 - hrd) * 0.35);")
   println(io, "")
-  println(io, "        noiseSig = PinkNoise.ar() * (texture - 0.7).max(0) * 0.5;")
-  println(io, "        sub = SinOsc.ar(freq) * (1.0 - texture).max(0.2) * 0.5;")
-  println(io, "        sig = core + noiseSig + sub;")
+  println(io, "        // --- source B: brass-ish (pulse/saw with drive) ---")
+  println(io, "        brassOsc = Pulse.ar(f0, (0.42 + tex * 0.24).clip(0.08, 0.92)) * 0.65 + Saw.ar(f0 * 2.0) * 0.35;")
+  println(io, "        brassOsc = RLPF.ar(brassOsc, (300 + (bri * 3800) + (hrd * 2400)).clip(100, 14000), (0.7 - hrd * 0.35).clip(0.08, 0.95));")
+  println(io, "        brassOsc = tanh(brassOsc * (1.3 + hrd * 1.8));")
   println(io, "")
-  println(io, "        cutoff = freq * (1 + (brightness * 20));")
-  println(io, "        cutoff = cutoff.clip(20, 20000);")
+  println(io, "        // --- source C: shimmer / metallic FM ---")
+  println(io, "        fmOsc = SinOsc.ar(f0 + (SinOsc.ar(f0 * (1.3 + bri * 3.4)) * f0 * (0.08 + tex * 1.55)));")
+  println(io, "        shimmerOsc = BPF.ar(fmOsc, (1400 + bri * 9000).clip(300, 16000), (0.22 + tex * 0.25).clip(0.08, 0.9));")
+  println(io, "        shimmerOsc = HPF.ar(shimmerOsc, (300 + bri * 1500).clip(150, 8000));")
   println(io, "")
-  println(io, "        rq = (1.0 - (resonance * 0.95)).clip(0.02, 1.0);")
+  println(io, "        // --- noise / percussive layer ---")
+  println(io, "        noise = LPF.ar(PinkNoise.ar(), 12000) * (0.02 + tex * 0.14);")
+  println(io, "        percNoise = BPF.ar(WhiteNoise.ar(), (1200 + bri * 9000).clip(400, 16000), (0.18 + hrd * 0.35).clip(0.08, 0.95));")
+  println(io, "        click = percNoise * transientEnv * (0.18 + hrd * 0.55) * (0.25 + tex * 0.5);")
   println(io, "")
+  println(io, "        // --- low-end body ---")
+  println(io, "        sub = SinOsc.ar(f0 * 0.5) * (0.22 + (1.0 - bri) * 0.42);")
+  println(io, "        sub = sub + (LFTri.ar(f0 * 0.5) * (0.10 + (1.0 - tex) * 0.18));")
+  println(io, "        sub = LPF.ar(sub, (170 + (1.0 - bri) * 260).clip(90, 700));")
+  println(io, "")
+  println(io, "        // --- morph by texture/hardness ---")
+  println(io, "        stringAmt = ((1.0 - tex) * (1.0 - hrd * 0.55)).clip(0.0, 1.0);")
+  println(io, "        brassAmt = ((1.0 - (tex - 0.45).abs * 2.0).clip(0.0, 1.0) * (0.45 + hrd * 0.55)).clip(0.0, 1.0);")
+  println(io, "        fmAmt = (tex * (0.25 + bri * 0.75)).clip(0.0, 1.0);")
+  println(io, "        percAmt = (tex * (0.35 + hrd * 0.65)).clip(0.0, 1.0);")
+  println(io, "        den = (stringAmt + brassAmt + fmAmt + 0.001);")
+  println(io, "        tone = ((stringOsc * stringAmt) + (brassOsc * brassAmt) + (shimmerOsc * fmAmt)) / den;")
+  println(io, "        body = tone + sub + noise + (click * percAmt);")
+  println(io, "        air = HPF.ar(body, (3500 + bri * 5200).clip(1200, 14000)) * (bri * (0.05 + tex * 0.20));")
+  println(io, "        sig = body + air;")
+  println(io, "")
+  println(io, "        // --- global tone shaping by brightness ---")
+  println(io, "        cutoff = (140 + ((bri * bri) * 15500) + (hrd * 900)).clip(90, 17000);")
+  println(io, "        rq = (0.92 - (bri * 0.45) + (tex * 0.08)).clip(0.12, 0.95);")
   println(io, "        sig = RLPF.ar(sig, cutoff, rq);")
-  println(io, "        sig = BHiShelf.ar(sig, 3000, 1.0, (brightness - 0.5) * 12);")
+  println(io, "        sig = BLowShelf.ar(sig, 140, 0.8, ((1.0 - bri) * 6.0 + (1.0 - tex) * 2.0) - 2.5);")
+  println(io, "        sig = BHiShelf.ar(sig, 3200, 0.9, (bri * 9.0 + tex * 3.0) - 5.0);")
+  println(io, "")
+  println(io, "        // --- hardness => drive / punch ---")
+  println(io, "        drive = 1.0 + (hrd * 2.2) + (tex * 1.0);")
+  println(io, "        sig = tanh(sig * drive);")
+  println(io, "        // intense timbre area is auto-attenuated to avoid silent failure by overload")
+  println(io, "        safeGain = (1.0 - (tex * 0.22) - (hrd * 0.12)).clip(0.55, 1.0);")
+  println(io, "        sig = sig * safeGain;")
+  println(io, "        sig = HPF.ar(sig, 18);")
+  println(io, "        sig = LPF.ar(sig, 18000);")
+  println(io, "        sig = sig.clip2(1.2);")
+  println(io, "        sig = CompanderD.ar(sig, thresh: 0.55, slopeBelow: 1.0, slopeAbove: 0.62, clampTime: 0.002, relaxTime: 0.08);")
+  println(io, "        sig = Limiter.ar(sig, 0.95, 0.003);")
   println(io, "")
   println(io, "        sig = LeakDC.ar(sig);")
   println(io, "        sig = sig * env * amp;")
   println(io, "")
-  println(io, "        Out.ar(outBus, sig ! 2);")
+  println(io, "        left = sig;")
+  println(io, "        right = DelayC.ar(sig, 0.03, (0.0015 + tex * 0.007 + (1.0 - hrd) * 0.002).clip(0.0, 0.03));")
+  println(io, "        Out.ar(outBus, [left, right]);")
   println(io, "    }).asBytes;")
   println(io, "  ]],")
   println(io, "")
+
+  # ---------- Master output SynthDef ----------
   println(io, "  [0.0, ['/d_recv',")
   println(io, "    SynthDef(\\masterOut, {")
   println(io, @sprintf("        |inBus=%d, out=0, masterGain=0.92|", mix_bus))
@@ -104,19 +147,20 @@ function build_score_events_scd(
   println(io, @sprintf("  [0.0, ['/s_new', \\masterOut, %d, 1, 0, \\inBus, %d, \\out, 0, \\masterGain, 0.92]],", master_node_id, mix_bus))
   println(io, "")
 
+  # ---------- Parse input and generate note events ----------
   current_time = 0.0
   node_id = 1000
-
-  # helper: midi -> freq
-  # SCに直接渡すので Julia側で計算する
   midi_to_freq(m) = 440.0 * 2.0^((m - 69.0) / 12.0)
 
-  function _parse_stream_legacy_or_strict(s)::Tuple{Vector{Int},Float64,Float64,Float64,Float64,Float64}
+  # Parse one stream entry (legacy or strict)
+  # Returns: (abs_notes, vol, bri, hrd, tex, sustain)
+  # Note: chord_range and density are ignored for sound synthesis.
+  function _parse_stream(s)::Tuple{Vector{Int},Float64,Float64,Float64,Float64,Float64}
     s isa AbstractVector || return (Int[], 0.0, 0.0, 0.0, 0.0, 0.0)
     isempty(s) && return (Int[], 0.0, 0.0, 0.0, 0.0, 0.0)
 
     # strict: [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain]
-    if s[1] isa AbstractVector
+    if length(s) >= 1 && s[1] isa AbstractVector
       abs_notes = Int[]
       for v in s[1]
         v === nothing && continue
@@ -129,6 +173,7 @@ function build_score_events_scd(
       bri = clamp(length(s) >= 3 ? _parse_float(s[3]) : 0.0, 0.0, 1.0)
       hrd = clamp(length(s) >= 4 ? _parse_float(s[4]) : 0.0, 0.0, 1.0)
       tex = clamp(length(s) >= 5 ? _parse_float(s[5]) : 0.0, 0.0, 1.0)
+      # skip chord_range (index 6) and density (index 7)
       sus = clamp(length(s) >= 8 ? _parse_float(s[8]) : 0.0, 0.0, 1.0)
       sus = clamp(round(sus * 4.0) / 4.0, 0.0, 1.0)
       return (abs_notes, vol, bri, hrd, tex, sus)
@@ -156,7 +201,6 @@ function build_score_events_scd(
     tex = clamp(length(s) >= 6 ? _parse_float(s[6]) : 0.0, 0.0, 1.0)
     sus = clamp(length(s) >= 7 ? _parse_float(s[7]) : 0.0, 0.0, 1.0)
     sus = clamp(round(sus * 4.0) / 4.0, 0.0, 1.0)
-
     return (abs_notes, vol, bri, hrd, tex, sus)
   end
 
@@ -170,8 +214,6 @@ function build_score_events_scd(
   }
   events = Event[]
   base_voice_gain = 0.22
-
-  # key: (stream_index, midi_note) => index in `events`
   active_ties = Dict{Tuple{Int,Int},Int}()
 
   for step_streams in (time_series isa AbstractVector ? time_series : Any[])
@@ -181,8 +223,7 @@ function build_score_events_scd(
     if step_streams isa AbstractVector
       for (stream_idx, s) in enumerate(step_streams)
         s === nothing && continue
-
-        abs_notes, vol, bri, hrd, tex, sustain = _parse_stream_legacy_or_strict(s)
+        abs_notes, vol, bri, hrd, tex, sustain = _parse_stream(s)
         (vol > 0.01 && !isempty(abs_notes)) || continue
         push!(step_voices, (
           stream_idx = stream_idx,
@@ -196,7 +237,6 @@ function build_score_events_scd(
       end
 
       step_note_mass = sum(v.vol * length(v.abs_notes) for v in step_voices)
-      # Dense chords/streams get automatic attenuation to avoid clipping.
       step_gain = step_note_mass > 0 ? (1.0 / sqrt(step_note_mass)) : 1.0
       step_gain = clamp(step_gain, 0.20, 1.0)
 
@@ -208,7 +248,6 @@ function build_score_events_scd(
         if tie_mode
           for midi_note in voice.abs_notes
             key = (voice.stream_idx, midi_note)
-
             if haskey(active_ties, key)
               ev_idx = active_ties[key]
               ev = events[ev_idx]
@@ -239,7 +278,6 @@ function build_score_events_scd(
             end
           end
         else
-          # sustain<1.0: normal per-step note events
           note_dur = step_duration * (0.98 + (1.22 * voice.sustain))
           for midi_note in voice.abs_notes
             freq = midi_to_freq(midi_note)
@@ -264,7 +302,7 @@ function build_score_events_scd(
 
   for ev in events
     println(io, @sprintf(
-      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\hardness, %.6f, \\texture, %.6f, \\sustain, %.6f, \\resonance, 0.2, \\outBus, %d]],",
+      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\hardness, %.6f, \\texture, %.6f, \\sustain, %.6f, \\outBus, %d]],",
       ev.time, node_id, ev.freq, ev.dur, ev.amp, ev.bri, ev.hrd, ev.tex, ev.sus, mix_bus
     ))
     node_id += 1
@@ -276,7 +314,7 @@ function build_score_events_scd(
   println(io, "]);")
   println(io, "")
 
-  # ✅ ここが超重要：最後に必ず終了させる
+  # ---------- NRT recording ----------
   println(io, "a.recordNRT(")
   println(io, "    outputFilePath: " * repr(outfile) * ",")
   println(io, "    headerFormat: \"wav\",")
@@ -310,12 +348,10 @@ end
 function _payload()::Dict{String,Any}
   jp = Requests.jsonpayload()
   if jp !== nothing
-    # Dict{Symbol,Any} でも Dict{String,Any} でも確実に String キーに揃える
     return Dict{String,Any}(string(k) => v for (k, v) in pairs(jp))
   end
   return Dict{String,Any}()
 end
-
 
 _parse_float(x) = x isa Real ? float(x) : (x === nothing ? 0.0 : parse(Float64, string(x)))
 _parse_int(x) = x isa Integer ? Int(x) : (x === nothing ? 0 : parse(Int, string(x)))
@@ -325,108 +361,9 @@ function _safe_tmp_path(prefix::AbstractString, suffix::AbstractString)
 end
 
 function _is_safe_tmp_file(path::AbstractString)
-  # /tmp 下のみ許可 (任意ファイル削除防止)
   p = abspath(path)
   return startswith(p, "/tmp/")
 end
-
-# ------------------------------------------------------------
-# SC code generator
-# ------------------------------------------------------------
-"""Convert a (octave, pitchclass) pair to MIDI note in this project"""
-@inline function _to_midi_note(octave::Int, pc::Int)::Int
-  raw = PolyphonicConfig.base_c_midi(octave) + (pc % PolyphonicConfig.STEPS_PER_OCTAVE)
-  return clamp(raw, PolyphonicConfig.abs_pitch_min(), PolyphonicConfig.abs_pitch_max())
-end
-
-@inline function _midi_to_freq(midi::Int)::Float64
-  return 440.0 * 2.0^((float(midi) - 69.0) / 12.0)
-end
-
-function _as_int_vec(x)::Vector{Int}
-  if x isa AbstractVector
-    return [Int(v) for v in x]
-  else
-    return [Int(x)]
-  end
-end
-
-"""Build events for SuperCollider script.
-
-Each event is a 4-tuple: (time_sec, freq_hz, amp, pan)
-"""
-function _build_events(time_series_any, step_duration::Float64)
-  # time_series: Vector{Any} (timestep) -> Vector{Any} (stream) -> Vector{Any} (dims)
-  events = Vector{NTuple{4,Float64}}()
-
-  # determine maximum stream count across steps (for panning)
-  max_streams = 0
-  if time_series_any isa AbstractVector
-    for step in time_series_any
-      if step isa AbstractVector
-        max_streams = max(max_streams, length(step))
-      end
-    end
-  end
-
-  # pan mapping
-  function pan_for(i::Int, n::Int)::Float64
-    n <= 1 && return 0.0
-    return -0.8 + (float(i - 1) / float(n - 1)) * 1.6
-  end
-
-  # conservative amp scale (avoid clipping when many streams/chords)
-  amp_scale = 0.18
-
-  # build events
-  t = 0.0
-  for step in (time_series_any isa AbstractVector ? time_series_any : Any[])
-    if !(step isa AbstractVector)
-      t += step_duration
-      continue
-    end
-    for (stream_idx, stream_vec) in enumerate(step)
-      if !(stream_vec isa AbstractVector) || length(stream_vec) < 3
-        continue
-      end
-      octave = _parse_int(stream_vec[1])
-      pcs = _as_int_vec(stream_vec[2])
-      vol = _parse_float(stream_vec[3])
-      vol = clamp(vol, 0.0, 1.0)
-
-      chord_n = max(1, length(pcs))
-      amp_each = (vol * amp_scale) / chord_n
-      pan = pan_for(stream_idx, max_streams)
-
-      for pc in pcs
-        midi = _to_midi_note(octave, Int(pc))
-        freq = _midi_to_freq(midi)
-        push!(events, (t, freq, amp_each, pan))
-      end
-    end
-    t += step_duration
-  end
-
-  return (events, t) # events, total_duration
-end
-
-function _events_to_sc_array(events::Vector{NTuple{4,Float64}})::String
-  sort!(events, by = e -> e[1])
-
-  io = IOBuffer()
-  for (idx, (t, f, a, p)) in enumerate(events)
-    line = @sprintf("[%.6f, %.3f, %.5f, %.4f]", t, f, a, p)
-    if idx < length(events)
-      println(io, "  ", line, ",")
-    else
-      println(io, "  ", line)
-    end
-  end
-
-  return String(take!(io))
-end
-"""Generate the SuperCollider .scd script for polyphonic playback."""
-
 
 # ------------------------------------------------------------
 # Actions
@@ -452,11 +389,7 @@ function render_polyphonic()
     end
 
     # Run sclang headless (QT offscreen)
-    # NOTE: sclang の起動には Qt が絡むため offscreen を明示
-    cmd = `bash -lc $("QT_QPA_PLATFORM=offscreen sclang \"$(scd_path)\"")`
-
-    # In case SuperCollider fails, we still want a readable error in logs.
-    # We don't capture stdout to avoid memory bloat with long logs.
+    cmd = `bash -c "QT_QPA_PLATFORM=offscreen sclang $(scd_path)"`
     run(cmd)
 
     if !isfile(wav_path)
