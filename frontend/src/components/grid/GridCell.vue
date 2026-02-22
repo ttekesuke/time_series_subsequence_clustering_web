@@ -2,6 +2,7 @@
   <input
     type="number"
     class="grid-input"
+    :class="{ 'is-selected': selected }"
     :value="modelValue"
     :min="config.min"
     :max="config.max"
@@ -18,6 +19,7 @@ const props = defineProps({
   modelValue: { type: [Number, String], default: 0 },
   rowIndex: { type: Number, required: true },
   colIndex: { type: Number, required: true },
+  selected: { type: Boolean, default: false },
   config: {
     type: Object,
     default: () => ({ min: 0, max: 1, isInt: false, step: 0.1 })
@@ -78,6 +80,10 @@ const onPaste = (e: ClipboardEvent) => {
   font-size: 0.9rem;
 }
 .grid-input:focus {
+  background-color: #e8f5e9;
+  font-weight: bold;
+}
+.grid-input.is-selected {
   background-color: #e8f5e9;
   font-weight: bold;
 }

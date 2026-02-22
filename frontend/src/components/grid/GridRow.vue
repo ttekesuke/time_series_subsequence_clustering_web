@@ -1,9 +1,14 @@
 <template>
   <tr>
     <!-- 固定ヘッダー列 (パラメータ名) -->
-    <td class="sticky-col head-col row-label">
+    <td
+      class="sticky-col head-col row-label row-header"
+      :class="{ 'selected-header': rowSelected }"
+      @mousedown.prevent
+      @click="onRowHeaderClick"
+    >
       <span>
-        {{ row.shortName }}
+        {{ row.shortName || row.name }}
         <v-tooltip
           v-if="row.help"
           activator="parent"
@@ -21,12 +26,18 @@
     </td>
 
     <!-- データ列 -->
-    <td v-for="i in steps" :key="i" class="data-col">
+    <td
+      v-for="i in steps"
+      :key="i"
+      class="data-col"
+      :class="{ 'selected-cell': rowSelected || isColSelected(i - 1) }"
+    >
       <GridCell
         :model-value="row.data[i-1]"
         @update:model-value="updateCell(i-1, $event)"
         :rowIndex="rowIndex"
         :colIndex="i-1"
+        :selected="rowSelected || isColSelected(i - 1)"
         :config="row.config"
         @focus="$emit('focus-cell', $event)"
         @dblclick="$emit('dblclick-cell', $event)"
@@ -46,10 +57,24 @@ const props = defineProps({
     // { name: string, data: number[], config: { min, max, isInt... } }
   },
   rowIndex: { type: Number, required: true },
-  steps: { type: Number, required: true }
+  steps: { type: Number, required: true },
+  rowSelected: { type: Boolean, default: false },
+  selectedCols: {
+    type: Array as () => number[],
+    default: () => []
+  }
 })
 
-const emit = defineEmits(['update:row', 'focus-cell', 'dblclick-cell', 'paste-cell'])
+const emit = defineEmits(['update:row', 'focus-cell', 'dblclick-cell', 'paste-cell', 'select-row-header'])
+
+const isColSelected = (idx: number): boolean => props.selectedCols.includes(idx)
+
+const onRowHeaderClick = (event: MouseEvent) => {
+  emit('select-row-header', {
+    rowIndex: props.rowIndex,
+    shiftKey: event.shiftKey
+  })
+}
 
 const updateCell = (idx: number, val: number) => {
   // 配列の特定要素だけ更新するため、コピーして置換
@@ -95,5 +120,15 @@ td {
 .row-label {
   padding-left: 8px !important;
   vertical-align: middle;
+}
+.row-header {
+  cursor: pointer;
+  user-select: none;
+}
+.selected-header {
+  background-color: #e8f5e9;
+}
+.selected-cell {
+  background-color: #e8f5e9;
 }
 </style>
