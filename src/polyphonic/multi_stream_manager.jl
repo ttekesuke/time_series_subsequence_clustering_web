@@ -22,6 +22,23 @@ using ..PolyphonicClusterManager
 
 const INACTIVE_STRENGTH_DECAY::Float64 = 0.98
 
+@inline function _create_quadratic_integer_array(start_val::Real, end_val::Real, count::Int)::Vector{Int}
+  count <= 1 && return Int[ceil(Int, start_val) + 1]
+  out = Int[]
+  sizehint!(out, count)
+  for i in 0:(count - 1)
+    t = float(i) / float(count - 1)
+    curve = t^10
+    value = start_val + (end_val - start_val) * curve
+    if start_val < end_val
+      push!(out, ceil(Int, value) + 1)
+    else
+      push!(out, floor(Int, value) + 1)
+    end
+  end
+  return out
+end
+
 # ============================================================
 # Types
 # ============================================================
@@ -239,6 +256,15 @@ function build_stream_manager(
   )
   try
     PolyphonicClusterManager.process_data(mgr)
+  catch
+    # noop
+  end
+  try
+    len = max(length(mgr.data), 1)
+    width = abs(float(value_max) - float(value_min))
+    width = width <= 0.0 ? 1.0 : width
+    q_array = _create_quadratic_integer_array(0.0, width * float(len), len)
+    PolyphonicClusterManager.update_caches_permanently(mgr, q_array)
   catch
     # noop
   end

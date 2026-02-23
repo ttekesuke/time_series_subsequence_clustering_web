@@ -475,6 +475,7 @@ function select_best_polyphonic_candidate_unified_with_cost(
 
   sdm = stream_dist_max
   sdm = (sdm <= 0.0) ? 1.0 : sdm
+  conc_enabled = !isempty(metrics) && length(metrics[1].ordered_cand) > 1
 
   for (i, m) in enumerate(metrics)
     current_global = (g_dists[i] + g_qtys[i] + g_comps[i]) / 3.0
@@ -504,9 +505,12 @@ function select_best_polyphonic_candidate_unified_with_cost(
       end
     end
 
-    conc_t = clamp(concordance_weight, 0.0, 1.0)
-    concord01 = 1.0 - clamp(m.discordance, 0.0, 1.0)
-    cost_c = abs(concord01 - conc_t)
+    cost_c = 0.0
+    if conc_enabled
+      conc_t = clamp(concordance_weight, 0.0, 1.0)
+      concord01 = 1.0 - clamp(m.discordance, 0.0, 1.0)
+      cost_c = abs(concord01 - conc_t)
+    end
 
     total = cost_a + cost_b + cost_c
     if total < min_cost
