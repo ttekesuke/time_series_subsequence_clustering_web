@@ -27,6 +27,8 @@ import ..MultiStreamManager
 import ..DissonanceStmManager
 
 const SUBSEQUENCE_MIN_WINDOW_SIZE = 2
+const DEFAULT_USE_RECENT_POSITION_WEIGHT = false
+const UNIFORM_QUANTITY_WEIGHT = 2
 
 # ------------------------------------------------------------
 # Utilities
@@ -171,10 +173,30 @@ function create_quadratic_integer_array(start_val::Real, end_val::Real, count::I
   return result
 end
 
-# Initialize cache values (we compute "full" caches for stability)
-function initial_calc_values!(manager, clusters_each_window_size, max_master::Real, min_master::Real, len::Int)
-  qarr = create_quadratic_integer_array(0.0, (float(max_master) - float(min_master)) * float(len), len)
+function create_quantity_weight_array(
+  start_val::Real,
+  end_val::Real,
+  count::Int;
+  use_recent_position_weight::Bool=DEFAULT_USE_RECENT_POSITION_WEIGHT
+)
+  n = max(count, 1)
+  if use_recent_position_weight
+    return create_quadratic_integer_array(start_val, end_val, n)
+  end
+  return fill(UNIFORM_QUANTITY_WEIGHT, n)
+end
 
+@inline cluster_quantity_score(cluster_size::Int, window_size::Int)::Float64 = float(cluster_size * window_size)
+
+# Initialize cache values (we compute "full" caches for stability)
+function initial_calc_values!(
+  manager,
+  clusters_each_window_size,
+  max_master::Real,
+  min_master::Real,
+  len::Int;
+  use_recent_position_weight::Bool=DEFAULT_USE_RECENT_POSITION_WEIGHT
+)
   for (window_size, same_ws) in clusters_each_window_size
     all_ids = collect(keys(same_ws))
 
@@ -195,13 +217,7 @@ function initial_calc_values!(manager, clusters_each_window_size, max_master::Re
     for (cid, cluster) in same_ws
       si = cluster["si"]
       length(si) > 1 || continue
-      q = 1.0
-      for s in si
-        idx = s[1] + 1
-        if 1 <= idx <= length(qarr)
-          q *= qarr[idx]
-        end
-      end
+      q = cluster_quantity_score(length(si), window_size)
       q_cache[cid] = q
       c_cache[cid] = calculate_cluster_complexity(cluster)
     end
@@ -287,6 +303,14 @@ function generate()
   first_elements = _parse_csv_ints(string(get(p, "first_elements", "")))
   complexity_targets = _parse_csv_floats(string(get(p, "complexity_transition", "")))
   merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", 0.3))
+  use_recent_position_weight = _parse_bool(
+    get(
+      p,
+      "use_recent_position_weight",
+      get(p, "use_most_recent_adding_weight", get(p, "user_most_recent_adding_weight", DEFAULT_USE_RECENT_POSITION_WEIGHT))
+    ),
+    DEFAULT_USE_RECENT_POSITION_WEIGHT
+  )
 
   candidate_min_master = _parse_int(get(p, "range_min", 0))
   candidate_max_master = _parse_int(get(p, "range_max", 24))
@@ -307,7 +331,14 @@ function generate()
   process_data!(manager)
 
   clusters_each = transform_clusters(manager.clusters, min_window_size)
-  initial_calc_values!(manager, clusters_each, candidate_max_master, candidate_min_master, length(first_elements))
+  initial_calc_values!(
+    manager,
+    clusters_each,
+    candidate_max_master,
+    candidate_min_master,
+    length(first_elements);
+    use_recent_position_weight=use_recent_position_weight
+  )
   empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
 
   results = copy(first_elements)
@@ -317,10 +348,11 @@ function generate()
     indexed_metrics = Vector{Dict{String,Any}}()
     current_len = length(results) + 1
 
-    qarr = create_quadratic_integer_array(
+    qarr = create_quantity_weight_array(
       0.0,
       (candidate_max_master - candidate_min_master) * current_len,
-      current_len
+      current_len;
+      use_recent_position_weight=use_recent_position_weight
     )
 
     for (idx, candidate) in enumerate(candidates)
@@ -455,16 +487,52 @@ struct CandidateMetric
   global_qty::Float64
   global_comp::Float64
   stream_dists::Vector{Float64}
+  stream_qtys::Vector{Float64}
   stream_comps::Vector{Float64}
   discordance::Float64
+end
+
+function _normalize_metric_weights(dw::Real, qw::Real, cw::Real)::NTuple{3,Float64}
+  d = isfinite(float(dw)) ? max(float(dw), 0.0) : 0.0
+  q = isfinite(float(qw)) ? max(float(qw), 0.0) : 0.0
+  c = isfinite(float(cw)) ? max(float(cw), 0.0) : 0.0
+  if d + q + c <= 0.0
+    return (1.0, 1.0, 1.0)
+  end
+  return (d, q, c)
+end
+
+function _safe_corrcoef(xs::Vector{Float64}, ys::Vector{Float64})::Float64
+  n = min(length(xs), length(ys))
+  n <= 1 && return NaN
+
+  mx = sum(xs[1:n]) / float(n)
+  my = sum(ys[1:n]) / float(n)
+
+  sxx = 0.0
+  syy = 0.0
+  sxy = 0.0
+  for i in 1:n
+    dx = xs[i] - mx
+    dy = ys[i] - my
+    sxx += dx * dx
+    syy += dy * dy
+    sxy += dx * dy
+  end
+
+  if sxx <= 0.0 || syy <= 0.0
+    return NaN
+  end
+  return sxy / sqrt(sxx * syy)
 end
 
 function select_best_polyphonic_candidate_unified_with_cost(
   metrics::Vector{CandidateMetric},
   global_target::Float64,
   stream_targets::Vector{Float64},
-  concordance_weight::Float64;
-  stream_dist_max::Float64 = 1.0
+  concordance_weight::Float64,
+  global_metric_weights::NTuple{3,Float64},
+  stream_metric_weights::NTuple{3,Float64};
 )
   best_i = 1
   min_cost = Inf
@@ -473,35 +541,59 @@ function select_best_polyphonic_candidate_unified_with_cost(
   g_qtys,  _ = normalize_scores([m.global_qty  for m in metrics], false)
   g_comps, _ = normalize_scores([m.global_comp for m in metrics], true)
 
-  sdm = stream_dist_max
-  sdm = (sdm <= 0.0) ? 1.0 : sdm
+  g_dw, g_qw, g_cw = _normalize_metric_weights(global_metric_weights[1], global_metric_weights[2], global_metric_weights[3])
+  s_dw, s_qw, s_cw = _normalize_metric_weights(stream_metric_weights[1], stream_metric_weights[2], stream_metric_weights[3])
+  g_wsum = g_dw + g_qw + g_cw
+  s_wsum = s_dw + s_qw + s_cw
+
+  n_stream_metrics = 0
+  for m in metrics
+    n_stream_metrics = max(
+      n_stream_metrics,
+      length(m.stream_dists),
+      length(m.stream_qtys),
+      length(m.stream_comps),
+    )
+  end
+  stream_d_norm = Vector{Vector{Float64}}(undef, n_stream_metrics)
+  stream_q_norm = Vector{Vector{Float64}}(undef, n_stream_metrics)
+  stream_c_norm = Vector{Vector{Float64}}(undef, n_stream_metrics)
+
+  for s_idx in 1:n_stream_metrics
+    raw_d = Float64[(s_idx <= length(m.stream_dists)) ? m.stream_dists[s_idx] : 0.0 for m in metrics]
+    raw_q = Float64[(s_idx <= length(m.stream_qtys)) ? m.stream_qtys[s_idx] : 0.0 for m in metrics]
+    raw_c = Float64[(s_idx <= length(m.stream_comps)) ? m.stream_comps[s_idx] : 0.0 for m in metrics]
+    stream_d_norm[s_idx], _ = normalize_scores(raw_d, true)
+    stream_q_norm[s_idx], _ = normalize_scores(raw_q, false)
+    stream_c_norm[s_idx], _ = normalize_scores(raw_c, true)
+  end
+
   conc_enabled = !isempty(metrics) && length(metrics[1].ordered_cand) > 1
 
   for (i, m) in enumerate(metrics)
-    current_global = (g_dists[i] + g_qtys[i] + g_comps[i]) / 3.0
+    current_global = (
+      (g_dw * g_dists[i]) +
+      (g_qw * g_qtys[i]) +
+      (g_cw * g_comps[i])
+    ) / g_wsum
     cost_a = abs(current_global - global_target)
 
     cost_b = 0.0
+    stream_scores = Float64[]
     if !isempty(stream_targets)
-      if !isempty(m.stream_comps)
-        n = min(length(stream_targets), length(m.stream_comps))
-        if n > 0
-          for s_idx in 1:n
-            comp01 = clamp(m.stream_comps[s_idx], 0.0, 1.0)
-            cost_b += abs(comp01 - stream_targets[s_idx])
-          end
-          cost_b /= float(n)
+      n = min(length(stream_targets), n_stream_metrics)
+      if n > 0
+        sizehint!(stream_scores, n)
+        for s_idx in 1:n
+          stream_score = (
+            (s_dw * stream_d_norm[s_idx][i]) +
+            (s_qw * stream_q_norm[s_idx][i]) +
+            (s_cw * stream_c_norm[s_idx][i])
+          ) / s_wsum
+          cost_b += abs(stream_score - stream_targets[s_idx])
+          push!(stream_scores, stream_score)
         end
-      else
-        n = min(length(stream_targets), length(m.stream_dists))
-        if n > 0
-          for s_idx in 1:n
-            raw_dist = m.stream_dists[s_idx]
-            dist01 = clamp(raw_dist / sdm, 0.0, 1.0)
-            cost_b += abs(dist01 - stream_targets[s_idx])
-          end
-          cost_b /= float(n)
-        end
+        cost_b /= float(n)
       end
     end
 
@@ -532,6 +624,8 @@ function select_best_chord_for_dimension_with_cost(
   concordance_weight::Float64,
   n::Int,
   range_vec::Vector{<:Real};
+  global_metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
+  stream_metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
   absolute_bases::Union{Nothing,Vector{Int}} = nothing,
   active_note_counts::Union{Nothing,Vector{Int}} = nothing,
   active_total_notes::Union{Nothing,Int} = nothing,
@@ -545,15 +639,15 @@ function select_best_chord_for_dimension_with_cost(
   assignment_distance_weight   = density01
   assignment_complexity_weight = 1.0 - density01
 
-  vmin = float(minimum(range_vec))
-  vmax = float(maximum(range_vec))
+  vmin = isempty(range_vec) ? 0.0 : float(minimum(range_vec))
+  vmax = isempty(range_vec) ? 1.0 : float(maximum(range_vec))
   range_width = abs(vmax - vmin)
   range_width = range_width <= 0.0 ? 1.0 : range_width
 
   metrics = CandidateMetric[]
 
   for cand_set in candidates
-    ordered_polysets, stream_metric = MultiStreamManager.resolve_mapping_and_score(
+    ordered_polysets, _stream_metric = MultiStreamManager.resolve_mapping_and_score(
       mgrs[:stream],
       cand_set,
       stream_costs;
@@ -580,41 +674,44 @@ function select_best_chord_for_dimension_with_cost(
       push!(global_vals, float(v) + (i - 1) * float(g_offset))
     end
     g_dist, g_qty, g_comp = PolyphonicClusterManager.simulate_add_and_calculate(mgrs[:global], global_vals, q_array)
-    disc = (maximum(ordered_vals) - minimum(ordered_vals)) / range_width
+    disc =
+      if isempty(ordered_vals)
+        0.0
+      else
+        (maximum(ordered_vals) - minimum(ordered_vals)) / range_width
+      end
 
     stream_dists = Float64[]
+    stream_qtys = Float64[]
     stream_comps = Float64[]
-    if stream_metric !== nothing && hasproperty(stream_metric, :individual_scores)
-      for sc in stream_metric.individual_scores
-        push!(stream_dists, float(sc.dist))
-        push!(stream_comps, float(sc.complexity01))
+
+    stream_mgr = mgrs[:stream]
+    actives = MultiStreamManager.active_stream_containers(stream_mgr, n)
+    for i in 1:n
+      if i <= length(actives) && i <= length(ordered_polysets)
+        d_s, q_s, c_s = MultiStreamManager.safe_simulate_add_and_calculate(actives[i].manager, ordered_polysets[i], q_array)
+        push!(stream_dists, isfinite(d_s) ? float(d_s) : 0.0)
+        push!(stream_qtys, isfinite(q_s) ? float(q_s) : 0.0)
+        push!(stream_comps, isfinite(c_s) ? float(c_s) : 0.0)
+      else
+        push!(stream_dists, 0.0)
+        push!(stream_qtys, 0.0)
+        push!(stream_comps, 0.0)
       end
     end
-    if length(stream_dists) < n
-      append!(stream_dists, fill(0.0, n - length(stream_dists)))
-    end
 
-    push!(metrics, CandidateMetric(ordered_vals, g_dist, g_qty, g_comp, stream_dists, stream_comps, disc))
+    push!(metrics, CandidateMetric(ordered_vals, g_dist, g_qty, g_comp, stream_dists, stream_qtys, stream_comps, disc))
   end
 
   isempty(metrics) && return (Float64[], Inf)
-
-  max_raw_dist = 0.0
-  for m in metrics
-    for d in m.stream_dists
-      max_raw_dist = max(max_raw_dist, d)
-    end
-  end
-
-  base_stream_dist_max = absolute_bases === nothing ? range_width : float(PolyphonicConfig.abs_pitch_width())
-  stream_dist_max_for_cost = max_raw_dist <= 1.000001 ? 1.0 : base_stream_dist_max
 
   best_i, best_cost = select_best_polyphonic_candidate_unified_with_cost(
     metrics,
     global_target,
     stream_targets,
-    concordance_weight;
-    stream_dist_max=stream_dist_max_for_cost
+    concordance_weight,
+    global_metric_weights,
+    stream_metric_weights;
   )
 
   best = metrics[best_i]
@@ -927,6 +1024,14 @@ function generate_polyphonic()
   end
 
   merge_threshold_ratio = _parse_float(get(gp, "merge_threshold_ratio", PolyphonicConfig.DEFAULT_POLYPHONIC_MERGE_THRESHOLD_RATIO))
+  use_recent_position_weight = _parse_bool(
+    get(
+      gp,
+      "use_recent_position_weight",
+      get(gp, "use_most_recent_adding_weight", get(gp, "user_most_recent_adding_weight", DEFAULT_USE_RECENT_POSITION_WEIGHT))
+    ),
+    DEFAULT_USE_RECENT_POSITION_WEIGHT
+  )
   min_window = PolyphonicConfig.POLYPHONIC_MIN_WINDOW_SIZE
 
   function pad_history!(mat, fallback_row)
@@ -1088,7 +1193,12 @@ function generate_polyphonic()
     PolyphonicClusterManager.process_data!(g_mgr)
     PolyphonicClusterManager.update_caches_permanently(
       g_mgr,
-      create_quadratic_integer_array(0, _safe_width(value_min, value_max) * length(g_mgr.data), length(g_mgr.data))
+      create_quantity_weight_array(
+        0,
+        _safe_width(value_min, value_max) * length(g_mgr.data),
+        length(g_mgr.data);
+        use_recent_position_weight=use_recent_position_weight
+      )
     )
     managers[key] = Dict(:global => g_mgr, :stream => s_mgr, :global_offset => offset)
   end
@@ -1164,7 +1274,15 @@ function generate_polyphonic()
   s_note = MultiStreamManager.Manager(hist_note_anchor, merge_threshold_ratio, min_window; use_complexity_mapping=true, value_range=collect(ABS_MIN:ABS_MAX), track_presence=true)
   g_note = PolyphonicClusterManager.Manager(note_global_series, merge_threshold_ratio, min_window; value_min=note_min, value_max=note_max, max_set_size=1)
   PolyphonicClusterManager.process_data!(g_note)
-  PolyphonicClusterManager.update_caches_permanently(g_note, create_quadratic_integer_array(0, (note_max - note_min) * length(g_note.data), length(g_note.data)))
+  PolyphonicClusterManager.update_caches_permanently(
+    g_note,
+    create_quantity_weight_array(
+      0,
+      (note_max - note_min) * length(g_note.data),
+      length(g_note.data);
+      use_recent_position_weight=use_recent_position_weight
+    )
+  )
   managers["note"] = Dict(:global => g_note, :stream => s_note)
 
   # ----------------------------------------------------------
@@ -1265,6 +1383,37 @@ function generate_polyphonic()
     return Float64[search_values[nearest_idx]]
   end
 
+  function _metric_weights_for_dimension(
+    key::String,
+    idx0::Int,
+    scope::String
+  )::NTuple{3,Float64}
+    scope_l = lowercase(scope)
+    scope_l in ("global", "stream") || error("scope must be global or stream")
+
+    d_raw = array_param(gp, "$(key)_$(scope_l)_dist_weight", idx0)
+    q_raw = array_param(gp, "$(key)_$(scope_l)_qty_weight", idx0)
+    c_raw = array_param(gp, "$(key)_$(scope_l)_comp_weight", idx0)
+
+    d_raw === nothing && (d_raw = array_param(gp, "$(key)_$(scope_l)_distance_weight", idx0))
+    q_raw === nothing && (q_raw = array_param(gp, "$(key)_$(scope_l)_quantity_weight", idx0))
+    c_raw === nothing && (c_raw = array_param(gp, "$(key)_$(scope_l)_complexity_weight", idx0))
+
+    d_raw === nothing && (d_raw = array_param(gp, "$(scope_l)_dist_weight", idx0))
+    q_raw === nothing && (q_raw = array_param(gp, "$(scope_l)_qty_weight", idx0))
+    c_raw === nothing && (c_raw = array_param(gp, "$(scope_l)_comp_weight", idx0))
+
+    d_raw === nothing && (d_raw = array_param(gp, "$(scope_l)_distance_weight", idx0))
+    q_raw === nothing && (q_raw = array_param(gp, "$(scope_l)_quantity_weight", idx0))
+    c_raw === nothing && (c_raw = array_param(gp, "$(scope_l)_complexity_weight", idx0))
+
+    d = d_raw === nothing ? 1.0 : _parse_float(d_raw)
+    q = q_raw === nothing ? 1.0 : _parse_float(q_raw)
+    c = c_raw === nothing ? 1.0 : _parse_float(c_raw)
+
+    return _normalize_metric_weights(d, q, c)
+  end
+
   # ----------------------------------------------------------
   # Main generation loop
   # ----------------------------------------------------------
@@ -1340,6 +1489,8 @@ function generate_polyphonic()
       s_center = clamp(_parse_float(array_param(gp, "$(key)_center", idx0)), 0.0, 1.0)
       s_spread = clamp(_parse_float(array_param(gp, "$(key)_spread", idx0)), 0.0, 1.0)
       conc_w   = _parse_float(array_param(gp, "$(key)_conc", idx0))
+      global_metric_weights = _metric_weights_for_dimension(key, idx0, "global")
+      stream_metric_weights = _metric_weights_for_dimension(key, idx0, "stream")
 
       stream_targets = generate_centered_targets(desired_stream_count, s_center, s_spread)
 
@@ -1349,7 +1500,12 @@ function generate_polyphonic()
       width = abs(vmax - vmin)
       width = width <= 0.0 ? 1.0 : width
       len_next = length(gl.data) + 1
-      q_array = create_quadratic_integer_array(0, width * len_next, len_next)
+      q_array = create_quantity_weight_array(
+        0,
+        width * len_next,
+        len_next;
+        use_recent_position_weight=use_recent_position_weight
+      )
 
       restricted_range = _restrict_candidates_with_target_window(key, range_vec, idx0)
       isempty(restricted_range) && (restricted_range = range_vec)
@@ -1375,7 +1531,9 @@ function generate_polyphonic()
         stream_targets,
         conc_w,
         desired_stream_count,
-        Float64[float(v) for v in restricted_range]
+        Float64[float(v) for v in restricted_range];
+        global_metric_weights=global_metric_weights,
+        stream_metric_weights=stream_metric_weights,
       )
 
       # commit (global manager expects stream-offset encoding)
@@ -1492,7 +1650,12 @@ for s in 1:desired_stream_count
 
   # q-array for THIS stream manager length
   len_next_s = length(sm.data) + 1
-  q_s = create_quadratic_integer_array(0, (note_max - note_min) * len_next_s, len_next_s)
+  q_s = create_quantity_weight_array(
+    0,
+    (note_max - note_min) * len_next_s,
+    len_next_s;
+    use_recent_position_weight=use_recent_position_weight
+  )
 
   raw_d = Float64[]  # avg_dist (complex when larger)
   raw_q = Float64[]  # quantity (complex when smaller)
@@ -1586,7 +1749,12 @@ end
 
     # q-array for global manager length
     len_next_g = length(area_gl.data) + 1
-    q_g = create_quadratic_integer_array(0, (note_max - note_min) * len_next_g, len_next_g)
+    q_g = create_quantity_weight_array(
+      0,
+      (note_max - note_min) * len_next_g,
+      len_next_g;
+      use_recent_position_weight=use_recent_position_weight
+    )
 
     global_raws = Float64[]
     sizehint!(global_raws, length(area_candidates))
@@ -1820,7 +1988,12 @@ end
     # ---- Commit NOTE managers using realized anchors (global scalar + per-stream) ----
     global_anchor_note = _global_anchor_from_step(current_step_values)
     note_len_next = length(note_mgrs[:global].data) + 1
-    note_q_array = create_quadratic_integer_array(0, (note_max - note_min) * note_len_next, note_len_next)
+    note_q_array = create_quantity_weight_array(
+      0,
+      (note_max - note_min) * note_len_next,
+      note_len_next;
+      use_recent_position_weight=use_recent_position_weight
+    )
 
     PolyphonicClusterManager.add_data_point_permanently(note_mgrs[:global], Float64[float(global_anchor_note)])
     PolyphonicClusterManager.update_caches_permanently(note_mgrs[:global], note_q_array)

@@ -542,7 +542,9 @@ end
 
 Identical to scalar TimeSeriesClusterManager, but uses polyphonic distances.
 """
-function update_caches_permanently!(mgr::Manager, quadratic_integer_array::Vector{Int})
+@inline cluster_quantity_score(cluster_size::Int, window_size::Int)::Float64 = float(cluster_size * window_size)
+
+function update_caches_permanently!(mgr::Manager, _quadratic_integer_array::Vector{Int})
   now_index = length(mgr.data) - 1
   now_index >= 0 && _prune_clusters_by_importance!(mgr, now_index)
 
@@ -609,13 +611,7 @@ function update_caches_permanently!(mgr::Manager, quadratic_integer_array::Vecto
       for (cid, node) in same_ws
         length(node.si) <= 1 && continue
 
-        q = 1.0
-        @inbounds for s in node.si
-          idx = s + 1
-          if 1 <= idx <= length(quadratic_integer_array)
-            q *= quadratic_integer_array[idx]
-          end
-        end
+        q = cluster_quantity_score(length(node.si), window_size)
         q_cache[cid] = q
         c_cache[cid] = calculate_cluster_complexity(mgr, node)
       end
@@ -625,13 +621,7 @@ function update_caches_permanently!(mgr::Manager, quadratic_integer_array::Vecto
         node === nothing && continue
         length(node.si) > 1 || continue
 
-        q = 1.0
-        @inbounds for s in node.si
-          idx = s + 1
-          if 1 <= idx <= length(quadratic_integer_array)
-            q *= quadratic_integer_array[idx]
-          end
-        end
+        q = cluster_quantity_score(length(node.si), window_size)
         q_cache[cid] = q
         c_cache[cid] = calculate_cluster_complexity(mgr, node)
       end
@@ -851,7 +841,7 @@ end
 
 # Simulation with rollback
 
-function simulate_add_and_calculate(mgr::Manager, candidate::PolySet, quadratic_integer_array::Vector{Int})
+function simulate_add_and_calculate(mgr::Manager, candidate::PolySet, _quadratic_integer_array::Vector{Int})
   start_transaction!(mgr)
   reset_updated_ids_for_simulation!(mgr)
 
@@ -938,13 +928,7 @@ function simulate_add_and_calculate(mgr::Manager, candidate::PolySet, quadratic_
         node === nothing && continue
         length(node.si) > 1 || continue
 
-        q = 1.0
-        @inbounds for s in node.si
-          idx = s + 1
-          if 1 <= idx <= length(quadratic_integer_array)
-            q *= quadratic_integer_array[idx]
-          end
-        end
+        q = cluster_quantity_score(length(node.si), window_size)
 
         old_q = haskey(q_cache, cid) ? q_cache[cid] : nothing
         q_cache[cid] = q

@@ -155,8 +155,10 @@ function add_data_point_permanently!(mgr::TimeSeriesClusterManager, val::Int)
   clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
 end
 
+@inline cluster_quantity_score(cluster_size::Int, window_size::Int)::Float64 = float(cluster_size * window_size)
+
 # full cache update (used after each permanent append in generate)
-function update_caches_permanently!(mgr::TimeSeriesClusterManager, quadratic_integer_array::Vector{Int})
+function update_caches_permanently!(mgr::TimeSeriesClusterManager, _quadratic_integer_array::Vector{Int})
   clusters_each = transform_clusters(mgr.clusters, mgr.min_window_size)
 
   for (window_size, same_ws) in clusters_each
@@ -211,13 +213,7 @@ function update_caches_permanently!(mgr::TimeSeriesClusterManager, quadratic_int
         si = cluster["si"]
         length(si) <= 1 && continue
 
-        q = 1.0
-        for s in si
-          idx = s[1] + 1
-          if 1 <= idx <= length(quadratic_integer_array)
-            q *= quadratic_integer_array[idx]
-          end
-        end
+        q = cluster_quantity_score(length(si), window_size)
         q_cache[cid] = q
         c_cache[cid] = calculate_cluster_complexity(cluster)
       end
@@ -228,13 +224,7 @@ function update_caches_permanently!(mgr::TimeSeriesClusterManager, quadratic_int
         si = cluster["si"]
         length(si) > 1 || continue
 
-        q = 1.0
-        for s in si
-          idx = s[1] + 1
-          if 1 <= idx <= length(quadratic_integer_array)
-            q *= quadratic_integer_array[idx]
-          end
-        end
+        q = cluster_quantity_score(length(si), window_size)
         q_cache[cid] = q
         c_cache[cid] = calculate_cluster_complexity(cluster)
       end
@@ -248,7 +238,7 @@ function update_caches_permanently!(mgr::TimeSeriesClusterManager, quadratic_int
 end
 
 # --- simulation with rollback ---
-function simulate_add_and_calculate(mgr::TimeSeriesClusterManager, candidate::Int, quadratic_integer_array::Vector{Int})
+function simulate_add_and_calculate(mgr::TimeSeriesClusterManager, candidate::Int, _quadratic_integer_array::Vector{Int})
   start_transaction!(mgr)
   reset_updated_ids_for_simulation!(mgr)
 
@@ -295,13 +285,7 @@ function simulate_add_and_calculate(mgr::TimeSeriesClusterManager, candidate::In
         si = cluster["si"]
         length(si) > 1 || continue
 
-        q = 1.0
-        for s in si
-          idx = s[1] + 1
-          if 1 <= idx <= length(quadratic_integer_array)
-            q *= quadratic_integer_array[idx]
-          end
-        end
+        q = cluster_quantity_score(length(si), window_size)
         old_q = get(q_cache, cid, nothing)
         q_cache[cid] = q
         record_action!(mgr, :cache_write, q_cache, cid, old_q)
