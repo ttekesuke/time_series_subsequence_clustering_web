@@ -837,10 +837,14 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: number) => {
   }
 
   const { out, chords } = toLegacyForRender(timeSeries)
+  // Temporary A/B knob for octave-lower "sub" layer in synth.
+  // 0.0: off, 0.2~0.4: reduced, 1.0: original.
+  const TEMP_SUB_GAIN_FOR_AUDITION = 0.0
 
   axios.post('/api/web/supercolliders/render_polyphonic', {
     time_series: out,
     bpm,
+    sub_gain: TEMP_SUB_GAIN_FOR_AUDITION,
     note_chords_pitch_classes: chords,
   })
     .then(response => {

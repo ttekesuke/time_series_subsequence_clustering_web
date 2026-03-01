@@ -9,7 +9,8 @@ import ..PolyphonicConfig
 
 function build_score_events_scd(
   time_series, step_duration::Float64,
-  outfile::String
+  outfile::String,
+  sub_gain::Float64
 )::String
 
   io = IOBuffer()
@@ -35,14 +36,14 @@ function build_score_events_scd(
     mix_bus,
     step_duration
   ))
-  println(io, "         brightness=0.5, hardness=0.5, texture=0.0, sustain=0.0|")
+  println(io, "         brightness=0.5, hardness=0.5, texture=0.0, sustain=0.0, subGain=1.0|")
   println(io, "")
   println(io, "        var sig, env, transientEnv, body, tone, sub, noise, click;")
   println(io, "        var legato, fullLegato, attack, hold, release;")
   println(io, "        var bri, hrd, tex, f0, vibRate, vibDepth, vibrato;")
   println(io, "        var stringOsc, brassOsc, fmOsc, shimmerOsc, percNoise;")
   println(io, "        var stringAmt, brassAmt, fmAmt, percAmt, den;")
-  println(io, "        var cutoff, rq, drive, left, right, air, safeGain;")
+  println(io, "        var cutoff, rq, drive, left, right, air, safeGain, timbreComp, levelerTarget, levelerDur;")
   println(io, "")
   println(io, "        // --- controls ---")
   println(io, "        bri = brightness.clip(0.0, 1.0);")
@@ -91,6 +92,7 @@ function build_score_events_scd(
   println(io, "        sub = SinOsc.ar(f0 * 0.5) * (0.22 + (1.0 - bri) * 0.42);")
   println(io, "        sub = sub + (LFTri.ar(f0 * 0.5) * (0.10 + (1.0 - tex) * 0.18));")
   println(io, "        sub = LPF.ar(sub, (170 + (1.0 - bri) * 260).clip(90, 700));")
+  println(io, "        sub = sub * subGain.clip(0.0, 1.0);")
   println(io, "")
   println(io, "        // --- morph by texture/hardness ---")
   println(io, "        stringAmt = ((1.0 - tex) * (1.0 - hrd * 0.55)).clip(0.0, 1.0);")
@@ -116,6 +118,13 @@ function build_score_events_scd(
   println(io, "        // intense timbre area is auto-attenuated to avoid silent failure by overload")
   println(io, "        safeGain = (1.0 - (tex * 0.22) - (hrd * 0.12)).clip(0.55, 1.0);")
   println(io, "        sig = sig * safeGain;")
+  println(io, "        // timbre-dependent loudness compensation (keep vol perceptually consistent)")
+  println(io, "        timbreComp = (1.18 - (tex * 0.34) - (hrd * 0.22) - (bri * 0.08)).clip(0.65, 1.18);")
+  println(io, "        sig = sig * timbreComp;")
+  println(io, "        // gentle per-voice leveling before applying vol amp")
+  println(io, "        levelerTarget = 0.38;")
+  println(io, "        levelerDur = 0.015;")
+  println(io, "        sig = Normalizer.ar(sig, levelerTarget, levelerDur);")
   println(io, "        sig = HPF.ar(sig, 18);")
   println(io, "        sig = LPF.ar(sig, 18000);")
   println(io, "        sig = sig.clip2(1.2);")
@@ -213,7 +222,7 @@ function build_score_events_scd(
     Tuple{Int,Vector{Int},Float64,Float64,Float64,Float64,Float64}
   }
   events = Event[]
-  base_voice_gain = 0.22
+  base_voice_gain = 0.30
   active_ties = Dict{Tuple{Int,Int},Int}()
 
   for step_streams in (time_series isa AbstractVector ? time_series : Any[])
@@ -302,8 +311,8 @@ function build_score_events_scd(
 
   for ev in events
     println(io, @sprintf(
-      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\hardness, %.6f, \\texture, %.6f, \\sustain, %.6f, \\outBus, %d]],",
-      ev.time, node_id, ev.freq, ev.dur, ev.amp, ev.bri, ev.hrd, ev.tex, ev.sus, mix_bus
+      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\hardness, %.6f, \\texture, %.6f, \\sustain, %.6f, \\subGain, %.6f, \\outBus, %d]],",
+      ev.time, node_id, ev.freq, ev.dur, ev.amp, ev.bri, ev.hrd, ev.tex, ev.sus, sub_gain, mix_bus
     ))
     node_id += 1
   end
@@ -371,6 +380,7 @@ end
 function render_polyphonic()
   payload = _payload()
   time_series_any = get(payload, "time_series", Any[])
+  raw_sub_gain = get(payload, "sub_gain", 0.0)
   raw_bpm = get(payload, "bpm", nothing)
   if raw_bpm === nothing
     gp = _to_string_dict(get(payload, "generate_polyphonic", nothing))
@@ -378,12 +388,13 @@ function render_polyphonic()
   end
   bpm = PolyphonicConfig.sanitize_bpm(_parse_float(raw_bpm === nothing ? PolyphonicConfig.POLYPHONIC_BPM : raw_bpm))
   step_duration = PolyphonicConfig.step_duration_from_bpm(bpm)
+  sub_gain = clamp(_parse_float(raw_sub_gain), 0.0, 1.0)
 
   scd_path = _safe_tmp_path("supercollider_render_polyphonic", ".scd")
   wav_path = _safe_tmp_path("supercollider_render_polyphonic", ".wav")
 
   try
-    scd_text = build_score_events_scd(time_series_any, step_duration, wav_path)
+    scd_text = build_score_events_scd(time_series_any, step_duration, wav_path, sub_gain)
     open(scd_path, "w") do f
       write(f, scd_text)
     end
@@ -407,6 +418,7 @@ function render_polyphonic()
       "sound_file_path" => wav_path,
       "bpm" => bpm,
       "stepDuration" => step_duration,
+      "subGain" => sub_gain,
     )
   catch e
     return Dict(
@@ -415,6 +427,7 @@ function render_polyphonic()
       "sound_file_path" => wav_path,
       "bpm" => bpm,
       "stepDuration" => step_duration,
+      "subGain" => sub_gain,
     )
   end
 end
