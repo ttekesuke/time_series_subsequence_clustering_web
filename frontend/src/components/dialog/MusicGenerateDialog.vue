@@ -1226,7 +1226,7 @@ watch(open, (next, prev) => {
 
 <style scoped>
 .dialog-body {
-  max-height: 80vh;
+  max-height: 100vh;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -1239,7 +1239,7 @@ watch(open, (next, prev) => {
   height: clamp(260px, 36vh, 420px);
 }
 .generation-card {
-  height: clamp(420px, 78vh, 900px);
+  height: 85vh;
   margin-bottom: 0;
 }
 .step-input {
