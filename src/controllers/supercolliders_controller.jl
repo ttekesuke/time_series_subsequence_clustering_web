@@ -245,7 +245,11 @@ function build_score_events_scd(
         ))
       end
 
-      step_note_mass = sum(v.vol * length(v.abs_notes) for v in step_voices)
+      # Compute step_note_mass defensively to avoid "reducing over an empty collection"
+      step_note_mass = 0.0
+      for v in step_voices
+        step_note_mass += float(v.vol) * float(length(v.abs_notes))
+      end
       step_gain = step_note_mass > 0 ? (1.0 / sqrt(step_note_mass)) : 1.0
       step_gain = clamp(step_gain, 0.20, 1.0)
 
@@ -380,6 +384,58 @@ end
 function render_polyphonic()
   payload = _payload()
   time_series_any = get(payload, "time_series", Any[])
+  # Sanitize incoming time_series to avoid empty/invalid entries that can
+  # cause downstream reducers (like `maximum`/`minimum`) to error.
+  function _sanitize_time_series(raw)
+    out = Any[]
+    for step in (raw isa AbstractVector ? raw : Any[])
+      if !(step isa AbstractVector)
+        push!(out, Any[])
+        continue
+      end
+      step_out = Any[]
+      for s in step
+        try
+          s === nothing && continue
+
+          # strict: [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain]
+          if length(s) >= 1 && s[1] isa AbstractVector
+            abs_notes = Int[]
+            for v in s[1]
+              v === nothing && continue
+              push!(abs_notes, clamp(_parse_int(v), PolyphonicConfig.abs_pitch_min(), PolyphonicConfig.abs_pitch_max()))
+            end
+            vol = clamp(length(s) >= 2 ? _parse_float(s[2]) : 0.0, 0.0, 1.0)
+            # skip near-zero volume or empty chords
+            if vol > 0.001 && !isempty(abs_notes)
+              push!(step_out, [abs_notes, vol, length(s) >= 3 ? _parse_float(s[3]) : 0.0, length(s) >= 4 ? _parse_float(s[4]) : 0.0, length(s) >= 5 ? _parse_float(s[5]) : 0.0, length(s) >= 6 ? _parse_float(s[6]) : 0.0, length(s) >= 7 ? _parse_float(s[7]) : 0.0, length(s) >= 8 ? _parse_float(s[8]) : 0.0])
+            end
+          else
+            # legacy: [oct, pcs, vol, bri, hrd, tex, sustain?]
+            oct = _parse_int(length(s) >= 1 ? s[1] : 4)
+            note_val = length(s) >= 2 ? s[2] : 0
+            pcs = if note_val isa AbstractVector
+              [_parse_int(x) % 12 for x in note_val if x !== nothing]
+            else
+              [_parse_int(note_val) % 12]
+            end
+            isempty(pcs) && (pcs = [0])
+            vol = clamp(length(s) >= 3 ? _parse_float(s[3]) : 0.0, 0.0, 1.0)
+            if vol > 0.001 && !isempty(pcs)
+              push!(step_out, [oct, pcs, vol, length(s) >= 4 ? _parse_float(s[4]) : 0.0, length(s) >= 5 ? _parse_float(s[5]) : 0.0, length(s) >= 6 ? _parse_float(s[6]) : 0.0, length(s) >= 7 ? _parse_float(s[7]) : 0.0])
+            end
+          end
+        catch
+          # ignore malformed voice entries
+          continue
+        end
+      end
+      push!(out, step_out)
+    end
+    return out
+  end
+
+  time_series_any = _sanitize_time_series(time_series_any)
   raw_sub_gain = get(payload, "sub_gain", 0.0)
   raw_bpm = get(payload, "bpm", nothing)
   if raw_bpm === nothing
@@ -421,8 +477,17 @@ function render_polyphonic()
       "subGain" => sub_gain,
     )
   catch e
+    bt = catch_backtrace()
+    io = IOBuffer()
+    try
+      showerror(io, e, bt)
+    catch
+      # fallback to simple string if showerror fails
+      write(io, string(e))
+    end
+    bt_str = String(take!(io))
     return Dict(
-      "error" => string(e),
+      "error" => bt_str,
       "scd_file_path" => scd_path,
       "sound_file_path" => wav_path,
       "bpm" => bpm,
