@@ -26,7 +26,7 @@
           :maxValue="1"
           :valueResolution="0.01"
           :playheadStep="playheadStepForRoll"
-          title="Timbre Roll (BRI/HRD/TEX)"
+          title="Timbre Roll (BRI/ART/TON/RES)"
           @scroll="onScroll"
         />
       </div>
@@ -191,8 +191,8 @@
           <div class="row-in-quadrant">
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
-              ref="briClustersRef"
-              :clustersData="briClustersForView"
+              ref="brightnessClustersRef"
+              :clustersData="brightnessClustersForView"
               :stepWidth="computedStepWidth"
               :maxSteps="stepCount"
               title="BRI Clusters"
@@ -203,8 +203,8 @@
             />
             <StreamsRoll
               v-else
-              ref="briClustersRef"
-              :streamValues="complexityStreams.bri"
+              ref="brightnessClustersRef"
+              :streamValues="complexityStreams.brightness"
               :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
@@ -219,11 +219,11 @@
           <div class="row-in-quadrant">
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
-              ref="hrdClustersRef"
-              :clustersData="hrdClustersForView"
+              ref="articulationClustersRef"
+              :clustersData="articulationClustersForView"
               :stepWidth="computedStepWidth"
               :maxSteps="stepCount"
-              title="HRD Clusters"
+              title="ART Clusters"
               :highlightedIndices="rightHighlightedIndices"
               :highlightedWindowSize="rightHighlightedWindowSize"
               @hover-cluster="onHoverClusterRight"
@@ -231,15 +231,15 @@
             />
             <StreamsRoll
               v-else
-              ref="hrdClustersRef"
-              :streamValues="complexityStreams.hrd"
+              ref="articulationClustersRef"
+              :streamValues="complexityStreams.articulation"
               :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
               :playheadStep="playheadStepForRoll"
-              title="HRD Params"
+              title="ART Params"
               @scroll="onScroll"
             />
           </div>
@@ -247,11 +247,11 @@
           <div class="row-in-quadrant">
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
-              ref="texClustersRef"
-              :clustersData="texClustersForView"
+              ref="tonalnessClustersRef"
+              :clustersData="tonalnessClustersForView"
               :stepWidth="computedStepWidth"
               :maxSteps="stepCount"
-              title="TEX Clusters"
+              title="TON Clusters"
               :highlightedIndices="rightHighlightedIndices"
               :highlightedWindowSize="rightHighlightedWindowSize"
               @hover-cluster="onHoverClusterRight"
@@ -259,15 +259,43 @@
             />
             <StreamsRoll
               v-else
-              ref="texClustersRef"
-              :streamValues="complexityStreams.tex"
+              ref="tonalnessClustersRef"
+              :streamValues="complexityStreams.tonalness"
               :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
               :playheadStep="playheadStepForRoll"
-              title="TEX Params"
+              title="TON Params"
+              @scroll="onScroll"
+            />
+          </div>
+
+          <div class="row-in-quadrant">
+            <ClustersRoll
+              v-if="analysedViewMode === 'Cluster'"
+              ref="resonanceClustersRef"
+              :clustersData="resonanceClustersForView"
+              :stepWidth="computedStepWidth"
+              :maxSteps="stepCount"
+              title="RES Clusters"
+              :highlightedIndices="rightHighlightedIndices"
+              :highlightedWindowSize="rightHighlightedWindowSize"
+              @hover-cluster="onHoverClusterRight"
+              @scroll="onScroll"
+            />
+            <StreamsRoll
+              v-else
+              ref="resonanceClustersRef"
+              :streamValues="complexityStreams.resonance"
+              :streamLabels="complexityParamStreamLabels"
+              :stepWidth="computedStepWidth"
+              :minValue="0"
+              :maxValue="1"
+              :valueResolution="0.01"
+              :playheadStep="playheadStepForRoll"
+              title="RES Params"
               @scroll="onScroll"
             />
           </div>
@@ -360,9 +388,10 @@ const chordRangeClustersRef = ref<any>(null)
 const areaClustersRef = ref<any>(null)
 const densityClustersRef = ref<any>(null)
 const sustainClustersRef = ref<any>(null)
-const briClustersRef = ref<any>(null)
-const hrdClustersRef = ref<any>(null)
-const texClustersRef = ref<any>(null)
+const brightnessClustersRef = ref<any>(null)
+const articulationClustersRef = ref<any>(null)
+const tonalnessClustersRef = ref<any>(null)
+const resonanceClustersRef = ref<any>(null)
 const bottomScrollRef = ref<HTMLElement | null>(null)
 const dialogRef = ref<any>(null)
 
@@ -533,9 +562,10 @@ const { syncScroll } = useScrollSync([
   areaClustersRef,
   densityClustersRef,
   sustainClustersRef,
-  briClustersRef,
-  hrdClustersRef,
-  texClustersRef,
+  brightnessClustersRef,
+  articulationClustersRef,
+  tonalnessClustersRef,
+  resonanceClustersRef,
   bottomScrollRef
 ])
 const onScroll = (e: Event) => syncScroll(e)
@@ -587,16 +617,17 @@ type ClusterData = {
   indices: number[]
 }
 type StepVecLegacy = [number, number[] | number, number, number, number, number]
-// strict server: [abs_notes(Int[]), vol, bri, hrd, tex, chord_range(Int), density, sustain]
-type StepVecStrict = [number[], number, number, number, number, number, number, number]
+// strict server: [abs_notes(Int[]), vol, brightness, articulation, tonalness, resonance, chord_range(Int), density, sustain]
+type StepVecStrict = [number[], number, number, number, number, number, number, number, number]
 type StepVec = StepVecLegacy | StepVecStrict
 type PolyphonicResponse = {
   timeSeries: StepVec[][];
   clusters: Record<string, { global: ClusterData[]; streams: Record<string, ClusterData[]> }>;
   timbreSeries?: {
-    bri?: number[][]
-    hrd?: number[][]
-    tex?: number[][]
+    brightness?: number[][]
+    articulation?: number[][]
+    tonalness?: number[][]
+    resonance?: number[][]
   }
   processingTime: number;
 }
@@ -607,8 +638,9 @@ const generate = ref({
   notes: [] as (number | null)[][],
   velocities: [] as (number | null)[][],
   brightness: [] as (number | null)[][],
-  hardness: [] as (number | null)[][],
-  texture: [] as (number | null)[][],
+  articulation: [] as (number | null)[][],
+  tonalness: [] as (number | null)[][],
+  resonance: [] as (number | null)[][],
 
   clusters: {
     area: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
@@ -616,21 +648,13 @@ const generate = ref({
     density: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     note:   { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     vol:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    bri:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    hrd:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    tex:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    brightness: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    articulation: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    tonalness: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    resonance: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     sustain:{ global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
   },
 })
-
-const DIM = {
-  OCT: 0,
-  NOTE: 1,
-  VOL: 2,
-  BRI: 3,
-  HRD: 4,
-  TEX: 5,
-} as const
 
 const convertStepMajorTimbreToStreamMajor = (stepMajor: any): (number | null)[][] => {
   if (!Array.isArray(stepMajor)) return []
@@ -657,18 +681,20 @@ const convertStepMajorTimbreToStreamMajor = (stepMajor: any): (number | null)[][
 const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   lastResultJson.value = data
   const ts = (data as any).timeSeries as any[]
-  const { notes, vels, bris, hrds, texs } = expandTimeSeries(ts)
+  const { notes, vels, brightnesses, articulations, tonalnesses, resonances } = expandTimeSeries(ts)
   const timbreSeries = (data as any).timbreSeries ?? {}
-  const resBri = convertStepMajorTimbreToStreamMajor(timbreSeries.bri)
-  const resHrd = convertStepMajorTimbreToStreamMajor(timbreSeries.hrd)
-  const resTex = convertStepMajorTimbreToStreamMajor(timbreSeries.tex)
+  const resBrightness = convertStepMajorTimbreToStreamMajor(timbreSeries.brightness)
+  const resArticulation = convertStepMajorTimbreToStreamMajor(timbreSeries.articulation)
+  const resTonalness = convertStepMajorTimbreToStreamMajor(timbreSeries.tonalness)
+  const resResonance = convertStepMajorTimbreToStreamMajor(timbreSeries.resonance)
 
   generate.value.rawTimeSeries = ts as any
   generate.value.notes        = notes      // root（abs_notes[0] or pcs[0]）互換用途
   generate.value.velocities   = vels
-  generate.value.brightness   = resBri.length > 0 ? resBri : bris
-  generate.value.hardness     = resHrd.length > 0 ? resHrd : hrds
-  generate.value.texture      = resTex.length > 0 ? resTex : texs
+  generate.value.brightness   = resBrightness.length > 0 ? resBrightness : brightnesses
+  generate.value.articulation = resArticulation.length > 0 ? resArticulation : articulations
+  generate.value.tonalness    = resTonalness.length > 0 ? resTonalness : tonalnesses
+  generate.value.resonance    = resResonance.length > 0 ? resResonance : resonances
 
   const clusters = ((data as any).clusters ?? {}) as any
   generate.value.clusters.vol         = clusters.vol         ?? { global: [], streams: {} }
@@ -676,9 +702,10 @@ const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   generate.value.clusters.chord_range = clusters.chord_range ?? { global: [], streams: {} }
   generate.value.clusters.density     = clusters.density     ?? { global: [], streams: {} }
   generate.value.clusters.note        = clusters.note        ?? { global: [], streams: {} }
-  generate.value.clusters.bri         = clusters.bri         ?? { global: [], streams: {} }
-  generate.value.clusters.hrd         = clusters.hrd         ?? { global: [], streams: {} }
-  generate.value.clusters.tex         = clusters.tex         ?? { global: [], streams: {} }
+  generate.value.clusters.brightness  = clusters.brightness  ?? { global: [], streams: {} }
+  generate.value.clusters.articulation = clusters.articulation ?? { global: [], streams: {} }
+  generate.value.clusters.tonalness   = clusters.tonalness   ?? { global: [], streams: {} }
+  generate.value.clusters.resonance   = clusters.resonance   ?? { global: [], streams: {} }
   generate.value.clusters.sustain     = clusters.sustain     ?? { global: [], streams: {} }
 }
 
@@ -748,36 +775,39 @@ const expandTimeSeries = (ts: any[]) => {
 
   const notes = make2D()  // root互換: abs_notes[0] or pcs[0]
   const vels = make2D()
-  const bris = make2D()
-  const hrds = make2D()
-  const texs = make2D()
+  const brightnesses = make2D()
+  const articulations = make2D()
+  const tonalnesses = make2D()
+  const resonances = make2D()
 
   ts.forEach((stepStreams, stepIdx) => {
     stepStreams.forEach((vec, streamIdx) => {
       if (!vec) return
 
-      // Strict: [abs_notes(Int[]), vol, bri, hrd, tex, chord_range, density, sustain]
+      // Strict: [abs_notes(Int[]), vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
       // Legacy: [oct(Int), pcs(Int|Int[]), vol, bri, hrd, tex]
       if (Array.isArray(vec[0])) {
         const absNotes = (vec[0] as any[]).map(n => Number(n)).filter(n => Number.isFinite(n))
         notes[streamIdx][stepIdx] = absNotes.length ? absNotes[0] : null
         vels[streamIdx][stepIdx]  = vec[1]
-        bris[streamIdx][stepIdx]  = vec[2]
-        hrds[streamIdx][stepIdx]  = vec[3]
-        texs[streamIdx][stepIdx]  = vec[4]
+        brightnesses[streamIdx][stepIdx] = vec[2]
+        articulations[streamIdx][stepIdx] = vec[3]
+        tonalnesses[streamIdx][stepIdx] = vec[4]
+        resonances[streamIdx][stepIdx] = vec[5]
       } else {
         const noteVal = vec[1]
         const pcs = Array.isArray(noteVal) ? noteVal : [noteVal]
         notes[streamIdx][stepIdx] = (pcs[0] ?? null)
         vels[streamIdx][stepIdx]  = vec[2]
-        bris[streamIdx][stepIdx]  = vec[3]
-        hrds[streamIdx][stepIdx]  = vec[4]
-        texs[streamIdx][stepIdx]  = vec[5]
+        brightnesses[streamIdx][stepIdx] = vec[3]
+        articulations[streamIdx][stepIdx] = vec[4]
+        tonalnesses[streamIdx][stepIdx] = vec[5]
+        resonances[streamIdx][stepIdx] = 0.5
       }
     })
   })
 
-  return { notes, vels, bris, hrds, texs, maxStreams }
+  return { notes, vels, brightnesses, articulations, tonalnesses, resonances, maxStreams }
 }
 
 const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: number) => {
@@ -801,19 +831,20 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: number) => {
       for (const vec of step) {
         if (!vec) continue
 
-        // Strict: [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain]
+        // Strict: [abs_notes, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
         if (Array.isArray(vec[0])) {
           const absNotes = normAbs(vec[0])
           const vol = vec[1]
-          const bri = vec[2]
-          const hrd = vec[3]
-          const tex = vec[4]
-          const chordRange = Number(vec[5] ?? 0)
-          const density = Number(vec[6] ?? 0)
-          const sustain = Number(vec[7] ?? 0.0)
+          const brightness = vec[2]
+          const articulation = vec[3]
+          const tonalness = vec[4]
+          const resonance = vec[5]
+          const chordRange = Number(vec[6] ?? 0)
+          const density = Number(vec[7] ?? 0)
+          const sustain = Number(vec[8] ?? 0.0)
 
           // Keep strict stream shape so backend can tie by stream index reliably.
-          stepOut.push([absNotes, vol, bri, hrd, tex, chordRange, density, sustain])
+          stepOut.push([absNotes, vol, brightness, articulation, tonalness, resonance, chordRange, density, sustain])
 
           const pcs = absNotes
             .map(n => ((n % 12) + 12) % 12)
@@ -972,9 +1003,10 @@ const complexityStreams = computed(() => ({
   vol: buildComplexityStreams('vol'),
   chordRange: buildComplexityStreams('chord_range'),
   area: buildComplexityStreams('area'),
-  bri: buildComplexityStreams('bri'),
-  hrd: buildComplexityStreams('hrd'),
-  tex: buildComplexityStreams('tex'),
+  brightness: buildComplexityStreams('brightness'),
+  articulation: buildComplexityStreams('articulation'),
+  tonalness: buildComplexityStreams('tonalness'),
+  resonance: buildComplexityStreams('resonance'),
   density: buildComplexityStreams('density'),
   sustain: buildComplexityStreams('sustain'),
 }))
@@ -1044,7 +1076,7 @@ const chordPitchStreams = computed(() => {
   )
 })
 
-const timbreResultStreamLabels = ['BRI', 'HRD', 'TEX']
+const timbreResultStreamLabels = ['BRI', 'ART', 'TON', 'RES']
 
 const buildTimbreLane = (matrix: (number | null)[][]) => {
   const seriesLen = Math.max(stepCount.value, ...matrix.map(stream => (Array.isArray(stream) ? stream.length : 0)))
@@ -1062,8 +1094,9 @@ const buildTimbreLane = (matrix: (number | null)[][]) => {
 
 const timbreResultStreams = computed(() => ([
   buildTimbreLane(generate.value.brightness),
-  buildTimbreLane(generate.value.hardness),
-  buildTimbreLane(generate.value.texture),
+  buildTimbreLane(generate.value.articulation),
+  buildTimbreLane(generate.value.tonalness),
+  buildTimbreLane(generate.value.resonance),
 ]))
 
 // ===== cluster view switch =====
@@ -1112,31 +1145,40 @@ const sustainClustersForView = computed<ClusterData[]>(() => {
   return src.streams[String(sustainStreamId.value)] || []
 })
 
-const briMode = ref<'global' | 'stream'>('global')
-const briStreamId = ref<number>(0)
-const briClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.bri
+const brightnessMode = ref<'global' | 'stream'>('global')
+const brightnessStreamId = ref<number>(0)
+const brightnessClustersForView = computed<ClusterData[]>(() => {
+  const src = generate.value.clusters.brightness
   if (!src) return []
-  if (briMode.value === 'global') return src.global
-  return src.streams[String(briStreamId.value)] || []
+  if (brightnessMode.value === 'global') return src.global
+  return src.streams[String(brightnessStreamId.value)] || []
 })
 
-const hrdMode = ref<'global' | 'stream'>('global')
-const hrdStreamId = ref<number>(0)
-const hrdClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.hrd
+const articulationMode = ref<'global' | 'stream'>('global')
+const articulationStreamId = ref<number>(0)
+const articulationClustersForView = computed<ClusterData[]>(() => {
+  const src = generate.value.clusters.articulation
   if (!src) return []
-  if (hrdMode.value === 'global') return src.global
-  return src.streams[String(hrdStreamId.value)] || []
+  if (articulationMode.value === 'global') return src.global
+  return src.streams[String(articulationStreamId.value)] || []
 })
 
-const texMode = ref<'global' | 'stream'>('global')
-const texStreamId = ref<number>(0)
-const texClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.tex
+const tonalnessMode = ref<'global' | 'stream'>('global')
+const tonalnessStreamId = ref<number>(0)
+const tonalnessClustersForView = computed<ClusterData[]>(() => {
+  const src = generate.value.clusters.tonalness
   if (!src) return []
-  if (texMode.value === 'global') return src.global
-  return src.streams[String(texStreamId.value)] || []
+  if (tonalnessMode.value === 'global') return src.global
+  return src.streams[String(tonalnessStreamId.value)] || []
+})
+
+const resonanceMode = ref<'global' | 'stream'>('global')
+const resonanceStreamId = ref<number>(0)
+const resonanceClustersForView = computed<ClusterData[]>(() => {
+  const src = generate.value.clusters.resonance
+  if (!src) return []
+  if (resonanceMode.value === 'global') return src.global
+  return src.streams[String(resonanceStreamId.value)] || []
 })
 
 // ===== highlight =====

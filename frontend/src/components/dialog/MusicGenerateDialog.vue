@@ -3,8 +3,8 @@
     <v-card>
       <!-- ===== ヘッダ（タイトル / 進捗 / 実行ボタン） ===== -->
       <v-card-title class="text-h5 grey lighten-2 d-flex align-center justify-space-between py-2">
-        <span>Polyphonic Stream Generation Parameters</span>
-        <div class="d-flex align-center">
+        <span>Polyphonic Stream Generation</span>
+        <div class="d-flex align-center justify-end flex-wrap header-controls">
           <div
             class="mr-4 text-caption"
             v-if="progressState.status === 'progress' || progressState.status === 'rendering'"
@@ -15,6 +15,32 @@
             <span v-if="progressState.status === 'rendering'">
               Rendering Audio...
             </span>
+          </div>
+
+          <div class="dimension-policy-toolbar mr-4">
+            <div
+              v-for="dimKey in managedDimKeys"
+              :key="dimKey"
+              class="dimension-policy-item"
+            >
+              <label class="dimension-policy-label">
+                <input
+                  type="checkbox"
+                  :checked="getDimensionPolicyValue(dimKey).useFixedValue"
+                  @change="onDimensionPolicyAcceptChange(resolveManagedDimKey(dimKey), $event)"
+                >
+                <span>{{ getDimensionPolicyConfig(dimKey).label }}</span>
+              </label>
+              <input
+                type="number"
+                :value="getDimensionPolicyValue(dimKey).fixedValue"
+                @input="onDimensionPolicyFixedValueInput(resolveManagedDimKey(dimKey), $event)"
+                :min="getDimensionPolicyConfig(dimKey).min"
+                :max="getDimensionPolicyConfig(dimKey).max"
+                :step="getDimensionPolicyConfig(dimKey).step"
+                class="step-input dim-policy-input"
+              >
+            </div>
           </div>
 
           <v-text-field
@@ -176,33 +202,231 @@ const generationBpm = ref<number>(240)
 type GridRowData = {
   name: string;
   shortName: string;
-  data: number[];
+  data: Array<number | string>;
   config: {
     min: number;
     max: number;
     step?: number;
     isInt?: boolean;
+    inputMode?: 'number' | 'note-array';
   }
   help?: any;
+  disabled?: boolean;
+}
+
+type ManagedDimKey = 'area' | 'chord_range' | 'density' | 'sustain' | 'vol' | 'brightness' | 'articulation' | 'tonalness' | 'resonance'
+
+type DimensionPolicyConfig = {
+  label: string
+  min: number
+  max: number
+  step: number
+  isInt?: boolean
+  defaultUseFixedValue: boolean
+  defaultFixedValue: number
+}
+
+type DimensionPolicyValue = {
+  useFixedValue: boolean
+  fixedValue: number
+}
+
+const managedDimPolicyConfigs: Record<ManagedDimKey, DimensionPolicyConfig> = {
+  area: { label: 'AREA', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
+  chord_range: { label: 'CR', min: 0, max: 24, step: 1, isInt: true, defaultUseFixedValue: false, defaultFixedValue: 0 },
+  density: { label: 'DEN', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0 },
+  sustain: { label: 'SUS', min: 0, max: 1, step: 0.25, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
+  vol: { label: 'VOL', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 1 },
+  brightness: { label: 'BRI', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
+  articulation: { label: 'ART', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
+  tonalness: { label: 'TON', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
+  resonance: { label: 'RES', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 }
+}
+
+const managedDimKeys = Object.keys(managedDimPolicyConfigs) as ManagedDimKey[]
+
+const createDefaultDimensionPolicy = (): Record<ManagedDimKey, DimensionPolicyValue> => ({
+  area: { useFixedValue: managedDimPolicyConfigs.area.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.area.defaultFixedValue },
+  chord_range: { useFixedValue: managedDimPolicyConfigs.chord_range.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.chord_range.defaultFixedValue },
+  density: { useFixedValue: managedDimPolicyConfigs.density.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.density.defaultFixedValue },
+  sustain: { useFixedValue: managedDimPolicyConfigs.sustain.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.sustain.defaultFixedValue },
+  vol: { useFixedValue: managedDimPolicyConfigs.vol.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.vol.defaultFixedValue },
+  brightness: { useFixedValue: managedDimPolicyConfigs.brightness.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.brightness.defaultFixedValue },
+  articulation: { useFixedValue: managedDimPolicyConfigs.articulation.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.articulation.defaultFixedValue },
+  tonalness: { useFixedValue: managedDimPolicyConfigs.tonalness.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.tonalness.defaultFixedValue },
+  resonance: { useFixedValue: managedDimPolicyConfigs.resonance.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.resonance.defaultFixedValue }
+})
+
+const dimensionPolicy = ref<Record<ManagedDimKey, DimensionPolicyValue>>(createDefaultDimensionPolicy())
+
+const coerceFiniteNumber = (val: unknown, fallback: number) => {
+  const num = Number(val)
+  return isFinite(num) ? num : fallback
+}
+
+const coerceBoolean = (val: unknown, fallback: boolean) => {
+  if (typeof val === 'boolean') return val
+  if (typeof val === 'number') return val !== 0
+  if (typeof val === 'string') {
+    const normalized = val.trim().toLowerCase()
+    if (normalized === 'true') return true
+    if (normalized === 'false') return false
+    if (normalized === '1') return true
+    if (normalized === '0') return false
+  }
+  return fallback
+}
+
+const clampDimensionFixedValue = (key: ManagedDimKey, raw: unknown) => {
+  const config = managedDimPolicyConfigs[key]
+  let value = coerceFiniteNumber(raw, config.defaultFixedValue)
+  if (config.isInt) value = Math.round(value)
+  if (value < config.min) value = config.min
+  if (value > config.max) value = config.max
+  return value
+}
+
+const onDimensionPolicyAcceptChange = (key: ManagedDimKey, e: Event) => {
+  const target = e.target as HTMLInputElement
+  dimensionPolicy.value = {
+    ...dimensionPolicy.value,
+    [key]: {
+      ...dimensionPolicy.value[key],
+      useFixedValue: target.checked
+    }
+  }
+}
+
+const onDimensionPolicyFixedValueInput = (key: ManagedDimKey, e: Event) => {
+  const target = e.target as HTMLInputElement
+  if (target.value === '') return
+  dimensionPolicy.value = {
+    ...dimensionPolicy.value,
+    [key]: {
+      ...dimensionPolicy.value[key],
+      fixedValue: clampDimensionFixedValue(key, target.value)
+    }
+  }
+}
+
+const dimensionPolicyAliases: Record<string, ManagedDimKey> = {
+  area: 'area',
+  cr: 'chord_range',
+  chord_range: 'chord_range',
+  chordrange: 'chord_range',
+  'chord-range': 'chord_range',
+  den: 'density',
+  density: 'density',
+  sus: 'sustain',
+  sustain: 'sustain',
+  vol: 'vol',
+  volume: 'vol',
+  bri: 'brightness',
+  brightness: 'brightness',
+  art: 'articulation',
+  articulation: 'articulation',
+  ton: 'tonalness',
+  tonalness: 'tonalness',
+  res: 'resonance',
+  resonance: 'resonance'
+}
+
+const canonicalizeManagedDimKey = (raw: unknown): ManagedDimKey | null => {
+  const key = String(raw ?? '').trim().toLowerCase()
+  return dimensionPolicyAliases[key] ?? null
+}
+
+const resolveManagedDimKey = (raw: unknown): ManagedDimKey => (
+  canonicalizeManagedDimKey(raw) ?? 'area'
+)
+
+const getDimensionPolicyConfig = (raw: unknown) => {
+  const key = resolveManagedDimKey(raw)
+  return managedDimPolicyConfigs[key]
+}
+
+const getDimensionPolicyValue = (raw: unknown) => {
+  const key = resolveManagedDimKey(raw)
+  return dimensionPolicy.value[key]
+}
+
+const getManagedDimKeyForGenRow = (metaKey: string): ManagedDimKey | null => {
+  for (const key of managedDimKeys) {
+    if (metaKey === key || metaKey.indexOf(`${key}_`) === 0) return key
+  }
+  return null
+}
+
+const isGenRowDisabled = (metaKey: string) => {
+  const dimKey = getManagedDimKeyForGenRow(metaKey)
+  return dimKey ? dimensionPolicy.value[dimKey].useFixedValue : false
+}
+
+const buildDimensionPolicyPayload = () => {
+  const result: Record<string, { accept_params: boolean; fixed_value: number }> = {}
+  for (const key of managedDimKeys) {
+    result[key] = {
+      // Server contract is accept_params=true => generate from params.
+      accept_params: !dimensionPolicy.value[key].useFixedValue,
+      fixed_value: clampDimensionFixedValue(key, dimensionPolicy.value[key].fixedValue)
+    }
+  }
+  return result
+}
+
+const applyDimensionPolicyFromPayload = (rawPolicy: any) => {
+  const next = createDefaultDimensionPolicy()
+
+  if (rawPolicy && typeof rawPolicy === 'object') {
+    for (const rawKey in rawPolicy) {
+      const rawVal = rawPolicy[rawKey]
+      const key = canonicalizeManagedDimKey(rawKey)
+      if (!key) continue
+
+      if (rawVal != null && typeof rawVal === 'object' && !Array.isArray(rawVal)) {
+        const policy = rawVal as Record<string, any>
+        const acceptSource = policy.accept_params ?? policy.receive_params ?? policy.enabled ?? policy.use_user_params
+        const fixedModeSource = policy.use_fixed_value ?? policy.fixed_mode
+        const fixedSource = policy.fixed_value ?? policy.fallback_value ?? policy.value
+
+        if (acceptSource != null) {
+          next[key].useFixedValue = !coerceBoolean(acceptSource, !next[key].useFixedValue)
+        }
+        if (fixedModeSource != null) {
+          next[key].useFixedValue = coerceBoolean(fixedModeSource, next[key].useFixedValue)
+        }
+        if (fixedSource != null) {
+          next[key].fixedValue = clampDimensionFixedValue(key, fixedSource)
+        }
+      } else if (typeof rawVal === 'boolean') {
+        next[key].useFixedValue = !rawVal
+      } else if (rawVal != null) {
+        next[key].fixedValue = clampDimensionFixedValue(key, rawVal)
+      }
+    }
+  }
+
+  dimensionPolicy.value = next
 }
 
 /** ========== 1. Initial Context 用の定義 ========== */
 
-// 次元(8D): [abs_note(midi), vol, bri, hrd, tex, chord_range(semitones), density, sustain]
+// 次元(9D): [abs_note(midi), vol, brightness, articulation, tonalness, resonance, chord_range(semitones), density, sustain]
 const dimensions = [
   { key: 'abs_note', shortName: 'NOTE_ABS', name: 'NOTE (Abs MIDI)' },
   { key: 'vol', shortName: 'VOLUME', name: 'VOLUME' },
-  { key: 'bri', shortName: 'BRIGHTNESS', name: 'BRIGHTNESS' },
-  { key: 'hrd', shortName: 'HARDNESS', name: 'HARDNESS' },
-  { key: 'tex', shortName: 'TEXTURE', name: 'TEXTURE' },
+  { key: 'brightness', shortName: 'BRIGHTNESS', name: 'BRIGHTNESS' },
+  { key: 'articulation', shortName: 'ARTICULATION', name: 'ARTICULATION' },
+  { key: 'tonalness', shortName: 'TONALNESS', name: 'TONALNESS' },
+  { key: 'resonance', shortName: 'RESONANCE', name: 'RESONANCE' },
   { key: 'chord_range', shortName: 'CHORD_RANGE', name: 'CHORD RANGE (semitones)' },
   { key: 'density', shortName: 'DENSITY', name: 'DENSITY' },
   { key: 'sustain', shortName: 'SUSTAIN', name: 'SUSTAIN' }
 ]
 
 
-// 各次元のデフォルト値 (1ストリーム分) [abs_note, vol, bri, hrd, tex, chord_range, density, sustain]
-const defaultContextBase = [60, 1, 0, 0, 0, 0, 0, 0.5]
+// 各次元のデフォルト値 (1ストリーム分) [abs_note, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
+const defaultContextBase = [60, 1, 0.5, 0.5, 0.5, 0.5, 0, 0, 0.5]
 
 const contextSteps = ref(3)
 const contextStreamCount = ref(1)
@@ -211,7 +435,7 @@ const suppressContextWatch = ref(false)
 
 const makeContextConfig = (dimKey: string) => {
   if (dimKey === 'abs_note') {
-    return { min: 12, max: 120, isInt: true, step: 1 }
+    return { min: 12, max: 120, isInt: true, step: 1, inputMode: 'note-array' as const }
   } else if (dimKey === 'chord_range') {
     return { min: 0, max: 127, isInt: true, step: 1 }
   } else if (dimKey === 'density') {
@@ -219,7 +443,7 @@ const makeContextConfig = (dimKey: string) => {
   } else if (dimKey === 'sustain') {
     return { min: 0, max: 1, isInt: false, step: 0.25 }
   } else {
-    // vol/bri/hrd/tex
+    // vol/brightness/articulation/tonalness/resonance
     return { min: 0, max: 1, isInt: false, step: 0.01 }
   }
 }
@@ -230,9 +454,36 @@ const makeContextRow = (streamIdx: number, dimIdx: number): GridRowData => {
   return {
     name: `S${streamIdx + 1} ${dim.name}`,
     shortName: `S${streamIdx + 1} ${dim.shortName}`,
-    data: Array(contextSteps.value).fill(base),
+    data: Array(contextSteps.value).fill(dim.key === 'abs_note' ? `[${base}]` : base),
     config: makeContextConfig(dim.key)
   }
+}
+
+const parseAbsNoteCell = (raw: unknown): number[] => {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((value) => Number(value))
+      .filter((value) => isFinite(value))
+      .map((value) => Math.round(value))
+  }
+
+  const text = String(raw ?? '').trim()
+  if (text === '') return []
+
+  const hasBracketWrapper = text.charAt(0) === '[' && text.charAt(text.length - 1) === ']'
+  const body = hasBracketWrapper ? text.slice(1, -1) : text
+  return body
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => Number(part))
+    .filter((part) => isFinite(part))
+    .map((part) => Math.round(part))
+}
+
+const formatAbsNoteCell = (notes: unknown): string => {
+  const parsed = parseAbsNoteCell(notes)
+  return parsed.length > 0 ? `[${parsed.join(', ')}]` : ''
 }
 
 // 初期化
@@ -253,7 +504,7 @@ watch(contextSteps, (len) => {
   contextRows.value = contextRows.value.map((row) => {
     const data = [...row.data]
     while (data.length < len) {
-      data.push(data.length > 0 ? data[data.length - 1] : 0)
+      data.push(data.length > 0 ? data[data.length - 1] : (row.config.inputMode === 'note-array' ? '' : 0))
     }
     if (data.length > len) data.splice(len)
     return { ...row, data }
@@ -295,12 +546,18 @@ const buildInitialContext = () => {
   for (let step = 0; step < steps; step++) {
     const stepArr: any[] = []
     for (let s = 0; s < streams; s++) {
-      const vals: number[] = []
+      const vals: Array<number | number[]> = []
       for (let d = 0; d < dimsLen; d++) {
         const rowIndex = s * dimsLen + d
         const row = contextRows.value[rowIndex]
-        let v = row?.data[step] ?? 0
+        const rawValue = row?.data[step] ?? (row?.config?.inputMode === 'note-array' ? '' : 0)
         const cfg = row?.config
+        if (cfg?.inputMode === 'note-array') {
+          vals.push(parseAbsNoteCell(rawValue))
+          continue
+        }
+
+        let v = Number(rawValue ?? 0)
         if (cfg) {
           if (cfg.isInt) v = Math.round(v)
           if (v < cfg.min) v = cfg.min
@@ -309,18 +566,19 @@ const buildInitialContext = () => {
         vals.push(v)
       }
 
-      // vals: [abs_note, vol, bri, hrd, tex, chord_range, density, sustain]
-      const absNote = Math.round(vals[0] ?? 0)
-      const vol = vals[1] ?? 0
-      const bri = vals[2] ?? 0
-      const hrd = vals[3] ?? 0
-      const tex = vals[4] ?? 0
-      const chordRange = Math.round(vals[5] ?? 0)
-      const density = vals[6] ?? 0
-      const sustain = vals[7] ?? 0.5
+      // vals: [abs_note, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
+      const absNotes = (Array.isArray(vals[0]) ? vals[0] : []).map((value) => Math.round(Number(value))).filter((value) => isFinite(value))
+      const vol = Number(vals[1] ?? 0)
+      const brightness = Number(vals[2] ?? 0.5)
+      const articulation = Number(vals[3] ?? 0.5)
+      const tonalness = Number(vals[4] ?? 0.5)
+      const resonance = Number(vals[5] ?? 0.5)
+      const chordRange = Math.round(Number(vals[6] ?? 0))
+      const density = Number(vals[7] ?? 0)
+      const sustain = Number(vals[8] ?? 0.5)
 
-      // server strict: [abs_notes(Int[]), vol, bri, hrd, tex, chord_range(Int), density, sustain]
-      stepArr.push([[absNote], vol, bri, hrd, tex, chordRange, density, sustain])
+      // server strict: [abs_notes(Int[]), vol, brightness, articulation, tonalness, resonance, chord_range(Int), density, sustain]
+      stepArr.push([absNotes.length > 0 ? absNotes : [Math.round(defaultContextBase[0])], vol, brightness, articulation, tonalness, resonance, chordRange, density, sustain])
     }
     initial.push(stepArr)
   }
@@ -382,6 +640,50 @@ const fill = (start: number, mid: number, end: number, len: number = stepsDefaul
   return arr
 }
 const constant = (val: number, len: number = stepsDefault) => Array(len).fill(val)
+
+const makeTimbreDimensionRows = (
+  shortName: string,
+  name: string,
+  key: string,
+  overview: string,
+  atMin: string,
+  atMax: string
+): GenRowMeta[] => [
+  { shortName: `${shortName} G`, name: `${name} Global Complexity`, key: `${key}_global`, min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: `${shortName} C`, name: `${name} Center`, key: `${key}_center`, min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: `${shortName} S`, name: `${name} Spread`, key: `${key}_spread`, min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: `${shortName} Conc`, name: `${name} Conformity (Conc)`, key: `${key}_conc`, min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  {
+    shortName: `${shortName} Target`,
+    name: `${name} Target`,
+    key: `${key}_target`,
+    min: 0,
+    max: 1,
+    step: 0.1,
+    defaultFactory: (len) => constant(0.5, len),
+    help: H(
+      { min: 0, max: 1, step: 0.1 },
+      overview,
+      atMin,
+      atMax
+    )
+  },
+  {
+    shortName: `${shortName} Spread`,
+    name: `${name} Spread (Target Window)`,
+    key: `${key}_target_spread`,
+    min: 0,
+    max: 1,
+    step: 0.1,
+    defaultFactory: (len) => constant(1, len),
+    help: H(
+      { min: 0, max: 1, step: 0.1 },
+      `${name} の探索許容幅（中心±幅、0.1刻み）です。`,
+      "0：中心値のみ探索。",
+      "1：ほぼ全域を探索。"
+    )
+  }
+]
 
 const genSteps = ref<number>(stepsDefault)
 const suppressGenWatch = ref(false)
@@ -741,9 +1043,9 @@ const genRowMetas: GenRowMeta[] = [
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "音を次の発音へどれだけ滑らかにつなぐか（サステイン感）の変化複雑度です。",
-      "0：サステイン感が変わりにくい。",
-      "1：サステイン感がよく変わる。"
+      "音のゲート長とタイの度合いの変化複雑度です。",
+      "0：短さ/つながり方が変わりにくい。",
+      "1：短さ/つながり方がよく変わる。"
     )
   },
   {
@@ -784,8 +1086,8 @@ const genRowMetas: GenRowMeta[] = [
     help: H(
       { min: 0, max: 1, step: 0.25 },
       "SUSTAIN の探索中心値です（0.0/0.25/0.5/0.75/1.0）。",
-      "0：切れやすい。",
-      "1：つながりやすい。"
+      "0：1ステップの 1/4 だけ鳴って残りは無音。",
+      "1：同音同ストリームなら次音へ完全タイ。"
     )
   },
   {
@@ -805,7 +1107,7 @@ const genRowMetas: GenRowMeta[] = [
   },
 
   // =========================================================
-  // vol/bri/hrd/tex : global / center / spread / conc (+ target window)
+  // vol + timbre dimensions : global / center / spread / conc (+ target window)
   // =========================================================
   {
     shortName: "VOL G",
@@ -849,127 +1151,39 @@ const genRowMetas: GenRowMeta[] = [
       "1：ほぼ全域を探索。"
     )
   },
-
-  { shortName: "BRI G", name: "BRIGHTNESS Global Complexity", key: "bri_global", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: "BRI C", name: "BRIGHTNESS Center", key: "bri_center", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: "BRI S", name: "BRIGHTNESS Spread", key: "bri_spread", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: "BRI Conc", name: "BRIGHTNESS Conformity (Conc)", key: "bri_conc", min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  {
-    shortName: "BRI Target",
-    name: "BRIGHTNESS Target",
-    key: "bri_target",
-    min: 0,
-    max: 1,
-    step: 0.1,
-    defaultFactory: (len) => constant(0.5, len),
-    help: H(
-      { min: 0, max: 1, step: 0.1 },
-      "BRIGHTNESS の探索中心値です（0.1刻み）。",
-      "0：暗め中心。",
-      "1：明るめ中心。"
-    )
-  },
-  {
-    shortName: "BRI Spread",
-    name: "BRIGHTNESS Spread (Target Window)",
-    key: "bri_target_spread",
-    min: 0,
-    max: 1,
-    step: 0.1,
-    defaultFactory: (len) => constant(1, len),
-    help: H(
-      { min: 0, max: 1, step: 0.1 },
-      "BRIGHTNESS の探索許容幅（中心±幅、0.1刻み）です。",
-      "0：中心値のみ探索。",
-      "1：ほぼ全域を探索。"
-    )
-  },
-
-  { shortName: "HRD G", name: "HARDNESS Global Complexity", key: "hrd_global", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: "HRD C", name: "HARDNESS Center", key: "hrd_center", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: "HRD S", name: "HARDNESS Spread", key: "hrd_spread", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: "HRD Conc", name: "HARDNESS Conformity (Conc)", key: "hrd_conc", min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  {
-    shortName: "HRD Target",
-    name: "HARDNESS Target",
-    key: "hrd_target",
-    min: 0,
-    max: 1,
-    step: 0.1,
-    defaultFactory: (len) => constant(0.5, len),
-    help: H(
-      { min: 0, max: 1, step: 0.1 },
-      "HARDNESS の探索中心値です（0.1刻み）。",
-      "0：柔らかめ中心。",
-      "1：硬め中心。"
-    )
-  },
-  {
-    shortName: "HRD Spread",
-    name: "HARDNESS Spread (Target Window)",
-    key: "hrd_target_spread",
-    min: 0,
-    max: 1,
-    step: 0.1,
-    defaultFactory: (len) => constant(1, len),
-    help: H(
-      { min: 0, max: 1, step: 0.1 },
-      "HARDNESS の探索許容幅（中心±幅、0.1刻み）です。",
-      "0：中心値のみ探索。",
-      "1：ほぼ全域を探索。"
-    )
-  },
-
-  { shortName: "TEX G", name: "TEXTURE Global Complexity", key: "tex_global", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: "TEX C", name: "TEXTURE Center", key: "tex_center", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: "TEX S", name: "TEXTURE Spread", key: "tex_spread", min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: "TEX Conc", name: "TEXTURE Conformity (Conc)", key: "tex_conc", min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  {
-    shortName: "TEX Target",
-    name: "TEXTURE Target",
-    key: "tex_target",
-    min: 0,
-    max: 1,
-    step: 0.1,
-    defaultFactory: (len) => constant(0.5, len),
-    help: H(
-      { min: 0, max: 1, step: 0.1 },
-      "TEXTURE の探索中心値です（0.1刻み）。",
-      "0：滑らかめ中心。",
-      "1：粗め中心。"
-    )
-  },
-  {
-    shortName: "TEX Spread",
-    name: "TEXTURE Spread (Target Window)",
-    key: "tex_target_spread",
-    min: 0,
-    max: 1,
-    step: 0.1,
-    defaultFactory: (len) => constant(1, len),
-    help: H(
-      { min: 0, max: 1, step: 0.1 },
-      "TEXTURE の探索許容幅（中心±幅、0.1刻み）です。",
-      "0：中心値のみ探索。",
-      "1：ほぼ全域を探索。"
-    )
-  },
+  ...makeTimbreDimensionRows('BRI', 'BRIGHTNESS', 'brightness', 'BRIGHTNESS の探索中心値です（0.1刻み）。', '0：暗め中心。', '1：明るめ中心。'),
+  ...makeTimbreDimensionRows('ART', 'ARTICULATION', 'articulation', 'ARTICULATION の探索中心値です（0.1刻み）。', '0：丸い立ち上がり中心。', '1：鋭い立ち上がり中心。'),
+  ...makeTimbreDimensionRows('TON', 'TONALNESS', 'tonalness', 'TONALNESS の探索中心値です（0.1刻み）。', '0：ノイズ寄り中心。', '1：有音高寄り中心。'),
+  ...makeTimbreDimensionRows('RES', 'RESONANCE', 'resonance', 'RESONANCE の探索中心値です（0.1刻み）。', '0：乾いた短い鳴り中心。', '1：響きの長い鳴り中心。'),
 ]
+
+const complexityDimensionKeys = ['area', 'chord_range', 'density', 'sustain', 'vol', 'brightness', 'articulation', 'tonalness', 'resonance'] as const
+const targetWindowDimensionKeys = ['vol', 'chord_range', 'density', 'sustain', 'brightness', 'articulation', 'tonalness', 'resonance'] as const
+
+const makeGenRowData = (meta: GenRowMeta, data: number[]): GridRowData => ({
+  name: meta.name,
+  shortName: meta.shortName,
+  data,
+  config: {
+    min: meta.min,
+    max: meta.max,
+    step: meta.step,
+    isInt: meta.isInt
+  },
+  help: meta.help,
+  disabled: isGenRowDisabled(meta.key)
+})
+
+const syncGenRowsDisabledState = () => {
+  genRows.value = genRows.value.map((row: GridRowData, idx: number) => ({
+    ...row,
+    disabled: isGenRowDisabled(genRowMetas[idx]?.key ?? '')
+  }))
+}
 
 // rows 実体
 const genRows = ref<GridRowData[]>(
-  genRowMetas.map((meta) => ({
-    name: meta.name,
-    shortName: meta.shortName,
-    data: meta.defaultFactory(genSteps.value),
-    config: {
-      min: meta.min,
-      max: meta.max,
-      step: meta.step,
-      isInt: meta.isInt
-    },
-    help: meta.help
-  }))
+  genRowMetas.map((meta) => makeGenRowData(meta, meta.defaultFactory(genSteps.value)))
 )
 
 // steps 変更時に row.data を合わせる
@@ -982,9 +1196,11 @@ watch(genSteps, (len) => {
       data.push(data.length > 0 ? data[data.length - 1] : (meta.isInt ? meta.min : 0))
     }
     if (data.length > len) data.splice(len)
-    return { ...row, data }
+    return { ...row, data, disabled: isGenRowDisabled(meta.key) }
   })
 })
+
+watch(dimensionPolicy, syncGenRowsDisabledState, { deep: true })
 
 // meta を key で引くマップ
 const genMetaByKey: Record<string, GenRowMeta> = {}
@@ -1034,62 +1250,17 @@ const buildGenParamsFromRows = () => {
   result.stream_comp_weight = get('stream_comp_weight')
   result.dissonance_target      = get('dissonance_target')
 
-  // macro pitch movement
-  result.area_global  = get('area_global')
-  result.area_center  = get('area_center')
-  result.area_spread  = get('area_spread')
-  result.area_conc    = get('area_conc')
+  complexityDimensionKeys.forEach((key) => {
+    result[`${key}_global`] = get(`${key}_global`)
+    result[`${key}_center`] = get(`${key}_center`)
+    result[`${key}_spread`] = get(`${key}_spread`)
+    result[`${key}_conc`] = get(`${key}_conc`)
+  })
 
-  // chord controls
-  result.chord_range_global = get('chord_range_global')
-  result.chord_range_center = get('chord_range_center')
-  result.chord_range_spread = get('chord_range_spread')
-  result.chord_range_conc   = get('chord_range_conc')
-  result.chord_range_target = get('chord_range_target')
-  result.chord_range_target_spread = get('chord_range_target_spread')
-
-  result.density_global = get('density_global')
-  result.density_center = get('density_center')
-  result.density_spread = get('density_spread')
-  result.density_conc   = get('density_conc')
-  result.density_target = get('density_target')
-  result.density_target_spread = get('density_target_spread')
-
-  result.sustain_global = get('sustain_global')
-  result.sustain_center = get('sustain_center')
-  result.sustain_spread = get('sustain_spread')
-  result.sustain_conc   = get('sustain_conc')
-  result.sustain_target = get('sustain_target')
-  result.sustain_target_spread = get('sustain_target_spread')
-
-  // timbre-ish controls
-  result.vol_global = get('vol_global')
-  result.vol_center = get('vol_center')
-  result.vol_spread = get('vol_spread')
-  result.vol_conc   = get('vol_conc')
-  result.vol_target = get('vol_target')
-  result.vol_target_spread = get('vol_target_spread')
-
-  result.bri_global = get('bri_global')
-  result.bri_center = get('bri_center')
-  result.bri_spread = get('bri_spread')
-  result.bri_conc   = get('bri_conc')
-  result.bri_target = get('bri_target')
-  result.bri_target_spread = get('bri_target_spread')
-
-  result.hrd_global = get('hrd_global')
-  result.hrd_center = get('hrd_center')
-  result.hrd_spread = get('hrd_spread')
-  result.hrd_conc   = get('hrd_conc')
-  result.hrd_target = get('hrd_target')
-  result.hrd_target_spread = get('hrd_target_spread')
-
-  result.tex_global = get('tex_global')
-  result.tex_center = get('tex_center')
-  result.tex_spread = get('tex_spread')
-  result.tex_conc   = get('tex_conc')
-  result.tex_target = get('tex_target')
-  result.tex_target_spread = get('tex_target_spread')
+  targetWindowDimensionKeys.forEach((key) => {
+    result[`${key}_target`] = get(`${key}_target`)
+    result[`${key}_target_spread`] = get(`${key}_target_spread`)
+  })
 
   return result
 }
@@ -1128,12 +1299,15 @@ const applyInitialContextFromPayload = async (ctxRaw: any) => {
     for (let d = 0; d < dimensions.length; d++) {
       const row = makeContextRow(s, d)
       const base = defaultContextBase[d] ?? 0
-      const data: number[] = []
+      const data: Array<number | string> = []
       for (let step = 0; step < steps; step++) {
         const stepArr = ctxRaw[step]
         const streamArr = Array.isArray(stepArr) ? stepArr[s] : null
         let rawVal = Array.isArray(streamArr) ? streamArr[d] : null
-        if (d === 0 && Array.isArray(rawVal)) rawVal = rawVal[0]
+        if (d === 0) {
+          data.push(formatAbsNoteCell(rawVal))
+          continue
+        }
         let v = normalizeNumber(rawVal, base)
         const cfg = row.config
         if (cfg) {
@@ -1160,6 +1334,7 @@ const applyGenParamsFromPayload = async (payload: any) => {
     const v = normalizeNumber(candidate.merge_threshold_ratio, mergeThresholdRatio.value)
     mergeThresholdRatio.value = Math.min(1, Math.max(0, Number(v)))
   }
+  applyDimensionPolicyFromPayload(candidate.dimension_policy)
 
   const lengths = genRowMetas.map((meta) => {
     const val = candidate[meta.key]
@@ -1186,18 +1361,7 @@ const applyGenParamsFromPayload = async (payload: any) => {
       data.push(v)
     }
 
-    return {
-      name: meta.name,
-      shortName: meta.shortName,
-      data,
-      config: {
-        min: meta.min,
-        max: meta.max,
-        step: meta.step,
-        isInt: meta.isInt
-      },
-      help: meta.help
-    } as GridRowData
+    return makeGenRowData(meta, data)
   })
 
   await nextTick()
@@ -1215,6 +1379,7 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       bpm: normalizeBpm(generationBpm.value),
       stream_counts: genParams.stream_counts,
       initial_context: initialContext,
+      dimension_policy: buildDimensionPolicyPayload(),
       merge_threshold_ratio: mergeThresholdRatio.value,
       use_recent_position_weight: false,
       stream_strength_target: genParams.stream_strength_target,
@@ -1232,13 +1397,13 @@ const buildParamsPayload = (jobIdOverride?: string) => {
     }
   }
 
-  ;['area', 'chord_range', 'density', 'sustain', 'vol', 'bri', 'hrd', 'tex'].forEach((k) => {
+  complexityDimensionKeys.forEach((k) => {
     payload.generate_polyphonic[`${k}_global`] = genParams[`${k}_global`]
     payload.generate_polyphonic[`${k}_center`] = genParams[`${k}_center`]
     payload.generate_polyphonic[`${k}_spread`] = genParams[`${k}_spread`]
     payload.generate_polyphonic[`${k}_conc`] = genParams[`${k}_conc`]
   })
-  ;['vol', 'chord_range', 'density', 'sustain', 'bri', 'hrd', 'tex'].forEach((k) => {
+  targetWindowDimensionKeys.forEach((k) => {
     payload.generate_polyphonic[`${k}_target`] = genParams[`${k}_target`]
     payload.generate_polyphonic[`${k}_target_spread`] = genParams[`${k}_target_spread`]
   })
@@ -1304,6 +1469,9 @@ watch(open, (next, prev) => {
   overflow-y: auto;
   overflow-x: hidden;
 }
+.header-controls {
+  gap: 8px;
+}
 .grid-card {
   min-height: 0;
   overflow: hidden;
@@ -1322,6 +1490,32 @@ watch(open, (next, prev) => {
   padding: 2px 5px;
   border-radius: 4px;
   background: white;
+}
+.dimension-policy-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: min(100%, 860px);
+}
+.dimension-policy-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.82);
+  font-size: 0.78rem;
+}
+.dimension-policy-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.dim-policy-input {
+  width: 64px;
 }
 .bpm-input-dialog {
   width: 88px;

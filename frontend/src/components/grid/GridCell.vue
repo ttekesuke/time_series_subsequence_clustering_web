@@ -1,12 +1,13 @@
 <template>
   <input
-    type="number"
+    :type="inputType"
     class="grid-input"
     :class="{ 'is-selected': selected }"
     :value="modelValue"
-    :min="config.min"
-    :max="config.max"
-    :step="config.step || (config.isInt ? 1 : 0.1)"
+    :disabled="disabled"
+    :min="inputType === 'number' ? config.min : undefined"
+    :max="inputType === 'number' ? config.max : undefined"
+    :step="inputType === 'number' ? (config.step || (config.isInt ? 1 : 0.1)) : undefined"
     @input="onInput"
     @focus="onFocus"
     @dblclick="onDblClick"
@@ -15,11 +16,16 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+
+const inputType = computed(() => props.config?.inputMode === 'note-array' ? 'text' : 'number')
+
 const props = defineProps({
   modelValue: { type: [Number, String], default: 0 },
   rowIndex: { type: Number, required: true },
   colIndex: { type: Number, required: true },
   selected: { type: Boolean, default: false },
+  disabled: { type: Boolean, default: false },
   config: {
     type: Object,
     default: () => ({ min: 0, max: 1, isInt: false, step: 0.1 })
@@ -30,6 +36,11 @@ const emit = defineEmits(['update:modelValue', 'focus', 'dblclick', 'paste'])
 
 const onInput = (e: Event) => {
   const target = e.target as HTMLInputElement
+  if (props.config?.inputMode === 'note-array') {
+    emit('update:modelValue', target.value)
+    return
+  }
+
   let val = parseFloat(target.value)
   if (isNaN(val)) val = 0
   emit('update:modelValue', val)
@@ -86,5 +97,9 @@ const onPaste = (e: ClipboardEvent) => {
 .grid-input.is-selected {
   background-color: #e8f5e9;
   font-weight: bold;
+}
+.grid-input:disabled {
+  color: #9e9e9e;
+  cursor: not-allowed;
 }
 </style>

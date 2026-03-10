@@ -3,7 +3,7 @@
     <!-- 固定ヘッダー列 (パラメータ名) -->
     <td
       class="sticky-col head-col row-label row-header"
-      :class="{ 'selected-header': rowSelected }"
+      :class="{ 'selected-header': rowSelected, 'row-disabled': row.disabled }"
       @mousedown.prevent
       @click="onRowHeaderClick"
     >
@@ -38,6 +38,7 @@
         :rowIndex="rowIndex"
         :colIndex="i-1"
         :selected="rowSelected || isColSelected(i - 1)"
+        :disabled="Boolean(row.disabled)"
         :config="row.config"
         @focus="$emit('focus-cell', $event)"
         @dblclick="$emit('dblclick-cell', $event)"
@@ -76,12 +77,14 @@ const onRowHeaderClick = (event: MouseEvent) => {
   })
 }
 
-const updateCell = (idx: number, val: number) => {
+const updateCell = (idx: number, val: number | string) => {
+  if (props.row.disabled) return
+
   // 配列の特定要素だけ更新するため、コピーして置換
   // (Vueのバージョンによっては直接代入でも検知するが安全のため)
   const newData = [...props.row.data]
   // 配列が足りない場合は埋める
-  while(newData.length <= idx) newData.push(0)
+  while(newData.length <= idx) newData.push(props.row.config?.inputMode === 'note-array' ? '' : 0)
 
   newData[idx] = val
 
@@ -130,5 +133,8 @@ td {
 }
 .selected-cell {
   background-color: #e8f5e9;
+}
+.row-disabled {
+  color: #9e9e9e;
 }
 </style>

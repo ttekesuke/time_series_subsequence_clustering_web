@@ -27,7 +27,7 @@ function build_score_events_scd(
   mix_bus = 16
   master_node_id = 900
 
-  # ---------- SynthDef (polySynth) with only brightness, hardness, texture ----------
+  # ---------- SynthDef (polySynth) with brightness, articulation, tonalness, resonance ----------
   println(io, "a = Score([")
   println(io, "  [0.0, ['/d_recv',")
   println(io, "    SynthDef(\\polySynth, {")
@@ -36,95 +36,100 @@ function build_score_events_scd(
     mix_bus,
     step_duration
   ))
-  println(io, "         brightness=0.5, hardness=0.5, texture=0.0, sustain=0.0, subGain=1.0|")
+  println(io, "         brightness=0.5, articulation=0.5, tonalness=0.5, resonance=0.5, sustain=0.0, subGain=1.0|")
   println(io, "")
-  println(io, "        var sig, env, transientEnv, body, tone, sub, noise, click;")
-  println(io, "        var legato, fullLegato, attack, hold, release;")
-  println(io, "        var bri, hrd, tex, f0, vibRate, vibDepth, vibrato;")
-  println(io, "        var stringOsc, brassOsc, fmOsc, shimmerOsc, percNoise;")
-  println(io, "        var stringAmt, brassAmt, fmAmt, percAmt, den;")
-  println(io, "        var cutoff, rq, drive, left, right, air, safeGain, timbreComp, levelerTarget, levelerDur;")
+  println(io, "        var sig, env, transientEnv, kickEnv, snareEnv, snareSnapEnv, snareTailEnv, hatEnv, toneEnv, clickEnv;")
+  println(io, "        var gate01, fullLegato, attack, hold, release;")
+  println(io, "        var bri, art, ton, res, basePitch, vibRate, vibDepth, vibrato;")
+  println(io, "        var kickSweep, snareSweep, whiteBurst, pinkBurst, click, air;")
+  println(io, "        var kickBody, snareBody, snareNoise, hatNoise, tonalBody, sub;")
+  println(io, "        var kickMix, snareMix, snarePureMix, hatMix, tonalMix, lowWeight, cutoff, rq, spread, drive, left, right;")
   println(io, "")
   println(io, "        // --- controls ---")
   println(io, "        bri = brightness.clip(0.0, 1.0);")
-  println(io, "        hrd = hardness.clip(0.0, 1.0);")
-  println(io, "        tex = texture.clip(0.0, 1.0);")
+  println(io, "        art = articulation.clip(0.0, 1.0);")
+  println(io, "        ton = tonalness.clip(0.0, 1.0);")
+  println(io, "        res = resonance.clip(0.0, 1.0);")
   println(io, "")
-  println(io, "        // --- envelope (hardness controls attack / body) ---")
-  println(io, "        legato = sustain.clip(0.0, 1.0);")
-  println(io, "        fullLegato = (legato >= 0.999);")
-  println(io, "        attack = (1.0 - hrd).linexp(0.0, 1.0, 0.001, 0.2);")
-  println(io, "        attack = attack.min((dur * (0.34 - (legato * 0.14))).max(0.0015));")
-  println(io, "        attack = (attack * (1 - fullLegato)) + (((dur * (0.18 + tex * 0.08)).clip(0.008, 0.07)) * fullLegato);")
+  println(io, "        // --- envelope (sustain = gate length, 1.0 = tie / no retrigger) ---")
+  println(io, "        gate01 = sustain.clip(0.0, 1.0);")
+  println(io, "        fullLegato = (gate01 >= 0.999);")
+  println(io, "        attack = (0.002 + ((1.0 - art) * 0.06) + ((1.0 - ton) * 0.015)).clip(0.001, 0.08);")
+  println(io, "        attack = attack.min((dur * (0.22 + (1.0 - gate01) * 0.18)).max(0.001));")
   println(io, "        hold = (dur - attack).max(0.002);")
-  println(io, "        release = (dur * (0.35 + (legato * 1.20) + ((1.0 - hrd) * 0.30) + (tex * 0.15))).max(0.01);")
+  println(io, "        release = (dur * (0.08 + res * 0.85 + ton * 0.12)).clip(0.01, 0.7);")
   println(io, "        release = (release * (1 - fullLegato)) + (((dur * 0.08).max(0.02)) * fullLegato);")
   println(io, "        env = EnvGen.ar(Env.linen(attack, hold, release, 1.0, -4), doneAction: 2);")
-  println(io, "        transientEnv = EnvGen.ar(Env.perc(0.0008, (0.012 + (1.0 - hrd) * 0.05), curve: -6));")
+  println(io, "        transientEnv = EnvGen.ar(Env.perc(0.0004, (0.006 + (1.0 - art) * 0.020), curve: -7));")
+  println(io, "        kickEnv = EnvGen.ar(Env.perc(0.0008, (0.05 + res * 0.18 + ton * 0.08), curve: -6));")
+  println(io, "        snareEnv = EnvGen.ar(Env.perc(0.0005, (0.11 + res * 0.22 + (1.0 - ton) * 0.08), curve: -5));")
+  println(io, "        snareSnapEnv = EnvGen.ar(Env([0.0, 1.0, 0.0], [0.005 + (1.0 - art) * 0.003, 0.12 + res * 0.28 + (1.0 - ton) * 0.10], [-3, -7]));")
+  println(io, "        snareTailEnv = EnvGen.ar(Env.perc(0.001, (0.04 + res * 0.12 + bri * 0.03), curve: -6));")
+  println(io, "        hatEnv = EnvGen.ar(Env.perc(0.0003, (0.015 + bri * 0.05 + res * 0.12), curve: -8));")
+  println(io, "        toneEnv = EnvGen.ar(Env.perc(0.001, (0.05 + ton * 0.12 + res * 0.12), curve: -4));")
+  println(io, "        clickEnv = EnvGen.ar(Env.perc(0.0002, (0.003 + art * 0.008), curve: -9));")
   println(io, "")
-  println(io, "        // --- subtle movement (string-like softness at low hardness/texture) ---")
-  println(io, "        vibRate = 4.0 + (1.0 - hrd) * 1.5 + (1.0 - tex) * 1.0;")
-  println(io, "        vibDepth = (1.0 - hrd) * (1.0 - tex * 0.7) * 0.012;")
+  println(io, "        // --- continuous pitch behavior ---")
+  println(io, "        vibRate = 3.5 + (1.0 - art) * 2.5;")
+  println(io, "        vibDepth = ton * (1.0 - art) * 0.01;")
   println(io, "        vibrato = SinOsc.kr(vibRate, 0, vibDepth, 1.0);")
-  println(io, "        f0 = freq * vibrato * (1.0 + Rand(-0.003, 0.003));")
+  println(io, "        basePitch = freq.clip(24, 12000);")
+  println(io, "        kickSweep = XLine.kr((basePitch * (2.2 - bri * 0.35)).clip(28, 5000), (basePitch * (0.70 + ton * 0.16)).clip(22, 2500), (0.025 + (1.0 - art) * 0.02 + res * 0.03));")
+  println(io, "        snareSweep = XLine.kr((basePitch * (1.35 - ton * 0.12)).clip(90, 6000), basePitch.clip(70, 3200), (0.012 + (1.0 - art) * 0.015));")
   println(io, "")
-  println(io, "        // --- source A: string-ish (detuned saw stack) ---")
-  println(io, "        stringOsc = Mix([Saw.ar(f0 * 0.997), Saw.ar(f0), Saw.ar(f0 * 1.003)]) * 0.33;")
-  println(io, "        stringOsc = LPF.ar(stringOsc, (800 + (bri * 5200) + ((1.0 - tex) * 1600)).clip(120, 12000));")
-  println(io, "        stringOsc = stringOsc * (0.75 + (1.0 - hrd) * 0.35);")
+  println(io, "        whiteBurst = WhiteNoise.ar();")
+  println(io, "        pinkBurst = PinkNoise.ar();")
+  println(io, "        click = HPF.ar(whiteBurst, (1500 + bri * 9000).clip(500, 17000)) * clickEnv * (0.03 + art * 0.12);")
+  println(io, "        click = click + BPF.ar(whiteBurst, (900 + bri * 7000).clip(300, 12000), 0.35) * transientEnv * (0.04 + art * 0.12);")
   println(io, "")
-  println(io, "        // --- source B: brass-ish (pulse/saw with drive) ---")
-  println(io, "        brassOsc = Pulse.ar(f0, (0.42 + tex * 0.24).clip(0.08, 0.92)) * 0.65 + Saw.ar(f0 * 2.0) * 0.35;")
-  println(io, "        brassOsc = RLPF.ar(brassOsc, (300 + (bri * 3800) + (hrd * 2400)).clip(100, 14000), (0.7 - hrd * 0.35).clip(0.08, 0.95));")
-  println(io, "        brassOsc = tanh(brassOsc * (1.3 + hrd * 1.8));")
+  println(io, "        tonalBody = Mix([")
+  println(io, "          SinOsc.ar(basePitch * vibrato),")
+  println(io, "          VarSaw.ar(basePitch * (1.0 + art * 0.015), 0, (0.60 - art * 0.20).clip(0.12, 0.95)) * 0.18")
+  println(io, "        ]) * toneEnv;")
+  println(io, "        tonalBody = LPF.ar(tonalBody, (220 + bri * 7000 + ton * 1800).clip(120, 12000));")
   println(io, "")
-  println(io, "        // --- source C: shimmer / metallic FM ---")
-  println(io, "        fmOsc = SinOsc.ar(f0 + (SinOsc.ar(f0 * (1.3 + bri * 3.4)) * f0 * (0.08 + tex * 1.55)));")
-  println(io, "        shimmerOsc = BPF.ar(fmOsc, (1400 + bri * 9000).clip(300, 16000), (0.22 + tex * 0.25).clip(0.08, 0.9));")
-  println(io, "        shimmerOsc = HPF.ar(shimmerOsc, (300 + bri * 1500).clip(150, 8000));")
+  println(io, "        kickBody = SinOsc.ar(kickSweep, 0, kickEnv * (0.58 + ton * 0.26));")
+  println(io, "        kickBody = kickBody + SinOsc.ar((kickSweep * 0.50).clip(20, 1800), 0, kickEnv * (0.10 + (1.0 - bri) * 0.16));")
+  println(io, "        kickBody = LPF.ar(kickBody, (180 + (1.0 - bri) * 320 + ton * 120).clip(80, 900));")
   println(io, "")
-  println(io, "        // --- noise / percussive layer ---")
-  println(io, "        noise = LPF.ar(PinkNoise.ar(), 12000) * (0.02 + tex * 0.14);")
-  println(io, "        percNoise = BPF.ar(WhiteNoise.ar(), (1200 + bri * 9000).clip(400, 16000), (0.18 + hrd * 0.35).clip(0.08, 0.95));")
-  println(io, "        click = percNoise * transientEnv * (0.18 + hrd * 0.55) * (0.25 + tex * 0.5);")
+  println(io, "        snareBody = SinOsc.ar(snareSweep, 0, snareEnv * (0.08 + ton * 0.14));")
+  println(io, "        snareBody = snareBody + SinOsc.ar((snareSweep * 1.8).clip(120, 8000), 0, snareEnv * 0.04);")
+  println(io, "        snareBody = BPF.ar(snareBody, (150 + basePitch * 0.82 + ton * 80).clip(110, 2200), 0.40);")
   println(io, "")
-  println(io, "        // --- low-end body ---")
-  println(io, "        sub = SinOsc.ar(f0 * 0.5) * (0.22 + (1.0 - bri) * 0.42);")
-  println(io, "        sub = sub + (LFTri.ar(f0 * 0.5) * (0.10 + (1.0 - tex) * 0.18));")
-  println(io, "        sub = LPF.ar(sub, (170 + (1.0 - bri) * 260).clip(90, 700));")
+  println(io, "        snareNoise = WhiteNoise.ar(snareSnapEnv);")
+  println(io, "        snareNoise = snareNoise + (WhiteNoise.ar(snareSnapEnv) * (0.55 + (1.0 - ton) * 0.30));")
+  println(io, "        snareNoise = (snareNoise * (0.65 + (1.0 - ton) * 0.45)) + (BPF.ar(WhiteNoise.ar(snareTailEnv), (2500 + bri * 1800).clip(1400, 6000), 0.65) * (0.18 + bri * 0.14));")
+  println(io, "        snareNoise = snareNoise + (HPF.ar(PinkNoise.ar(snareTailEnv), (1400 + bri * 1200).clip(900, 4200)) * (0.08 + bri * 0.06));")
+  println(io, "")
+  println(io, "        hatNoise = HPF.ar(WhiteNoise.ar(1), (7000 + bri * 9000).clip(4000, 17000));")
+  println(io, "        hatNoise = hatNoise * hatEnv;")
+  println(io, "        hatNoise = hatNoise + BPF.ar(WhiteNoise.ar(1), (9500 + bri * 6500).clip(5500, 18000), 0.22) * hatEnv * (0.18 + bri * 0.22);")
+  println(io, "")
+  println(io, "        sub = SinOsc.ar((basePitch * (0.50 + ton * 0.18)).clip(20, 3000)) * (0.08 + ton * 0.20 + res * 0.08 + (1.0 - bri) * 0.08);")
   println(io, "        sub = sub * subGain.clip(0.0, 1.0);")
+  println(io, "        sub = LPF.ar(sub, (110 + (1.0 - bri) * 220 + ton * 120).clip(50, 700));")
   println(io, "")
-  println(io, "        // --- morph by texture/hardness ---")
-  println(io, "        stringAmt = ((1.0 - tex) * (1.0 - hrd * 0.55)).clip(0.0, 1.0);")
-  println(io, "        brassAmt = ((1.0 - (tex - 0.45).abs * 2.0).clip(0.0, 1.0) * (0.45 + hrd * 0.55)).clip(0.0, 1.0);")
-  println(io, "        fmAmt = (tex * (0.25 + bri * 0.75)).clip(0.0, 1.0);")
-  println(io, "        percAmt = (tex * (0.35 + hrd * 0.65)).clip(0.0, 1.0);")
-  println(io, "        den = (stringAmt + brassAmt + fmAmt + 0.001);")
-  println(io, "        tone = ((stringOsc * stringAmt) + (brassOsc * brassAmt) + (shimmerOsc * fmAmt)) / den;")
-  println(io, "        body = tone + sub + noise + (click * percAmt);")
-  println(io, "        air = HPF.ar(body, (3500 + bri * 5200).clip(1200, 14000)) * (bri * (0.05 + tex * 0.20));")
-  println(io, "        sig = body + air;")
+  println(io, "        kickMix = ((1.0 - bri) * (0.35 + ton * 0.65)).clip(0.0, 1.0);")
+  println(io, "        snareMix = ((1.0 - (bri - 0.38).abs * 2.0).clip(0.0, 1.0) * (1.0 - ton * 0.78) * (0.55 + art * 0.30)).clip(0.0, 1.0);")
+  println(io, "        snarePureMix = ((1.0 - (bri - 0.30).abs * 2.4).clip(0.0, 1.0) * (1.0 - ton).pow(0.7) * (0.75 + art * 0.20)).clip(0.0, 1.0);")
+  println(io, "        hatMix = (bri * (1.0 - ton) * (0.45 + art * 0.20 + res * 0.15)).clip(0.0, 1.0);")
+  println(io, "        tonalMix = (ton * (0.20 + res * 0.18)).clip(0.0, 1.0);")
+  println(io, "        lowWeight = ((1.0 - bri) * (0.40 + ton * 0.60)).clip(0.0, 1.0);")
   println(io, "")
-  println(io, "        // --- global tone shaping by brightness ---")
-  println(io, "        cutoff = (140 + ((bri * bri) * 15500) + (hrd * 900)).clip(90, 17000);")
-  println(io, "        rq = (0.92 - (bri * 0.45) + (tex * 0.08)).clip(0.12, 0.95);")
+  println(io, "        sig = (kickBody * kickMix) + ((snareBody * (0.25 + ton * 0.55)) + (snareNoise * (0.55 + snarePureMix * 0.95))) * snareMix + (hatNoise * hatMix) + (tonalBody * tonalMix) + (sub * lowWeight) + click;")
+  println(io, "        air = HPF.ar(sig, (3000 + bri * 8000).clip(1500, 17500)) * (0.02 + hatMix * 0.18);")
+  println(io, "        sig = sig + air;")
+  println(io, "")
+  println(io, "        cutoff = (180 + bri * 15500 + ton * 1200).clip(120, 18000);")
+  println(io, "        rq = (0.88 - bri * 0.40 + (1.0 - ton) * 0.05).clip(0.12, 0.95);")
   println(io, "        sig = RLPF.ar(sig, cutoff, rq);")
-  println(io, "        sig = BLowShelf.ar(sig, 140, 0.8, ((1.0 - bri) * 6.0 + (1.0 - tex) * 2.0) - 2.5);")
-  println(io, "        sig = BHiShelf.ar(sig, 3200, 0.9, (bri * 9.0 + tex * 3.0) - 5.0);")
+  println(io, "        sig = BLowShelf.ar(sig, 140, 0.8, ((1.0 - bri) * 6.0) + ton * 1.0 - 2.5);")
+  println(io, "        sig = BHiShelf.ar(sig, 4200, 0.9, (bri * 8.5) + hatMix * 3.0 - 5.0);")
   println(io, "")
-  println(io, "        // --- hardness => drive / punch ---")
-  println(io, "        drive = 1.0 + (hrd * 2.2) + (tex * 1.0);")
+  println(io, "        drive = 1.0 + art * 1.4 + (1.0 - ton) * 0.35 + res * 0.15;")
   println(io, "        sig = tanh(sig * drive);")
-  println(io, "        // intense timbre area is auto-attenuated to avoid silent failure by overload")
-  println(io, "        safeGain = (1.0 - (tex * 0.22) - (hrd * 0.12)).clip(0.55, 1.0);")
-  println(io, "        sig = sig * safeGain;")
-  println(io, "        // timbre-dependent loudness compensation (keep vol perceptually consistent)")
-  println(io, "        timbreComp = (1.18 - (tex * 0.34) - (hrd * 0.22) - (bri * 0.08)).clip(0.65, 1.18);")
-  println(io, "        sig = sig * timbreComp;")
-  println(io, "        // gentle per-voice leveling before applying vol amp")
-  println(io, "        levelerTarget = 0.38;")
-  println(io, "        levelerDur = 0.015;")
-  println(io, "        sig = Normalizer.ar(sig, levelerTarget, levelerDur);")
+  println(io, "        sig = sig * (0.94 - hatMix * 0.06 - snareMix * 0.03).clip(0.62, 1.0);")
+  println(io, "        sig = Normalizer.ar(sig, 0.4, 0.015);")
   println(io, "        sig = HPF.ar(sig, 18);")
   println(io, "        sig = LPF.ar(sig, 18000);")
   println(io, "        sig = sig.clip2(1.2);")
@@ -135,7 +140,8 @@ function build_score_events_scd(
   println(io, "        sig = sig * env * amp;")
   println(io, "")
   println(io, "        left = sig;")
-  println(io, "        right = DelayC.ar(sig, 0.03, (0.0015 + tex * 0.007 + (1.0 - hrd) * 0.002).clip(0.0, 0.03));")
+  println(io, "        spread = (0.001 + (1.0 - ton) * 0.006 + res * 0.003 + bri * 0.002).clip(0.0, 0.03);")
+  println(io, "        right = DelayC.ar(sig, 0.03, spread);")
   println(io, "        Out.ar(outBus, [left, right]);")
   println(io, "    }).asBytes;")
   println(io, "  ]],")
@@ -162,13 +168,17 @@ function build_score_events_scd(
   midi_to_freq(m) = 440.0 * 2.0^((m - 69.0) / 12.0)
 
   # Parse one stream entry (legacy or strict)
-  # Returns: (abs_notes, vol, bri, hrd, tex, sustain)
+  # Returns: (abs_notes, vol, brightness, articulation, tonalness, resonance, sustain)
+  # sustain semantics:
+  #   0.0 => gate length is one step's 1/4
+  #   0.0 < sustain < 1.0 => gate length interpolates up to one full step
+  #   1.0 => tie to next note on same stream/pitch with no retrigger
   # Note: chord_range and density are ignored for sound synthesis.
-  function _parse_stream(s)::Tuple{Vector{Int},Float64,Float64,Float64,Float64,Float64}
-    s isa AbstractVector || return (Int[], 0.0, 0.0, 0.0, 0.0, 0.0)
-    isempty(s) && return (Int[], 0.0, 0.0, 0.0, 0.0, 0.0)
+  function _parse_stream(s)::Tuple{Vector{Int},Float64,Float64,Float64,Float64,Float64,Float64}
+    s isa AbstractVector || return (Int[], 0.0, 0.5, 0.5, 0.5, 0.5, 0.0)
+    isempty(s) && return (Int[], 0.0, 0.5, 0.5, 0.5, 0.5, 0.0)
 
-    # strict: [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain]
+    # strict: [abs_notes, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
     if length(s) >= 1 && s[1] isa AbstractVector
       abs_notes = Int[]
       for v in s[1]
@@ -179,13 +189,14 @@ function build_score_events_scd(
       unique!(abs_notes)
 
       vol = clamp(length(s) >= 2 ? _parse_float(s[2]) : 0.0, 0.0, 1.0)
-      bri = clamp(length(s) >= 3 ? _parse_float(s[3]) : 0.0, 0.0, 1.0)
-      hrd = clamp(length(s) >= 4 ? _parse_float(s[4]) : 0.0, 0.0, 1.0)
-      tex = clamp(length(s) >= 5 ? _parse_float(s[5]) : 0.0, 0.0, 1.0)
-      # skip chord_range (index 6) and density (index 7)
-      sus = clamp(length(s) >= 8 ? _parse_float(s[8]) : 0.0, 0.0, 1.0)
+      bri = clamp(length(s) >= 3 ? _parse_float(s[3]) : 0.5, 0.0, 1.0)
+      art = clamp(length(s) >= 4 ? _parse_float(s[4]) : 0.5, 0.0, 1.0)
+      ton = clamp(length(s) >= 5 ? _parse_float(s[5]) : 0.5, 0.0, 1.0)
+      res = clamp(length(s) >= 6 ? _parse_float(s[6]) : 0.5, 0.0, 1.0)
+      # skip chord_range (index 7) and density (index 8)
+      sus = clamp(length(s) >= 9 ? _parse_float(s[9]) : 0.0, 0.0, 1.0)
       sus = clamp(round(sus * 4.0) / 4.0, 0.0, 1.0)
-      return (abs_notes, vol, bri, hrd, tex, sus)
+      return (abs_notes, vol, bri, art, ton, res, sus)
     end
 
     # legacy: [oct, pcs, vol, bri, hrd, tex, sustain?]
@@ -205,21 +216,22 @@ function build_score_events_scd(
     unique!(abs_notes)
 
     vol = clamp(length(s) >= 3 ? _parse_float(s[3]) : 0.0, 0.0, 1.0)
-    bri = clamp(length(s) >= 4 ? _parse_float(s[4]) : 0.0, 0.0, 1.0)
-    hrd = clamp(length(s) >= 5 ? _parse_float(s[5]) : 0.0, 0.0, 1.0)
-    tex = clamp(length(s) >= 6 ? _parse_float(s[6]) : 0.0, 0.0, 1.0)
+    bri = clamp(length(s) >= 4 ? _parse_float(s[4]) : 0.5, 0.0, 1.0)
+    art = clamp(length(s) >= 5 ? _parse_float(s[5]) : 0.5, 0.0, 1.0)
+    ton = clamp(length(s) >= 6 ? _parse_float(s[6]) : 0.5, 0.0, 1.0)
+    res = 0.5
     sus = clamp(length(s) >= 7 ? _parse_float(s[7]) : 0.0, 0.0, 1.0)
     sus = clamp(round(sus * 4.0) / 4.0, 0.0, 1.0)
-    return (abs_notes, vol, bri, hrd, tex, sus)
+    return (abs_notes, vol, bri, art, ton, res, sus)
   end
 
   Event = NamedTuple{
-    (:time, :freq, :dur, :amp, :bri, :hrd, :tex, :sus),
-    Tuple{Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64}
+    (:time, :freq, :dur, :amp, :brightness, :articulation, :tonalness, :resonance, :sus),
+    Tuple{Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64}
   }
   StepVoice = NamedTuple{
-    (:stream_idx, :abs_notes, :vol, :bri, :hrd, :tex, :sustain),
-    Tuple{Int,Vector{Int},Float64,Float64,Float64,Float64,Float64}
+    (:stream_idx, :abs_notes, :vol, :brightness, :articulation, :tonalness, :resonance, :sustain),
+    Tuple{Int,Vector{Int},Float64,Float64,Float64,Float64,Float64,Float64}
   }
   events = Event[]
   base_voice_gain = 0.30
@@ -232,15 +244,16 @@ function build_score_events_scd(
     if step_streams isa AbstractVector
       for (stream_idx, s) in enumerate(step_streams)
         s === nothing && continue
-        abs_notes, vol, bri, hrd, tex, sustain = _parse_stream(s)
+        abs_notes, vol, brightness, articulation, tonalness, resonance, sustain = _parse_stream(s)
         (vol > 0.01 && !isempty(abs_notes)) || continue
         push!(step_voices, (
           stream_idx = stream_idx,
           abs_notes = abs_notes,
           vol = vol,
-          bri = bri,
-          hrd = hrd,
-          tex = tex,
+          brightness = brightness,
+          articulation = articulation,
+          tonalness = tonalness,
+          resonance = resonance,
           sustain = sustain
         ))
       end
@@ -269,9 +282,10 @@ function build_score_events_scd(
                 freq = ev.freq,
                 dur  = ev.dur + step_duration,
                 amp  = ev.amp,
-                bri  = ev.bri,
-                hrd  = ev.hrd,
-                tex  = ev.tex,
+                brightness  = ev.brightness,
+                articulation = ev.articulation,
+                tonalness = ev.tonalness,
+                resonance = ev.resonance,
                 sus  = 1.0
               )
               next_active_ties[key] = ev_idx
@@ -282,16 +296,17 @@ function build_score_events_scd(
                 freq = freq,
                 dur  = step_duration,
                 amp  = amp_each,
-                bri  = voice.bri,
-                hrd  = voice.hrd,
-                tex  = voice.tex,
+                brightness  = voice.brightness,
+                articulation = voice.articulation,
+                tonalness = voice.tonalness,
+                resonance = voice.resonance,
                 sus  = 1.0
               ))
               next_active_ties[key] = length(events)
             end
           end
         else
-          note_dur = step_duration * (0.98 + (1.22 * voice.sustain))
+          note_dur = step_duration * (0.25 + (0.75 * voice.sustain))
           for midi_note in voice.abs_notes
             freq = midi_to_freq(midi_note)
             push!(events, (
@@ -299,9 +314,10 @@ function build_score_events_scd(
               freq = freq,
               dur  = note_dur,
               amp  = amp_each,
-              bri  = voice.bri,
-              hrd  = voice.hrd,
-              tex  = voice.tex,
+              brightness  = voice.brightness,
+              articulation = voice.articulation,
+              tonalness = voice.tonalness,
+              resonance = voice.resonance,
               sus  = voice.sustain
             ))
           end
@@ -315,8 +331,8 @@ function build_score_events_scd(
 
   for ev in events
     println(io, @sprintf(
-      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\hardness, %.6f, \\texture, %.6f, \\sustain, %.6f, \\subGain, %.6f, \\outBus, %d]],",
-      ev.time, node_id, ev.freq, ev.dur, ev.amp, ev.bri, ev.hrd, ev.tex, ev.sus, sub_gain, mix_bus
+      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\articulation, %.6f, \\tonalness, %.6f, \\resonance, %.6f, \\sustain, %.6f, \\subGain, %.6f, \\outBus, %d]],",
+      ev.time, node_id, ev.freq, ev.dur, ev.amp, ev.brightness, ev.articulation, ev.tonalness, ev.resonance, ev.sus, sub_gain, mix_bus
     ))
     node_id += 1
   end
@@ -398,7 +414,7 @@ function render_polyphonic()
         try
           s === nothing && continue
 
-          # strict: [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain]
+          # strict: [abs_notes, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
           if length(s) >= 1 && s[1] isa AbstractVector
             abs_notes = Int[]
             for v in s[1]
@@ -408,7 +424,7 @@ function render_polyphonic()
             vol = clamp(length(s) >= 2 ? _parse_float(s[2]) : 0.0, 0.0, 1.0)
             # skip near-zero volume or empty chords
             if vol > 0.001 && !isempty(abs_notes)
-              push!(step_out, [abs_notes, vol, length(s) >= 3 ? _parse_float(s[3]) : 0.0, length(s) >= 4 ? _parse_float(s[4]) : 0.0, length(s) >= 5 ? _parse_float(s[5]) : 0.0, length(s) >= 6 ? _parse_float(s[6]) : 0.0, length(s) >= 7 ? _parse_float(s[7]) : 0.0, length(s) >= 8 ? _parse_float(s[8]) : 0.0])
+              push!(step_out, [abs_notes, vol, length(s) >= 3 ? _parse_float(s[3]) : 0.5, length(s) >= 4 ? _parse_float(s[4]) : 0.5, length(s) >= 5 ? _parse_float(s[5]) : 0.5, length(s) >= 6 ? _parse_float(s[6]) : 0.5, length(s) >= 7 ? _parse_float(s[7]) : 0.0, length(s) >= 8 ? _parse_float(s[8]) : 0.0, length(s) >= 9 ? _parse_float(s[9]) : 0.0])
             end
           else
             # legacy: [oct, pcs, vol, bri, hrd, tex, sustain?]
@@ -422,7 +438,7 @@ function render_polyphonic()
             isempty(pcs) && (pcs = [0])
             vol = clamp(length(s) >= 3 ? _parse_float(s[3]) : 0.0, 0.0, 1.0)
             if vol > 0.001 && !isempty(pcs)
-              push!(step_out, [oct, pcs, vol, length(s) >= 4 ? _parse_float(s[4]) : 0.0, length(s) >= 5 ? _parse_float(s[5]) : 0.0, length(s) >= 6 ? _parse_float(s[6]) : 0.0, length(s) >= 7 ? _parse_float(s[7]) : 0.0])
+              push!(step_out, [oct, pcs, vol, length(s) >= 4 ? _parse_float(s[4]) : 0.5, length(s) >= 5 ? _parse_float(s[5]) : 0.5, length(s) >= 6 ? _parse_float(s[6]) : 0.5, length(s) >= 7 ? _parse_float(s[7]) : 0.0])
             end
           end
         catch

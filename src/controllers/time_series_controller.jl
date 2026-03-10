@@ -770,21 +770,21 @@ function generate_polyphonic()
   ctx_raw = get(gp, "initial_context", Any[])
 
   # Stream record (REQUIRED):
-  #   [abs_notes::Vector{Int}, vol, bri, hrd, tex, chord_range::Int, density::Float64, sustain::Float64]
+  #   [abs_notes::Vector{Int}, vol, brightness, articulation, tonalness, resonance, chord_range::Int, density::Float64, sustain::Float64]
   #
   # initial_context MUST be a 3-level array:
   #   initial_context[step][stream] = stream_record
   results = Vector{Vector{Vector{Any}}}()
 
   if !(ctx_raw isa AbstractVector)
-    error("generate_polyphonic.initial_context must be an Array of steps; each step is an Array of streams; each stream is [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain].")
+    error("generate_polyphonic.initial_context must be an Array of steps; each step is an Array of streams; each stream is [abs_notes, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain].")
   end
 
   for step in ctx_raw
     step isa AbstractVector || error("generate_polyphonic.initial_context: each step must be an Array of streams.")
     streams = Vector{Vector{Any}}()
     for st in step
-      st isa AbstractVector || error("generate_polyphonic.initial_context: each stream must be an Array [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain].")
+      st isa AbstractVector || error("generate_polyphonic.initial_context: each stream must be an Array [abs_notes, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain].")
       push!(streams, Any[st...])
     end
     push!(results, streams)
@@ -792,18 +792,19 @@ function generate_polyphonic()
 
   # Defaults
   if isempty(results)
-    push!(results, [Any[[Int(PolyphonicConfig.abs_pitch_min())], 1.0, 0.0, 0.0, 0.0, 0, 0.0, 0.5]])
+    push!(results, [Any[[Int(PolyphonicConfig.abs_pitch_min())], 1.0, 0.5, 0.5, 0.5, 0.5, 0, 0.0, 0.5]])
   end
 
   # Indices for NEW format
   note_abs_idx    = 1
   vol_idx         = 2
-  bri_idx         = 3
-  hrd_idx         = 4
-  tex_idx         = 5
-  chord_range_idx = 6
-  density_idx     = 7
-  sustain_idx     = 8
+  brightness_idx  = 3
+  articulation_idx = 4
+  tonalness_idx   = 5
+  resonance_idx   = 6
+  chord_range_idx = 7
+  density_idx     = 8
+  sustain_idx     = 9
 
   # --- MIDI range (keep consistent across AREA/tmp_anchor and NOTE) ---
   ABS_MIN = Int(PolyphonicConfig.abs_pitch_min())
@@ -827,9 +828,10 @@ function generate_polyphonic()
     s in ("den", "density") && return "density"
     s in ("sus", "sustain") && return "sustain"
     s in ("vol", "volume") && return "vol"
-    s in ("bri", "brightness") && return "bri"
-    s in ("hrd", "hardness") && return "hrd"
-    s in ("tex", "texture") && return "tex"
+    s in ("bri", "brightness") && return "brightness"
+    s in ("art", "articulation", "attack") && return "articulation"
+    s in ("ton", "tonalness", "pitched", "pitchiness") && return "tonalness"
+    s in ("res", "resonance", "ring") && return "resonance"
     return nothing
   end
 
@@ -838,29 +840,30 @@ function generate_polyphonic()
       return float(clamp(_parse_int(raw), CHORD_RANGE_MIN, CHORD_RANGE_MAX))
     elseif key == "sustain"
       return _quantize_sustain(raw)
-    elseif key == "area" || key == "density" || key == "vol" || key == "bri" || key == "hrd" || key == "tex"
+    elseif key == "area" || key == "density" || key == "vol" || key == "brightness" || key == "articulation" || key == "tonalness" || key == "resonance"
       return clamp(_parse_float(raw), 0.0, 1.0)
     else
       return _parse_float(raw)
     end
   end
 
-  managed_dims = ["area", "chord_range", "density", "sustain", "vol", "bri", "hrd", "tex"]
+  managed_dims = ["area", "chord_range", "density", "sustain", "vol", "brightness", "articulation", "tonalness", "resonance"]
   dim_accept = Dict{String,Bool}()
   dim_fixed = Dict{String,Float64}()
 
   # Internal default policy:
-  # - vol/bri/hrd/tex: disabled by default to reduce clustering/search cost in pitch-focused experiments
+  # - vol/brightness/articulation/tonalness/resonance: disabled by default to reduce clustering/search cost in pitch-focused experiments
   # - others: enabled
   default_dim_policy = Dict{String,Dict{String,Any}}(
-    "area" => Dict("accept_params" => true,  "fixed_value" => 0.5),
-    "chord_range" => Dict("accept_params" => true, "fixed_value" => 0.0),
-    "density" => Dict("accept_params" => true, "fixed_value" => 0.0),
-    "sustain" => Dict("accept_params" => true, "fixed_value" => 0.5),
+    "area" => Dict("accept_params" => false,  "fixed_value" => 0.5),
+    "chord_range" => Dict("accept_params" => false, "fixed_value" => 0.0),
+    "density" => Dict("accept_params" => false, "fixed_value" => 0.0),
+    "sustain" => Dict("accept_params" => false, "fixed_value" => 0.5),
     "vol" => Dict("accept_params" => true, "fixed_value" => 1.0),
-    "bri" => Dict("accept_params" => true, "fixed_value" => 0.0),
-    "hrd" => Dict("accept_params" => true, "fixed_value" => 0.0),
-    "tex" => Dict("accept_params" => true, "fixed_value" => 0.0),
+    "brightness" => Dict("accept_params" => false, "fixed_value" => 0.5),
+    "articulation" => Dict("accept_params" => false, "fixed_value" => 0.5),
+    "tonalness" => Dict("accept_params" => false, "fixed_value" => 0.5),
+    "resonance" => Dict("accept_params" => false, "fixed_value" => 0.5),
   )
   for key in managed_dims
     d = default_dim_policy[key]
@@ -872,7 +875,9 @@ function generate_polyphonic()
   # generate_polyphonic.dimension_policy = {
   #   vol: { accept_params: false, fixed_value: 1.0 }, cr: {...}, den: {...}, sus: {...}, ...
   # }
-  raw_dim_policy = _to_string_dict(get(gp, "dimension_policy", nothing))
+  # generate_polyphonic.default_dim_policy also works as an alias.
+  raw_dim_policy_src = get(gp, "dimension_policy", get(gp, "default_dim_policy", nothing))
+  raw_dim_policy = _to_string_dict(raw_dim_policy_src)
   for (raw_key, raw_val) in raw_dim_policy
     key = _canonical_dim_key(raw_key)
     key === nothing && continue
@@ -906,14 +911,17 @@ function generate_polyphonic()
     if !get(dim_accept, "vol", true)
       st[vol_idx] = dim_fixed["vol"]
     end
-    if !get(dim_accept, "bri", true)
-      st[bri_idx] = dim_fixed["bri"]
+    if !get(dim_accept, "brightness", true)
+      st[brightness_idx] = dim_fixed["brightness"]
     end
-    if !get(dim_accept, "hrd", true)
-      st[hrd_idx] = dim_fixed["hrd"]
+    if !get(dim_accept, "articulation", true)
+      st[articulation_idx] = dim_fixed["articulation"]
     end
-    if !get(dim_accept, "tex", true)
-      st[tex_idx] = dim_fixed["tex"]
+    if !get(dim_accept, "tonalness", true)
+      st[tonalness_idx] = dim_fixed["tonalness"]
+    end
+    if !get(dim_accept, "resonance", true)
+      st[resonance_idx] = dim_fixed["resonance"]
     end
     if !get(dim_accept, "chord_range", true)
       st[chord_range_idx] = Int(round(clamp(dim_fixed["chord_range"], float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX))))
@@ -969,15 +977,16 @@ function generate_polyphonic()
   end
   function _normalize_stream!(st::Vector{Any})
     # Accept both:
-    # - strict: [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain]
+    # - strict: [abs_notes, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
     # - legacy: [octave, pcs, vol, bri, hrd, tex, (optional sustain)]
-    length(st) >= 6 || error("generate_polyphonic.initial_context stream record must be strict [abs_notes, vol, bri, hrd, tex, chord_range, density, sustain] or legacy [octave, pcs, vol, bri, hrd, tex, sustain?].")
+    length(st) >= 6 || error("generate_polyphonic.initial_context stream record must be strict [abs_notes, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain] or legacy [octave, pcs, vol, bri, hrd, tex, sustain?].")
 
     abs_notes = Int[]
     vol = 1.0
-    bri = 0.0
-    hrd = 0.0
-    tex = 0.0
+    brightness = 0.5
+    articulation = 0.5
+    tonalness = 0.5
+    resonance = 0.5
     cr  = 0
     den = 0.0
     sus = 0.5
@@ -986,12 +995,13 @@ function generate_polyphonic()
       # strict
       abs_notes = _normalize_abs_notes(st[1])
       vol = clamp(_parse_float(length(st) >= 2 ? st[2] : 1.0), 0.0, 1.0)
-      bri = clamp(_parse_float(length(st) >= 3 ? st[3] : 0.0), 0.0, 1.0)
-      hrd = clamp(_parse_float(length(st) >= 4 ? st[4] : 0.0), 0.0, 1.0)
-      tex = clamp(_parse_float(length(st) >= 5 ? st[5] : 0.0), 0.0, 1.0)
-      cr  = max(_parse_int(length(st) >= 6 ? st[6] : 0), 0)
-      den = clamp(_parse_float(length(st) >= 7 ? st[7] : 0.0), 0.0, 1.0)
-      sus = length(st) >= 8 ? _quantize_sustain(st[8]) : 0.5
+      brightness = clamp(_parse_float(length(st) >= 3 ? st[3] : 0.5), 0.0, 1.0)
+      articulation = clamp(_parse_float(length(st) >= 4 ? st[4] : 0.5), 0.0, 1.0)
+      tonalness = clamp(_parse_float(length(st) >= 5 ? st[5] : 0.5), 0.0, 1.0)
+      resonance = clamp(_parse_float(length(st) >= 6 ? st[6] : 0.5), 0.0, 1.0)
+      cr  = max(_parse_int(length(st) >= 7 ? st[7] : 0), 0)
+      den = clamp(_parse_float(length(st) >= 8 ? st[8] : 0.0), 0.0, 1.0)
+      sus = length(st) >= 9 ? _quantize_sustain(st[9]) : 0.5
     else
       # legacy
       oct = _parse_int(st[1])
@@ -999,9 +1009,10 @@ function generate_polyphonic()
       base_c = PolyphonicConfig.base_c_midi(oct)
       abs_notes = _normalize_abs_notes(Int[base_c + pc for pc in pcs])
       vol = clamp(_parse_float(length(st) >= 3 ? st[3] : 1.0), 0.0, 1.0)
-      bri = clamp(_parse_float(length(st) >= 4 ? st[4] : 0.0), 0.0, 1.0)
-      hrd = clamp(_parse_float(length(st) >= 5 ? st[5] : 0.0), 0.0, 1.0)
-      tex = clamp(_parse_float(length(st) >= 6 ? st[6] : 0.0), 0.0, 1.0)
+      brightness = clamp(_parse_float(length(st) >= 4 ? st[4] : 0.5), 0.0, 1.0)
+      articulation = clamp(_parse_float(length(st) >= 5 ? st[5] : 0.5), 0.0, 1.0)
+      tonalness = clamp(_parse_float(length(st) >= 6 ? st[6] : 0.5), 0.0, 1.0)
+      resonance = 0.5
       # legacy slot 7 is treated as sustain when in [0,1], otherwise ignored
       if length(st) >= 7
         v7 = _parse_float(st[7])
@@ -1012,7 +1023,7 @@ function generate_polyphonic()
     end
 
     empty!(st)
-    push!(st, abs_notes, vol, bri, hrd, tex, cr, den, sus)
+    push!(st, abs_notes, vol, brightness, articulation, tonalness, resonance, cr, den, sus)
     return st
   end
 
@@ -1085,13 +1096,14 @@ function generate_polyphonic()
     return [ [ (length(st) >= idx ? st[idx] : 0) for st in step ] for step in results ]
   end
 
-  hist_vol  = matrix_for_idx(vol_idx)
-  hist_bri  = matrix_for_idx(bri_idx)
-  hist_hrd  = matrix_for_idx(hrd_idx)
-  hist_tex  = matrix_for_idx(tex_idx)
-  hist_cr   = matrix_for_idx(chord_range_idx)
-  hist_den  = matrix_for_idx(density_idx)
-  hist_sus  = matrix_for_idx(sustain_idx)
+  hist_vol          = matrix_for_idx(vol_idx)
+  hist_brightness   = matrix_for_idx(brightness_idx)
+  hist_articulation = matrix_for_idx(articulation_idx)
+  hist_tonalness    = matrix_for_idx(tonalness_idx)
+  hist_resonance    = matrix_for_idx(resonance_idx)
+  hist_cr           = matrix_for_idx(chord_range_idx)
+  hist_den          = matrix_for_idx(density_idx)
+  hist_sus          = matrix_for_idx(sustain_idx)
 
   hist_note_anchor = Vector{Vector{Int}}()
   note_global_series = Vector{Vector{Float64}}()
@@ -1118,13 +1130,14 @@ function generate_polyphonic()
 
   first_streams = max(get(stream_counts, 1, 1), 1)
 
-  pad_history!(hist_vol,  [1.0 for _ in 1:first_streams])
-  pad_history!(hist_bri,  [0.0 for _ in 1:first_streams])
-  pad_history!(hist_hrd,  [0.0 for _ in 1:first_streams])
-  pad_history!(hist_tex,  [0.0 for _ in 1:first_streams])
-  pad_history!(hist_cr,   [0   for _ in 1:first_streams])
-  pad_history!(hist_den,  [0.0 for _ in 1:first_streams])
-  pad_history!(hist_sus,  [0.5 for _ in 1:first_streams])
+  pad_history!(hist_vol,          [1.0 for _ in 1:first_streams])
+  pad_history!(hist_brightness,   [0.5 for _ in 1:first_streams])
+  pad_history!(hist_articulation, [0.5 for _ in 1:first_streams])
+  pad_history!(hist_tonalness,    [0.5 for _ in 1:first_streams])
+  pad_history!(hist_resonance,    [0.5 for _ in 1:first_streams])
+  pad_history!(hist_cr,           [0   for _ in 1:first_streams])
+  pad_history!(hist_den,          [0.0 for _ in 1:first_streams])
+  pad_history!(hist_sus,          [0.5 for _ in 1:first_streams])
   pad_history!(hist_note_anchor, [Int(PolyphonicConfig.abs_pitch_min()) for _ in 1:first_streams])
   pad_history!(hist_area_tmp_anchor, [PolyphonicConfig.area_band_low(PolyphonicConfig.abs_pitch_min()) for _ in 1:first_streams])
 
@@ -1205,9 +1218,10 @@ function generate_polyphonic()
 
   for (key, history, track_presence) in (
     ("vol", hist_vol, true),
-    ("bri", hist_bri, false),
-    ("hrd", hist_hrd, false),
-    ("tex", hist_tex, false)
+    ("brightness", hist_brightness, false),
+    ("articulation", hist_articulation, false),
+    ("tonalness", hist_tonalness, false),
+    ("resonance", hist_resonance, false)
   )
     if get(dim_accept, key, true)
       _setup_dimension_manager!(
@@ -1343,7 +1357,7 @@ function generate_polyphonic()
     search_values::Vector{Float64},
     idx0::Int
   )::Vector{Float64}
-    if !(key == "vol" || key == "bri" || key == "hrd" || key == "tex" || key == "chord_range" || key == "density" || key == "sustain")
+    if !(key == "vol" || key == "brightness" || key == "articulation" || key == "tonalness" || key == "resonance" || key == "chord_range" || key == "density" || key == "sustain")
       return search_values
     end
 
@@ -1433,9 +1447,10 @@ function generate_polyphonic()
       Any[
         Int[],
         clamp(dim_fixed["vol"], 0.0, 1.0),
-        clamp(dim_fixed["bri"], 0.0, 1.0),
-        clamp(dim_fixed["hrd"], 0.0, 1.0),
-        clamp(dim_fixed["tex"], 0.0, 1.0),
+        clamp(dim_fixed["brightness"], 0.0, 1.0),
+        clamp(dim_fixed["articulation"], 0.0, 1.0),
+        clamp(dim_fixed["tonalness"], 0.0, 1.0),
+        clamp(dim_fixed["resonance"], 0.0, 1.0),
         Int(round(clamp(dim_fixed["chord_range"], float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))),
         clamp(dim_fixed["density"], 0.0, 1.0),
         _quantize_sustain(dim_fixed["sustain"])
@@ -1455,9 +1470,10 @@ function generate_polyphonic()
       ("chord_range", chord_range_search_values, chord_range_idx),
       ("density",     density_search_values,     density_idx),
       ("sustain",     sustain_search_values,     sustain_idx),
-      ("bri",         Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], bri_idx),
-      ("hrd",         Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], hrd_idx),
-      ("tex",         Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], tex_idx),
+      ("brightness",   Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], brightness_idx),
+      ("articulation", Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], articulation_idx),
+      ("tonalness",    Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], tonalness_idx),
+      ("resonance",    Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], resonance_idx),
     ]
 
     for (key, range_vec, out_idx) in dim_order
@@ -2023,9 +2039,10 @@ end
     for vec in step
       vec[note_abs_idx] = _normalize_abs_notes(vec[note_abs_idx])
       vec[vol_idx] = get(dim_accept, "vol", true) ? clamp(_parse_float(vec[vol_idx]), 0.0, 1.0) : clamp(dim_fixed["vol"], 0.0, 1.0)
-      vec[bri_idx] = get(dim_accept, "bri", true) ? clamp(_parse_float(vec[bri_idx]), 0.0, 1.0) : clamp(dim_fixed["bri"], 0.0, 1.0)
-      vec[hrd_idx] = get(dim_accept, "hrd", true) ? clamp(_parse_float(vec[hrd_idx]), 0.0, 1.0) : clamp(dim_fixed["hrd"], 0.0, 1.0)
-      vec[tex_idx] = get(dim_accept, "tex", true) ? clamp(_parse_float(vec[tex_idx]), 0.0, 1.0) : clamp(dim_fixed["tex"], 0.0, 1.0)
+      vec[brightness_idx] = get(dim_accept, "brightness", true) ? clamp(_parse_float(vec[brightness_idx]), 0.0, 1.0) : clamp(dim_fixed["brightness"], 0.0, 1.0)
+      vec[articulation_idx] = get(dim_accept, "articulation", true) ? clamp(_parse_float(vec[articulation_idx]), 0.0, 1.0) : clamp(dim_fixed["articulation"], 0.0, 1.0)
+      vec[tonalness_idx] = get(dim_accept, "tonalness", true) ? clamp(_parse_float(vec[tonalness_idx]), 0.0, 1.0) : clamp(dim_fixed["tonalness"], 0.0, 1.0)
+      vec[resonance_idx] = get(dim_accept, "resonance", true) ? clamp(_parse_float(vec[resonance_idx]), 0.0, 1.0) : clamp(dim_fixed["resonance"], 0.0, 1.0)
       vec[chord_range_idx] = get(dim_accept, "chord_range", true) ? clamp(_parse_int(vec[chord_range_idx]), CHORD_RANGE_MIN, CHORD_RANGE_MAX) : Int(round(clamp(dim_fixed["chord_range"], float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX))))
       vec[density_idx] = get(dim_accept, "density", true) ? clamp(_parse_float(vec[density_idx]), 0.0, 1.0) : clamp(dim_fixed["density"], 0.0, 1.0)
       vec[sustain_idx] = get(dim_accept, "sustain", true) ? _quantize_sustain(vec[sustain_idx]) : _quantize_sustain(dim_fixed["sustain"])
@@ -2035,22 +2052,26 @@ end
   processing_time_s = round(time() - t0; digits=2)
 
   timbre_series = Dict(
-    "bri" => Any[
-      Float64[clamp(_parse_float(st[bri_idx]), 0.0, 1.0) for st in step]
+    "brightness" => Any[
+      Float64[clamp(_parse_float(st[brightness_idx]), 0.0, 1.0) for st in step]
       for step in results
     ],
-    "hrd" => Any[
-      Float64[clamp(_parse_float(st[hrd_idx]), 0.0, 1.0) for st in step]
+    "articulation" => Any[
+      Float64[clamp(_parse_float(st[articulation_idx]), 0.0, 1.0) for st in step]
       for step in results
     ],
-    "tex" => Any[
-      Float64[clamp(_parse_float(st[tex_idx]), 0.0, 1.0) for st in step]
+    "tonalness" => Any[
+      Float64[clamp(_parse_float(st[tonalness_idx]), 0.0, 1.0) for st in step]
+      for step in results
+    ],
+    "resonance" => Any[
+      Float64[clamp(_parse_float(st[resonance_idx]), 0.0, 1.0) for st in step]
       for step in results
     ]
   )
 
   cluster_payload = Dict{String,Any}()
-  for key in ["note", "area", "vol", "bri", "hrd", "tex", "chord_range", "density", "sustain"]
+  for key in ["note", "area", "vol", "brightness", "articulation", "tonalness", "resonance", "chord_range", "density", "sustain"]
     mgrs = get(managers, key, nothing)
     mgrs === nothing && continue
 

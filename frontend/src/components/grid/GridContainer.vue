@@ -86,7 +86,7 @@
       <v-btn
         color="secondary"
         size="small"
-        :disabled="!focusedCell"
+        :disabled="!canGenerateParameters"
         @click="openParamGenDialog"
       >
         GENERATE PARAMETERS
@@ -148,6 +148,7 @@ import ParamGenDialog from './ParamGenDialog.vue'
 import {
   getStructuredClipboard,
   setStructuredClipboard,
+  type GridCellValue,
   type GridStructuredClipboard,
   type GridStructuredClipboardType
 } from './gridClipboard'
@@ -158,13 +159,15 @@ type GridConfig = {
   max: number;
   step?: number;
   isInt?: boolean;
+  inputMode?: 'number' | 'note-array';
 }
 
 type GridRowData = {
   name: string;
   shortName?: string;
-  data: number[];
+  data: GridCellValue[];
   config: GridConfig;
+  disabled?: boolean;
 }
 
 type RangeSelection = {
@@ -201,6 +204,8 @@ const rowSelection = ref<RangeSelection | null>(null)
 const colSelection = ref<RangeSelection | null>(null)
 const copiedTooltipVisible = ref(false)
 let copiedTooltipTimer: ReturnType<typeof setTimeout> | null = null
+
+const canGenerateParameters = computed(() => Boolean(focusedCell.value) && focusedCell.value?.config?.inputMode !== 'note-array')
 
 watch(
   () => props.steps,
@@ -302,8 +307,25 @@ const showCopiedTooltip = () => {
 const normalizeClipboardText = (text: string): string =>
   text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd()
 
-const matrixToClipboardText = (matrix: number[][]): string =>
+const matrixToClipboardText = (matrix: GridCellValue[][]): string =>
   matrix.map((row) => row.map((v) => String(v)).join('\t')).join('\n')
+
+const normalizeNoteArrayCellText = (value: unknown): string => {
+  const raw = String(value ?? '').trim()
+  if (raw === '') return ''
+
+  const hasBracketWrapper = raw.charAt(0) === '[' && raw.charAt(raw.length - 1) === ']'
+  const body = hasBracketWrapper ? raw.slice(1, -1) : raw
+  const numbers = body
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => Number(part))
+    .filter((part) => isFinite(part))
+    .map((part) => Math.round(part))
+
+  return numbers.length > 0 ? `[${numbers.join(', ')}]` : ''
+}
 
 const clampToConfig = (value: number, config: GridConfig): number => {
   let v = value
@@ -313,29 +335,46 @@ const clampToConfig = (value: number, config: GridConfig): number => {
   return v
 }
 
-const getRowSelectionMatrix = (): number[][] => {
+const coerceCellValueForConfig = (value: unknown, config: GridConfig): GridCellValue | null => {
+  if (config.inputMode === 'note-array') {
+    const normalized = normalizeNoteArrayCellText(value)
+    return normalized
+  }
+
+  const num = Number(value)
+  if (!isFinite(num)) return null
+  return clampToConfig(num, config)
+}
+
+const getRowSelectionMatrix = (): GridCellValue[][] => {
   if (!rowSelection.value) return []
-  const matrix: number[][] = []
+  const matrix: GridCellValue[][] = []
   for (let rowIndex = rowSelection.value.start; rowIndex <= rowSelection.value.end; rowIndex++) {
     const row = props.rows[rowIndex]
     if (!row) continue
-    const values: number[] = []
+    const values: GridCellValue[] = []
     for (let colIndex = 0; colIndex < props.steps; colIndex++) {
-      const raw = Number(row.data[colIndex] ?? 0)
-      values.push(Number.isFinite(raw) ? raw : 0)
+      const raw = row.data[colIndex]
+      if (row.config.inputMode === 'note-array') values.push(String(raw ?? ''))
+      else {
+        const num = Number(raw ?? 0)
+        values.push(isFinite(num) ? num : 0)
+      }
     }
     matrix.push(values)
   }
   return matrix
 }
 
-const getColSelectionMatrix = (): number[][] => {
+const getColSelectionMatrix = (): GridCellValue[][] => {
   if (!colSelection.value) return []
   const selectedCols = selectedColumnIndexes.value
   return props.rows.map((row) =>
     selectedCols.map((colIndex) => {
-      const raw = Number(row.data[colIndex] ?? 0)
-      return Number.isFinite(raw) ? raw : 0
+      const raw = row.data[colIndex]
+      if (row.config.inputMode === 'note-array') return String(raw ?? '')
+      const num = Number(raw ?? 0)
+      return isFinite(num) ? num : 0
     })
   )
 }
@@ -360,13 +399,13 @@ const applyRowPaste = (clipboard: GridStructuredClipboard) => {
     const targetRow = { ...newRows[dstRowIndex] }
     const newData = [...targetRow.data]
 
-    while (newData.length < props.steps) newData.push(0)
+    while (newData.length < props.steps) newData.push(targetRow.config.inputMode === 'note-array' ? '' : 0)
 
     const copyCols = Math.min(sourceValues.length, props.steps)
     for (let colIndex = 0; colIndex < copyCols; colIndex++) {
-      const raw = Number(sourceValues[colIndex])
-      if (!Number.isFinite(raw)) continue
-      newData[colIndex] = clampToConfig(raw, targetRow.config)
+      const coerced = coerceCellValueForConfig(sourceValues[colIndex], targetRow.config)
+      if (coerced == null) continue
+      newData[colIndex] = coerced
       changed = true
     }
 
@@ -401,13 +440,13 @@ const applyColPaste = (clipboard: GridStructuredClipboard) => {
     const targetRow = { ...newRows[rowIndex] }
     const newData = [...targetRow.data]
 
-    while (newData.length < requiredLen) newData.push(0)
+    while (newData.length < requiredLen) newData.push(targetRow.config.inputMode === 'note-array' ? '' : 0)
 
     for (let colOffset = 0; colOffset < sourceValues.length; colOffset++) {
-      const raw = Number(sourceValues[colOffset])
-      if (!Number.isFinite(raw)) continue
+      const coerced = coerceCellValueForConfig(sourceValues[colOffset], targetRow.config)
+      if (coerced == null) continue
       const dstColIndex = startCol + colOffset
-      newData[dstColIndex] = clampToConfig(raw, targetRow.config)
+      newData[dstColIndex] = coerced
       changed = true
     }
 
@@ -623,6 +662,17 @@ const onCellPaste = (payload: any) => {
   }
 
   const { text, rowIndex, colIndex, config } = payload
+  const targetRow = { ...props.rows[rowIndex] }
+
+  if (config.inputMode === 'note-array') {
+    const newData = [...targetRow.data]
+    while (newData.length <= colIndex) newData.push('')
+    newData[colIndex] = normalizeNoteArrayCellText(text)
+    targetRow.data = newData
+    updateRow(rowIndex, targetRow)
+    return
+  }
+
   const values = text.split(/[\s\t]+/).filter((v: string) => v !== '').map(Number)
   if (values.some(isNaN)) return
 
@@ -631,7 +681,6 @@ const onCellPaste = (payload: any) => {
   // 列数の自動拡張
   if (requiredLen > props.steps) emit('update:steps', requiredLen)
 
-  const targetRow = { ...props.rows[rowIndex] }
   const newData = [...targetRow.data]
   while (newData.length < requiredLen) newData.push(0)
 
@@ -649,6 +698,7 @@ const onCellPaste = (payload: any) => {
 
 const openParamGenDialogAt = (cell: any) => {
   if (!cell) return
+  if (cell.config?.inputMode === 'note-array') return
   focusedCell.value = cell
   clearHeaderSelections()
 
@@ -670,7 +720,7 @@ const openParamGenDialogAt = (cell: any) => {
 
 // ParamGen ダイアログオープン
 const openParamGenDialog = () => {
-  if (!focusedCell.value) return
+  if (!canGenerateParameters.value) return
   openParamGenDialogAt(focusedCell.value)
 }
 

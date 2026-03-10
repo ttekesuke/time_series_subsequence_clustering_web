@@ -1,8 +1,10 @@
 export type GridStructuredClipboardType = 'rows' | 'cols'
 
+export type GridCellValue = number | string
+
 export type GridStructuredClipboard = {
   type: GridStructuredClipboardType;
-  matrix: number[][];
+  matrix: GridCellValue[][];
   text: string;
 }
 
