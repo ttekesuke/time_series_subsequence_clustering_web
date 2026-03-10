@@ -850,6 +850,13 @@ function generate_polyphonic()
   managed_dims = ["area", "chord_range", "density", "sustain", "vol", "brightness", "articulation", "tonalness", "resonance"]
   dim_accept = Dict{String,Bool}()
   dim_fixed = Dict{String,Float64}()
+  dim_fixed_source = Dict{String,String}()
+
+  function _normalize_fixed_value_source(raw)::String
+    s = lowercase(strip(string(raw)))
+    s in ("initial_context_last_step", "initial_context", "context_last_step", "last_step", "last-step") && return "initial_context_last_step"
+    return "manual_input"
+  end
 
   # Internal default policy:
   # - vol/brightness/articulation/tonalness/resonance: disabled by default to reduce clustering/search cost in pitch-focused experiments
@@ -869,6 +876,7 @@ function generate_polyphonic()
     d = default_dim_policy[key]
     dim_accept[key] = _parse_bool(get(d, "accept_params", true), true)
     dim_fixed[key] = _normalize_fixed_value_for_dim(key, get(d, "fixed_value", 0.0))
+    dim_fixed_source[key] = "manual_input"
   end
 
   # Optional request-time override:
@@ -889,6 +897,10 @@ function generate_polyphonic()
         haskey(p, "receive_params") ? p["receive_params"] :
         haskey(p, "enabled") ? p["enabled"] :
         haskey(p, "use_user_params") ? p["use_user_params"] : nothing
+      source_src =
+        haskey(p, "fixed_value_source") ? p["fixed_value_source"] :
+        haskey(p, "fixed_source") ? p["fixed_source"] :
+        haskey(p, "value_source") ? p["value_source"] : nothing
       fixed_src =
         haskey(p, "fixed_value") ? p["fixed_value"] :
         haskey(p, "fallback_value") ? p["fallback_value"] :
@@ -896,6 +908,9 @@ function generate_polyphonic()
 
       if accept_src !== nothing
         dim_accept[key] = _parse_bool(accept_src, dim_accept[key])
+      end
+      if source_src !== nothing
+        dim_fixed_source[key] = _normalize_fixed_value_source(source_src)
       end
       if fixed_src !== nothing
         dim_fixed[key] = _normalize_fixed_value_for_dim(key, fixed_src)
@@ -940,6 +955,42 @@ function generate_polyphonic()
     n_bins = max(Int(fld(BAND_LOW_MAX - BAND_LOW_MIN, BAND_SIZE)), 0)
     idx = clamp(round(Int, v01 * n_bins), 0, n_bins)
     return clamp(BAND_LOW_MIN + (idx * BAND_SIZE), BAND_LOW_MIN, BAND_LOW_MAX)
+  end
+
+  function _fixed_value_from_last_context_step(key::String)::Float64
+    last_step = isempty(results) ? Vector{Vector{Any}}() : results[end]
+
+    if key == "area"
+      anchor = isempty(last_step) ? Int(PolyphonicConfig.abs_pitch_min()) : _global_anchor_from_step(last_step)
+      band_low = PolyphonicConfig.area_band_low(anchor)
+      n_bins = max(Int(fld(BAND_LOW_MAX - BAND_LOW_MIN, BAND_SIZE)), 0)
+      n_bins <= 0 && return 0.0
+      idx = clamp(Int(fld(band_low - BAND_LOW_MIN, BAND_SIZE)), 0, n_bins)
+      return clamp(float(idx) / float(n_bins), 0.0, 1.0)
+    end
+
+    idx =
+      key == "vol" ? vol_idx :
+      key == "brightness" ? brightness_idx :
+      key == "articulation" ? articulation_idx :
+      key == "tonalness" ? tonalness_idx :
+      key == "resonance" ? resonance_idx :
+      key == "chord_range" ? chord_range_idx :
+      key == "density" ? density_idx :
+      key == "sustain" ? sustain_idx : 0
+
+    if idx == 0 || isempty(last_step)
+      return dim_fixed[key]
+    end
+
+    vals = Float64[]
+    for st in last_step
+      length(st) >= idx || continue
+      push!(vals, _parse_float(st[idx]))
+    end
+    isempty(vals) && return dim_fixed[key]
+
+    return _normalize_fixed_value_for_dim(key, sum(vals) / float(length(vals)))
   end
 
 
@@ -1030,6 +1081,17 @@ function generate_polyphonic()
   for step in results
     for st in step
       _normalize_stream!(st)
+    end
+  end
+
+  for key in managed_dims
+    if get(dim_fixed_source, key, "manual_input") == "initial_context_last_step"
+      dim_fixed[key] = _fixed_value_from_last_context_step(key)
+    end
+  end
+
+  for step in results
+    for st in step
       _apply_fixed_dimension_values!(st)
     end
   end

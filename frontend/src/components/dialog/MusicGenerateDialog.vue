@@ -31,15 +31,32 @@
                 >
                 <span>{{ getDimensionPolicyConfig(dimKey).label }}</span>
               </label>
-              <input
-                type="number"
-                :value="getDimensionPolicyValue(dimKey).fixedValue"
-                @input="onDimensionPolicyFixedValueInput(resolveManagedDimKey(dimKey), $event)"
-                :min="getDimensionPolicyConfig(dimKey).min"
-                :max="getDimensionPolicyConfig(dimKey).max"
-                :step="getDimensionPolicyConfig(dimKey).step"
-                class="step-input dim-policy-input"
-              >
+              <template v-if="getDimensionPolicyValue(dimKey).useFixedValue">
+                <select
+                  :value="getDimensionPolicyValue(dimKey).fixedValueSource"
+                  @change="onDimensionPolicyFixedValueSourceChange(resolveManagedDimKey(dimKey), $event)"
+                  class="step-input dim-policy-select"
+                >
+                  <option value="initial_context_last_step">Last Step</option>
+                  <option value="manual_input">Manual</option>
+                </select>
+                <input
+                  v-if="getDimensionPolicyValue(dimKey).fixedValueSource === 'manual_input'"
+                  type="number"
+                  :value="getDimensionPolicyValue(dimKey).fixedValue"
+                  @input="onDimensionPolicyFixedValueInput(resolveManagedDimKey(dimKey), $event)"
+                  :min="getDimensionPolicyConfig(dimKey).min"
+                  :max="getDimensionPolicyConfig(dimKey).max"
+                  :step="getDimensionPolicyConfig(dimKey).step"
+                  class="step-input dim-policy-input"
+                >
+                <span
+                  v-else
+                  class="dimension-policy-preview"
+                >
+                  {{ formatDimensionPolicyDerivedValue(dimKey) }}
+                </span>
+              </template>
             </div>
           </div>
 
@@ -226,9 +243,12 @@ type DimensionPolicyConfig = {
   defaultFixedValue: number
 }
 
+type DimensionFixedValueSource = 'initial_context_last_step' | 'manual_input'
+
 type DimensionPolicyValue = {
   useFixedValue: boolean
   fixedValue: number
+  fixedValueSource: DimensionFixedValueSource
 }
 
 const managedDimPolicyConfigs: Record<ManagedDimKey, DimensionPolicyConfig> = {
@@ -245,16 +265,30 @@ const managedDimPolicyConfigs: Record<ManagedDimKey, DimensionPolicyConfig> = {
 
 const managedDimKeys = Object.keys(managedDimPolicyConfigs) as ManagedDimKey[]
 
+const canonicalizeDimensionFixedValueSource = (raw: unknown): DimensionFixedValueSource => {
+  const key = String(raw ?? '').trim().toLowerCase()
+  if (
+    key === 'initial_context_last_step' ||
+    key === 'initial_context' ||
+    key === 'context_last_step' ||
+    key === 'last_step' ||
+    key === 'last-step'
+  ) {
+    return 'initial_context_last_step'
+  }
+  return 'manual_input'
+}
+
 const createDefaultDimensionPolicy = (): Record<ManagedDimKey, DimensionPolicyValue> => ({
-  area: { useFixedValue: managedDimPolicyConfigs.area.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.area.defaultFixedValue },
-  chord_range: { useFixedValue: managedDimPolicyConfigs.chord_range.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.chord_range.defaultFixedValue },
-  density: { useFixedValue: managedDimPolicyConfigs.density.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.density.defaultFixedValue },
-  sustain: { useFixedValue: managedDimPolicyConfigs.sustain.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.sustain.defaultFixedValue },
-  vol: { useFixedValue: managedDimPolicyConfigs.vol.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.vol.defaultFixedValue },
-  brightness: { useFixedValue: managedDimPolicyConfigs.brightness.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.brightness.defaultFixedValue },
-  articulation: { useFixedValue: managedDimPolicyConfigs.articulation.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.articulation.defaultFixedValue },
-  tonalness: { useFixedValue: managedDimPolicyConfigs.tonalness.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.tonalness.defaultFixedValue },
-  resonance: { useFixedValue: managedDimPolicyConfigs.resonance.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.resonance.defaultFixedValue }
+  area: { useFixedValue: managedDimPolicyConfigs.area.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.area.defaultFixedValue, fixedValueSource: 'manual_input' },
+  chord_range: { useFixedValue: managedDimPolicyConfigs.chord_range.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.chord_range.defaultFixedValue, fixedValueSource: 'manual_input' },
+  density: { useFixedValue: managedDimPolicyConfigs.density.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.density.defaultFixedValue, fixedValueSource: 'manual_input' },
+  sustain: { useFixedValue: managedDimPolicyConfigs.sustain.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.sustain.defaultFixedValue, fixedValueSource: 'manual_input' },
+  vol: { useFixedValue: managedDimPolicyConfigs.vol.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.vol.defaultFixedValue, fixedValueSource: 'manual_input' },
+  brightness: { useFixedValue: managedDimPolicyConfigs.brightness.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.brightness.defaultFixedValue, fixedValueSource: 'manual_input' },
+  articulation: { useFixedValue: managedDimPolicyConfigs.articulation.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.articulation.defaultFixedValue, fixedValueSource: 'manual_input' },
+  tonalness: { useFixedValue: managedDimPolicyConfigs.tonalness.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.tonalness.defaultFixedValue, fixedValueSource: 'manual_input' },
+  resonance: { useFixedValue: managedDimPolicyConfigs.resonance.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.resonance.defaultFixedValue, fixedValueSource: 'manual_input' }
 })
 
 const dimensionPolicy = ref<Record<ManagedDimKey, DimensionPolicyValue>>(createDefaultDimensionPolicy())
@@ -280,6 +314,7 @@ const coerceBoolean = (val: unknown, fallback: boolean) => {
 const clampDimensionFixedValue = (key: ManagedDimKey, raw: unknown) => {
   const config = managedDimPolicyConfigs[key]
   let value = coerceFiniteNumber(raw, config.defaultFixedValue)
+  if (key === 'sustain') value = Math.round(Math.min(1, Math.max(0, value)) * 4) / 4
   if (config.isInt) value = Math.round(value)
   if (value < config.min) value = config.min
   if (value > config.max) value = config.max
@@ -305,6 +340,17 @@ const onDimensionPolicyFixedValueInput = (key: ManagedDimKey, e: Event) => {
     [key]: {
       ...dimensionPolicy.value[key],
       fixedValue: clampDimensionFixedValue(key, target.value)
+    }
+  }
+}
+
+const onDimensionPolicyFixedValueSourceChange = (key: ManagedDimKey, e: Event) => {
+  const target = e.target as HTMLSelectElement
+  dimensionPolicy.value = {
+    ...dimensionPolicy.value,
+    [key]: {
+      ...dimensionPolicy.value[key],
+      fixedValueSource: canonicalizeDimensionFixedValueSource(target.value)
     }
   }
 }
@@ -363,12 +409,13 @@ const isGenRowDisabled = (metaKey: string) => {
 }
 
 const buildDimensionPolicyPayload = () => {
-  const result: Record<string, { accept_params: boolean; fixed_value: number }> = {}
+  const result: Record<string, { accept_params: boolean; fixed_value: number; fixed_value_source: DimensionFixedValueSource }> = {}
   for (const key of managedDimKeys) {
     result[key] = {
       // Server contract is accept_params=true => generate from params.
       accept_params: !dimensionPolicy.value[key].useFixedValue,
-      fixed_value: clampDimensionFixedValue(key, dimensionPolicy.value[key].fixedValue)
+      fixed_value: getResolvedDimensionPolicyFixedValue(key),
+      fixed_value_source: dimensionPolicy.value[key].fixedValueSource
     }
   }
   return result
@@ -388,6 +435,7 @@ const applyDimensionPolicyFromPayload = (rawPolicy: any) => {
         const acceptSource = policy.accept_params ?? policy.receive_params ?? policy.enabled ?? policy.use_user_params
         const fixedModeSource = policy.use_fixed_value ?? policy.fixed_mode
         const fixedSource = policy.fixed_value ?? policy.fallback_value ?? policy.value
+        const fixedValueSource = policy.fixed_value_source ?? policy.fixed_source ?? policy.value_source
 
         if (acceptSource != null) {
           next[key].useFixedValue = !coerceBoolean(acceptSource, !next[key].useFixedValue)
@@ -397,6 +445,9 @@ const applyDimensionPolicyFromPayload = (rawPolicy: any) => {
         }
         if (fixedSource != null) {
           next[key].fixedValue = clampDimensionFixedValue(key, fixedSource)
+        }
+        if (fixedValueSource != null) {
+          next[key].fixedValueSource = canonicalizeDimensionFixedValueSource(fixedValueSource)
         }
       } else if (typeof rawVal === 'boolean') {
         next[key].useFixedValue = !rawVal
@@ -427,6 +478,20 @@ const dimensions = [
 
 // 各次元のデフォルト値 (1ストリーム分) [abs_note, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
 const defaultContextBase = [60, 1, 0.5, 0.5, 0.5, 0.5, 0, 0, 0.5]
+const areaBandSize = 4
+const areaBandLowMin = 24
+const areaBandLowMax = 120
+
+const contextManagedDimensionIndex: Record<Exclude<ManagedDimKey, 'area'>, number> = {
+  vol: 1,
+  brightness: 2,
+  articulation: 3,
+  tonalness: 4,
+  resonance: 5,
+  chord_range: 6,
+  density: 7,
+  sustain: 8
+}
 
 const contextSteps = ref(3)
 const contextStreamCount = ref(1)
@@ -484,6 +549,67 @@ const parseAbsNoteCell = (raw: unknown): number[] => {
 const formatAbsNoteCell = (notes: unknown): string => {
   const parsed = parseAbsNoteCell(notes)
   return parsed.length > 0 ? `[${parsed.join(', ')}]` : ''
+}
+
+const getLastContextStepIndex = () => Math.max(contextSteps.value - 1, 0)
+
+const getLastContextAreaFixedValue = () => {
+  const lastStepIndex = getLastContextStepIndex()
+  const absNotes: number[] = []
+
+  for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
+    const rowIndex = streamIdx * dimensions.length
+    const row = contextRows.value[rowIndex]
+    const notes = parseAbsNoteCell(row?.data[lastStepIndex] ?? '')
+    absNotes.push(...notes)
+  }
+
+  if (absNotes.length === 0) {
+    return managedDimPolicyConfigs.area.defaultFixedValue
+  }
+
+  const sorted = [...absNotes].sort((left, right) => left - right)
+  const anchor = sorted[Math.ceil(sorted.length / 2) - 1] ?? defaultContextBase[0]
+  const bandLow = Math.min(areaBandLowMax, Math.max(areaBandLowMin, Math.floor(anchor / areaBandSize) * areaBandSize))
+  const bandCount = Math.max(Math.floor((areaBandLowMax - areaBandLowMin) / areaBandSize), 0)
+  if (bandCount === 0) return 0
+
+  return clampDimensionFixedValue('area', (bandLow - areaBandLowMin) / bandCount)
+}
+
+const getLastContextManagedDimensionFixedValue = (key: Exclude<ManagedDimKey, 'area'>) => {
+  const dimIndex = contextManagedDimensionIndex[key]
+  const lastStepIndex = getLastContextStepIndex()
+  const values: number[] = []
+
+  for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
+    const rowIndex = streamIdx * dimensions.length + dimIndex
+    const row = contextRows.value[rowIndex]
+    values.push(coerceFiniteNumber(row?.data[lastStepIndex], managedDimPolicyConfigs[key].defaultFixedValue))
+  }
+
+  if (values.length === 0) {
+    return managedDimPolicyConfigs[key].defaultFixedValue
+  }
+
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length
+  return clampDimensionFixedValue(key, average)
+}
+
+const getResolvedDimensionPolicyFixedValue = (key: ManagedDimKey) => {
+  const policy = dimensionPolicy.value[key]
+  if (policy.fixedValueSource === 'initial_context_last_step') {
+    return key === 'area'
+      ? getLastContextAreaFixedValue()
+      : getLastContextManagedDimensionFixedValue(key)
+  }
+  return clampDimensionFixedValue(key, policy.fixedValue)
+}
+
+const formatDimensionPolicyDerivedValue = (raw: unknown) => {
+  const key = resolveManagedDimKey(raw)
+  const value = getResolvedDimensionPolicyFixedValue(key)
+  return managedDimPolicyConfigs[key].isInt ? `Last ${Math.round(value)}` : `Last ${value.toFixed(2)}`
 }
 
 // 初期化
@@ -1516,6 +1642,14 @@ watch(open, (next, prev) => {
 }
 .dim-policy-input {
   width: 64px;
+}
+.dim-policy-select {
+  width: 88px;
+}
+.dimension-policy-preview {
+  min-width: 68px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 .bpm-input-dialog {
   width: 88px;
