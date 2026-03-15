@@ -481,6 +481,24 @@ function repeated_combinations(values::Vector{T}, n::Int) where {T}
   return out
 end
 
+function ordered_cartesian_product(values::Vector{T}, n::Int) where {T}
+  n <= 0 && return Vector{Vector{T}}()
+  n == 1 && return [[v] for v in values]
+
+  out = Vector{Vector{T}}([T[]])
+  for _ in 1:n
+    next_out = Vector{Vector{T}}()
+    sizehint!(next_out, length(out) * length(values))
+    for prefix in out
+      for value in values
+        push!(next_out, vcat(prefix, T[value]))
+      end
+    end
+    out = next_out
+  end
+  return out
+end
+
 struct CandidateMetric
   ordered_cand::Vector{Float64}
   global_dist::Float64
@@ -490,6 +508,15 @@ struct CandidateMetric
   stream_qtys::Vector{Float64}
   stream_comps::Vector{Float64}
   discordance::Float64
+end
+
+struct CandidateCostBreakdown
+  total::Float64
+  global_cost::Float64
+  stream_cost::Float64
+  conc_cost::Float64
+  current_global::Float64
+  stream_scores::Vector{Float64}
 end
 
 function _normalize_metric_weights(dw::Real, qw::Real, cw::Real)::NTuple{3,Float64}
@@ -526,6 +553,16 @@ function _safe_corrcoef(xs::Vector{Float64}, ys::Vector{Float64})::Float64
   return sxy / sqrt(sxx * syy)
 end
 
+@inline function _concordance_cost(raw_conc::Real, discordance::Real)::Float64
+  conc = clamp(float(raw_conc), -1.0, 1.0)
+  weight = abs(conc)
+  weight <= 0.0 && return 0.0
+
+  target_concordance = conc > 0.0 ? 1.0 : 0.0
+  concord01 = 1.0 - clamp(float(discordance), 0.0, 1.0)
+  return weight * abs(concord01 - target_concordance)
+end
+
 function select_best_polyphonic_candidate_unified_with_cost(
   metrics::Vector{CandidateMetric},
   global_target::Float64,
@@ -533,9 +570,12 @@ function select_best_polyphonic_candidate_unified_with_cost(
   concordance_weight::Float64,
   global_metric_weights::NTuple{3,Float64},
   stream_metric_weights::NTuple{3,Float64};
+  use_global_score::Bool = true,
 )
   best_i = 1
   min_cost = Inf
+  breakdowns = CandidateCostBreakdown[]
+  sizehint!(breakdowns, length(metrics))
 
   g_dists, _ = normalize_scores([m.global_dist for m in metrics], true)
   g_qtys,  _ = normalize_scores([m.global_qty  for m in metrics], false)
@@ -571,12 +611,14 @@ function select_best_polyphonic_candidate_unified_with_cost(
   conc_enabled = !isempty(metrics) && length(metrics[1].ordered_cand) > 1
 
   for (i, m) in enumerate(metrics)
-    current_global = (
-      (g_dw * g_dists[i]) +
-      (g_qw * g_qtys[i]) +
-      (g_cw * g_comps[i])
-    ) / g_wsum
-    cost_a = abs(current_global - global_target)
+    current_global = use_global_score ? (
+      (
+        (g_dw * g_dists[i]) +
+        (g_qw * g_qtys[i]) +
+        (g_cw * g_comps[i])
+      ) / g_wsum
+    ) : 0.0
+    cost_a = use_global_score ? abs(current_global - global_target) : 0.0
 
     cost_b = 0.0
     stream_scores = Float64[]
@@ -599,19 +641,18 @@ function select_best_polyphonic_candidate_unified_with_cost(
 
     cost_c = 0.0
     if conc_enabled
-      conc_t = clamp(concordance_weight, 0.0, 1.0)
-      concord01 = 1.0 - clamp(m.discordance, 0.0, 1.0)
-      cost_c = abs(concord01 - conc_t)
+      cost_c = _concordance_cost(concordance_weight, m.discordance)
     end
 
     total = cost_a + cost_b + cost_c
+    push!(breakdowns, CandidateCostBreakdown(total, cost_a, cost_b, cost_c, current_global, copy(stream_scores)))
     if total < min_cost
       min_cost = total
       best_i = i
     end
   end
 
-  return best_i, min_cost
+  return best_i, min_cost, breakdowns
 end
 
 function select_best_chord_for_dimension_with_cost(
@@ -626,18 +667,27 @@ function select_best_chord_for_dimension_with_cost(
   range_vec::Vector{<:Real};
   global_metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
   stream_metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
+  debug_prefix::Union{Nothing,String} = nothing,
+  debug_top_n::Int = 10,
   absolute_bases::Union{Nothing,Vector{Int}} = nothing,
   active_note_counts::Union{Nothing,Vector{Int}} = nothing,
   active_total_notes::Union{Nothing,Int} = nothing,
-  max_simultaneous_notes::Int = last(PolyphonicConfig.CHORD_SIZE_RANGE)
+  max_simultaneous_notes::Int = last(PolyphonicConfig.CHORD_SIZE_RANGE),
+  preserve_stream_order::Bool = false,
+  use_global_score::Bool = true
 )
   max_simul = max(max_simultaneous_notes, 1)
 
-  total_notes = active_total_notes === nothing ? 0 : Int(active_total_notes)
-  density01 = (n <= 0) ? 0.0 : clamp(total_notes / float(max_simul * n), 0.0, 1.0)
+  assignment_distance_weight::Float64 = 1.0
+  assignment_complexity_weight::Float64 = 1.0
 
-  assignment_distance_weight   = density01
-  assignment_complexity_weight = 1.0 - density01
+  if active_total_notes !== nothing
+    total_notes = Int(active_total_notes)
+    density01 = (n <= 0) ? 0.0 : clamp(total_notes / float(max_simul * n), 0.0, 1.0)
+
+    assignment_distance_weight   = density01
+    assignment_complexity_weight = 1.0 - density01
+  end
 
   vmin = isempty(range_vec) ? 0.0 : float(minimum(range_vec))
   vmax = isempty(range_vec) ? 1.0 : float(maximum(range_vec))
@@ -647,16 +697,21 @@ function select_best_chord_for_dimension_with_cost(
   metrics = CandidateMetric[]
 
   for cand_set in candidates
-    ordered_polysets, _stream_metric = MultiStreamManager.resolve_mapping_and_score(
-      mgrs[:stream],
-      cand_set,
-      stream_costs;
-      absolute_bases=absolute_bases,
-      active_note_counts=active_note_counts,
-      active_total_notes=active_total_notes,
-      distance_weight=assignment_distance_weight,
-      complexity_weight=assignment_complexity_weight,
-    )
+    ordered_polysets = if preserve_stream_order
+      [Float64[float(v)] for v in cand_set]
+    else
+      resolved_polysets, _stream_metric = MultiStreamManager.resolve_mapping_and_score(
+        mgrs[:stream],
+        cand_set,
+        stream_costs;
+        absolute_bases=absolute_bases,
+        active_note_counts=active_note_counts,
+        active_total_notes=active_total_notes,
+        distance_weight=assignment_distance_weight,
+        complexity_weight=assignment_complexity_weight,
+      )
+      resolved_polysets
+    end
 
     ordered_vals = Float64[]
     for v in ordered_polysets
@@ -705,13 +760,14 @@ function select_best_chord_for_dimension_with_cost(
 
   isempty(metrics) && return (Float64[], Inf)
 
-  best_i, best_cost = select_best_polyphonic_candidate_unified_with_cost(
+  best_i, best_cost, breakdowns = select_best_polyphonic_candidate_unified_with_cost(
     metrics,
     global_target,
     stream_targets,
     concordance_weight,
     global_metric_weights,
     stream_metric_weights;
+    use_global_score=use_global_score,
   )
 
   best = metrics[best_i]
@@ -728,7 +784,7 @@ function generate_polyphonic()
   gp = _subhash(payload, "generate_polyphonic")
   debug_poly = false
   try
-    debug_poly = get(gp, "debug_poly", false) == true || get(ENV, "ZIP_DEBUG_POLY", "0") == "1"
+    debug_poly = get(gp, "debug_poly", false) == true || get(gp, "debug_score", false) == true || get(ENV, "ZIP_DEBUG_POLY", "0") == "1"
   catch
     debug_poly = get(ENV, "ZIP_DEBUG_POLY", "0") == "1"
   end
@@ -922,47 +978,42 @@ function generate_polyphonic()
     end
   end
 
-  function _apply_fixed_dimension_values!(st::Vector{Any})
-    if !get(dim_accept, "vol", true)
-      st[vol_idx] = dim_fixed["vol"]
+  function _anchor_from_stream(st::Vector{Any})::Int
+    if length(st) >= note_abs_idx && st[note_abs_idx] isa AbstractVector
+      abs_notes = Int[]
+      for v in st[note_abs_idx]
+        push!(abs_notes, clamp(_parse_int(v), ABS_MIN, ABS_MAX))
+      end
+      if !isempty(abs_notes)
+        sort!(abs_notes)
+        return abs_notes[cld(length(abs_notes), 2)]
+      end
     end
-    if !get(dim_accept, "brightness", true)
-      st[brightness_idx] = dim_fixed["brightness"]
-    end
-    if !get(dim_accept, "articulation", true)
-      st[articulation_idx] = dim_fixed["articulation"]
-    end
-    if !get(dim_accept, "tonalness", true)
-      st[tonalness_idx] = dim_fixed["tonalness"]
-    end
-    if !get(dim_accept, "resonance", true)
-      st[resonance_idx] = dim_fixed["resonance"]
-    end
-    if !get(dim_accept, "chord_range", true)
-      st[chord_range_idx] = Int(round(clamp(dim_fixed["chord_range"], float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX))))
-    end
-    if !get(dim_accept, "density", true)
-      st[density_idx] = dim_fixed["density"]
-    end
-    if !get(dim_accept, "sustain", true)
-      st[sustain_idx] = _quantize_sustain(dim_fixed["sustain"])
-    end
-    return st
+    return Int(PolyphonicConfig.abs_pitch_min())
   end
 
-  function _fixed_area_band_low()::Int
+  function _fixed_area_band_low_for_stream(stream_idx::Int)::Int
+    if get(dim_fixed_source, "area", "manual_input") == "initial_context_last_step"
+      last_step = isempty(results) ? Vector{Vector{Any}}() : results[end]
+      if 1 <= stream_idx <= length(last_step)
+        anchor = _anchor_from_stream(last_step[stream_idx])
+        return PolyphonicConfig.area_band_low(anchor)
+      end
+    end
+
     v01 = clamp(dim_fixed["area"], 0.0, 1.0)
     n_bins = max(Int(fld(BAND_LOW_MAX - BAND_LOW_MIN, BAND_SIZE)), 0)
     idx = clamp(round(Int, v01 * n_bins), 0, n_bins)
     return clamp(BAND_LOW_MIN + (idx * BAND_SIZE), BAND_LOW_MIN, BAND_LOW_MAX)
   end
 
-  function _fixed_value_from_last_context_step(key::String)::Float64
-    last_step = isempty(results) ? Vector{Vector{Any}}() : results[end]
+  function _resolved_fixed_value_for_stream(key::String, stream_idx::Int)::Float64
+    if get(dim_fixed_source, key, "manual_input") != "initial_context_last_step"
+      return dim_fixed[key]
+    end
 
     if key == "area"
-      anchor = isempty(last_step) ? Int(PolyphonicConfig.abs_pitch_min()) : _global_anchor_from_step(last_step)
-      band_low = PolyphonicConfig.area_band_low(anchor)
+      band_low = _fixed_area_band_low_for_stream(stream_idx)
       n_bins = max(Int(fld(BAND_LOW_MAX - BAND_LOW_MIN, BAND_SIZE)), 0)
       n_bins <= 0 && return 0.0
       idx = clamp(Int(fld(band_low - BAND_LOW_MIN, BAND_SIZE)), 0, n_bins)
@@ -979,18 +1030,49 @@ function generate_polyphonic()
       key == "density" ? density_idx :
       key == "sustain" ? sustain_idx : 0
 
-    if idx == 0 || isempty(last_step)
+    if idx == 0
       return dim_fixed[key]
     end
 
-    vals = Float64[]
-    for st in last_step
-      length(st) >= idx || continue
-      push!(vals, _parse_float(st[idx]))
+    last_step = isempty(results) ? Vector{Vector{Any}}() : results[end]
+    if !(1 <= stream_idx <= length(last_step))
+      return dim_fixed[key]
     end
-    isempty(vals) && return dim_fixed[key]
 
-    return _normalize_fixed_value_for_dim(key, sum(vals) / float(length(vals)))
+    st = last_step[stream_idx]
+    if length(st) < idx
+      return dim_fixed[key]
+    end
+
+    return _normalize_fixed_value_for_dim(key, st[idx])
+  end
+
+  function _apply_fixed_dimension_values!(st::Vector{Any}, stream_idx::Int)
+    if !get(dim_accept, "vol", true)
+      st[vol_idx] = _resolved_fixed_value_for_stream("vol", stream_idx)
+    end
+    if !get(dim_accept, "brightness", true)
+      st[brightness_idx] = _resolved_fixed_value_for_stream("brightness", stream_idx)
+    end
+    if !get(dim_accept, "articulation", true)
+      st[articulation_idx] = _resolved_fixed_value_for_stream("articulation", stream_idx)
+    end
+    if !get(dim_accept, "tonalness", true)
+      st[tonalness_idx] = _resolved_fixed_value_for_stream("tonalness", stream_idx)
+    end
+    if !get(dim_accept, "resonance", true)
+      st[resonance_idx] = _resolved_fixed_value_for_stream("resonance", stream_idx)
+    end
+    if !get(dim_accept, "chord_range", true)
+      st[chord_range_idx] = Int(round(clamp(_resolved_fixed_value_for_stream("chord_range", stream_idx), float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX))))
+    end
+    if !get(dim_accept, "density", true)
+      st[density_idx] = _resolved_fixed_value_for_stream("density", stream_idx)
+    end
+    if !get(dim_accept, "sustain", true)
+      st[sustain_idx] = _quantize_sustain(_resolved_fixed_value_for_stream("sustain", stream_idx))
+    end
+    return st
   end
 
 
@@ -1081,18 +1163,6 @@ function generate_polyphonic()
   for step in results
     for st in step
       _normalize_stream!(st)
-    end
-  end
-
-  for key in managed_dims
-    if get(dim_fixed_source, key, "manual_input") == "initial_context_last_step"
-      dim_fixed[key] = _fixed_value_from_last_context_step(key)
-    end
-  end
-
-  for step in results
-    for st in step
-      _apply_fixed_dimension_values!(st)
     end
   end
 
@@ -1261,6 +1331,8 @@ function generate_polyphonic()
       global_series_from_matrix(history, offset),
       merge_threshold_ratio,
       min_window;
+      use_streamwise_surface_average=true,
+      stream_axis_offset=offset,
       value_min=float(value_min),
       value_max=float(value_max) + (float(max_streams - 1) * offset),
       max_set_size=max_streams
@@ -1508,21 +1580,21 @@ function generate_polyphonic()
     current_step_values = [
       Any[
         Int[],
-        clamp(dim_fixed["vol"], 0.0, 1.0),
-        clamp(dim_fixed["brightness"], 0.0, 1.0),
-        clamp(dim_fixed["articulation"], 0.0, 1.0),
-        clamp(dim_fixed["tonalness"], 0.0, 1.0),
-        clamp(dim_fixed["resonance"], 0.0, 1.0),
-        Int(round(clamp(dim_fixed["chord_range"], float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))),
-        clamp(dim_fixed["density"], 0.0, 1.0),
-        _quantize_sustain(dim_fixed["sustain"])
-      ] for _ in 1:desired_stream_count
+        clamp(_resolved_fixed_value_for_stream("vol", s_i), 0.0, 1.0),
+        clamp(_resolved_fixed_value_for_stream("brightness", s_i), 0.0, 1.0),
+        clamp(_resolved_fixed_value_for_stream("articulation", s_i), 0.0, 1.0),
+        clamp(_resolved_fixed_value_for_stream("tonalness", s_i), 0.0, 1.0),
+        clamp(_resolved_fixed_value_for_stream("resonance", s_i), 0.0, 1.0),
+        Int(round(clamp(_resolved_fixed_value_for_stream("chord_range", s_i), float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))),
+        clamp(_resolved_fixed_value_for_stream("density", s_i), 0.0, 1.0),
+        _quantize_sustain(_resolved_fixed_value_for_stream("sustain", s_i))
+      ] for s_i in 1:desired_stream_count
     ]
     step_decisions = Dict{String,Any}()
 
     idx0 = step_idx - 1
 
-    vol_search_values = Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS]
+    vol_search_values = Float64[0.0, 1.0]
     density_search_values = Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS]
     chord_range_search_values = Float64[float(v) for v in cr_values]
     sustain_search_values = Float64[float(v) for v in PolyphonicConfig.SUSTAIN_LEVELS]
@@ -1540,21 +1612,25 @@ function generate_polyphonic()
 
     for (key, range_vec, out_idx) in dim_order
       if !get(dim_accept, key, true)
-        fixed_v =
-          if key == "chord_range"
-            float(Int(round(clamp(dim_fixed["chord_range"], float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))))
-          elseif key == "sustain"
-            _quantize_sustain(dim_fixed["sustain"])
-          else
-            clamp(dim_fixed[key], 0.0, 1.0)
-          end
-        fixed_vals = fill(float(fixed_v), desired_stream_count)
+        fixed_vals = Float64[]
+        sizehint!(fixed_vals, desired_stream_count)
+        for s_i in 1:desired_stream_count
+          fixed_v =
+            if key == "chord_range"
+              float(Int(round(clamp(_resolved_fixed_value_for_stream("chord_range", s_i), float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))))
+            elseif key == "sustain"
+              _quantize_sustain(_resolved_fixed_value_for_stream("sustain", s_i))
+            else
+              clamp(_resolved_fixed_value_for_stream(key, s_i), 0.0, 1.0)
+            end
+          push!(fixed_vals, float(fixed_v))
+        end
         step_decisions[key] = fixed_vals
         for s_i in 1:desired_stream_count
           if key == "chord_range"
-            current_step_values[s_i][out_idx] = Int(round(fixed_v))
+            current_step_values[s_i][out_idx] = Int(round(fixed_vals[s_i]))
           else
-            current_step_values[s_i][out_idx] = fixed_v
+            current_step_values[s_i][out_idx] = fixed_vals[s_i]
           end
         end
         continue
@@ -1591,14 +1667,21 @@ function generate_polyphonic()
       stream_costs = MultiStreamManager.precalculate_costs(mgrs[:stream], restricted_range, q_array, desired_stream_count)
 
       candidates = Vector{Vector{Float64}}()
+      preserve_stream_order = desired_stream_count > 1
+
       if desired_stream_count == 1
         candidates = [Float64[float(v)] for v in restricted_range]
       elseif key == "chord_range" || key == "density"
         # enforce global scalar: all streams share the same value (search space reduced)
         candidates = [Float64[fill(float(v), desired_stream_count)...] for v in restricted_range]
+        preserve_stream_order = true
       else
-        candidates = repeated_combinations(Float64[float(v) for v in restricted_range], desired_stream_count)
+        candidates = ordered_cartesian_product(Float64[float(v) for v in restricted_range], desired_stream_count)
       end
+
+      use_global_score = !(key == "vol" && preserve_stream_order)
+
+      debug_prefix = (debug_poly && key == "vol") ? "generate_polyphonic:vol:step$(step_idx)" : nothing
 
       best_vals, _ = select_best_chord_for_dimension_with_cost(
         mgrs,
@@ -1612,6 +1695,10 @@ function generate_polyphonic()
         Float64[float(v) for v in restricted_range];
         global_metric_weights=global_metric_weights,
         stream_metric_weights=stream_metric_weights,
+        debug_prefix=debug_prefix,
+        debug_top_n=20,
+        preserve_stream_order=preserve_stream_order,
+        use_global_score=use_global_score,
       )
 
       # commit (global manager expects stream-offset encoding)
@@ -1915,8 +2002,7 @@ end
 
     chosen_area = area_candidates[best_area_idx]  # Int per stream (tmp_anchor = band_low)
     if !area_enabled
-      fixed_band = _fixed_area_band_low()
-      chosen_area = Int[fill(fixed_band, desired_stream_count)...]
+      chosen_area = Int[_fixed_area_band_low_for_stream(s_i) for s_i in 1:desired_stream_count]
     end
 
     # ---- Commit AREA(tmp_anchor) managers (NOW consistent with evaluation) ----
@@ -2097,17 +2183,18 @@ end
   # ----------------------------------------------------------
   # Post-process / clamp
   # ----------------------------------------------------------
-  for step in results
-    for vec in step
+  for (step_idx, step) in enumerate(results)
+    is_generated_step = step_idx > base_step_index
+    for (stream_idx, vec) in enumerate(step)
       vec[note_abs_idx] = _normalize_abs_notes(vec[note_abs_idx])
-      vec[vol_idx] = get(dim_accept, "vol", true) ? clamp(_parse_float(vec[vol_idx]), 0.0, 1.0) : clamp(dim_fixed["vol"], 0.0, 1.0)
-      vec[brightness_idx] = get(dim_accept, "brightness", true) ? clamp(_parse_float(vec[brightness_idx]), 0.0, 1.0) : clamp(dim_fixed["brightness"], 0.0, 1.0)
-      vec[articulation_idx] = get(dim_accept, "articulation", true) ? clamp(_parse_float(vec[articulation_idx]), 0.0, 1.0) : clamp(dim_fixed["articulation"], 0.0, 1.0)
-      vec[tonalness_idx] = get(dim_accept, "tonalness", true) ? clamp(_parse_float(vec[tonalness_idx]), 0.0, 1.0) : clamp(dim_fixed["tonalness"], 0.0, 1.0)
-      vec[resonance_idx] = get(dim_accept, "resonance", true) ? clamp(_parse_float(vec[resonance_idx]), 0.0, 1.0) : clamp(dim_fixed["resonance"], 0.0, 1.0)
-      vec[chord_range_idx] = get(dim_accept, "chord_range", true) ? clamp(_parse_int(vec[chord_range_idx]), CHORD_RANGE_MIN, CHORD_RANGE_MAX) : Int(round(clamp(dim_fixed["chord_range"], float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX))))
-      vec[density_idx] = get(dim_accept, "density", true) ? clamp(_parse_float(vec[density_idx]), 0.0, 1.0) : clamp(dim_fixed["density"], 0.0, 1.0)
-      vec[sustain_idx] = get(dim_accept, "sustain", true) ? _quantize_sustain(vec[sustain_idx]) : _quantize_sustain(dim_fixed["sustain"])
+      vec[vol_idx] = (!get(dim_accept, "vol", true) && is_generated_step) ? clamp(_resolved_fixed_value_for_stream("vol", stream_idx), 0.0, 1.0) : clamp(_parse_float(vec[vol_idx]), 0.0, 1.0)
+      vec[brightness_idx] = (!get(dim_accept, "brightness", true) && is_generated_step) ? clamp(_resolved_fixed_value_for_stream("brightness", stream_idx), 0.0, 1.0) : clamp(_parse_float(vec[brightness_idx]), 0.0, 1.0)
+      vec[articulation_idx] = (!get(dim_accept, "articulation", true) && is_generated_step) ? clamp(_resolved_fixed_value_for_stream("articulation", stream_idx), 0.0, 1.0) : clamp(_parse_float(vec[articulation_idx]), 0.0, 1.0)
+      vec[tonalness_idx] = (!get(dim_accept, "tonalness", true) && is_generated_step) ? clamp(_resolved_fixed_value_for_stream("tonalness", stream_idx), 0.0, 1.0) : clamp(_parse_float(vec[tonalness_idx]), 0.0, 1.0)
+      vec[resonance_idx] = (!get(dim_accept, "resonance", true) && is_generated_step) ? clamp(_resolved_fixed_value_for_stream("resonance", stream_idx), 0.0, 1.0) : clamp(_parse_float(vec[resonance_idx]), 0.0, 1.0)
+      vec[chord_range_idx] = (!get(dim_accept, "chord_range", true) && is_generated_step) ? Int(round(clamp(_resolved_fixed_value_for_stream("chord_range", stream_idx), float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))) : clamp(_parse_int(vec[chord_range_idx]), CHORD_RANGE_MIN, CHORD_RANGE_MAX)
+      vec[density_idx] = (!get(dim_accept, "density", true) && is_generated_step) ? clamp(_resolved_fixed_value_for_stream("density", stream_idx), 0.0, 1.0) : clamp(_parse_float(vec[density_idx]), 0.0, 1.0)
+      vec[sustain_idx] = (!get(dim_accept, "sustain", true) && is_generated_step) ? _quantize_sustain(_resolved_fixed_value_for_stream("sustain", stream_idx)) : _quantize_sustain(vec[sustain_idx])
     end
   end
 

@@ -104,6 +104,8 @@ mutable struct Manager
   merge_threshold_ratio::Float64
   min_window_size::Int
   calculate_distance_when_added_subsequence_to_cluster::Bool
+  use_streamwise_surface_average::Bool
+  stream_axis_offset::Float64
 
   value_min::Float64
   value_max::Float64
@@ -159,6 +161,8 @@ function Manager(
   data::Vector{PolySet},
   merge_threshold_ratio::Real,
   min_window_size::Int;
+  use_streamwise_surface_average::Bool = false,
+  stream_axis_offset::Real = 0.0,
   value_min::Real = 0.0,
   value_max::Real = 1.0,
   max_set_size::Int = last(PolyphonicConfig.CHORD_SIZE_RANGE),
@@ -201,6 +205,8 @@ function Manager(
     mtr,
     min_window_size,
     false, # calculate_distance_when_added_subsequence_to_cluster (Polyphonic == false)
+    Bool(use_streamwise_surface_average),
+    float(stream_axis_offset),
     vmin,
     vmax,
     vwidth,
@@ -301,12 +307,57 @@ euclidean_distance(mgr::Manager, seq_a::PolySeq, seq_b::PolySeq)::Float64 = sqrt
 
 """average_sequences(sequences)
 
-Rails semantics:
+Rails semantics for ordinary 1D/stream use:
   - If all sets at timestep t have the same count, sort each and average by index.
   - Otherwise pick the latest (sequences[end][t]).
+
+For forced global polyphonic streams, `use_streamwise_surface_average=true` decodes the
+synthetic stream axis and averages each timestep/stream cell independently.
 """
+@inline function _decode_streamwise_value(mgr::Manager, encoded::Float64)::Tuple{Int,Float64}
+  offset = mgr.stream_axis_offset
+  if offset <= 0.0
+    return (1, encoded)
+  end
+
+  slot = floor(Int, (encoded - mgr.value_min) / offset) + 1
+  slot = clamp(slot, 1, mgr.max_set_size)
+  raw = encoded - float(slot - 1) * offset
+  return (slot, raw)
+end
+
+function _average_streamwise_surface_sequences(mgr::Manager, sequences::Vector{PolySeq})::PolySeq
+  len = length(sequences[1])
+  result = PolySeq(undef, len)
+
+  for t in 1:len
+    sums = zeros(Float64, mgr.max_set_size)
+    counts = zeros(Int, mgr.max_set_size)
+
+    for seq in sequences
+      for encoded in seq[t]
+        slot, raw = _decode_streamwise_value(mgr, encoded)
+        sums[slot] += raw
+        counts[slot] += 1
+      end
+    end
+
+    avg_set = Float64[]
+    sizehint!(avg_set, mgr.max_set_size)
+    for slot in 1:mgr.max_set_size
+      counts[slot] <= 0 && continue
+      avg_raw = sums[slot] / float(counts[slot])
+      push!(avg_set, avg_raw + float(slot - 1) * mgr.stream_axis_offset)
+    end
+    result[t] = avg_set
+  end
+
+  return result
+end
+
 function average_sequences(mgr::Manager, sequences::Vector{PolySeq})::PolySeq
   length(sequences) == 1 && return deep_copy_seq(sequences[1])
+  mgr.use_streamwise_surface_average && return _average_streamwise_surface_sequences(mgr, sequences)
 
   len = length(sequences[1])
   # Assume consistent lengths as Rails does.

@@ -132,7 +132,7 @@ const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'MusicGenerate'])
 const selectedMode = ref('ClusteringAnalyse')
 const analysedViewModes = ref(['Cluster', 'Complexity'])
 const analysedViewMode = ref('Complexity')
-const resultViewModes = ref(['pianoRoll', 'timbreRoll'])
+const resultViewModes = ref(['pianoRoll', 'timbreRoll', 'volRoll'])
 const resultViewMode = ref('pianoRoll')
 const transferDialog = ref(false)
 
@@ -230,7 +230,7 @@ const onAnalysedViewModeChange = (val: string) => {
 }
 
 const onResultViewModeChange = (val: string) => {
-  resultViewMode.value = val === 'timbreRoll' ? 'timbreRoll' : 'pianoRoll'
+  resultViewMode.value = val === 'timbreRoll' || val === 'volRoll' ? val : 'pianoRoll'
   const inst = activeFeatureRef.value as any
   inst?.setResultViewMode?.(resultViewMode.value)
 }

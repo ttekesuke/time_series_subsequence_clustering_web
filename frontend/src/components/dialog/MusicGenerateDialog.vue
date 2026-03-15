@@ -577,6 +577,35 @@ const getLastContextAreaFixedValue = () => {
   return clampDimensionFixedValue('area', (bandLow - areaBandLowMin) / bandCount)
 }
 
+const getLastContextAreaFixedValues = () => {
+  const lastStepIndex = getLastContextStepIndex()
+  const values: number[] = []
+
+  for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
+    const rowIndex = streamIdx * dimensions.length
+    const row = contextRows.value[rowIndex]
+    const notes = parseAbsNoteCell(row?.data[lastStepIndex] ?? '')
+
+    if (notes.length === 0) {
+      values.push(managedDimPolicyConfigs.area.defaultFixedValue)
+      continue
+    }
+
+    const sorted = [...notes].sort((left, right) => left - right)
+    const anchor = sorted[Math.ceil(sorted.length / 2) - 1] ?? defaultContextBase[0]
+    const bandLow = Math.min(areaBandLowMax, Math.max(areaBandLowMin, Math.floor(anchor / areaBandSize) * areaBandSize))
+    const bandCount = Math.max(Math.floor((areaBandLowMax - areaBandLowMin) / areaBandSize), 0)
+    if (bandCount === 0) {
+      values.push(0)
+      continue
+    }
+
+    values.push(clampDimensionFixedValue('area', (bandLow - areaBandLowMin) / bandCount))
+  }
+
+  return values
+}
+
 const getLastContextManagedDimensionFixedValue = (key: Exclude<ManagedDimKey, 'area'>) => {
   const dimIndex = contextManagedDimensionIndex[key]
   const lastStepIndex = getLastContextStepIndex()
@@ -596,6 +625,20 @@ const getLastContextManagedDimensionFixedValue = (key: Exclude<ManagedDimKey, 'a
   return clampDimensionFixedValue(key, average)
 }
 
+const getLastContextManagedDimensionFixedValues = (key: Exclude<ManagedDimKey, 'area'>) => {
+  const dimIndex = contextManagedDimensionIndex[key]
+  const lastStepIndex = getLastContextStepIndex()
+  const values: number[] = []
+
+  for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
+    const rowIndex = streamIdx * dimensions.length + dimIndex
+    const row = contextRows.value[rowIndex]
+    values.push(clampDimensionFixedValue(key, row?.data[lastStepIndex]))
+  }
+
+  return values
+}
+
 const getResolvedDimensionPolicyFixedValue = (key: ManagedDimKey) => {
   const policy = dimensionPolicy.value[key]
   if (policy.fixedValueSource === 'initial_context_last_step') {
@@ -608,6 +651,18 @@ const getResolvedDimensionPolicyFixedValue = (key: ManagedDimKey) => {
 
 const formatDimensionPolicyDerivedValue = (raw: unknown) => {
   const key = resolveManagedDimKey(raw)
+  const policy = dimensionPolicy.value[key]
+
+  if (policy.fixedValueSource === 'initial_context_last_step') {
+    const values = key === 'area'
+      ? getLastContextAreaFixedValues()
+      : getLastContextManagedDimensionFixedValues(key)
+    const rendered = values.map((value) => (
+      managedDimPolicyConfigs[key].isInt ? `${Math.round(value)}` : value.toFixed(2)
+    ))
+    return `Last ${rendered.join(' / ')}`
+  }
+
   const value = getResolvedDimensionPolicyFixedValue(key)
   return managedDimPolicyConfigs[key].isInt ? `Last ${Math.round(value)}` : `Last ${value.toFixed(2)}`
 }

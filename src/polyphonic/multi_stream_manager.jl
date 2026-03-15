@@ -872,7 +872,12 @@ function precalculate_costs(
       # This manager only supports scalar candidates; values are stored as 1-element sets.
       key = isempty(v) ? 0.0 : v[1]
       dist, _qty, comp = safe_simulate_add_and_calculate(c.manager, v, q_array)
-      raw = finite_number(comp) ? comp : (finite_number(dist) ? dist : 0.0)
+      raw =
+        if m.track_presence && length(v) == 1
+          finite_number(dist) ? dist : (finite_number(comp) ? comp : 0.0)
+        else
+          finite_number(comp) ? comp : (finite_number(dist) ? dist : 0.0)
+        end
       push!(raw_list, raw)
       per_value[key] = PerCandidateCost(raw, 0.0)
     end
@@ -1126,7 +1131,11 @@ function resolve_mapping_and_score(
         # - if either is Array => set_distance01
         # In this Julia port, scalar values are stored as 1-element vectors,
         # so we must mirror the scalar branch explicitly.
-        if length(v) == 1 && length(last) == 1
+        if m.track_presence && stream_costs !== nothing && length(v) == 1 && length(last) == 1
+          # For presence-like scalar dimensions such as vol, stream assignment should follow
+          # subsequence fit rather than greedily sticking to the previous scalar value.
+          dist01 = 0.0
+        elseif length(v) == 1 && length(last) == 1
           raw = abs(v[1] - last[1])
           dist01 = clamp(raw / m.value_width, 0.0, 1.0)
         else

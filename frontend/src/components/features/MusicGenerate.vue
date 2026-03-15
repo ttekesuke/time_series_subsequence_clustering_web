@@ -17,7 +17,7 @@
           @scroll="onScroll"
         />
         <StreamsRoll
-          v-else
+          v-else-if="resultViewMode === 'timbreRoll'"
           ref="timbreRollRef"
           :streamValues="timbreResultStreams"
           :streamLabels="timbreResultStreamLabels"
@@ -27,6 +27,19 @@
           :valueResolution="0.01"
           :playheadStep="playheadStepForRoll"
           title="Timbre Roll (BRI/ART/TON/RES)"
+          @scroll="onScroll"
+        />
+        <StreamsRoll
+          v-else
+          ref="volRollRef"
+          :streamValues="volResultStreams"
+          :streamLabels="volResultStreamLabels"
+          :stepWidth="computedStepWidth"
+          :minValue="0"
+          :maxValue="1"
+          :valueResolution="1"
+          :playheadStep="playheadStepForRoll"
+          title="VOL Roll"
           @scroll="onScroll"
         />
       </div>
@@ -382,6 +395,7 @@ import { defineExpose } from 'vue'
 // ===== refs =====
 const pianoRollRef = ref<any>(null)
 const timbreRollRef = ref<any>(null)
+const volRollRef = ref<any>(null)
 const dissonanceRollRef = ref<any>(null)
 const velClustersRef = ref<any>(null)
 const chordRangeClustersRef = ref<any>(null)
@@ -411,7 +425,7 @@ const nowPlaying = ref(false)
 const lastResultJson = ref<any | null>(null)
 const latestParamsPayload = ref<any | null>(null)
 const analysedViewMode = ref<'Cluster' | 'Complexity'>('Cluster')
-const resultViewMode = ref<'pianoRoll' | 'timbreRoll'>('pianoRoll')
+const resultViewMode = ref<'pianoRoll' | 'timbreRoll' | 'volRoll'>('pianoRoll')
 
 const containerWidth = ref(0)
 let resizeObserver: ResizeObserver | null = null
@@ -490,8 +504,8 @@ const createAudioElement = (url: string) => {
 
 const openParams = () => { setDataDialog.value = true }
 const setAnalysedViewMode = (mode: 'Cluster' | 'Complexity') => { analysedViewMode.value = mode }
-const setResultViewMode = (mode: 'pianoRoll' | 'timbreRoll') => {
-  resultViewMode.value = mode === 'timbreRoll' ? 'timbreRoll' : 'pianoRoll'
+const setResultViewMode = (mode: 'pianoRoll' | 'timbreRoll' | 'volRoll') => {
+  resultViewMode.value = mode === 'timbreRoll' || mode === 'volRoll' ? mode : 'pianoRoll'
 }
 const stopPlayingSound = () => {
   nowPlaying.value = false
@@ -556,6 +570,7 @@ watch(soundFilePath, (url) => {
 const { syncScroll } = useScrollSync([
   pianoRollRef,
   timbreRollRef,
+  volRollRef,
   dissonanceRollRef,
   velClustersRef,
   chordRangeClustersRef,
@@ -1078,6 +1093,14 @@ const chordPitchStreams = computed(() => {
 
 const timbreResultStreamLabels = ['BRI', 'ART', 'TON', 'RES']
 
+const volResultStreamLabels = computed(() => {
+  const labels: string[] = []
+  for (let idx = 0; idx < generate.value.velocities.length; idx++) {
+    labels.push(`VOL-S${idx + 1}`)
+  }
+  return labels
+})
+
 const buildTimbreLane = (matrix: (number | null)[][]) => {
   const seriesLen = Math.max(stepCount.value, ...matrix.map(stream => (Array.isArray(stream) ? stream.length : 0)))
   return Array.from({ length: seriesLen }, (_, stepIdx) => {
@@ -1098,6 +1121,18 @@ const timbreResultStreams = computed(() => ([
   buildTimbreLane(generate.value.tonalness),
   buildTimbreLane(generate.value.resonance),
 ]))
+
+const volResultStreams = computed(() =>
+  generate.value.velocities.map((stream: (number | null)[]) =>
+    Array.isArray(stream)
+      ? stream.map((value: number | null) => {
+          if (value == null) return null
+          const num = Number(value)
+          return Number.isFinite(num) ? Math.max(0, Math.min(1, num)) : null
+        })
+      : []
+  )
+)
 
 // ===== cluster view switch =====
 const velocityMode = ref<'global' | 'stream'>('global')
