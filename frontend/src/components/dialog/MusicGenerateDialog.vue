@@ -50,12 +50,6 @@
                   :step="getDimensionPolicyConfig(dimKey).step"
                   class="step-input dim-policy-input"
                 >
-                <span
-                  v-else
-                  class="dimension-policy-preview"
-                >
-                  {{ formatDimensionPolicyDerivedValue(dimKey) }}
-                </span>
               </template>
             </div>
           </div>
