@@ -1206,6 +1206,65 @@ function generate_polyphonic()
     end
   end
 
+  function _restrict_area_anchors_by_register_window(
+    anchors::Vector{Int},
+    register_center::Float64,
+    allowance::Float64
+  )::Vector{Int}
+    isempty(anchors) && return Int[]
+
+    filtered = Int[]
+    best_anchor = anchors[1]
+    best_distance = Inf
+    band_center_offset = float(BAND_SIZE - 1) / 2.0
+
+    for anchor in anchors
+      dist = abs((float(anchor) + band_center_offset) - register_center)
+      if dist < best_distance - 1e-12
+        best_distance = dist
+        best_anchor = anchor
+      end
+      if dist <= allowance + 1e-9
+        push!(filtered, anchor)
+      end
+    end
+
+    if isempty(filtered)
+      return Int[best_anchor]
+    end
+
+    return filtered
+  end
+
+  function _restrict_chords_by_register_window(
+    chords::Vector{Vector{Int}},
+    register_center::Float64,
+    allowance::Float64
+  )::Vector{Vector{Int}}
+    isempty(chords) && return Vector{Vector{Int}}()
+
+    filtered = Vector{Vector{Int}}()
+    best_chord = copy(chords[1])
+    best_distance = Inf
+
+    for chord in chords
+      dist = abs(float(_anchor_from_abs(chord)) - register_center)
+      if dist < best_distance - 1e-12
+        best_distance = dist
+        best_chord = copy(chord)
+      end
+      if dist <= allowance + 1e-9
+        push!(filtered, chord)
+      end
+    end
+
+    if isempty(filtered)
+      return Vector{Vector{Int}}([best_chord])
+    end
+
+    return filtered
+  end
+
   function _global_anchor_from_step(step)::Int
     alln = Int[]
     for st in step
@@ -1486,6 +1545,31 @@ function generate_polyphonic()
     return out
   end
 
+  function _recent_register_center_for_stream(note_stream_mgr, stream_idx::Int)::Float64
+    if stream_idx < 1 || stream_idx > length(note_stream_mgr.stream_pool)
+      return float(ABS_MIN)
+    end
+
+    stream = note_stream_mgr.stream_pool[stream_idx]
+    anchors = Int[]
+    recent_steps = max(Int(PolyphonicConfig.NOTE_REGISTER_MEMORY_STEPS), 1)
+    data_len = length(stream.manager.data)
+    start_idx = max(data_len - recent_steps + 1, 1)
+
+    for i in start_idx:data_len
+      value = stream.manager.data[i]
+      isempty(value) && continue
+      push!(anchors, clamp(round(Int, value[1]), ABS_MIN, ABS_MAX))
+    end
+
+    if isempty(anchors)
+      return isempty(stream.last_value) ? float(ABS_MIN) : clamp(float(stream.last_value[1]), float(ABS_MIN), float(ABS_MAX))
+    end
+
+    sort!(anchors)
+    return float(anchors[cld(length(anchors), 2)])
+  end
+
   function _restrict_candidates_with_target_window(
     key::String,
     search_values::Vector{Float64},
@@ -1745,6 +1829,22 @@ function generate_polyphonic()
 
     area_stream_targets = generate_centered_targets(desired_stream_count, area_center, area_spread)
     stream_pool = area_mgrs[:stream].stream_pool
+    note_register_freedom_raw = array_param(gp, "note_register_freedom", idx0)
+    note_register_freedom = clamp(_parse_float(note_register_freedom_raw === nothing ? 1.0 : note_register_freedom_raw), 0.0, 1.0)
+    register_centers = Float64[]
+    sizehint!(register_centers, desired_stream_count)
+    for s in 1:desired_stream_count
+      push!(register_centers, _recent_register_center_for_stream(note_mgrs[:stream], s))
+    end
+    register_allowance = if note_register_freedom >= 1.0 - 1e-9
+      float(ABS_MAX - ABS_MIN)
+    elseif note_register_freedom <= 1e-9
+      0.0
+    else
+      min_allow = float(PolyphonicConfig.NOTE_REGISTER_MIN_ALLOWANCE)
+      max_allow = float(PolyphonicConfig.NOTE_REGISTER_MAX_ALLOWANCE)
+      min_allow + (max_allow - min_allow) * note_register_freedom
+    end
 
     # AREA is an intermediate decision (4-semitone band base). If we base the next AREA on realized notes,
     # dissonance/chord_range/density can "drag" the anchor and collapse AREA complexity.
@@ -1790,6 +1890,9 @@ function generate_polyphonic()
     end
 
     sort!(cand)
+    if note_register_freedom < 1.0 - 1e-9
+      cand = _restrict_area_anchors_by_register_window(cand, register_centers[s], register_allowance)
+    end
     push!(per_stream_anchor_candidates, cand)
   end
 
@@ -1982,7 +2085,17 @@ end
         end
       end
 
-      total = g_cost + s_cost + conc_cost
+      register_cost = 0.0
+      if note_register_freedom < 1.0 - 1e-9
+        for s in 1:desired_stream_count
+          candidate_center = float(cand[s]) + (float(BAND_SIZE - 1) / 2.0)
+          excess = max(0.0, abs(candidate_center - register_centers[s]) - register_allowance)
+          register_cost += excess / max(float(ABS_MAX - ABS_MIN), 1.0)
+        end
+        register_cost = (register_cost / float(desired_stream_count)) * (1.0 - note_register_freedom)
+      end
+
+      total = g_cost + s_cost + conc_cost + register_cost
 
       # tie-break: smaller average jump vs prev
       jump = 0.0
@@ -2043,6 +2156,9 @@ end
       chords = _iter_combinations_range(low, high, n_notes)
       if isempty(chords)
         chords = Vector{Vector{Int}}([Int[band_low]])
+      end
+      if note_register_freedom < 1.0 - 1e-9
+        chords = _restrict_chords_by_register_window(chords, register_centers[s], register_allowance)
       end
 
       stream_chord_candidates[s] = chords

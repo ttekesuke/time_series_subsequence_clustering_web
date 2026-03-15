@@ -933,6 +933,21 @@ const genRowMetas: GenRowMeta[] = [
       "1：強度ターゲットの幅が最大。"
     )
   },
+  {
+    shortName: "REG Freedom",
+    name: "Note Register Freedom",
+    key: "note_register_freedom",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(1, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "各ストリームが現在の音域からどれだけ離れてよいかを制御します。低いほど同じ音域に留まり、高いほど広い音域移動を許します。",
+      "0：現在の音域付近に強く留まり、累積的な大ジャンプを起こしにくい。",
+      "1：音域拘束をほぼかけず、広いレジスタ移動を許す。"
+    )
+  },
 
   // =========================================================
   // scoring weights (global / stream ; dist / qty / comp)
@@ -1429,6 +1444,7 @@ const buildGenParamsFromRows = () => {
   result.stream_dist_weight = get('stream_dist_weight')
   result.stream_qty_weight = get('stream_qty_weight')
   result.stream_comp_weight = get('stream_comp_weight')
+  result.note_register_freedom  = get('note_register_freedom')
   result.dissonance_target      = get('dissonance_target')
 
   complexityDimensionKeys.forEach((key) => {
@@ -1571,6 +1587,7 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       stream_dist_weight: genParams.stream_dist_weight,
       stream_qty_weight: genParams.stream_qty_weight,
       stream_comp_weight: genParams.stream_comp_weight,
+      note_register_freedom: genParams.note_register_freedom,
       debug_score: true,
       debug_score_key: 'vol',
       debug_score_top_n: 20,

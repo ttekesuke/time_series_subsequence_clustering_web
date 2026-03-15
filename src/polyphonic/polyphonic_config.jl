@@ -14,7 +14,7 @@ const OCTAVE_TO_MIDI_C_OFFSET::Int = 1  # oct=4 -> baseC=60 (C4)
 
 const MIDI_A4::Int = 69
 const A4_FREQ::Float64 = 440.0
-const MIDI_NOTE_MIN::Int = 24
+const MIDI_NOTE_MIN::Int = 36
 const MIDI_NOTE_MAX::Int = 120
 
 const AMP_EPS::Float64 = 1e-6
@@ -47,6 +47,9 @@ const AREA_MOVE_BINS::Vector{Tuple{Int,Int}} = [
 ]
 const AREA_TOP_BINS_PER_STREAM_SINGLE::Int = 1
 const AREA_TOP_BINS_PER_STREAM_MULTI::Int = 3
+const NOTE_REGISTER_MEMORY_STEPS::Int = 16
+const NOTE_REGISTER_MIN_ALLOWANCE::Int = AREA_BAND_SIZE
+const NOTE_REGISTER_MAX_ALLOWANCE::Int = 28
 
 const POLYPHONIC_BPM::Float64 = 240.0
 const POLYPHONIC_STEP_DURATION::Float64 = 60.0 / POLYPHONIC_BPM
