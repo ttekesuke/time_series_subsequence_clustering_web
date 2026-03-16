@@ -437,23 +437,76 @@ const singleValueStreamLabel = ['value']
 const playheadStep = ref(-1)
 let playheadTimerId: ReturnType<typeof setInterval> | null = null
 const playheadStepForRoll = computed(() => (nowPlaying.value ? playheadStep.value : -1))
-const currentPlaybackBpm = ref(240)
+const DEFAULT_BPM = 480
+const currentPlaybackBpm = ref(DEFAULT_BPM)
 const normalizeBpm = (val: any): number => {
   const bpm = Number(val)
-  return Number.isFinite(bpm) && bpm > 0 ? bpm : 240
+  return Number.isFinite(bpm) && bpm > 0 ? bpm : DEFAULT_BPM
 }
 
-const resolveGenerationBpm = (): number => {
+const normalizeBpmSeries = (
+  val: any,
+  expectedLength: number,
+  align: 'head' | 'tail' = 'head'
+): number[] => {
+  const source = Array.isArray(val)
+    ? val
+    : (val == null ? [] : [val])
+  const targetLength = Math.max(1, expectedLength)
+
+  if (source.length === 0) {
+    return Array(targetLength).fill(DEFAULT_BPM)
+  }
+
+  const normalized = source.map(normalizeBpm)
+  if (normalized.length >= targetLength) {
+    const start = align === 'tail' ? normalized.length - targetLength : 0
+    return normalized.slice(start, start + targetLength)
+  }
+
+  const fallback = normalized[normalized.length - 1] ?? DEFAULT_BPM
+  return Array.from({ length: targetLength }, (_, idx) => normalized[idx] ?? fallback)
+}
+
+const combineBpmSeries = (initialRaw: any, futureRaw: any, expectedLength: number): number[] | null => {
+  const hasInitial = initialRaw != null
+  const hasFuture = futureRaw != null
+  if (!hasInitial && !hasFuture) return null
+
+  const initial = hasInitial ? normalizeBpmSeries(initialRaw, Math.max(1, Array.isArray(initialRaw) ? initialRaw.length : 1)) : []
+  const future = hasFuture ? normalizeBpmSeries(futureRaw, Math.max(1, Array.isArray(futureRaw) ? futureRaw.length : 1)) : []
+  const combined = [...initial, ...future]
+  return normalizeBpmSeries(combined, expectedLength, 'tail')
+}
+
+const resolveGenerationBpmSeries = (preferred: any, expectedLength: number): number[] => {
+  if (preferred != null) {
+    const align = Array.isArray(preferred) ? 'tail' : 'head'
+    return normalizeBpmSeries(preferred, expectedLength, align)
+  }
+
   const payload = latestParamsPayload.value
   if (payload && typeof payload === 'object') {
     const gp = (payload as any).generate_polyphonic ?? payload
-    if (gp?.bpm != null) return normalizeBpm(gp.bpm)
+    const combined = combineBpmSeries(gp?.initial_context_bpm, gp?.future_bpm, expectedLength)
+    if (combined != null) return combined
+    if (gp?.future_bpm != null) return normalizeBpmSeries(gp.future_bpm, expectedLength)
+    if (gp?.bpm_series != null) return normalizeBpmSeries(gp.bpm_series, expectedLength, 'tail')
+    if (gp?.bpm != null) return normalizeBpmSeries(gp.bpm, expectedLength)
   }
 
   const result = lastResultJson.value as any
-  if (result?.bpm != null) return normalizeBpm(result.bpm)
+  if (result?.bpmSeries != null) return normalizeBpmSeries(result.bpmSeries, expectedLength, 'tail')
+  const combined = combineBpmSeries(result?.initialContextBpm, result?.futureBpm, expectedLength)
+  if (combined != null) return combined
+  if (result?.futureBpm != null) return normalizeBpmSeries(result.futureBpm, expectedLength)
+  if (result?.bpm != null) return normalizeBpmSeries(result.bpm, expectedLength)
 
-  return 240
+  return normalizeBpmSeries(null, expectedLength)
+}
+
+const resolveGenerationBpm = (): number => {
+  return resolveGenerationBpmSeries(null, 1)[0] ?? DEFAULT_BPM
 }
 
 const clearPlayheadTimer = () => {
@@ -469,7 +522,7 @@ const stopPlayhead = () => {
 }
 
 const startPlayhead = (bpm: number) => {
-  const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 240
+  const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : DEFAULT_BPM
   const stepMs = Math.max(20, Math.round((60 * 1000) / safeBpm))
   const totalSteps = Math.max(1, stepCount.value)
 
@@ -481,7 +534,7 @@ const startPlayhead = (bpm: number) => {
   }, stepMs)
 }
 
-const startPlaybackVisual = (bpm = 240) => {
+const startPlaybackVisual = (bpm = DEFAULT_BPM) => {
   nowPlaying.value = true
   startPlayhead(bpm)
 }
@@ -727,8 +780,8 @@ const applyPolyphonicResponse = (data: PolyphonicResponse) => {
 const handleGenerated = (data: PolyphonicResponse) => {
   applyPolyphonicResponse(data)
   const ts = data.timeSeries
-  const responseBpm = Number((data as any)?.bpm)
-  renderPolyphonicAudio(ts, Number.isFinite(responseBpm) && responseBpm > 0 ? responseBpm : undefined)
+  const responseBpmSeries = (data as any)?.bpmSeries ?? (data as any)?.futureBpm ?? (data as any)?.bpm
+  renderPolyphonicAudio(ts, responseBpmSeries)
 }
 
 const handleDispatched = (info: any) => {
@@ -825,9 +878,8 @@ const expandTimeSeries = (ts: any[]) => {
   return { notes, vels, brightnesses, articulations, tonalnesses, resonances, maxStreams }
 }
 
-const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: number) => {
+const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
   progress.value.status = 'rendering'
-  const bpm = normalizeBpm(bpmArg ?? resolveGenerationBpm())
 
   // renderer は legacy 形式を想定していることが多いので、strict(abs_notes) の場合は変換して投げる
   const toLegacyForRender = (ts: any[][]) => {
@@ -883,6 +935,8 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: number) => {
   }
 
   const { out, chords } = toLegacyForRender(timeSeries)
+  const bpmSeries = resolveGenerationBpmSeries(bpmArg, out.length)
+  const bpm = bpmSeries[0] ?? DEFAULT_BPM
   // Temporary A/B knob for octave-lower "sub" layer in synth.
   // 0.0: off, 0.2~0.4: reduced, 1.0: original.
   const TEMP_SUB_GAIN_FOR_AUDITION = 0.0
@@ -890,6 +944,7 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: number) => {
   axios.post('/api/web/supercolliders/render_polyphonic', {
     time_series: out,
     bpm,
+    bpm_series: bpmSeries,
     sub_gain: TEMP_SUB_GAIN_FOR_AUDITION,
     note_chords_pitch_classes: chords,
   })

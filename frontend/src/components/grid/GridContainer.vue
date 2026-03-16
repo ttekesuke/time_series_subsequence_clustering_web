@@ -93,42 +93,110 @@
       </v-btn>
     </v-toolbar>
 
-    <!-- グリッド本体 -->
+    <!-- グリッド本体 (仮想スクロール) -->
     <v-card variant="outlined" class="fill-height grid-card">
-      <div class="grid-scroll-container">
-        <table class="param-grid">
-          <thead>
-            <tr>
-              <th class="sticky-col head-col">Steps</th>
-              <th
-                v-for="i in steps"
-                :key="`h-${i}`"
-                class="data-col column-header"
-                :class="{ 'selected-header': isColumnSelected(i - 1) }"
+      <div class="grid-scroll-container virtual-grid-host">
+        <VirtualScroll
+          ref="virtualScrollRef"
+          class="param-grid-virtual"
+          direction="both"
+          role="grid"
+          :items="virtualItems"
+          :item-size="rowHeight"
+          :column-count="steps"
+          :column-width="cellWidth"
+          :buffer-before="8"
+          :buffer-after="8"
+          :sticky-indices="stickyIndices"
+          :aria-label="`${title || 'parameter'} grid`"
+        >
+          <template #item="{ item: row, index: rowIndex, columnRange, offset, getColumnWidth, getCellAriaProps }">
+            <div class="param-grid-row" :data-row-index="rowIndex">
+              <template v-if="rowIndex === 0">
+                <div class="sticky-col head-col header-col top-left-corner" :style="getStickyLeftStyle(offset?.x)">Steps</div>
+                <div
+                  class="row-cells"
+                  :style="{
+                    paddingInlineStart: `${columnRange.padStart}px`,
+                    paddingInlineEnd: `${columnRange.padEnd}px`
+                  }"
+                >
+                  <div
+                    v-for="c in (columnRange.end - columnRange.start)"
+                    :key="`h-${columnRange.start + c - 1}`"
+                    class="data-col column-header"
+                    :class="{ 'selected-header': isColumnSelected(columnRange.start + c - 1) }"
+                    :style="{ inlineSize: `${getColumnWidth(columnRange.start + c - 1)}px` }"
+                    @mousedown.prevent
+                    @click="onColumnHeaderClick(columnRange.start + c - 1, $event)"
+                    v-bind="getCellAriaProps(columnRange.start + c - 1)"
+                  >
+                    {{ columnRange.start + c }}
+                  </div>
+                </div>
+              </template>
+
+              <template v-else>
+              <div
+                class="sticky-col head-col row-label row-header"
+                :class="{ 'selected-header': isRowSelected(rowIndex - 1), 'row-disabled': row.disabled }"
+                :style="getStickyLeftStyle(offset?.x)"
                 @mousedown.prevent
-                @click="onColumnHeaderClick(i - 1, $event)"
+                @click="onRowHeaderClick(rowIndex - 1, $event)"
               >
-                {{ i }}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <GridRow
-              v-for="(row, idx) in rows"
-              :key="`row-${idx}`"
-              :row="row"
-              :rowIndex="idx"
-              :steps="steps"
-              :rowSelected="isRowSelected(idx)"
-              :selectedCols="selectedColumnIndexes"
-              @update:row="updateRow(idx, $event)"
-              @focus-cell="onCellFocus"
-              @dblclick-cell="onCellDblClick"
-              @paste-cell="onCellPaste"
-              @select-row-header="onRowHeaderSelect"
-            />
-          </tbody>
-        </table>
+                <span>
+                  {{ row.shortName || row.name }}
+                  <v-tooltip
+                    v-if="row.help"
+                    activator="parent"
+                    location="end"
+                  >
+                    <div style="max-width: 340px;" class="text-body-2">
+                      <div class="mt-1"> {{ row.name }}</div>
+                      <div class="mt-1"> {{ row.help.overview }}</div>
+                      <div><b>範囲:</b> {{ row.help.range }}</div>
+                      <div class="mt-1"> {{ row.help.atMin }}</div>
+                      <div class="mt-1"> {{ row.help.atMax }}</div>
+                    </div>
+                  </v-tooltip>
+                </span>
+              </div>
+
+              <div
+                class="row-cells"
+                :style="{
+                  paddingInlineStart: `${columnRange.padStart}px`,
+                  paddingInlineEnd: `${columnRange.padEnd}px`
+                }"
+              >
+                <div
+                  v-for="c in (columnRange.end - columnRange.start)"
+                  :key="`r-${rowIndex - 1}-c-${columnRange.start + c - 1}`"
+                  class="data-col"
+                  :class="{ 'selected-cell': isRowSelected(rowIndex - 1) || isColumnSelected(columnRange.start + c - 1) }"
+                  :style="{ inlineSize: `${getColumnWidth(columnRange.start + c - 1)}px` }"
+                  :data-col-index="columnRange.start + c - 1"
+                  v-bind="getCellAriaProps(columnRange.start + c - 1)"
+                >
+                  <GridCell
+                    class="grid-input"
+                    :model-value="row.data[columnRange.start + c - 1]"
+                    :rowIndex="rowIndex - 1"
+                    :colIndex="columnRange.start + c - 1"
+                    :selected="isRowSelected(rowIndex - 1) || isColumnSelected(columnRange.start + c - 1)"
+                    :disabled="Boolean(row.disabled)"
+                    :config="row.config"
+                    @update:model-value="onVirtualUpdateCell(rowIndex - 1, columnRange.start + c - 1, $event)"
+                    @focus="onCellFocus"
+                    @dblclick="onCellDblClick"
+                    @paste="onCellPaste"
+                  />
+                </div>
+              </div>
+              </template>
+            </div>
+          </template>
+        </VirtualScroll>
       </div>
     </v-card>
 
@@ -143,7 +211,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import GridRow from './GridRow.vue'
+import { VirtualScroll } from '@pdanpdan/virtual-scroll'
+import '@pdanpdan/virtual-scroll/style.css'
+import GridCell from './GridCell.vue'
 import ParamGenDialog from './ParamGenDialog.vue'
 import {
   getStructuredClipboard,
@@ -195,6 +265,7 @@ const emit = defineEmits([
 
 // --- State ---
 const wrapperRef = ref<HTMLElement | null>(null)
+const virtualScrollRef = ref<any>(null)
 const focusedCell = ref<any>(null) // { rowIndex, colIndex, config }
 const paramGenDialog = ref(false)
 const paramGenInit = ref<any>({})
@@ -204,6 +275,12 @@ const rowSelection = ref<RangeSelection | null>(null)
 const colSelection = ref<RangeSelection | null>(null)
 const copiedTooltipVisible = ref(false)
 let copiedTooltipTimer: ReturnType<typeof setTimeout> | null = null
+
+const stickyIndices = [0]
+const virtualItems = computed(() => [{ __header: true } as const, ...props.rows])
+
+const rowHeight = 30
+const cellWidth = 56
 
 const canGenerateParameters = computed(() => Boolean(focusedCell.value) && focusedCell.value?.config?.inputMode !== 'note-array')
 
@@ -245,6 +322,13 @@ const selectedColumnIndexes = computed<number[]>(() => {
   }
   return cols
 })
+
+const getStickyLeftStyle = (x: unknown) => {
+  const offset = typeof x === 'number' && isFinite(x) ? x : 0
+  return {
+    insetInlineStart: `${-Math.max(0, offset)}px`
+  }
+}
 
 // --- Methods ---
 
@@ -509,8 +593,8 @@ const onStreamBlur = (e: Event) => {
   target.value = streamCountDraft.value
 }
 
-const onRowHeaderSelect = (payload: { rowIndex: number; shiftKey: boolean }) => {
-  const { rowIndex, shiftKey } = payload
+const onRowHeaderClick = (rowIndex: number, event: MouseEvent) => {
+  const shiftKey = event.shiftKey
   if (rowIndex < 0 || rowIndex >= props.rows.length) return
 
   const anchor = shiftKey && rowSelection.value ? rowSelection.value.anchor : rowIndex
@@ -518,6 +602,18 @@ const onRowHeaderSelect = (payload: { rowIndex: number; shiftKey: boolean }) => 
   colSelection.value = null
   focusedCell.value = null
   focusWrapper()
+}
+
+const onVirtualUpdateCell = (rowIndex: number, colIndex: number, val: GridCellValue) => {
+  const row = props.rows[rowIndex]
+  if (!row || row.disabled) return
+
+  const nextRow = { ...row }
+  const newData = [...nextRow.data]
+  while (newData.length <= colIndex) newData.push(nextRow.config?.inputMode === 'note-array' ? '' : 0)
+  newData[colIndex] = val
+  nextRow.data = newData
+  updateRow(rowIndex, nextRow)
 }
 
 const onColumnHeaderClick = (colIndex: number, event: MouseEvent) => {
@@ -532,7 +628,7 @@ const onColumnHeaderClick = (colIndex: number, event: MouseEvent) => {
 
 const onWrapperCopy = (event: ClipboardEvent) => {
   const target = event.target as HTMLElement | null
-  const isGridTarget = target === wrapperRef.value || !!target?.closest('.param-grid')
+  const isGridTarget = target === wrapperRef.value || !!target?.closest('.virtual-grid-host')
   if (!isGridTarget) {
     setStructuredClipboard(null)
     return
@@ -576,7 +672,7 @@ const onWrapperPaste = (event: ClipboardEvent) => {
   if (!rowSelection.value && !colSelection.value) return
 
   const target = event.target as HTMLElement | null
-  const isGridTarget = target === wrapperRef.value || !!target?.closest('.param-grid')
+  const isGridTarget = target === wrapperRef.value || !!target?.closest('.virtual-grid-host')
   if (!isGridTarget) return
 
   const clipboard = getStructuredClipboard()
@@ -727,14 +823,13 @@ const openParamGenDialog = () => {
 const getInputAt = (rowIndex: number, colIndex: number): HTMLInputElement | null => {
   const root = wrapperRef.value
   if (!root) return null
-  const rows = root.querySelectorAll('.param-grid tbody tr')
-  const rowEl = rows.item(rowIndex) as HTMLElement | null
+  const rowEl = root.querySelector(`[data-row-index="${rowIndex}"]`) as HTMLElement | null
   if (!rowEl) return null
-  const inputs = rowEl.querySelectorAll('td.data-col input.grid-input')
-  return (inputs.item(colIndex) as HTMLInputElement | null) ?? null
+  return rowEl.querySelector(`[data-col-index="${colIndex}"] input.grid-input`) as HTMLInputElement | null
 }
 
 const focusCellAndScroll = async (rowIndex: number, colIndex: number, config: any) => {
+  virtualScrollRef.value?.scrollToIndex?.(rowIndex, colIndex, { align: { y: 'auto', x: 'auto' }, behavior: 'auto' })
   await nextTick()
   await nextTick()
   const input = getInputAt(rowIndex, colIndex)
@@ -828,41 +923,96 @@ const applyGeneratedParams = async (params: any) => {
   overflow: hidden;
 }
 .grid-scroll-container {
-  overflow-x: auto;
-  overflow-y: auto;
+  overflow: hidden;
   flex: 1 1 auto;
   min-height: 0;
 }
-.param-grid {
-  border-collapse: separate;
-  border-spacing: 0;
-  table-layout: fixed;
+.param-grid-virtual {
+  width: 100%;
+  height: 100%;
   font-size: 0.8rem;
 }
-.param-grid th {
-  background-color: #f5f5f5;
-  position: sticky;
-  top: 0;
-  z-index: 2;
+.param-grid-header {
+  display: flex;
   height: 40px;
-  border: 1px solid #e0e0e0;
+  background-color: #f5f5f5;
+}
+.header-cols {
+  display: flex;
+  flex: 1;
+}
+.header-col {
+  background-color: #f5f5f5;
+  display: flex;
+  align-items: center;
+  z-index: 6;
+}
+.param-grid-row {
+  display: flex;
+  min-height: 30px;
+  background-color: #fff;
+}
+.param-grid-row:first-child {
+  background-color: #f5f5f5;
+}
+.row-cells {
+  display: flex;
+  flex: 1;
+}
+.data-col {
+  box-sizing: border-box;
+  min-width: 56px;
+  max-width: 56px;
+  width: 56px;
+  border-right: 1px solid #e0e0e0;
+  border-bottom: 1px solid #e0e0e0;
+  display: flex;
+  align-items: stretch;
+}
+.column-header {
+  background-color: #f5f5f5;
+  user-select: none;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  z-index: 5;
+}
+.top-left-corner {
+  z-index: 12 !important;
+  background-color: #f5f5f5;
 }
 .sticky-col {
   position: sticky;
   left: 0;
-  z-index: 3;
+  z-index: 4;
   background-color: white;
   border-right: 2px solid #ccc;
+  border: 1px solid #e0e0e0;
 }
-thead th.sticky-col {
-  z-index: 4;
+.head-col {
+  width: 120px !important;
+  min-width: 120px !important;
+  max-width: 120px !important;
+  font-weight: bold;
+  text-align: left;
+  padding-left: 8px;
 }
-.column-header {
-  cursor: pointer;
+.row-label {
+  vertical-align: middle;
+}
+.row-header {
   user-select: none;
+  cursor: pointer;
 }
 .selected-header {
   background-color: #e8f5e9 !important;
   font-weight: bold;
+}
+.selected-cell {
+  background-color: #e8f5e9;
+}
+.row-disabled {
+  color: #9e9e9e;
 }
 </style>

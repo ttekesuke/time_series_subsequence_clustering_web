@@ -431,6 +431,51 @@ function array_param(raw::AbstractDict, key::String, idx0::Int)
   return array_param(_to_string_dict(raw), key, idx0)
 end
 
+function _normalize_bpm_value(raw; fallback::Real=PolyphonicConfig.POLYPHONIC_BPM)::Float64
+  source = raw === nothing ? fallback : raw
+  return PolyphonicConfig.sanitize_bpm(_parse_float(source))
+end
+
+function _normalize_bpm_series(raw, expected_len::Int; fallback::Real=PolyphonicConfig.POLYPHONIC_BPM)::Vector{Float64}
+  fallback_bpm = _normalize_bpm_value(fallback; fallback=fallback)
+  source = Any[]
+
+  if raw isa AbstractVector
+    append!(source, raw)
+  elseif raw !== nothing
+    push!(source, raw)
+  end
+
+  isempty(source) && push!(source, fallback_bpm)
+
+  target_len = max(expected_len, 1)
+  out = Float64[]
+  sizehint!(out, target_len)
+  last_raw = source[end]
+
+  for i in 1:target_len
+    raw_val = i <= length(source) ? source[i] : last_raw
+    push!(out, _normalize_bpm_value(raw_val; fallback=fallback_bpm))
+  end
+
+  return out
+end
+
+function _step_durations_from_bpm_series(bpm_series::AbstractVector)::Vector{Float64}
+  return Float64[PolyphonicConfig.step_duration_from_bpm(bpm) for bpm in bpm_series]
+end
+
+function _step_onsets_from_durations(step_durations::AbstractVector)::Vector{Float64}
+  onsets = Float64[]
+  sizehint!(onsets, length(step_durations))
+  current = 0.0
+  for dur in step_durations
+    push!(onsets, current)
+    current += float(dur)
+  end
+  return onsets
+end
+
 function generate_centered_targets(n::Int, center::Real, spread::Real)::Vector{Float64}
   n = max(n, 1)
   if n == 1
@@ -820,8 +865,7 @@ function generate_polyphonic()
     end
   end
 
-  bpm = PolyphonicConfig.sanitize_bpm(_parse_float(get(gp, "bpm", PolyphonicConfig.POLYPHONIC_BPM)))
-  step_duration = PolyphonicConfig.step_duration_from_bpm(bpm)
+  bpm = _normalize_bpm_value(get(gp, "bpm", PolyphonicConfig.POLYPHONIC_BPM))
 
   ctx_raw = get(gp, "initial_context", Any[])
 
@@ -850,6 +894,17 @@ function generate_polyphonic()
   if isempty(results)
     push!(results, [Any[[Int(PolyphonicConfig.abs_pitch_min())], 1.0, 0.5, 0.5, 0.5, 0.5, 0, 0.0, 0.5]])
   end
+
+  initial_context_bpm = _normalize_bpm_series(get(gp, "initial_context_bpm", nothing), length(results); fallback=bpm)
+  future_bpm = _normalize_bpm_series(get(gp, "future_bpm", nothing), length(stream_counts); fallback=bpm)
+  initial_step_durations = _step_durations_from_bpm_series(initial_context_bpm)
+  future_step_durations = _step_durations_from_bpm_series(future_bpm)
+  initial_step_onsets = _step_onsets_from_durations(initial_step_durations)
+  future_step_onsets = _step_onsets_from_durations(future_step_durations)
+  base_onset = isempty(initial_step_durations) ? 0.0 : sum(initial_step_durations)
+  future_step_onsets = Float64[base_onset + onset for onset in future_step_onsets]
+  bpm_series = vcat(initial_context_bpm, future_bpm)
+  step_durations = vcat(initial_step_durations, future_step_durations)
 
   # Indices for NEW format
   note_abs_idx    = 1
@@ -1514,7 +1569,7 @@ function generate_polyphonic()
         push!(amps, a_each)
       end
     end
-    onset = (i - 1) * step_duration
+    onset = i <= length(initial_step_onsets) ? initial_step_onsets[i] : base_onset
     DissonanceStmManager.commit!(stm_mgr, midi_notes, amps, onset)
   end
 
@@ -2130,7 +2185,7 @@ end
     MultiStreamManager.update_caches_permanently!(area_mgrs[:stream], q_g)
 
     # ---- Decide realized notes per stream (within band + chord_range, size by density, choose by dissonance LAST) ----
-    onset = float(base_step_index + idx0) * step_duration
+    onset = step_idx <= length(future_step_onsets) ? future_step_onsets[step_idx] : base_onset
 
     dis_target_raw = array_param(gp, "dissonance_target", idx0)
     target01 = dis_target_raw === nothing ? PolyphonicConfig.DEFAULT_TARGET_01 : clamp(_parse_float(dis_target_raw), 0.0, 1.0)
@@ -2362,8 +2417,12 @@ end
     "processingTime" => processing_time_s,
     "streamStrengths" => nothing,
     "timbreSeries" => timbre_series,
-    "bpm" => bpm,
-    "stepDuration" => step_duration
+    "bpm" => isempty(future_bpm) ? bpm : future_bpm[1],
+    "stepDuration" => isempty(future_step_durations) ? PolyphonicConfig.step_duration_from_bpm(bpm) : future_step_durations[1],
+    "initialContextBpm" => initial_context_bpm,
+    "futureBpm" => future_bpm,
+    "bpmSeries" => bpm_series,
+    "stepDurations" => step_durations
   )
 end
 

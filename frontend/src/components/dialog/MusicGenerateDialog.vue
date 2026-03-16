@@ -54,17 +54,6 @@
             </div>
           </div>
 
-          <v-text-field
-            v-model.number="generationBpm"
-            label="BPM"
-            type="number"
-            min="1"
-            density="compact"
-            hide-details
-            variant="outlined"
-            class="mr-2 bpm-input-dialog"
-          />
-
           <v-btn
             color="success"
             class="mr-2"
@@ -86,7 +75,7 @@
         <v-card variant="outlined" class="grid-card context-card">
           <GridContainer
             title="1. Initial Context (Past Context)"
-            v-model:rows="contextRows"
+            v-model:rows="contextRowsForGrid"
             v-model:steps="contextSteps"
             v-model:streamCount="contextStreamCount"
             :showStreamCount="true"
@@ -207,7 +196,7 @@ const isProcessing = computed(
 
 /** ========== 音源側ステート(必要最低限) ========== */
 const music = ref({ loading: false, setDataDialog: false, tracks: [] as any[], midiData: null })
-const generationBpm = ref<number>(240)
+const DEFAULT_BPM = 480
 
 /** 共通型 */
 type GridRowData = {
@@ -492,6 +481,33 @@ const contextStreamCount = ref(1)
 const contextRows = ref<GridRowData[]>([])
 const suppressContextWatch = ref(false)
 
+const makeBpmGridRow = (data: number[]): GridRowData => ({
+  name: 'Initial Context BPM',
+  shortName: 'BPM',
+  data,
+  config: {
+    min: 1,
+    max: 960,
+    step: 1,
+    isInt: true
+  }
+})
+
+const initialContextBpm = ref<number[]>(Array(contextSteps.value).fill(DEFAULT_BPM))
+
+const contextRowsForGrid = computed<GridRowData[]>({
+  get: () => [
+    makeBpmGridRow(initialContextBpm.value),
+    ...contextRows.value
+  ],
+  set: (rows: GridRowData[]) => {
+    const nextRows = Array.isArray(rows) ? [...rows] : []
+    const bpmRow = nextRows.shift()
+    initialContextBpm.value = normalizeBpmSeries(bpmRow?.data, contextSteps.value)
+    contextRows.value = nextRows
+  }
+})
+
 const makeContextConfig = (dimKey: string) => {
   if (dimKey === 'abs_note') {
     return { min: 12, max: 120, isInt: true, step: 1, inputMode: 'note-array' as const }
@@ -684,6 +700,7 @@ watch(contextSteps, (len) => {
     if (data.length > len) data.splice(len)
     return { ...row, data }
   })
+  initialContextBpm.value = normalizeBpmSeries(initialContextBpm.value, len)
 })
 
 // Streams が増減したとき: 6行単位で追加/削除
@@ -1017,6 +1034,22 @@ const genRowMetas: GenRowMeta[] = [
       "最終段の和音詳細化で、roughness（不協和度）をどれくらいに寄せたいかの目標値です。",
       "0：協和寄り（濁りが少ない）。",
       "1：不協和寄り（濁りが強い）。"
+    )
+  },
+  {
+    shortName: "BPM",
+    name: "Future BPM",
+    key: "future_bpm",
+    min: 1,
+    max: 960,
+    step: 1,
+    isInt: true,
+    defaultFactory: (len) => constant(DEFAULT_BPM, len),
+    help: H(
+      { min: 1, max: 960, step: 1, isInt: true },
+      "各 future step の BPM です。生成後の各 step 長と wav 生成のテンポに使われます。",
+      "1：非常に遅く、1 step が長い。",
+      "960：非常に速く、1 step が短い。"
     )
   },
 
@@ -1440,6 +1473,7 @@ const buildGenParamsFromRows = () => {
   result.stream_comp_weight = get('stream_comp_weight')
   result.note_register_freedom  = get('note_register_freedom')
   result.dissonance_target      = get('dissonance_target')
+  result.future_bpm             = get('future_bpm')
 
   complexityDimensionKeys.forEach((key) => {
     result[`${key}_global`] = get(`${key}_global`)
@@ -1462,9 +1496,25 @@ const normalizeNumber = (val: any, fallback: number) => {
 }
 
 const normalizeBpm = (val: any) => {
-  const bpm = normalizeNumber(val, 240)
-  if (!Number.isFinite(bpm) || bpm < 1) return 240
+  const bpm = normalizeNumber(val, DEFAULT_BPM)
+  if (!Number.isFinite(bpm) || bpm < 1) return DEFAULT_BPM
   return Math.round(bpm)
+}
+
+const normalizeBpmSeries = (val: any, expectedLength: number) => {
+  const source = Array.isArray(val)
+    ? val
+    : (val == null ? [] : [val])
+  const targetLength = Math.max(1, expectedLength)
+  const fallback = source.length > 0 ? source[source.length - 1] : DEFAULT_BPM
+  const out: number[] = []
+
+  for (let i = 0; i < targetLength; i++) {
+    const raw = i < source.length ? source[i] : fallback
+    out.push(normalizeBpm(raw))
+  }
+
+  return out
 }
 
 const normalizeArray = (val: any) => {
@@ -1473,7 +1523,7 @@ const normalizeArray = (val: any) => {
   return [val]
 }
 
-const applyInitialContextFromPayload = async (ctxRaw: any) => {
+const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
   if (!Array.isArray(ctxRaw)) return
   const steps = Math.max(1, ctxRaw.length)
   const streamCount = Math.max(
@@ -1514,13 +1564,13 @@ const applyInitialContextFromPayload = async (ctxRaw: any) => {
   }
 
   contextRows.value = rows
+  initialContextBpm.value = normalizeBpmSeries(bpmRaw, steps)
   await nextTick()
   suppressContextWatch.value = false
 }
 
 const applyGenParamsFromPayload = async (payload: any) => {
   const candidate = payload?.generate_polyphonic ?? payload ?? {}
-  generationBpm.value = normalizeBpm(candidate.bpm)
   if (candidate.merge_threshold_ratio != null) {
     const v = normalizeNumber(candidate.merge_threshold_ratio, mergeThresholdRatio.value)
     mergeThresholdRatio.value = Math.min(1, Math.max(0, Number(v)))
@@ -1528,7 +1578,9 @@ const applyGenParamsFromPayload = async (payload: any) => {
   applyDimensionPolicyFromPayload(candidate.dimension_policy)
 
   const lengths = genRowMetas.map((meta) => {
-    const val = candidate[meta.key]
+    const val = meta.key === 'future_bpm'
+      ? (candidate.future_bpm ?? candidate.bpm)
+      : candidate[meta.key]
     return Array.isArray(val) ? val.length : (val != null ? 1 : 0)
   })
   const steps = Math.max(1, ...lengths)
@@ -1537,7 +1589,14 @@ const applyGenParamsFromPayload = async (payload: any) => {
   genSteps.value = steps
 
   genRows.value = genRowMetas.map((meta) => {
-    const arr = normalizeArray(candidate[meta.key]).map((v: any) => normalizeNumber(v, meta.isInt ? meta.min : 0))
+    const rawVal = meta.key === 'future_bpm'
+      ? (candidate.future_bpm ?? candidate.bpm)
+      : candidate[meta.key]
+    const arr = normalizeArray(rawVal).map((v: any) => (
+      meta.key === 'future_bpm'
+        ? normalizeBpm(v)
+        : normalizeNumber(v, meta.isInt ? meta.min : 0)
+    ))
     const defaults = meta.defaultFactory(steps)
     const data: number[] = []
     for (let i = 0; i < steps; i++) {
@@ -1562,14 +1621,17 @@ const applyGenParamsFromPayload = async (payload: any) => {
 const buildParamsPayload = (jobIdOverride?: string) => {
   const genParams = buildGenParamsFromRows()
   const initialContext = buildInitialContext()
+  const futureBpm = normalizeBpmSeries(genParams.future_bpm, genSteps.value)
   const jobId = jobIdOverride || uuidv4()
 
   const payload: any = {
     generate_polyphonic: {
       job_id: jobId,
-      bpm: normalizeBpm(generationBpm.value),
+      bpm: futureBpm[0] ?? DEFAULT_BPM,
+      future_bpm: futureBpm,
       stream_counts: genParams.stream_counts,
       initial_context: initialContext,
+      initial_context_bpm: normalizeBpmSeries(initialContextBpm.value, contextSteps.value),
       dimension_policy: buildDimensionPolicyPayload(),
       merge_threshold_ratio: mergeThresholdRatio.value,
       use_recent_position_weight: false,
@@ -1606,7 +1668,7 @@ const buildParamsPayload = (jobIdOverride?: string) => {
 const applyParamsPayload = async (payload: any) => {
   if (!payload || typeof payload !== 'object') return
   const candidate = payload.generate_polyphonic ?? payload
-  await applyInitialContextFromPayload(candidate.initial_context)
+  await applyInitialContextFromPayload(candidate.initial_context, candidate.initial_context_bpm ?? candidate.bpm)
   await applyGenParamsFromPayload(candidate)
 }
 
@@ -1716,8 +1778,5 @@ watch(open, (next, prev) => {
   min-width: 68px;
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-.bpm-input-dialog {
-  width: 88px;
 }
 </style>

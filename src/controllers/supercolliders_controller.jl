@@ -8,7 +8,7 @@ using Printf
 import ..PolyphonicConfig
 
 function build_score_events_scd(
-  time_series, step_duration::Float64,
+  time_series, step_durations::AbstractVector{<:Real},
   outfile::String,
   sub_gain::Float64
 )::String
@@ -26,6 +26,7 @@ function build_score_events_scd(
 
   mix_bus = 16
   master_node_id = 900
+  default_step_duration = isempty(step_durations) ? PolyphonicConfig.step_duration_from_bpm(PolyphonicConfig.POLYPHONIC_BPM) : float(step_durations[1])
 
   # ---------- SynthDef (polySynth) with brightness, articulation, tonalness, resonance ----------
   println(io, "a = Score([")
@@ -34,7 +35,7 @@ function build_score_events_scd(
   println(io, @sprintf(
     "        |outBus=%d, freq=440, dur=%.6f, amp=0.18,",
     mix_bus,
-    step_duration
+    default_step_duration
   ))
   println(io, "         brightness=0.5, articulation=0.5, tonalness=0.5, resonance=0.5, sustain=0.0, subGain=1.0|")
   println(io, "")
@@ -237,7 +238,8 @@ function build_score_events_scd(
   base_voice_gain = 0.30
   active_ties = Dict{Tuple{Int,Int},Int}()
 
-  for step_streams in (time_series isa AbstractVector ? time_series : Any[])
+  for (step_idx, step_streams) in enumerate(time_series isa AbstractVector ? time_series : Any[])
+    step_duration = float(step_durations[clamp(step_idx, 1, length(step_durations))])
     next_active_ties = Dict{Tuple{Int,Int},Int}()
     step_voices = StepVoice[]
 
@@ -385,6 +387,56 @@ end
 _parse_float(x) = x isa Real ? float(x) : (x === nothing ? 0.0 : parse(Float64, string(x)))
 _parse_int(x) = x isa Integer ? Int(x) : (x === nothing ? 0 : parse(Int, string(x)))
 
+function _normalize_bpm_value(raw; fallback=PolyphonicConfig.POLYPHONIC_BPM)::Float64
+  bpm = try
+    _parse_float(raw)
+  catch
+    float(fallback)
+  end
+  return PolyphonicConfig.sanitize_bpm(bpm)
+end
+
+function _normalize_bpm_series(raw, expected_len::Int; fallback=PolyphonicConfig.POLYPHONIC_BPM, align_tail::Bool=false)::Vector{Float64}
+  target_len = max(expected_len, 1)
+  source = raw isa AbstractVector ? collect(raw) : (raw === nothing ? Any[] : Any[raw])
+
+  normalized = Float64[]
+  for item in source
+    push!(normalized, _normalize_bpm_value(item; fallback=fallback))
+  end
+
+  isempty(normalized) && return fill(_normalize_bpm_value(fallback; fallback=fallback), target_len)
+
+  if length(normalized) >= target_len
+    start_idx = align_tail ? (length(normalized) - target_len + 1) : 1
+    return normalized[start_idx:(start_idx + target_len - 1)]
+  end
+
+  fallback_bpm = normalized[end]
+  out = copy(normalized)
+  while length(out) < target_len
+    push!(out, fallback_bpm)
+  end
+  return out
+end
+
+function _step_durations_from_bpm_series(bpm_series::AbstractVector{<:Real})::Vector{Float64}
+  return [PolyphonicConfig.step_duration_from_bpm(float(bpm)) for bpm in bpm_series]
+end
+
+function _combine_bpm_series(initial_raw, future_raw, expected_len::Int; fallback=PolyphonicConfig.POLYPHONIC_BPM)::Union{Nothing,Vector{Float64}}
+  if initial_raw === nothing && future_raw === nothing
+    return nothing
+  end
+
+  initial_len = initial_raw isa AbstractVector ? length(initial_raw) : (initial_raw === nothing ? 0 : 1)
+  future_len = future_raw isa AbstractVector ? length(future_raw) : (future_raw === nothing ? 0 : 1)
+
+  initial_series = initial_len > 0 ? _normalize_bpm_series(initial_raw, initial_len; fallback=fallback) : Float64[]
+  future_series = future_len > 0 ? _normalize_bpm_series(future_raw, future_len; fallback=fallback) : Float64[]
+  return _normalize_bpm_series(vcat(initial_series, future_series), expected_len; fallback=fallback, align_tail=true)
+end
+
 function _safe_tmp_path(prefix::AbstractString, suffix::AbstractString)
   return joinpath("/tmp", "$(prefix)_$(uuid4())$(suffix)")
 end
@@ -453,20 +505,36 @@ function render_polyphonic()
 
   time_series_any = _sanitize_time_series(time_series_any)
   raw_sub_gain = get(payload, "sub_gain", 0.0)
+  gp = _to_string_dict(get(payload, "generate_polyphonic", nothing))
   raw_bpm = get(payload, "bpm", nothing)
   if raw_bpm === nothing
-    gp = _to_string_dict(get(payload, "generate_polyphonic", nothing))
     raw_bpm = get(gp, "bpm", nothing)
   end
-  bpm = PolyphonicConfig.sanitize_bpm(_parse_float(raw_bpm === nothing ? PolyphonicConfig.POLYPHONIC_BPM : raw_bpm))
-  step_duration = PolyphonicConfig.step_duration_from_bpm(bpm)
+  raw_bpm_series = get(payload, "bpm_series", get(payload, "future_bpm", nothing))
+  if raw_bpm_series === nothing
+    raw_bpm_series = get(gp, "future_bpm", get(gp, "bpm_series", nothing))
+  end
+  bpm = _normalize_bpm_value(raw_bpm === nothing ? PolyphonicConfig.POLYPHONIC_BPM : raw_bpm)
+  step_count = length(time_series_any)
+  combined_bpm_series = _combine_bpm_series(get(payload, "initial_context_bpm", nothing), get(payload, "future_bpm", nothing), step_count; fallback=bpm)
+  if combined_bpm_series === nothing
+    combined_bpm_series = _combine_bpm_series(get(gp, "initial_context_bpm", nothing), get(gp, "future_bpm", nothing), step_count; fallback=bpm)
+  end
+  bpm_series = if raw_bpm_series !== nothing
+    _normalize_bpm_series(raw_bpm_series, step_count; fallback=bpm, align_tail=true)
+  elseif combined_bpm_series !== nothing
+    combined_bpm_series
+  else
+    _normalize_bpm_series(nothing, step_count; fallback=bpm, align_tail=true)
+  end
+  step_durations = _step_durations_from_bpm_series(bpm_series)
   sub_gain = clamp(_parse_float(raw_sub_gain), 0.0, 1.0)
 
   scd_path = _safe_tmp_path("supercollider_render_polyphonic", ".scd")
   wav_path = _safe_tmp_path("supercollider_render_polyphonic", ".wav")
 
   try
-    scd_text = build_score_events_scd(time_series_any, step_duration, wav_path, sub_gain)
+    scd_text = build_score_events_scd(time_series_any, step_durations, wav_path, sub_gain)
     open(scd_path, "w") do f
       write(f, scd_text)
     end
@@ -488,8 +556,10 @@ function render_polyphonic()
       "audio_data" => "data:audio/wav;base64,$audio_b64",
       "scd_file_path" => scd_path,
       "sound_file_path" => wav_path,
-      "bpm" => bpm,
-      "stepDuration" => step_duration,
+      "bpm" => (isempty(bpm_series) ? bpm : bpm_series[1]),
+      "bpmSeries" => bpm_series,
+      "stepDuration" => (isempty(step_durations) ? PolyphonicConfig.step_duration_from_bpm(bpm) : step_durations[1]),
+      "stepDurations" => step_durations,
       "subGain" => sub_gain,
     )
   catch e
@@ -506,8 +576,10 @@ function render_polyphonic()
       "error" => bt_str,
       "scd_file_path" => scd_path,
       "sound_file_path" => wav_path,
-      "bpm" => bpm,
-      "stepDuration" => step_duration,
+      "bpm" => (isempty(bpm_series) ? bpm : bpm_series[1]),
+      "bpmSeries" => bpm_series,
+      "stepDuration" => (isempty(step_durations) ? PolyphonicConfig.step_duration_from_bpm(bpm) : step_durations[1]),
+      "stepDurations" => step_durations,
       "subGain" => sub_gain,
     )
   end
