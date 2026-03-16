@@ -1221,6 +1221,34 @@ function generate_polyphonic()
     end
   end
 
+  initial_context_steps = length(results)
+
+  function _observed_chord_range_and_density(abs_notes_raw)::Tuple{Int,Float64}
+    notes = _normalize_abs_notes(abs_notes_raw)
+    sort!(notes)
+    uniq = unique(notes)
+    isempty(uniq) && return (0, 0.0)
+
+    low = first(uniq)
+    high = last(uniq)
+    chord_range = clamp(high - low, CHORD_RANGE_MIN, CHORD_RANGE_MAX)
+    slot_count = max((high - low + 1), 1)
+    density = clamp(float(length(uniq)) / float(slot_count), 0.0, 1.0)
+    return (chord_range, density)
+  end
+
+  # Initial context uses observed metrics only: derive chord_range/density from abs_notes per stream/step.
+  for step_idx in 1:initial_context_steps
+    step = results[step_idx]
+    for st in step
+      abs_notes = _normalize_abs_notes(st[note_abs_idx])
+      st[note_abs_idx] = abs_notes
+      observed_cr, observed_den = _observed_chord_range_and_density(abs_notes)
+      st[chord_range_idx] = observed_cr
+      st[density_idx] = observed_den
+    end
+  end
+
   merge_threshold_ratio = _parse_float(get(gp, "merge_threshold_ratio", PolyphonicConfig.DEFAULT_POLYPHONIC_MERGE_THRESHOLD_RATIO))
   use_recent_position_weight = _parse_bool(
     get(
@@ -1351,6 +1379,20 @@ function generate_polyphonic()
   hist_den          = matrix_for_idx(density_idx)
   hist_sus          = matrix_for_idx(sustain_idx)
 
+  hist_cr_global = Vector{Vector{Float64}}()
+  hist_den_global = Vector{Vector{Float64}}()
+
+  for step in results
+    step_notes = Int[]
+    for st in step
+      abs_notes = _normalize_abs_notes(st[note_abs_idx])
+      append!(step_notes, abs_notes)
+    end
+    observed_cr, observed_den = _observed_chord_range_and_density(step_notes)
+    push!(hist_cr_global, Float64[float(observed_cr)])
+    push!(hist_den_global, Float64[observed_den])
+  end
+
   hist_note_anchor = Vector{Vector{Int}}()
   note_global_series = Vector{Vector{Float64}}()
 
@@ -1386,6 +1428,9 @@ function generate_polyphonic()
   pad_history!(hist_sus,          [0.5 for _ in 1:first_streams])
   pad_history!(hist_note_anchor, [Int(PolyphonicConfig.abs_pitch_min()) for _ in 1:first_streams])
   pad_history!(hist_area_tmp_anchor, [PolyphonicConfig.area_band_low(PolyphonicConfig.abs_pitch_min()) for _ in 1:first_streams])
+
+  pad_series!(hist_cr_global, Float64[0.0])
+  pad_series!(hist_den_global, Float64[0.0])
 
   pad_series!(note_global_series, Float64[float(PolyphonicConfig.abs_pitch_min())])
 
@@ -1430,9 +1475,16 @@ function generate_polyphonic()
     value_range;
     value_min::Real,
     value_max::Real,
-    track_presence::Bool=false
+    track_presence::Bool=false,
+    global_history=nothing
   )
     offset = offset_for_range(value_min, value_max)
+    global_history_src = global_history === nothing ? history : global_history
+    global_row_width = 1
+    for row in global_history_src
+      global_row_width = max(global_row_width, length(row))
+    end
+
     s_mgr = MultiStreamManager.Manager(
       history,
       merge_threshold_ratio,
@@ -1442,14 +1494,14 @@ function generate_polyphonic()
       track_presence=track_presence
     )
     g_mgr = PolyphonicClusterManager.Manager(
-      global_series_from_matrix(history, offset),
+      global_series_from_matrix(global_history_src, offset),
       merge_threshold_ratio,
       min_window;
       use_streamwise_surface_average=true,
       stream_axis_offset=offset,
       value_min=float(value_min),
-      value_max=float(value_max) + (float(max_streams - 1) * offset),
-      max_set_size=max_streams
+      value_max=float(value_max) + (float(global_row_width - 1) * offset),
+      max_set_size=global_row_width
     )
     PolyphonicClusterManager.process_data!(g_mgr)
     PolyphonicClusterManager.update_caches_permanently(
@@ -1493,7 +1545,8 @@ function generate_polyphonic()
       cr_values;
       value_min=cr_min,
       value_max=cr_max,
-      track_presence=true
+      track_presence=true,
+      global_history=hist_cr_global
     )
   end
 
@@ -1504,7 +1557,8 @@ function generate_polyphonic()
       PolyphonicConfig.FLOAT_STEPS;
       value_min=0.0,
       value_max=1.0,
-      track_presence=true
+      track_presence=true,
+      global_history=hist_den_global
     )
   end
 

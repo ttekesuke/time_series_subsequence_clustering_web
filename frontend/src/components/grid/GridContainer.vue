@@ -84,6 +84,7 @@
 
       <!-- パラメータ生成ボタン -->
       <v-btn
+        v-if="showGenerateParametersButton"
         color="secondary"
         size="small"
         :disabled="!canGenerateParameters"
@@ -252,6 +253,7 @@ const props = defineProps({
   steps: { type: Number, required: true },
   showRowsLength: { type: Boolean, default: true },
   showColsLength: { type: Boolean, default: true },
+  showGenerateParametersButton: { type: Boolean, default: true },
   // 初期コンテキスト用: Streams 入力
   showStreamCount: { type: Boolean, default: false },
   streamCount: { type: Number, default: 0 }
@@ -260,7 +262,8 @@ const props = defineProps({
 const emit = defineEmits([
   'update:rows',
   'update:steps',
-  'update:streamCount'
+  'update:streamCount',
+  'selected-columns-change'
 ])
 
 // --- State ---
@@ -321,6 +324,10 @@ const selectedColumnIndexes = computed<number[]>(() => {
     cols.push(i)
   }
   return cols
+})
+
+watch(selectedColumnIndexes, (cols) => {
+  emit('selected-columns-change', [...cols])
 })
 
 const getStickyLeftStyle = (x: unknown) => {

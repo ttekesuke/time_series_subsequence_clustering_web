@@ -10,7 +10,8 @@ import ..PolyphonicConfig
 function build_score_events_scd(
   time_series, step_durations::AbstractVector{<:Real},
   outfile::String,
-  sub_gain::Float64
+  sub_gain::Float64,
+  tail_pad_seconds::Float64
 )::String
 
   io = IOBuffer()
@@ -40,6 +41,7 @@ function build_score_events_scd(
   println(io, "         brightness=0.5, articulation=0.5, tonalness=0.5, resonance=0.5, sustain=0.0, subGain=1.0|")
   println(io, "")
   println(io, "        var sig, env, transientEnv, kickEnv, snareEnv, snareSnapEnv, snareTailEnv, hatEnv, toneEnv, clickEnv;")
+  println(io, "        var toneHold, toneRel;")
   println(io, "        var gate01, fullLegato, attack, hold, release;")
   println(io, "        var bri, art, ton, res, basePitch, vibRate, vibDepth, vibrato;")
   println(io, "        var kickSweep, snareSweep, whiteBurst, pinkBurst, click, air;")
@@ -67,7 +69,9 @@ function build_score_events_scd(
   println(io, "        snareSnapEnv = EnvGen.ar(Env([0.0, 1.0, 0.0], [0.005 + (1.0 - art) * 0.003, 0.12 + res * 0.28 + (1.0 - ton) * 0.10], [-3, -7]));")
   println(io, "        snareTailEnv = EnvGen.ar(Env.perc(0.001, (0.04 + res * 0.12 + bri * 0.03), curve: -6));")
   println(io, "        hatEnv = EnvGen.ar(Env.perc(0.0003, (0.015 + bri * 0.05 + res * 0.12), curve: -8));")
-  println(io, "        toneEnv = EnvGen.ar(Env.perc(0.001, (0.05 + ton * 0.12 + res * 0.12), curve: -4));")
+  println(io, "        toneHold = (dur * (0.65 + ton * 0.20 + res * 0.20)).clip(0.03, 2.5);")
+  println(io, "        toneRel = (dur * (0.10 + res * 0.25)).clip(0.01, 1.0);")
+  println(io, "        toneEnv = EnvGen.ar(Env.linen(0.001, toneHold, toneRel, 1.0, -4));")
   println(io, "        clickEnv = EnvGen.ar(Env.perc(0.0002, (0.003 + art * 0.008), curve: -9));")
   println(io, "")
   println(io, "        // --- continuous pitch behavior ---")
@@ -340,7 +344,7 @@ function build_score_events_scd(
   end
 
   total_duration = current_time
-  total_duration_pad = total_duration + 2.0
+  total_duration_pad = total_duration + max(0.0, tail_pad_seconds)
 
   println(io, "]);")
   println(io, "")
@@ -529,12 +533,14 @@ function render_polyphonic()
   end
   step_durations = _step_durations_from_bpm_series(bpm_series)
   sub_gain = clamp(_parse_float(raw_sub_gain), 0.0, 1.0)
+  raw_tail_pad_seconds = get(payload, "tail_pad_seconds", get(gp, "tail_pad_seconds", 2.0))
+  tail_pad_seconds = clamp(_parse_float(raw_tail_pad_seconds), 0.0, 10.0)
 
   scd_path = _safe_tmp_path("supercollider_render_polyphonic", ".scd")
   wav_path = _safe_tmp_path("supercollider_render_polyphonic", ".wav")
 
   try
-    scd_text = build_score_events_scd(time_series_any, step_durations, wav_path, sub_gain)
+    scd_text = build_score_events_scd(time_series_any, step_durations, wav_path, sub_gain, tail_pad_seconds)
     open(scd_path, "w") do f
       write(f, scd_text)
     end
@@ -561,6 +567,7 @@ function render_polyphonic()
       "stepDuration" => (isempty(step_durations) ? PolyphonicConfig.step_duration_from_bpm(bpm) : step_durations[1]),
       "stepDurations" => step_durations,
       "subGain" => sub_gain,
+      "tailPadSeconds" => tail_pad_seconds,
     )
   catch e
     bt = catch_backtrace()
@@ -581,6 +588,7 @@ function render_polyphonic()
       "stepDuration" => (isempty(step_durations) ? PolyphonicConfig.step_duration_from_bpm(bpm) : step_durations[1]),
       "stepDurations" => step_durations,
       "subGain" => sub_gain,
+      "tailPadSeconds" => tail_pad_seconds,
     )
   end
 end

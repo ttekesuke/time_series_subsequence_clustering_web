@@ -55,6 +55,16 @@
           </div>
 
           <v-btn
+            color="primary"
+            variant="outlined"
+            class="mr-2"
+            :disabled="!canOpenSoundCheck"
+            @click="openSoundCheckDialog"
+          >
+            Sound Check
+          </v-btn>
+
+          <v-btn
             color="success"
             class="mr-2"
             :loading="music.loading || isProcessing"
@@ -78,6 +88,7 @@
             v-model:rows="contextRowsForGrid"
             v-model:steps="contextSteps"
             v-model:streamCount="contextStreamCount"
+            @selected-columns-change="onContextSelectedColumnsChange"
             :showStreamCount="true"
             :showRowsLength="false"
             :showColsLength="true"
@@ -113,13 +124,64 @@
       <v-card-footer></v-card-footer>
     </v-card>
   </v-dialog>
+
+  <v-dialog v-model="soundCheckDialog" max-width="1200" scrollable>
+    <v-card>
+      <v-card-title class="text-h6 d-flex align-center justify-space-between">
+        <span>Sound Check</span>
+        <v-btn icon @click="soundCheckDialog = false">
+          <v-icon>mdi-close</v-icon>
+        </v-btn>
+      </v-card-title>
+      <v-card-text>
+        <div class="sound-check-layout">
+          <v-card variant="outlined" class="sound-check-grid-card">
+            <GridContainer
+              title="Sound Check Grid"
+              v-model:rows="soundCheckRows"
+              :steps="1"
+              :showRowsLength="false"
+              :showColsLength="false"
+              :showGenerateParametersButton="false"
+            />
+          </v-card>
+
+          <div class="sound-check-controls">
+            <v-select
+              v-model="soundCheckStreamIndex"
+              :items="soundCheckStreamItems"
+              item-title="title"
+              item-value="value"
+              label="Target Stream"
+              density="compact"
+              hide-details
+            />
+
+            <div class="d-flex ga-2">
+              <v-btn color="success" :loading="soundCheckPlaying" @click="playSoundCheckTone">
+                Play
+              </v-btn>
+              <v-btn color="primary" variant="outlined" @click="saveSoundCheckToInitialContext">
+                Save
+              </v-btn>
+            </div>
+          </div>
+
+          <v-card variant="outlined" class="sound-check-fft-card pa-2">
+            <Fft :audioEl="soundCheckAudioEl" :width="980" :height="240" />
+          </v-card>
+        </div>
+      </v-card-text>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch, nextTick } from 'vue'
+import { computed, defineExpose, nextTick, onUnmounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
 import GridContainer from '../grid/GridContainer.vue'
+import Fft from '../audio/Fft.vue'
 
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
@@ -445,21 +507,21 @@ const applyDimensionPolicyFromPayload = (rawPolicy: any) => {
 
 /** ========== 1. Initial Context 用の定義 ========== */
 
-// 次元(9D): [abs_note(midi), vol, brightness, articulation, tonalness, resonance, chord_range(semitones), density, sustain]
-const dimensions = [
+// Initial Context input dimensions (7D): chord_range/density are derived from abs notes.
+const contextInputDimensions = [
   { key: 'abs_note', shortName: 'NOTE_ABS', name: 'NOTE (Abs MIDI)' },
   { key: 'vol', shortName: 'VOLUME', name: 'VOLUME' },
   { key: 'brightness', shortName: 'BRIGHTNESS', name: 'BRIGHTNESS' },
   { key: 'articulation', shortName: 'ARTICULATION', name: 'ARTICULATION' },
   { key: 'tonalness', shortName: 'TONALNESS', name: 'TONALNESS' },
   { key: 'resonance', shortName: 'RESONANCE', name: 'RESONANCE' },
-  { key: 'chord_range', shortName: 'CHORD_RANGE', name: 'CHORD RANGE (semitones)' },
-  { key: 'density', shortName: 'DENSITY', name: 'DENSITY' },
   { key: 'sustain', shortName: 'SUSTAIN', name: 'SUSTAIN' }
 ]
 
 
-// 各次元のデフォルト値 (1ストリーム分) [abs_note, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
+// Strict server shape remains 9D: [abs_note, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
+// Input rows are 7D, and chord_range/density are derived per-step from abs notes.
+// Default values still keep strict indices for payload assembly.
 const defaultContextBase = [60, 1, 0.5, 0.5, 0.5, 0.5, 0, 0, 0.5]
 const areaBandSize = 4
 const areaBandLowMin = 24
@@ -471,15 +533,44 @@ const contextManagedDimensionIndex: Record<Exclude<ManagedDimKey, 'area'>, numbe
   articulation: 3,
   tonalness: 4,
   resonance: 5,
+  chord_range: -1,
+  density: -1,
+  sustain: 6
+}
+
+const strictContextIndexByKey = {
+  abs_note: 0,
+  vol: 1,
+  brightness: 2,
+  articulation: 3,
+  tonalness: 4,
+  resonance: 5,
   chord_range: 6,
   density: 7,
   sustain: 8
-}
+} as const
+
+const contextInputIndexByKey = {
+  abs_note: 0,
+  vol: 1,
+  brightness: 2,
+  articulation: 3,
+  tonalness: 4,
+  resonance: 5,
+  sustain: 6
+} as const
 
 const contextSteps = ref(3)
 const contextStreamCount = ref(1)
 const contextRows = ref<GridRowData[]>([])
 const suppressContextWatch = ref(false)
+const selectedContextColumns = ref<number[]>([])
+const selectedContextColumnForSoundCheck = ref<number | null>(null)
+
+const canOpenSoundCheck = computed(() => {
+  const col = selectedContextColumnForSoundCheck.value
+  return col != null && col >= 0 && col < contextSteps.value
+})
 
 const makeBpmGridRow = (data: number[]): GridRowData => ({
   name: 'Initial Context BPM',
@@ -508,13 +599,172 @@ const contextRowsForGrid = computed<GridRowData[]>({
   }
 })
 
+const onContextSelectedColumnsChange = (raw: unknown) => {
+  if (!Array.isArray(raw)) {
+    selectedContextColumns.value = []
+    return
+  }
+
+  selectedContextColumns.value = raw
+    .map((v) => Number(v))
+    .filter((v) => Number.isInteger(v) && v >= 0 && v < contextSteps.value)
+
+  if (selectedContextColumns.value.length === 1) {
+    selectedContextColumnForSoundCheck.value = selectedContextColumns.value[0]
+  } else if (selectedContextColumns.value.length > 1) {
+    selectedContextColumnForSoundCheck.value = null
+  }
+}
+
+const soundCheckDialog = ref(false)
+const soundCheckRows = ref<GridRowData[]>([])
+const soundCheckPlaying = ref(false)
+const soundCheckStreamIndex = ref(0)
+const soundCheckAudioEl = ref<HTMLAudioElement | null>(null)
+let soundCheckAudioUrl = ''
+
+const soundCheckStreamItems = computed(() => {
+  const items: Array<{ title: string; value: number }> = []
+  for (let i = 0; i < contextStreamCount.value; i++) {
+    items.push({ title: `Stream ${i + 1}`, value: i })
+  }
+  return items
+})
+
+const cloneRowSingleColumn = (row: GridRowData, colIndex: number): GridRowData => {
+  const fallback = row.config.inputMode === 'note-array' ? '' : 0
+  return {
+    ...row,
+    config: { ...row.config },
+    data: [row.data[colIndex] ?? fallback]
+  }
+}
+
+const openSoundCheckDialog = () => {
+  if (!canOpenSoundCheck.value) return
+
+  const colIndex = selectedContextColumnForSoundCheck.value as number
+  soundCheckRows.value = contextRowsForGrid.value.map((row) => cloneRowSingleColumn(row, colIndex))
+  soundCheckStreamIndex.value = Math.min(soundCheckStreamIndex.value, Math.max(0, contextStreamCount.value - 1))
+  soundCheckDialog.value = true
+}
+
+const cleanupSoundCheckAudio = () => {
+  if (soundCheckAudioEl.value) {
+    try { soundCheckAudioEl.value.pause() } catch {}
+    try { soundCheckAudioEl.value.currentTime = 0 } catch {}
+  }
+  soundCheckAudioEl.value = null
+  if (soundCheckAudioUrl) {
+    URL.revokeObjectURL(soundCheckAudioUrl)
+    soundCheckAudioUrl = ''
+  }
+}
+
+const buildSoundCheckVoice = (streamIdx: number) => {
+  const dimsLen = contextInputDimensions.length
+  const baseIndex = 1 + (streamIdx * dimsLen)
+
+  const absNotes = parseAbsNoteCell(soundCheckRows.value[baseIndex + contextInputIndexByKey.abs_note]?.data?.[0] ?? '')
+  const vol = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.vol]?.data?.[0] ?? 1)
+  const brightness = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.brightness]?.data?.[0] ?? 0.5)
+  const articulation = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.articulation]?.data?.[0] ?? 0.5)
+  const tonalness = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.tonalness]?.data?.[0] ?? 0.5)
+  const resonance = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.resonance]?.data?.[0] ?? 0.5)
+  const sustain = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.sustain]?.data?.[0] ?? 0.5)
+  const observed = getObservedChordRangeAndDensity(absNotes)
+
+  return [
+    absNotes.length > 0 ? absNotes : [Math.round(defaultContextBase[0])],
+    Math.max(0, Math.min(1, vol)),
+    Math.max(0, Math.min(1, brightness)),
+    Math.max(0, Math.min(1, articulation)),
+    Math.max(0, Math.min(1, tonalness)),
+    Math.max(0, Math.min(1, resonance)),
+    observed.chordRange,
+    observed.density,
+    Math.max(0, Math.min(1, sustain))
+  ]
+}
+
+const decodeBase64AudioToObjectUrl = (audioData: string) => {
+  const base64 = audioData.includes(',') ? audioData.split(',')[1] : audioData
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  const blob = new Blob([bytes.buffer], { type: 'audio/wav' })
+  return URL.createObjectURL(blob)
+}
+
+const playSoundCheckTone = async () => {
+  if (!soundCheckDialog.value) return
+
+  const streamIdx = Math.max(0, Math.min(contextStreamCount.value - 1, Number(soundCheckStreamIndex.value) || 0))
+  const bpm = normalizeBpm(soundCheckRows.value[0]?.data?.[0] ?? DEFAULT_BPM)
+  const voice = buildSoundCheckVoice(streamIdx)
+  // Sound Check preview uses full-step sustain so BPM changes are easy to hear.
+  voice[8] = 1
+
+  soundCheckPlaying.value = true
+  try {
+    const response = await axios.post('/api/web/supercolliders/render_polyphonic', {
+      time_series: [[voice]],
+      bpm,
+      future_bpm: [bpm],
+      initial_context_bpm: [bpm],
+      tail_pad_seconds: 0.05
+    })
+
+    if (response?.data?.error) {
+      console.error('Sound check render error:', response.data.error)
+      return
+    }
+
+    const audioData = String(response?.data?.audio_data ?? '')
+    if (!audioData) return
+
+    cleanupSoundCheckAudio()
+    soundCheckAudioUrl = decodeBase64AudioToObjectUrl(audioData)
+    const audio = new Audio(soundCheckAudioUrl)
+    soundCheckAudioEl.value = audio
+    const played = audio.play()
+    if (played && typeof (played as Promise<void>).catch === 'function') {
+      ;(played as Promise<void>).catch((err) => {
+        console.error('Sound check play failed:', err)
+      })
+    }
+  } catch (err) {
+    console.error('Sound check request failed:', err)
+  } finally {
+    soundCheckPlaying.value = false
+  }
+}
+
+const saveSoundCheckToInitialContext = () => {
+  if (!canOpenSoundCheck.value || soundCheckRows.value.length === 0) return
+  const colIndex = selectedContextColumnForSoundCheck.value as number
+
+  const nextRows = contextRowsForGrid.value.map((row, idx) => {
+    const next = { ...row, config: { ...row.config }, data: [...row.data] }
+    if (colIndex >= next.data.length) return next
+    next.data[colIndex] = soundCheckRows.value[idx]?.data?.[0] ?? next.data[colIndex]
+    return next
+  })
+
+  contextRowsForGrid.value = nextRows
+  soundCheckDialog.value = false
+}
+
+watch(soundCheckDialog, (isOpen) => {
+  if (!isOpen) {
+    cleanupSoundCheckAudio()
+    soundCheckPlaying.value = false
+  }
+})
+
 const makeContextConfig = (dimKey: string) => {
   if (dimKey === 'abs_note') {
     return { min: 12, max: 120, isInt: true, step: 1, inputMode: 'note-array' as const }
-  } else if (dimKey === 'chord_range') {
-    return { min: 0, max: 127, isInt: true, step: 1 }
-  } else if (dimKey === 'density') {
-    return { min: 0, max: 1, isInt: false, step: 0.01 }
   } else if (dimKey === 'sustain') {
     return { min: 0, max: 1, isInt: false, step: 0.25 }
   } else {
@@ -524,7 +774,7 @@ const makeContextConfig = (dimKey: string) => {
 }
 
 const makeContextRow = (streamIdx: number, dimIdx: number): GridRowData => {
-  const dim = dimensions[dimIdx]
+  const dim = contextInputDimensions[dimIdx]
   const base = defaultContextBase[dimIdx] ?? 0
   return {
     name: `S${streamIdx + 1} ${dim.name}`,
@@ -563,12 +813,30 @@ const formatAbsNoteCell = (notes: unknown): string => {
 
 const getLastContextStepIndex = () => Math.max(contextSteps.value - 1, 0)
 
+const getObservedChordRangeAndDensity = (rawNotes: unknown) => {
+  const parsed = parseAbsNoteCell(rawNotes)
+  if (parsed.length === 0) {
+    return { chordRange: 0, density: 0 }
+  }
+
+  const uniqueSorted = [...parsed].sort((left, right) => left - right).filter((value, idx, arr) => (
+    idx === 0 || value !== arr[idx - 1]
+  ))
+  const minNote = uniqueSorted[0]
+  const maxNote = uniqueSorted[uniqueSorted.length - 1]
+  const chordRange = Math.max(0, Math.round(maxNote - minNote))
+  const slotCount = Math.max(1, chordRange + 1)
+  const density = Math.max(0, Math.min(1, uniqueSorted.length / slotCount))
+
+  return { chordRange, density }
+}
+
 const getLastContextAreaFixedValue = () => {
   const lastStepIndex = getLastContextStepIndex()
   const absNotes: number[] = []
 
   for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
-    const rowIndex = streamIdx * dimensions.length
+    const rowIndex = streamIdx * contextInputDimensions.length
     const row = contextRows.value[rowIndex]
     const notes = parseAbsNoteCell(row?.data[lastStepIndex] ?? '')
     absNotes.push(...notes)
@@ -592,7 +860,7 @@ const getLastContextAreaFixedValues = () => {
   const values: number[] = []
 
   for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
-    const rowIndex = streamIdx * dimensions.length
+    const rowIndex = streamIdx * contextInputDimensions.length
     const row = contextRows.value[rowIndex]
     const notes = parseAbsNoteCell(row?.data[lastStepIndex] ?? '')
 
@@ -617,12 +885,31 @@ const getLastContextAreaFixedValues = () => {
 }
 
 const getLastContextManagedDimensionFixedValue = (key: Exclude<ManagedDimKey, 'area'>) => {
+  if (key === 'chord_range' || key === 'density') {
+    const lastStepIndex = getLastContextStepIndex()
+    const values: number[] = []
+
+    for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
+      const rowIndex = streamIdx * contextInputDimensions.length
+      const row = contextRows.value[rowIndex]
+      const observed = getObservedChordRangeAndDensity(row?.data[lastStepIndex] ?? '')
+      values.push(key === 'chord_range' ? observed.chordRange : observed.density)
+    }
+
+    if (values.length === 0) {
+      return managedDimPolicyConfigs[key].defaultFixedValue
+    }
+
+    const average = values.reduce((sum, value) => sum + value, 0) / values.length
+    return clampDimensionFixedValue(key, average)
+  }
+
   const dimIndex = contextManagedDimensionIndex[key]
   const lastStepIndex = getLastContextStepIndex()
   const values: number[] = []
 
   for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
-    const rowIndex = streamIdx * dimensions.length + dimIndex
+    const rowIndex = streamIdx * contextInputDimensions.length + dimIndex
     const row = contextRows.value[rowIndex]
     values.push(coerceFiniteNumber(row?.data[lastStepIndex], managedDimPolicyConfigs[key].defaultFixedValue))
   }
@@ -636,12 +923,26 @@ const getLastContextManagedDimensionFixedValue = (key: Exclude<ManagedDimKey, 'a
 }
 
 const getLastContextManagedDimensionFixedValues = (key: Exclude<ManagedDimKey, 'area'>) => {
+  if (key === 'chord_range' || key === 'density') {
+    const lastStepIndex = getLastContextStepIndex()
+    const values: number[] = []
+
+    for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
+      const rowIndex = streamIdx * contextInputDimensions.length
+      const row = contextRows.value[rowIndex]
+      const observed = getObservedChordRangeAndDensity(row?.data[lastStepIndex] ?? '')
+      values.push(key === 'chord_range' ? observed.chordRange : observed.density)
+    }
+
+    return values.map((value) => clampDimensionFixedValue(key, value))
+  }
+
   const dimIndex = contextManagedDimensionIndex[key]
   const lastStepIndex = getLastContextStepIndex()
   const values: number[] = []
 
   for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
-    const rowIndex = streamIdx * dimensions.length + dimIndex
+    const rowIndex = streamIdx * contextInputDimensions.length + dimIndex
     const row = contextRows.value[rowIndex]
     values.push(clampDimensionFixedValue(key, row?.data[lastStepIndex]))
   }
@@ -681,7 +982,7 @@ const formatDimensionPolicyDerivedValue = (raw: unknown) => {
 const initContextRows = () => {
   const rows: GridRowData[] = []
   for (let s = 0; s < contextStreamCount.value; s++) {
-    for (let d = 0; d < dimensions.length; d++) {
+    for (let d = 0; d < contextInputDimensions.length; d++) {
       rows.push(makeContextRow(s, d))
     }
   }
@@ -692,6 +993,9 @@ initContextRows()
 // Steps が増減したとき: 行データを合わせる
 watch(contextSteps, (len) => {
   if (suppressContextWatch.value) return
+  if (selectedContextColumnForSoundCheck.value != null && selectedContextColumnForSoundCheck.value >= len) {
+    selectedContextColumnForSoundCheck.value = null
+  }
   contextRows.value = contextRows.value.map((row) => {
     const data = [...row.data]
     while (data.length < len) {
@@ -703,7 +1007,7 @@ watch(contextSteps, (len) => {
   initialContextBpm.value = normalizeBpmSeries(initialContextBpm.value, len)
 })
 
-// Streams が増減したとき: 6行単位で追加/削除
+// Streams が増減したとき: 7行単位で追加/削除
 watch(
   contextStreamCount,
   (newVal, oldVal) => {
@@ -711,11 +1015,11 @@ watch(
     if (oldVal == null) return
     const prev = oldVal as number
     const curr = newVal as number
-    const rowsPerStream = dimensions.length
+    const rowsPerStream = contextInputDimensions.length
 
     if (curr > prev) {
       for (let s = prev; s < curr; s++) {
-        for (let d = 0; d < dimensions.length; d++) {
+        for (let d = 0; d < contextInputDimensions.length; d++) {
           contextRows.value.push(makeContextRow(s, d))
         }
       }
@@ -731,7 +1035,7 @@ watch(
 const buildInitialContext = () => {
   const steps = contextSteps.value
   const streams = contextStreamCount.value
-  const dimsLen = dimensions.length
+  const dimsLen = contextInputDimensions.length
 
   const initial: any[] = []
 
@@ -758,16 +1062,20 @@ const buildInitialContext = () => {
         vals.push(v)
       }
 
-      // vals: [abs_note, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
-      const absNotes = (Array.isArray(vals[0]) ? vals[0] : []).map((value) => Math.round(Number(value))).filter((value) => isFinite(value))
-      const vol = Number(vals[1] ?? 0)
-      const brightness = Number(vals[2] ?? 0.5)
-      const articulation = Number(vals[3] ?? 0.5)
-      const tonalness = Number(vals[4] ?? 0.5)
-      const resonance = Number(vals[5] ?? 0.5)
-      const chordRange = Math.round(Number(vals[6] ?? 0))
-      const density = Number(vals[7] ?? 0)
-      const sustain = Number(vals[8] ?? 0.5)
+      // Input vals: [abs_note, vol, brightness, articulation, tonalness, resonance, sustain]
+      const absRaw = vals[contextInputIndexByKey.abs_note]
+      const absNotes = (Array.isArray(absRaw) ? absRaw : [])
+        .map((value) => Math.round(Number(value)))
+        .filter((value) => isFinite(value))
+      const vol = Number(vals[contextInputIndexByKey.vol] ?? 0)
+      const brightness = Number(vals[contextInputIndexByKey.brightness] ?? 0.5)
+      const articulation = Number(vals[contextInputIndexByKey.articulation] ?? 0.5)
+      const tonalness = Number(vals[contextInputIndexByKey.tonalness] ?? 0.5)
+      const resonance = Number(vals[contextInputIndexByKey.resonance] ?? 0.5)
+      const sustain = Number(vals[contextInputIndexByKey.sustain] ?? 0.5)
+      const observed = getObservedChordRangeAndDensity(absNotes)
+      const chordRange = observed.chordRange
+      const density = observed.density
 
       // server strict: [abs_notes(Int[]), vol, brightness, articulation, tonalness, resonance, chord_range(Int), density, sustain]
       stepArr.push([absNotes.length > 0 ? absNotes : [Math.round(defaultContextBase[0])], vol, brightness, articulation, tonalness, resonance, chordRange, density, sustain])
@@ -1537,14 +1845,16 @@ const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
 
   const rows: GridRowData[] = []
   for (let s = 0; s < streamCount; s++) {
-    for (let d = 0; d < dimensions.length; d++) {
+    for (let d = 0; d < contextInputDimensions.length; d++) {
       const row = makeContextRow(s, d)
-      const base = defaultContextBase[d] ?? 0
+      const key = contextInputDimensions[d]?.key as keyof typeof strictContextIndexByKey
+      const strictIndex = strictContextIndexByKey[key]
+      const base = defaultContextBase[strictIndex] ?? 0
       const data: Array<number | string> = []
       for (let step = 0; step < steps; step++) {
         const stepArr = ctxRaw[step]
         const streamArr = Array.isArray(stepArr) ? stepArr[s] : null
-        let rawVal = Array.isArray(streamArr) ? streamArr[d] : null
+        let rawVal = Array.isArray(streamArr) ? streamArr[strictIndex] : null
         if (d === 0) {
           data.push(formatAbsNoteCell(rawVal))
           continue
@@ -1704,10 +2014,12 @@ const handleGeneratePolyphonic = async () => {
   }
 }
 
-onUnmounted(() => cleanupProgress())
+onUnmounted(() => {
+  cleanupProgress()
+  cleanupSoundCheckAudio()
+})
 
 /** 親から open を操作したい場合用 */
-import { defineExpose } from 'vue'
 defineExpose({ open, applyParamsPayload, buildParamsPayload })
 
 watch(open, (next, prev) => {
@@ -1778,5 +2090,24 @@ watch(open, (next, prev) => {
   min-width: 68px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.sound-check-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sound-check-grid-card {
+  height: clamp(240px, 44vh, 520px);
+}
+.sound-check-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.sound-check-controls :deep(.v-input) {
+  max-width: 260px;
+}
+.sound-check-fft-card {
+  overflow-x: auto;
 }
 </style>
