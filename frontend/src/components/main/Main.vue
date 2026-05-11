@@ -124,11 +124,12 @@ import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
 import ClusteringAnalyse from '../../components/features/ClusteringAnalyse.vue'
 import ClusteringGenerate from '../../components/features/ClusteringGenerate.vue'
+import ClusteringQuery from '../../components/features/ClusteringQuery.vue'
 import MusicGenerate from '../../components/features/MusicGenerate.vue'
 import InfoDialog from './InfoDialog.vue'
 import TransferDialog from './TransferDialog.vue'
 const infoDialog = ref(false)
-const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'MusicGenerate'])
+const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'ClusteringQuery', 'MusicGenerate'])
 const selectedMode = ref('ClusteringAnalyse')
 const analysedViewModes = ref(['Cluster', 'Complexity'])
 const analysedViewMode = ref('Complexity')
@@ -190,6 +191,7 @@ const isNowPlaying = computed(() => {
 const selectedComponent = computed(() => {
   if (selectedMode.value === 'ClusteringAnalyse') return ClusteringAnalyse
   if (selectedMode.value === 'ClusteringGenerate') return ClusteringGenerate
+  if (selectedMode.value === 'ClusteringQuery') return ClusteringQuery
   if (selectedMode.value === 'MusicGenerate') return MusicGenerate
   return ClusteringAnalyse
 })

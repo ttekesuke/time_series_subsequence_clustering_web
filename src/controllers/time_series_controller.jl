@@ -46,6 +46,128 @@ function _to_string_dict(raw)
   end
 end
 
+function query()
+  t0 = time()
+  payload = _payload()
+  p = _subhash(payload, "query")
+
+  raw_query = get(p, "query_series", Any[])
+  query_series = Float64[]
+  for v in raw_query
+    push!(query_series, _parse_float(v))
+  end
+
+  raw_db = get(p, "db_series", Any[])
+  db_series = Vector{Vector{Float64}}()
+  for s in raw_db
+    arr = Float64[]
+    if s isa AbstractVector
+      for v in s
+        push!(arr, _parse_float(v))
+      end
+    end
+    push!(db_series, arr)
+  end
+
+  merge_threshold = _parse_float(get(p, "merge_threshold_ratio", 0.3))
+  min_window = SUBSEQUENCE_MIN_WINDOW_SIZE
+
+  candidate_min_master = _parse_int(get(p, "range_min", 0))
+  candidate_max_master = _parse_int(get(p, "range_max", 24))
+  min_match_window = _parse_int(get(p, "min_match_window", 3))
+
+  clusters_per_series = Dict{Int,Any}()
+
+  # normalize/quantize series to Ints as manager expects Int data
+  q_int = [ _parse_int(v) for v in query_series ]
+
+  for si in 1:length(db_series)
+    s = db_series[si]
+    s_int = [ _parse_int(v) for v in s ]
+
+    combined = vcat(q_int, s_int)
+
+    # create manager with range_fixed so distance scaling uses provided range
+    manager = TimeSeriesClusterManager(
+      copy(combined),
+      merge_threshold,
+      min_window,
+      true;
+      scale_mode = :range_fixed,
+      range_min = candidate_min_master,
+      range_max = candidate_max_master
+    )
+
+    process_data!(manager)
+
+    # extract clusters/timeline
+    timeline = clusters_to_timeline(manager.clusters, min_window)
+    clusters_dict = clusters_to_dict(manager.clusters)
+
+    # filter timeline entries that include indices from both query and db parts
+    qlen = length(q_int)
+    slen = length(s_int)
+    cross_entries = Any[]
+    for entry in timeline
+      inds = entry["indices"]::Vector{Int}
+      has_q = any(i -> i < qlen, inds)
+      has_db = any(i -> i >= qlen, inds)
+      if has_q && has_db
+        ws = Int(entry["window_size"])  # ensure Int
+        if ws < min_match_window
+          continue
+        end
+
+        # raw positions
+        q_raw = [i for i in inds if i < qlen]
+        db_raw = [i for i in inds if i >= qlen]
+
+        # filter starts so that the subsequence of length ws fits entirely within each region
+        q_indices = [i for i in q_raw if i + ws <= qlen]
+        db_indices = [i - qlen for i in db_raw if (i - qlen) + ws <= slen]
+
+        if !isempty(q_indices) && !isempty(db_indices)
+          push!(cross_entries, Dict(
+            "window_size" => ws,
+            "cluster_id" => entry["cluster_id"],
+            "q_indices" => sort(q_indices),
+            "db_indices" => sort(db_indices)
+          ))
+        end
+      end
+    end
+
+    if !isempty(cross_entries)
+      # also produce a simple matches list for frontend compatibility
+      simple_matches = Any[]
+      for e in cross_entries
+        ws = e["window_size"]::Int
+        db_idxs = e["db_indices"]::Vector{Int}
+        q_idxs = e["q_indices"]::Vector{Int}
+        for qi in q_idxs
+          for dbi in db_idxs
+            push!(simple_matches, Dict("q_start" => qi, "start" => dbi, "windowSize" => ws))
+          end
+        end
+      end
+
+      clusters_per_series[si - 1] = Dict(
+        "timeline" => cross_entries,
+        "clusters" => clusters_dict,
+        "matches" => simple_matches
+      )
+    end
+  end
+
+  processing_time_s = round(time() - t0; digits=2)
+  return Dict(
+    "query" => query_series,
+    "dbSeries" => db_series,
+    "clustersPerSeries" => clusters_per_series,
+    "processingTime" => processing_time_s
+  )
+end
+
 function _payload()
   raw = Requests.jsonpayload()
   if raw === nothing || isempty(raw)

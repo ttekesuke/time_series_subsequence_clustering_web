@@ -143,6 +143,9 @@ const draw = () => {
 
   canvas.value.width = width
   canvas.value.height = actualPlotHeight
+  // ensure layout uses the same size (prevent element baseline/layout shifts)
+  canvas.value.style.width = width + 'px'
+  canvas.value.style.height = actualPlotHeight + 'px'
   const canvasHeight = actualPlotHeight
 
   // 背景
@@ -354,6 +357,10 @@ defineExpose({ scrollWrapper, redraw: draw })
   overflow-y: auto;
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+.scroll-wrapper canvas {
+  display: block;
 }
 
 .scroll-wrapper::-webkit-scrollbar {

@@ -551,7 +551,14 @@ const applyColPaste = (clipboard: GridStructuredClipboard) => {
 // Steps 入力変更
 const onStepsInput = (e: Event) => {
   const target = e.target as HTMLInputElement
-  stepsDraft.value = target.value
+  const raw = target.value
+  stepsDraft.value = raw
+  // try to update immediately when user types a valid integer
+  const v = parseInt(raw, 10)
+  if (!Number.isNaN(v) && v >= 1) {
+    if (v !== props.steps) emit('update:steps', v)
+    stepsDraft.value = String(v)
+  }
 }
 
 const onStepsBlur = (e: Event) => {
