@@ -67,14 +67,14 @@ const open = computed({ get: () => props.modelValue, set: (v: boolean) => emit('
 type GridRowData = {
   name: string; shortName: string; data: number[]; config: { min:number; max:number; step?:number; isInt?:boolean }
 }
-const querySteps = ref(100)
+const querySteps = ref(8)
 const queryRows = ref<GridRowData[]>([
-  { name: 'querySeries', shortName: 'Query', data: Array(100).fill(0), config: { min:0, max:11, isInt:true, step:1 } }
+  { name: 'querySeries', shortName: 'Query', data: Array(querySteps.value).fill(0), config: { min:0, max:11, isInt:true, step:1 } }
 ])
 
 const rangeMin = ref(0)
 const rangeMax = ref(11)
-const mergeThreshold = ref(1.0)
+const mergeThreshold = ref(0.02)
 const minMatchWindow = ref(3)
 const loading = ref(false)
 

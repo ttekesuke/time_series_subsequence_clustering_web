@@ -36,7 +36,13 @@
                   >
                     <v-card-text style="font-size:12px; line-height:1.2">
                       <div><strong>q_start:</strong> {{m.q_start}}</div>
-                      <div><strong>db_start:</strong> {{m.start}}</div>
+                      <div>
+                        <strong>db_start:</strong>
+                        <span v-if="m.db_starts && m.db_starts.length > 0">
+                          {{ m.db_starts.slice(0,5).join(', ') }}<span v-if="m.db_starts.length > 5"> …(+{{ m.db_starts.length - 5 }})</span>
+                        </span>
+                        <span v-else>—</span>
+                      </div>
                       <div><strong>len:</strong> {{m.windowSize}}</div>
                     </v-card-text>
                   </v-card>
@@ -103,7 +109,20 @@ const seriesSummaries = computed(() => {
     let matches = []
     if (Array.isArray(entry)) matches = entry
     else if (entry && entry.matches) matches = entry.matches
-    out.push({ seriesIndex: idx, matches })
+
+    // group by q_start + windowSize
+    const groups = new Map()
+    for (const m of matches) {
+      const q = typeof m.q_start !== 'undefined' ? Number(m.q_start) : (typeof m.qStart !== 'undefined' ? Number(m.qStart) : 0)
+      const ws = typeof m.windowSize !== 'undefined' ? Number(m.windowSize) : (typeof m.len !== 'undefined' ? Number(m.len) : 0)
+      const db = typeof m.start !== 'undefined' ? Number(m.start) : (typeof m.db_start !== 'undefined' ? Number(m.db_start) : 0)
+      const key = `${q}:${ws}`
+      if (!groups.has(key)) groups.set(key, { q_start: q, windowSize: ws, db_starts: new Set() })
+      groups.get(key).db_starts.add(db)
+    }
+
+    const grouped = Array.from(groups.values()).map(g => ({ q_start: g.q_start, windowSize: g.windowSize, db_starts: Array.from(g.db_starts).sort((a,b)=>a-b) }))
+    out.push({ seriesIndex: idx, matches: grouped })
   }
   return out.sort((a,b) => b.matches.length - a.matches.length)
 })
@@ -114,7 +133,7 @@ const showSeries = (i: number) => {
 
 const hoveredMatch = ref<any | null>(null)
 const highlightQIndices = computed(() => hoveredMatch.value ? [hoveredMatch.value.q_start] : [])
-const highlightDBIndices = computed(() => hoveredMatch.value ? [hoveredMatch.value.start] : [])
+const highlightDBIndices = computed(() => hoveredMatch.value ? (hoveredMatch.value.db_starts || []) : [])
 const highlightWindowSize = computed(() => hoveredMatch.value ? (hoveredMatch.value.windowSize || 0) : 0)
 
 // expose open dialog from header
