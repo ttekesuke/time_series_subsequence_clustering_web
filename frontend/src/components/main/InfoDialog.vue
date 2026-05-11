@@ -34,7 +34,7 @@
         <section class="mb-6">
           <h3>Working with modes</h3>
           <ul class="custom-list">
-            <li>Switch modes from the header select: ClusteringAnalyse, ClusteringGenerate, or MusicGenerate.</li>
+            <li>Switch modes from the header select: ClusteringAnalyse, ClusteringGenerate, MusicGenerate, or MusicAnalyse.</li>
             <li>Use the <strong>SET PARAMS</strong> button in the header (or the feature’s own controls) to open the parameter dialog for the active mode.</li>
             <li>Each feature remembers its state when you close a dialog so you can continue from the last view.</li>
             <li>In MusicGenerate mode, the Play/Stop control in the header becomes available after audio has been rendered.</li>

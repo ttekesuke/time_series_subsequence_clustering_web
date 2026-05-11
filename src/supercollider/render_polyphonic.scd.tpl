@@ -19,40 +19,72 @@ var outPath = "{{SOUND_FILE_PATH}}";
 score = Score([
   [0.0, ['/d_recv',
     SynthDef(\polySynth, {
-        |out=0, freq=440, dur={{STEP_DURATION}}, amp=0.5,
-         brightness=0.5, hardness=0.5, texture=0.0, resonance=0.2|
+        |outBus=16, freq=440, dur={{STEP_DURATION}}, amp=0.3,
+         brightness=0.5, noise=0.2, harmonicity=1.0, attack=0.05,
+         decay=0.20, sustainRelease=0.75|
 
-        var sig, env, core, sub;
-        var attackTime, releaseTime, cutoff, rq, feedback, pulseWidth, noiseSig;
+        var sig, env;
+        var bri, noi, harCtl, atkCtl, decCtl, srCtl;
+        var tonalSig, noiseSig;
+        var ratios, partialAmps, cutoff, sustainLevel, harmonicBlend, cleanMix;
+        var totalCtl, timeScale, attackTime, decayTime, sustainTime, releaseTime;
 
-        attackTime = (1.0 - hardness).linexp(0.0, 1.0, 0.001, 0.2).min(dur * 0.5);
-        releaseTime = dur * (1.0 + (resonance * 2.0));
-        env = EnvGen.ar(Env.perc(attackTime, releaseTime, 1.0, -4), doneAction: 2);
+        bri = brightness.clip(0,1);
+        noi = noise.clip(0,1);
+        harCtl = harmonicity.clip(0,1);
+        atkCtl = attack.clip(0,1);
+        decCtl = decay.clip(0,1);
+        srCtl = sustainRelease.clip(0,1);
 
-        feedback = texture.linlin(0.0, 1.0, 0.0, 2.5);
-        core = SinOscFB.ar(freq, feedback);
+        totalCtl = atkCtl + decCtl + srCtl;
+        timeScale = dur / totalCtl.max(1.0);
 
-        pulseWidth = 0.5 + (texture * 0.4);
-        core = core * (1.0 - (texture * 0.5)) + (Pulse.ar(freq, pulseWidth) * (texture * 0.5));
+        attackTime = atkCtl * timeScale;
+        decayTime = decCtl * timeScale;
+        sustainTime = (srCtl * 0.7) * timeScale;
+        releaseTime = (srCtl * 0.3) * timeScale;
 
-        noiseSig = PinkNoise.ar() * (texture - 0.7).max(0) * 0.5;
-        sub = SinOsc.ar(freq) * (1.0 - texture).max(0.2) * 0.5;
-        sig = core + noiseSig + sub;
+        sustainLevel = 0.65;
+        env = EnvGen.kr(Env([0, 1, sustainLevel, sustainLevel, 0], [attackTime, decayTime, sustainTime, releaseTime], [-4, -2, 0, -4]), doneAction:2);
 
-        cutoff = freq * (1 + (brightness * 20));
-        cutoff = cutoff.clip(20, 20000);
+        ratios = [
+          1.0,
+          2.65 - (0.65 * harCtl),
+          4.10 - (1.10 * harCtl),
+          5.80 - (1.80 * harCtl)
+        ];
+        partialAmps = [1.0, 0.55 * bri, 0.32 * bri.squared, 0.20 * bri.squared];
+        tonalSig = Mix.fill(4, { |i| SinOsc.ar(freq * ratios[i], 0, partialAmps[i]) });
+        harmonicBlend = bri.squared;
+        tonalSig = XFade2.ar(SinOsc.ar(freq, 0, 1.0), tonalSig, (harmonicBlend * 2) - 1);
 
-        rq = (1.0 - (resonance * 0.95)).clip(0.02, 1.0);
-
-        sig = RLPF.ar(sig, cutoff, rq);
-        sig = BHiShelf.ar(sig, 3000, 1.0, (brightness - 0.5) * 12);
+        cutoff = 500 + (bri * 16000);
+        tonalSig = LPF.ar(tonalSig, cutoff.clip(80, 18000));
+        tonalSig = BHiShelf.ar(tonalSig, 3500, 0.8, (bri - 0.5) * 18);
+        noiseSig = WhiteNoise.ar(0.7 * noi);
+        sig = tonalSig + noiseSig;
+        cleanMix = (1.0 - noi).clip(0, 1);
+        sig = (sig * cleanMix) + (tanh(sig * 1.4) * (1.0 - cleanMix));
+        sig = LeakDC.ar(sig);
 
         sig = sig * env * amp;
-        sig = sig.tanh;
-
-        Out.ar(out, sig ! 2);
+        Out.ar(outBus, sig ! 2);
     }).asBytes;
   ]],
+
+  [0.0, ['/d_recv',
+    SynthDef(\masterOut, {
+        |inBus=16, out=0, masterGain=0.92|
+        var sig;
+        sig = In.ar(inBus, 2);
+        sig = LeakDC.ar(sig);
+        sig = CompanderD.ar(sig, thresh: 0.65, slopeBelow: 1.0, slopeAbove: 0.5, clampTime: 0.003, relaxTime: 0.10);
+        sig = Limiter.ar(sig, 0.92, 0.005);
+        Out.ar(out, sig * masterGain);
+    }).asBytes;
+  ]],
+
+  [0.0, ['/s_new', \masterOut, 900, 1, 0, \inBus, 16, \out, 0, \masterGain, 0.92]],
 
   {{SCORE_EVENTS}}
 ]);

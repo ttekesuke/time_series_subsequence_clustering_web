@@ -276,7 +276,7 @@ type GridRowData = {
   disabled?: boolean;
 }
 
-type ManagedDimKey = 'area' | 'chord_range' | 'density' | 'sustain' | 'vol' | 'brightness' | 'articulation' | 'tonalness' | 'resonance'
+type ManagedDimKey = 'area' | 'chord_range' | 'density' | 'vol' | 'brightness' | 'noise' | 'harmonicity' | 'attack' | 'decay_sustain' | 'release'
 
 type DimensionPolicyConfig = {
   label: string
@@ -300,12 +300,13 @@ const managedDimPolicyConfigs: Record<ManagedDimKey, DimensionPolicyConfig> = {
   area: { label: 'AREA', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
   chord_range: { label: 'CR', min: 0, max: 24, step: 1, isInt: true, defaultUseFixedValue: false, defaultFixedValue: 0 },
   density: { label: 'DEN', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0 },
-  sustain: { label: 'SUS', min: 0, max: 1, step: 0.25, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
   vol: { label: 'VOL', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 1 },
   brightness: { label: 'BRI', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
-  articulation: { label: 'ART', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
-  tonalness: { label: 'TON', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
-  resonance: { label: 'RES', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 }
+  noise: { label: 'NOI', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.2 },
+  harmonicity: { label: 'HAR', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
+  attack: { label: 'ATK', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.05 },
+  decay_sustain: { label: 'DEC', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.20 },
+  release: { label: 'S/R', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.75 }
 }
 
 const managedDimKeys = Object.keys(managedDimPolicyConfigs) as ManagedDimKey[]
@@ -328,12 +329,13 @@ const createDefaultDimensionPolicy = (): Record<ManagedDimKey, DimensionPolicyVa
   area: { useFixedValue: managedDimPolicyConfigs.area.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.area.defaultFixedValue, fixedValueSource: 'manual_input' },
   chord_range: { useFixedValue: managedDimPolicyConfigs.chord_range.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.chord_range.defaultFixedValue, fixedValueSource: 'manual_input' },
   density: { useFixedValue: managedDimPolicyConfigs.density.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.density.defaultFixedValue, fixedValueSource: 'manual_input' },
-  sustain: { useFixedValue: managedDimPolicyConfigs.sustain.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.sustain.defaultFixedValue, fixedValueSource: 'manual_input' },
   vol: { useFixedValue: managedDimPolicyConfigs.vol.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.vol.defaultFixedValue, fixedValueSource: 'manual_input' },
   brightness: { useFixedValue: managedDimPolicyConfigs.brightness.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.brightness.defaultFixedValue, fixedValueSource: 'manual_input' },
-  articulation: { useFixedValue: managedDimPolicyConfigs.articulation.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.articulation.defaultFixedValue, fixedValueSource: 'manual_input' },
-  tonalness: { useFixedValue: managedDimPolicyConfigs.tonalness.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.tonalness.defaultFixedValue, fixedValueSource: 'manual_input' },
-  resonance: { useFixedValue: managedDimPolicyConfigs.resonance.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.resonance.defaultFixedValue, fixedValueSource: 'manual_input' }
+  noise: { useFixedValue: managedDimPolicyConfigs.noise.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.noise.defaultFixedValue, fixedValueSource: 'manual_input' },
+  harmonicity: { useFixedValue: managedDimPolicyConfigs.harmonicity.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.harmonicity.defaultFixedValue, fixedValueSource: 'manual_input' },
+  attack: { useFixedValue: managedDimPolicyConfigs.attack.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.attack.defaultFixedValue, fixedValueSource: 'manual_input' },
+  decay_sustain: { useFixedValue: managedDimPolicyConfigs.decay_sustain.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.decay_sustain.defaultFixedValue, fixedValueSource: 'manual_input' },
+  release: { useFixedValue: managedDimPolicyConfigs.release.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.release.defaultFixedValue, fixedValueSource: 'manual_input' }
 })
 
 const dimensionPolicy = ref<Record<ManagedDimKey, DimensionPolicyValue>>(createDefaultDimensionPolicy())
@@ -359,7 +361,6 @@ const coerceBoolean = (val: unknown, fallback: boolean) => {
 const clampDimensionFixedValue = (key: ManagedDimKey, raw: unknown) => {
   const config = managedDimPolicyConfigs[key]
   let value = coerceFiniteNumber(raw, config.defaultFixedValue)
-  if (key === 'sustain') value = Math.round(Math.min(1, Math.max(0, value)) * 4) / 4
   if (config.isInt) value = Math.round(value)
   if (value < config.min) value = config.min
   if (value > config.max) value = config.max
@@ -408,18 +409,23 @@ const dimensionPolicyAliases: Record<string, ManagedDimKey> = {
   'chord-range': 'chord_range',
   den: 'density',
   density: 'density',
-  sus: 'sustain',
-  sustain: 'sustain',
   vol: 'vol',
   volume: 'vol',
   bri: 'brightness',
   brightness: 'brightness',
-  art: 'articulation',
-  articulation: 'articulation',
-  ton: 'tonalness',
-  tonalness: 'tonalness',
-  res: 'resonance',
-  resonance: 'resonance'
+  noi: 'noise',
+  noise: 'noise',
+  har: 'harmonicity',
+  harmonicity: 'harmonicity',
+  harmonic: 'harmonicity',
+  atk: 'attack',
+  attack: 'attack',
+  ds: 'decay_sustain',
+  decay_sustain: 'decay_sustain',
+  decaysustain: 'decay_sustain',
+  'decay-sustain': 'decay_sustain',
+  rel: 'release',
+  release: 'release'
 }
 
 const canonicalizeManagedDimKey = (raw: unknown): ManagedDimKey | null => {
@@ -507,22 +513,24 @@ const applyDimensionPolicyFromPayload = (rawPolicy: any) => {
 
 /** ========== 1. Initial Context 用の定義 ========== */
 
-// Initial Context input dimensions (7D): chord_range/density are derived from abs notes.
+// Initial Context input dimensions: chord_range/density are derived from abs notes.
 const contextInputDimensions = [
   { key: 'abs_note', shortName: 'NOTE_ABS', name: 'NOTE (Abs MIDI)' },
   { key: 'vol', shortName: 'VOLUME', name: 'VOLUME' },
   { key: 'brightness', shortName: 'BRIGHTNESS', name: 'BRIGHTNESS' },
-  { key: 'articulation', shortName: 'ARTICULATION', name: 'ARTICULATION' },
-  { key: 'tonalness', shortName: 'TONALNESS', name: 'TONALNESS' },
-  { key: 'resonance', shortName: 'RESONANCE', name: 'RESONANCE' },
-  { key: 'sustain', shortName: 'SUSTAIN', name: 'SUSTAIN' }
+  { key: 'noise', shortName: 'NOISE', name: 'NOISE' },
+  { key: 'harmonicity', shortName: 'HARMONICITY', name: 'HARMONICITY' },
+  { key: 'attack', shortName: 'ATTACK', name: 'ATTACK' },
+  { key: 'decay_sustain', shortName: 'DECAY', name: 'DECAY' },
+  { key: 'release', shortName: 'SUSTAIN_RELEASE', name: 'SUSTAIN/RELEASE' }
 ]
 
 
-// Strict server shape remains 9D: [abs_note, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
-// Input rows are 7D, and chord_range/density are derived per-step from abs notes.
+// Strict server shape remains derived: [abs_note, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density]
+// Input rows omit chord_range/density because they are derived per-step from abs notes.
 // Default values still keep strict indices for payload assembly.
-const defaultContextBase = [60, 1, 0.5, 0.5, 0.5, 0.5, 0, 0, 0.5]
+const defaultContextInputBase = [60, 1, 0.5, 0.2, 0.8, 0.05, 0.20, 0.75]
+const defaultContextBase = [60, 1, 0.5, 0.2, 0.8, 0.05, 0.20, 0.75, 0, 0]
 const areaBandSize = 4
 const areaBandLowMin = 24
 const areaBandLowMax = 120
@@ -530,34 +538,37 @@ const areaBandLowMax = 120
 const contextManagedDimensionIndex: Record<Exclude<ManagedDimKey, 'area'>, number> = {
   vol: 1,
   brightness: 2,
-  articulation: 3,
-  tonalness: 4,
-  resonance: 5,
+  noise: 3,
+  harmonicity: 4,
+  attack: 5,
+  decay_sustain: 6,
+  release: 7,
   chord_range: -1,
-  density: -1,
-  sustain: 6
+  density: -1
 }
 
 const strictContextIndexByKey = {
   abs_note: 0,
   vol: 1,
   brightness: 2,
-  articulation: 3,
-  tonalness: 4,
-  resonance: 5,
-  chord_range: 6,
-  density: 7,
-  sustain: 8
+  noise: 3,
+  harmonicity: 4,
+  attack: 5,
+  decay_sustain: 6,
+  release: 7,
+  chord_range: 8,
+  density: 9
 } as const
 
 const contextInputIndexByKey = {
   abs_note: 0,
   vol: 1,
   brightness: 2,
-  articulation: 3,
-  tonalness: 4,
-  resonance: 5,
-  sustain: 6
+  noise: 3,
+  harmonicity: 4,
+  attack: 5,
+  decay_sustain: 6,
+  release: 7
 } as const
 
 const contextSteps = ref(3)
@@ -661,30 +672,39 @@ const cleanupSoundCheckAudio = () => {
   }
 }
 
-const buildSoundCheckVoice = (streamIdx: number) => {
+const buildStrictContextVoiceFromRows = (rows: GridRowData[], streamIdx: number, stepIdx: number) => {
   const dimsLen = contextInputDimensions.length
-  const baseIndex = 1 + (streamIdx * dimsLen)
+  const baseIndex = streamIdx * dimsLen
+  const getRowValue = (key: keyof typeof contextInputIndexByKey, fallback: unknown) => {
+    const row = rows[baseIndex + contextInputIndexByKey[key]]
+    return row?.data?.[stepIdx] ?? fallback
+  }
 
-  const absNotes = parseAbsNoteCell(soundCheckRows.value[baseIndex + contextInputIndexByKey.abs_note]?.data?.[0] ?? '')
-  const vol = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.vol]?.data?.[0] ?? 1)
-  const brightness = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.brightness]?.data?.[0] ?? 0.5)
-  const articulation = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.articulation]?.data?.[0] ?? 0.5)
-  const tonalness = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.tonalness]?.data?.[0] ?? 0.5)
-  const resonance = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.resonance]?.data?.[0] ?? 0.5)
-  const sustain = Number(soundCheckRows.value[baseIndex + contextInputIndexByKey.sustain]?.data?.[0] ?? 0.5)
-  const observed = getObservedChordRangeAndDensity(absNotes)
+  const absNotes = parseAbsNoteCell(getRowValue('abs_note', ''))
+  const vol = Number(getRowValue('vol', 1))
+  const brightness = Number(getRowValue('brightness', 0.5))
+  const noise = Number(getRowValue('noise', 0.2))
+  const harmonicity = Number(getRowValue('harmonicity', 0.5))
+  const attack = Number(getRowValue('attack', 0.05))
+  const decaySustain = Number(getRowValue('decay_sustain', 0.20))
+  const release = Number(getRowValue('release', 0.75))
 
   return [
-    absNotes.length > 0 ? absNotes : [Math.round(defaultContextBase[0])],
+    absNotes,
     Math.max(0, Math.min(1, vol)),
     Math.max(0, Math.min(1, brightness)),
-    Math.max(0, Math.min(1, articulation)),
-    Math.max(0, Math.min(1, tonalness)),
-    Math.max(0, Math.min(1, resonance)),
-    observed.chordRange,
-    observed.density,
-    Math.max(0, Math.min(1, sustain))
+    Math.max(0, Math.min(1, noise)),
+    Math.max(0, Math.min(1, harmonicity)),
+    Math.max(0, Math.min(1, attack)),
+    Math.max(0, Math.min(1, decaySustain)),
+    Math.max(0, Math.min(1, release))
   ]
+}
+
+const buildSoundCheckVoice = (streamIdx: number) => {
+  // Sound Check uses the same simplified strict tuple assembly as normal generation.
+  // Its rows are a 1-step slice cloned from the selected initial-context column.
+  return buildStrictContextVoiceFromRows(soundCheckRows.value.slice(1), streamIdx, 0)
 }
 
 const decodeBase64AudioToObjectUrl = (audioData: string) => {
@@ -702,9 +722,6 @@ const playSoundCheckTone = async () => {
   const streamIdx = Math.max(0, Math.min(contextStreamCount.value - 1, Number(soundCheckStreamIndex.value) || 0))
   const bpm = normalizeBpm(soundCheckRows.value[0]?.data?.[0] ?? DEFAULT_BPM)
   const voice = buildSoundCheckVoice(streamIdx)
-  // Sound Check preview uses full-step sustain so BPM changes are easy to hear.
-  voice[8] = 1
-
   soundCheckPlaying.value = true
   try {
     const response = await axios.post('/api/web/supercolliders/render_polyphonic', {
@@ -765,17 +782,15 @@ watch(soundCheckDialog, (isOpen) => {
 const makeContextConfig = (dimKey: string) => {
   if (dimKey === 'abs_note') {
     return { min: 12, max: 120, isInt: true, step: 1, inputMode: 'note-array' as const }
-  } else if (dimKey === 'sustain') {
-    return { min: 0, max: 1, isInt: false, step: 0.25 }
   } else {
-    // vol/brightness/articulation/tonalness/resonance
+    // vol + 6-axis timbre controls
     return { min: 0, max: 1, isInt: false, step: 0.01 }
   }
 }
 
 const makeContextRow = (streamIdx: number, dimIdx: number): GridRowData => {
   const dim = contextInputDimensions[dimIdx]
-  const base = defaultContextBase[dimIdx] ?? 0
+  const base = defaultContextInputBase[dimIdx] ?? 0
   return {
     name: `S${streamIdx + 1} ${dim.name}`,
     shortName: `S${streamIdx + 1} ${dim.shortName}`,
@@ -1035,50 +1050,13 @@ watch(
 const buildInitialContext = () => {
   const steps = contextSteps.value
   const streams = contextStreamCount.value
-  const dimsLen = contextInputDimensions.length
 
   const initial: any[] = []
 
   for (let step = 0; step < steps; step++) {
     const stepArr: any[] = []
     for (let s = 0; s < streams; s++) {
-      const vals: Array<number | number[]> = []
-      for (let d = 0; d < dimsLen; d++) {
-        const rowIndex = s * dimsLen + d
-        const row = contextRows.value[rowIndex]
-        const rawValue = row?.data[step] ?? (row?.config?.inputMode === 'note-array' ? '' : 0)
-        const cfg = row?.config
-        if (cfg?.inputMode === 'note-array') {
-          vals.push(parseAbsNoteCell(rawValue))
-          continue
-        }
-
-        let v = Number(rawValue ?? 0)
-        if (cfg) {
-          if (cfg.isInt) v = Math.round(v)
-          if (v < cfg.min) v = cfg.min
-          if (v > cfg.max) v = cfg.max
-        }
-        vals.push(v)
-      }
-
-      // Input vals: [abs_note, vol, brightness, articulation, tonalness, resonance, sustain]
-      const absRaw = vals[contextInputIndexByKey.abs_note]
-      const absNotes = (Array.isArray(absRaw) ? absRaw : [])
-        .map((value) => Math.round(Number(value)))
-        .filter((value) => isFinite(value))
-      const vol = Number(vals[contextInputIndexByKey.vol] ?? 0)
-      const brightness = Number(vals[contextInputIndexByKey.brightness] ?? 0.5)
-      const articulation = Number(vals[contextInputIndexByKey.articulation] ?? 0.5)
-      const tonalness = Number(vals[contextInputIndexByKey.tonalness] ?? 0.5)
-      const resonance = Number(vals[contextInputIndexByKey.resonance] ?? 0.5)
-      const sustain = Number(vals[contextInputIndexByKey.sustain] ?? 0.5)
-      const observed = getObservedChordRangeAndDensity(absNotes)
-      const chordRange = observed.chordRange
-      const density = observed.density
-
-      // server strict: [abs_notes(Int[]), vol, brightness, articulation, tonalness, resonance, chord_range(Int), density, sustain]
-      stepArr.push([absNotes.length > 0 ? absNotes : [Math.round(defaultContextBase[0])], vol, brightness, articulation, tonalness, resonance, chordRange, density, sustain])
+      stepArr.push(buildStrictContextVoiceFromRows(contextRows.value, s, step))
     }
     initial.push(stepArr)
   }
@@ -1562,82 +1540,6 @@ const genRowMetas: GenRowMeta[] = [
   },
 
   // =========================================================
-  // SUSTAIN : global / center / spread / conc (+ target window)
-  // =========================================================
-  {
-    shortName: "SUS G",
-    name: "SUSTAIN Global Complexity",
-    key: "sustain_global",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-    help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "音のゲート長とタイの度合いの変化複雑度です。",
-      "0：短さ/つながり方が変わりにくい。",
-      "1：短さ/つながり方がよく変わる。"
-    )
-  },
-  {
-    shortName: "SUS C",
-    name: "SUSTAIN Center",
-    key: "sustain_center",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0.5, len),
-  },
-  {
-    shortName: "SUS S",
-    name: "SUSTAIN Spread",
-    key: "sustain_spread",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-  },
-  {
-    shortName: "SUS Conc",
-    name: "SUSTAIN Conformity (Conc)",
-    key: "sustain_conc",
-    min: -1,
-    max: 1,
-    step: 0.01,
-    defaultFactory: (len) => constant(0, len),
-  },
-  {
-    shortName: "SUS Target",
-    name: "SUSTAIN Target",
-    key: "sustain_target",
-    min: 0,
-    max: 1,
-    step: 0.25,
-    defaultFactory: (len) => constant(0.5, len),
-    help: H(
-      { min: 0, max: 1, step: 0.25 },
-      "SUSTAIN の探索中心値です（0.0/0.25/0.5/0.75/1.0）。",
-      "0：1ステップの 1/4 だけ鳴って残りは無音。",
-      "1：同音同ストリームなら次音へ完全タイ。"
-    )
-  },
-  {
-    shortName: "SUS Spread",
-    name: "SUSTAIN Spread (Target Window)",
-    key: "sustain_target_spread",
-    min: 0,
-    max: 1,
-    step: 0.25,
-    defaultFactory: (len) => constant(1, len),
-    help: H(
-      { min: 0, max: 1, step: 0.25 },
-      "SUSTAIN の探索許容幅（中心±幅）です。",
-      "0：中心値のみ探索。",
-      "1：5候補を広く探索。"
-    )
-  },
-
-  // =========================================================
   // vol + timbre dimensions : global / center / spread / conc (+ target window)
   // =========================================================
   {
@@ -1683,13 +1585,15 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   ...makeTimbreDimensionRows('BRI', 'BRIGHTNESS', 'brightness', 'BRIGHTNESS の探索中心値です（0.1刻み）。', '0：暗め中心。', '1：明るめ中心。'),
-  ...makeTimbreDimensionRows('ART', 'ARTICULATION', 'articulation', 'ARTICULATION の探索中心値です（0.1刻み）。', '0：丸い立ち上がり中心。', '1：鋭い立ち上がり中心。'),
-  ...makeTimbreDimensionRows('TON', 'TONALNESS', 'tonalness', 'TONALNESS の探索中心値です（0.1刻み）。', '0：ノイズ寄り中心。', '1：有音高寄り中心。'),
-  ...makeTimbreDimensionRows('RES', 'RESONANCE', 'resonance', 'RESONANCE の探索中心値です（0.1刻み）。', '0：乾いた短い鳴り中心。', '1：響きの長い鳴り中心。'),
+  ...makeTimbreDimensionRows('NOI', 'NOISE', 'noise', 'NOISE の探索中心値です（0.1刻み）。', '0：滑らかで純音寄り。', '1：ざらつきと粗さが強い。'),
+  ...makeTimbreDimensionRows('HAR', 'HARMONICITY', 'harmonicity', 'HARMONICITY の探索中心値です（0.1刻み）。', '0：非整数次倍音寄り。', '1：整数次倍音寄り。'),
+  ...makeTimbreDimensionRows('ATK', 'ATTACK', 'attack', 'ATTACK の探索中心値です。Attack / Decay / SustainRelease の比率で音全体の長さに正規化されます。', '0：立ち上がりほぼなし。', '1：Attack 比率が大きい。'),
+  ...makeTimbreDimensionRows('DEC', 'DECAY', 'decay_sustain', 'DECAY の探索中心値です。Attack / Decay / SustainRelease の比率で音全体の長さに正規化されます。', '0：減衰ほぼなし。', '1：Decay 比率が大きい。'),
+  ...makeTimbreDimensionRows('S/R', 'SUSTAIN/RELEASE', 'release', 'SUSTAIN/RELEASE の探索中心値です。Attack / Decay / SustainRelease の比率で音全体の長さに正規化され、この区間のうち 70% を sustain、30% を release に使います。', '0：末尾区間ほぼなし。', '1：Sustain/Release 比率が大きい。'),
 ]
 
-const complexityDimensionKeys = ['area', 'chord_range', 'density', 'sustain', 'vol', 'brightness', 'articulation', 'tonalness', 'resonance'] as const
-const targetWindowDimensionKeys = ['vol', 'chord_range', 'density', 'sustain', 'brightness', 'articulation', 'tonalness', 'resonance'] as const
+const complexityDimensionKeys = ['area', 'chord_range', 'density', 'vol', 'brightness', 'noise', 'harmonicity', 'attack', 'decay_sustain', 'release'] as const
+const targetWindowDimensionKeys = ['vol', 'chord_range', 'density', 'brightness', 'noise', 'harmonicity', 'attack', 'decay_sustain', 'release'] as const
 
 const makeGenRowData = (meta: GenRowMeta, data: number[]): GridRowData => ({
   name: meta.name,
@@ -1854,7 +1758,18 @@ const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
       for (let step = 0; step < steps; step++) {
         const stepArr = ctxRaw[step]
         const streamArr = Array.isArray(stepArr) ? stepArr[s] : null
-        let rawVal = Array.isArray(streamArr) ? streamArr[strictIndex] : null
+        let rawVal: any = null
+        if (Array.isArray(streamArr)) {
+          if (streamArr.length >= 13) {
+            rawVal = streamArr[strictIndex]
+          } else if (streamArr.length >= 11) {
+            rawVal = streamArr[contextInputIndexByKey[key as keyof typeof contextInputIndexByKey]]
+          } else if (streamArr.length >= 9) {
+            rawVal = streamArr[strictIndex]
+          } else if (streamArr.length >= 7) {
+            rawVal = streamArr[contextInputIndexByKey[key as keyof typeof contextInputIndexByKey]]
+          }
+        }
         if (d === 0) {
           data.push(formatAbsNoteCell(rawVal))
           continue

@@ -26,7 +26,7 @@
           :maxValue="1"
           :valueResolution="0.01"
           :playheadStep="playheadStepForRoll"
-          title="Timbre Roll (BRI/ART/TON/RES)"
+          title="Timbre Roll (BRI/NOI/HAR/ATK/DEC/SR)"
           @scroll="onScroll"
         />
         <StreamsRoll
@@ -176,11 +176,11 @@
           <div class="row-in-quadrant">
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
-              ref="sustainClustersRef"
-              :clustersData="sustainClustersForView"
+              ref="attackClustersRef"
+              :clustersData="attackClustersForView"
               :stepWidth="computedStepWidth"
               :maxSteps="stepCount"
-              title="SUSTAIN Clusters"
+              title="ATK Clusters"
               :highlightedIndices="leftHighlightedIndices"
               :highlightedWindowSize="leftHighlightedWindowSize"
               @hover-cluster="onHoverClusterLeft"
@@ -188,15 +188,15 @@
             />
             <StreamsRoll
               v-else
-              ref="sustainClustersRef"
-              :streamValues="complexityStreams.sustain"
+              ref="attackClustersRef"
+              :streamValues="complexityStreams.attack"
               :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
-              :valueResolution="0.25"
+              :valueResolution="0.01"
               :playheadStep="playheadStepForRoll"
-              title="SUSTAIN Params"
+              title="ATK Params"
               @scroll="onScroll"
             />
           </div>
@@ -232,11 +232,11 @@
           <div class="row-in-quadrant">
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
-              ref="articulationClustersRef"
-              :clustersData="articulationClustersForView"
+              ref="noiseClustersRef"
+              :clustersData="noiseClustersForView"
               :stepWidth="computedStepWidth"
               :maxSteps="stepCount"
-              title="ART Clusters"
+              title="NOI Clusters"
               :highlightedIndices="rightHighlightedIndices"
               :highlightedWindowSize="rightHighlightedWindowSize"
               @hover-cluster="onHoverClusterRight"
@@ -244,15 +244,15 @@
             />
             <StreamsRoll
               v-else
-              ref="articulationClustersRef"
-              :streamValues="complexityStreams.articulation"
+              ref="noiseClustersRef"
+              :streamValues="complexityStreams.noise"
               :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
               :playheadStep="playheadStepForRoll"
-              title="ART Params"
+              title="NOI Params"
               @scroll="onScroll"
             />
           </div>
@@ -260,11 +260,11 @@
           <div class="row-in-quadrant">
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
-              ref="tonalnessClustersRef"
-              :clustersData="tonalnessClustersForView"
+              ref="harmonicityClustersRef"
+              :clustersData="harmonicityClustersForView"
               :stepWidth="computedStepWidth"
               :maxSteps="stepCount"
-              title="TON Clusters"
+              title="HAR Clusters"
               :highlightedIndices="rightHighlightedIndices"
               :highlightedWindowSize="rightHighlightedWindowSize"
               @hover-cluster="onHoverClusterRight"
@@ -272,15 +272,15 @@
             />
             <StreamsRoll
               v-else
-              ref="tonalnessClustersRef"
-              :streamValues="complexityStreams.tonalness"
+              ref="harmonicityClustersRef"
+              :streamValues="complexityStreams.harmonicity"
               :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
               :playheadStep="playheadStepForRoll"
-              title="TON Params"
+              title="HAR Params"
               @scroll="onScroll"
             />
           </div>
@@ -288,11 +288,11 @@
           <div class="row-in-quadrant">
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
-              ref="resonanceClustersRef"
-              :clustersData="resonanceClustersForView"
+              ref="decaySustainClustersRef"
+              :clustersData="decaySustainClustersForView"
               :stepWidth="computedStepWidth"
               :maxSteps="stepCount"
-              title="RES Clusters"
+              title="DEC Clusters"
               :highlightedIndices="rightHighlightedIndices"
               :highlightedWindowSize="rightHighlightedWindowSize"
               @hover-cluster="onHoverClusterRight"
@@ -300,18 +300,47 @@
             />
             <StreamsRoll
               v-else
-              ref="resonanceClustersRef"
-              :streamValues="complexityStreams.resonance"
+              ref="decaySustainClustersRef"
+              :streamValues="complexityStreams.decaySustain"
               :streamLabels="complexityParamStreamLabels"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
               :playheadStep="playheadStepForRoll"
-              title="RES Params"
+              title="DEC Params"
               @scroll="onScroll"
             />
           </div>
+
+          <div class="row-in-quadrant">
+            <ClustersRoll
+              v-if="analysedViewMode === 'Cluster'"
+              ref="releaseClustersRef"
+              :clustersData="releaseClustersForView"
+              :stepWidth="computedStepWidth"
+              :maxSteps="stepCount"
+              title="SR Clusters"
+              :highlightedIndices="rightHighlightedIndices"
+              :highlightedWindowSize="rightHighlightedWindowSize"
+              @hover-cluster="onHoverClusterRight"
+              @scroll="onScroll"
+            />
+            <StreamsRoll
+              v-else
+              ref="releaseClustersRef"
+              :streamValues="complexityStreams.release"
+              :streamLabels="complexityParamStreamLabels"
+              :stepWidth="computedStepWidth"
+              :minValue="0"
+              :maxValue="1"
+              :valueResolution="0.01"
+              :playheadStep="playheadStepForRoll"
+              title="SR Params"
+              @scroll="onScroll"
+            />
+          </div>
+
         </div>
       </div>
     </div>
@@ -401,11 +430,12 @@ const velClustersRef = ref<any>(null)
 const chordRangeClustersRef = ref<any>(null)
 const areaClustersRef = ref<any>(null)
 const densityClustersRef = ref<any>(null)
-const sustainClustersRef = ref<any>(null)
+const attackClustersRef = ref<any>(null)
 const brightnessClustersRef = ref<any>(null)
-const articulationClustersRef = ref<any>(null)
-const tonalnessClustersRef = ref<any>(null)
-const resonanceClustersRef = ref<any>(null)
+const noiseClustersRef = ref<any>(null)
+const harmonicityClustersRef = ref<any>(null)
+const decaySustainClustersRef = ref<any>(null)
+const releaseClustersRef = ref<any>(null)
 const bottomScrollRef = ref<HTMLElement | null>(null)
 const dialogRef = ref<any>(null)
 
@@ -629,11 +659,12 @@ const { syncScroll } = useScrollSync([
   chordRangeClustersRef,
   areaClustersRef,
   densityClustersRef,
-  sustainClustersRef,
+  attackClustersRef,
   brightnessClustersRef,
-  articulationClustersRef,
-  tonalnessClustersRef,
-  resonanceClustersRef,
+  noiseClustersRef,
+  harmonicityClustersRef,
+  decaySustainClustersRef,
+  releaseClustersRef,
   bottomScrollRef
 ])
 const onScroll = (e: Event) => syncScroll(e)
@@ -684,18 +715,19 @@ type ClusterData = {
   cluster_id: string
   indices: number[]
 }
-type StepVecLegacy = [number, number[] | number, number, number, number, number]
-// strict server: [abs_notes(Int[]), vol, brightness, articulation, tonalness, resonance, chord_range(Int), density, sustain]
-type StepVecStrict = [number[], number, number, number, number, number, number, number, number]
-type StepVec = StepVecLegacy | StepVecStrict
+// strict server: [abs_notes(Int[]), vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range(Int), density]
+type StepVecStrict = [number[], number, number, number, number, number, number, number, number?, number?]
+type StepVec = StepVecStrict
 type PolyphonicResponse = {
   timeSeries: StepVec[][];
   clusters: Record<string, { global: ClusterData[]; streams: Record<string, ClusterData[]> }>;
   timbreSeries?: {
     brightness?: number[][]
-    articulation?: number[][]
-    tonalness?: number[][]
-    resonance?: number[][]
+    noise?: number[][]
+    harmonicity?: number[][]
+    attack?: number[][]
+    decay_sustain?: number[][]
+    release?: number[][]
   }
   processingTime: number;
 }
@@ -706,9 +738,11 @@ const generate = ref({
   notes: [] as (number | null)[][],
   velocities: [] as (number | null)[][],
   brightness: [] as (number | null)[][],
-  articulation: [] as (number | null)[][],
-  tonalness: [] as (number | null)[][],
-  resonance: [] as (number | null)[][],
+  noise: [] as (number | null)[][],
+  harmonicity: [] as (number | null)[][],
+  attack: [] as (number | null)[][],
+  decay_sustain: [] as (number | null)[][],
+  release: [] as (number | null)[][],
 
   clusters: {
     area: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
@@ -717,10 +751,11 @@ const generate = ref({
     note:   { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     vol:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     brightness: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    articulation: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    tonalness: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    resonance: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    sustain:{ global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    noise: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    harmonicity: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    attack: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    decay_sustain: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    release:{ global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
   },
 })
 
@@ -749,20 +784,24 @@ const convertStepMajorTimbreToStreamMajor = (stepMajor: any): (number | null)[][
 const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   lastResultJson.value = data
   const ts = (data as any).timeSeries as any[]
-  const { notes, vels, brightnesses, articulations, tonalnesses, resonances } = expandTimeSeries(ts)
+  const { notes, vels, brightnesses, noises, harmonicities, attacks, decaySustains, releases } = expandTimeSeries(ts)
   const timbreSeries = (data as any).timbreSeries ?? {}
   const resBrightness = convertStepMajorTimbreToStreamMajor(timbreSeries.brightness)
-  const resArticulation = convertStepMajorTimbreToStreamMajor(timbreSeries.articulation)
-  const resTonalness = convertStepMajorTimbreToStreamMajor(timbreSeries.tonalness)
-  const resResonance = convertStepMajorTimbreToStreamMajor(timbreSeries.resonance)
+  const resNoise = convertStepMajorTimbreToStreamMajor(timbreSeries.noise)
+  const resHarmonicity = convertStepMajorTimbreToStreamMajor(timbreSeries.harmonicity)
+  const resAttack = convertStepMajorTimbreToStreamMajor(timbreSeries.attack)
+  const resDecaySustain = convertStepMajorTimbreToStreamMajor(timbreSeries.decay_sustain)
+  const resRelease = convertStepMajorTimbreToStreamMajor(timbreSeries.release)
 
   generate.value.rawTimeSeries = ts as any
   generate.value.notes        = notes      // root（abs_notes[0] or pcs[0]）互換用途
   generate.value.velocities   = vels
   generate.value.brightness   = resBrightness.length > 0 ? resBrightness : brightnesses
-  generate.value.articulation = resArticulation.length > 0 ? resArticulation : articulations
-  generate.value.tonalness    = resTonalness.length > 0 ? resTonalness : tonalnesses
-  generate.value.resonance    = resResonance.length > 0 ? resResonance : resonances
+  generate.value.noise        = resNoise.length > 0 ? resNoise : noises
+  generate.value.harmonicity  = resHarmonicity.length > 0 ? resHarmonicity : harmonicities
+  generate.value.attack       = resAttack.length > 0 ? resAttack : attacks
+  generate.value.decay_sustain = resDecaySustain.length > 0 ? resDecaySustain : decaySustains
+  generate.value.release      = resRelease.length > 0 ? resRelease : releases
 
   const clusters = ((data as any).clusters ?? {}) as any
   generate.value.clusters.vol         = clusters.vol         ?? { global: [], streams: {} }
@@ -771,10 +810,11 @@ const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   generate.value.clusters.density     = clusters.density     ?? { global: [], streams: {} }
   generate.value.clusters.note        = clusters.note        ?? { global: [], streams: {} }
   generate.value.clusters.brightness  = clusters.brightness  ?? { global: [], streams: {} }
-  generate.value.clusters.articulation = clusters.articulation ?? { global: [], streams: {} }
-  generate.value.clusters.tonalness   = clusters.tonalness   ?? { global: [], streams: {} }
-  generate.value.clusters.resonance   = clusters.resonance   ?? { global: [], streams: {} }
-  generate.value.clusters.sustain     = clusters.sustain     ?? { global: [], streams: {} }
+  generate.value.clusters.noise       = clusters.noise       ?? { global: [], streams: {} }
+  generate.value.clusters.harmonicity = clusters.harmonicity ?? { global: [], streams: {} }
+  generate.value.clusters.attack      = clusters.attack      ?? { global: [], streams: {} }
+  generate.value.clusters.decay_sustain = clusters.decay_sustain ?? { global: [], streams: {} }
+  generate.value.clusters.release     = clusters.release     ?? { global: [], streams: {} }
 }
 
 const handleGenerated = (data: PolyphonicResponse) => {
@@ -844,45 +884,38 @@ const expandTimeSeries = (ts: any[]) => {
   const notes = make2D()  // root互換: abs_notes[0] or pcs[0]
   const vels = make2D()
   const brightnesses = make2D()
-  const articulations = make2D()
-  const tonalnesses = make2D()
-  const resonances = make2D()
+  const noises = make2D()
+  const harmonicities = make2D()
+  const attacks = make2D()
+  const decaySustains = make2D()
+  const releases = make2D()
 
   ts.forEach((stepStreams, stepIdx) => {
     stepStreams.forEach((vec, streamIdx) => {
       if (!vec) return
 
-      // Strict: [abs_notes(Int[]), vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
-      // Legacy: [oct(Int), pcs(Int|Int[]), vol, bri, hrd, tex]
+      // Strict: [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density]
       if (Array.isArray(vec[0])) {
         const absNotes = (vec[0] as any[]).map(n => Number(n)).filter(n => Number.isFinite(n))
         notes[streamIdx][stepIdx] = absNotes.length ? absNotes[0] : null
         vels[streamIdx][stepIdx]  = vec[1]
         brightnesses[streamIdx][stepIdx] = vec[2]
-        articulations[streamIdx][stepIdx] = vec[3]
-        tonalnesses[streamIdx][stepIdx] = vec[4]
-        resonances[streamIdx][stepIdx] = vec[5]
-      } else {
-        const noteVal = vec[1]
-        const pcs = Array.isArray(noteVal) ? noteVal : [noteVal]
-        notes[streamIdx][stepIdx] = (pcs[0] ?? null)
-        vels[streamIdx][stepIdx]  = vec[2]
-        brightnesses[streamIdx][stepIdx] = vec[3]
-        articulations[streamIdx][stepIdx] = vec[4]
-        tonalnesses[streamIdx][stepIdx] = vec[5]
-        resonances[streamIdx][stepIdx] = 0.5
+        noises[streamIdx][stepIdx] = vec[3]
+        harmonicities[streamIdx][stepIdx] = vec[4]
+        attacks[streamIdx][stepIdx] = vec[5]
+        decaySustains[streamIdx][stepIdx] = vec[6]
+        releases[streamIdx][stepIdx] = vec[7]
       }
     })
   })
 
-  return { notes, vels, brightnesses, articulations, tonalnesses, resonances, maxStreams }
+  return { notes, vels, brightnesses, noises, harmonicities, attacks, decaySustains, releases, maxStreams }
 }
 
 const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
   progress.value.status = 'rendering'
 
-  // renderer は legacy 形式を想定していることが多いので、strict(abs_notes) の場合は変換して投げる
-  const toLegacyForRender = (ts: any[][]) => {
+  const normalizeRenderPayload = (ts: any[][]) => {
     const out: any[] = []
     const chords: any[] = []
 
@@ -898,31 +931,23 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
       for (const vec of step) {
         if (!vec) continue
 
-        // Strict: [abs_notes, vol, brightness, articulation, tonalness, resonance, chord_range, density, sustain]
         if (Array.isArray(vec[0])) {
           const absNotes = normAbs(vec[0])
           const vol = vec[1]
-          const brightness = vec[2]
-          const articulation = vec[3]
-          const tonalness = vec[4]
-          const resonance = vec[5]
-          const chordRange = Number(vec[6] ?? 0)
-          const density = Number(vec[7] ?? 0)
-          const sustain = Number(vec[8] ?? 0.0)
-
-          // Keep strict stream shape so backend can tie by stream index reliably.
-          stepOut.push([absNotes, vol, brightness, articulation, tonalness, resonance, chordRange, density, sustain])
+          stepOut.push([
+            absNotes,
+            vol,
+            Number(vec[2] ?? 0.5),
+            Number(vec[3] ?? 0.2),
+            Number(vec[4] ?? 0.8),
+            Number(vec[5] ?? 0.5),
+            Number(vec[6] ?? 0.5),
+            Number(vec[7] ?? 0.3)
+          ])
 
           const pcs = absNotes
             .map(n => ((n % 12) + 12) % 12)
             .sort((a, b) => a - b)
-          stepChords.push(pcs)
-        } else {
-          // Legacy: [oct, pcs, vol, bri, hrd, tex, sustain?]
-          const oct = vec[0]
-          const pcs = Array.isArray(vec[1]) ? vec[1] : [vec[1]]
-          const sustain = Number(vec[6] ?? 0.0)
-          stepOut.push([oct, pcs, vec[2], vec[3], vec[4], vec[5], sustain])
           stepChords.push(pcs)
         }
       }
@@ -934,18 +959,13 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
     return { out, chords }
   }
 
-  const { out, chords } = toLegacyForRender(timeSeries)
+  const { out, chords } = normalizeRenderPayload(timeSeries)
   const bpmSeries = resolveGenerationBpmSeries(bpmArg, out.length)
   const bpm = bpmSeries[0] ?? DEFAULT_BPM
-  // Temporary A/B knob for octave-lower "sub" layer in synth.
-  // 0.0: off, 0.2~0.4: reduced, 1.0: original.
-  const TEMP_SUB_GAIN_FOR_AUDITION = 0.0
-
   axios.post('/api/web/supercolliders/render_polyphonic', {
     time_series: out,
     bpm,
     bpm_series: bpmSeries,
-    sub_gain: TEMP_SUB_GAIN_FOR_AUDITION,
     note_chords_pitch_classes: chords,
   })
     .then(response => {
@@ -1074,11 +1094,12 @@ const complexityStreams = computed(() => ({
   chordRange: buildComplexityStreams('chord_range'),
   area: buildComplexityStreams('area'),
   brightness: buildComplexityStreams('brightness'),
-  articulation: buildComplexityStreams('articulation'),
-  tonalness: buildComplexityStreams('tonalness'),
-  resonance: buildComplexityStreams('resonance'),
+  noise: buildComplexityStreams('noise'),
+  harmonicity: buildComplexityStreams('harmonicity'),
+  attack: buildComplexityStreams('attack'),
+  decaySustain: buildComplexityStreams('decay_sustain'),
+  release: buildComplexityStreams('release'),
   density: buildComplexityStreams('density'),
-  sustain: buildComplexityStreams('sustain'),
 }))
 
 const dissonanceTargetStreams = computed(() => {
@@ -1132,21 +1153,12 @@ const chordPitchStreams = computed(() => {
         return absNotes.length ? absNotes : null
       }
 
-      // Legacy: (oct + pcs) -> abs MIDI
-      const oct = Number(vec[0])
-      const noteVal = vec[1]
-      const pcs = Array.isArray(noteVal) ? noteVal : [noteVal]
-      const pcsSafe = pcs.filter(n => Number.isFinite(Number(n))).map(n => Number(n))
-
-      if (!Number.isFinite(oct) || pcsSafe.length === 0) return null
-
-      const baseC = (oct + 1) * 12
-      return pcsSafe.map(pc => baseC + ((pc % 12) + 12) % 12)
+      return null
     })
   )
 })
 
-const timbreResultStreamLabels = ['BRI', 'ART', 'TON', 'RES']
+const timbreResultStreamLabels = ['BRI', 'NOI', 'HAR', 'ATK', 'DEC', 'SR']
 
 const volResultStreamLabels = computed(() => {
   const labels: string[] = []
@@ -1172,9 +1184,11 @@ const buildTimbreLane = (matrix: (number | null)[][]) => {
 
 const timbreResultStreams = computed(() => ([
   buildTimbreLane(generate.value.brightness),
-  buildTimbreLane(generate.value.articulation),
-  buildTimbreLane(generate.value.tonalness),
-  buildTimbreLane(generate.value.resonance),
+  buildTimbreLane(generate.value.noise),
+  buildTimbreLane(generate.value.harmonicity),
+  buildTimbreLane(generate.value.attack),
+  buildTimbreLane(generate.value.decay_sustain),
+  buildTimbreLane(generate.value.release),
 ]))
 
 const volResultStreams = computed(() =>
@@ -1226,13 +1240,13 @@ const densityClustersForView = computed<ClusterData[]>(() => {
   return src.streams[String(densityStreamId.value)] || []
 })
 
-const sustainMode = ref<'global' | 'stream'>('global')
-const sustainStreamId = ref<number>(0)
-const sustainClustersForView = computed<ClusterData[]>(() => {
-  const src = (generate.value.clusters as any).sustain
+const attackMode = ref<'global' | 'stream'>('global')
+const attackStreamId = ref<number>(0)
+const attackClustersForView = computed<ClusterData[]>(() => {
+  const src = (generate.value.clusters as any).attack
   if (!src) return []
-  if (sustainMode.value === 'global') return src.global
-  return src.streams[String(sustainStreamId.value)] || []
+  if (attackMode.value === 'global') return src.global
+  return src.streams[String(attackStreamId.value)] || []
 })
 
 const brightnessMode = ref<'global' | 'stream'>('global')
@@ -1244,31 +1258,40 @@ const brightnessClustersForView = computed<ClusterData[]>(() => {
   return src.streams[String(brightnessStreamId.value)] || []
 })
 
-const articulationMode = ref<'global' | 'stream'>('global')
-const articulationStreamId = ref<number>(0)
-const articulationClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.articulation
+const noiseMode = ref<'global' | 'stream'>('global')
+const noiseStreamId = ref<number>(0)
+const noiseClustersForView = computed<ClusterData[]>(() => {
+  const src = generate.value.clusters.noise
   if (!src) return []
-  if (articulationMode.value === 'global') return src.global
-  return src.streams[String(articulationStreamId.value)] || []
+  if (noiseMode.value === 'global') return src.global
+  return src.streams[String(noiseStreamId.value)] || []
 })
 
-const tonalnessMode = ref<'global' | 'stream'>('global')
-const tonalnessStreamId = ref<number>(0)
-const tonalnessClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.tonalness
+const harmonicityMode = ref<'global' | 'stream'>('global')
+const harmonicityStreamId = ref<number>(0)
+const harmonicityClustersForView = computed<ClusterData[]>(() => {
+  const src = generate.value.clusters.harmonicity
   if (!src) return []
-  if (tonalnessMode.value === 'global') return src.global
-  return src.streams[String(tonalnessStreamId.value)] || []
+  if (harmonicityMode.value === 'global') return src.global
+  return src.streams[String(harmonicityStreamId.value)] || []
 })
 
-const resonanceMode = ref<'global' | 'stream'>('global')
-const resonanceStreamId = ref<number>(0)
-const resonanceClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.resonance
+const decaySustainMode = ref<'global' | 'stream'>('global')
+const decaySustainStreamId = ref<number>(0)
+const decaySustainClustersForView = computed<ClusterData[]>(() => {
+  const src = generate.value.clusters.decay_sustain
   if (!src) return []
-  if (resonanceMode.value === 'global') return src.global
-  return src.streams[String(resonanceStreamId.value)] || []
+  if (decaySustainMode.value === 'global') return src.global
+  return src.streams[String(decaySustainStreamId.value)] || []
+})
+
+const releaseMode = ref<'global' | 'stream'>('global')
+const releaseStreamId = ref<number>(0)
+const releaseClustersForView = computed<ClusterData[]>(() => {
+  const src = generate.value.clusters.release
+  if (!src) return []
+  if (releaseMode.value === 'global') return src.global
+  return src.streams[String(releaseStreamId.value)] || []
 })
 
 // ===== highlight =====
