@@ -32,8 +32,8 @@ route("/api/web/time_series/generate_polyphonic", method=POST) do
   TimeSeriesController.generate_polyphonic() |> json
 end
 
-route("/api/web/time_series/query", method=POST) do
-  TimeSeriesController.query() |> json
+route("/api/web/time_series/query_db", method=POST) do
+  TimeSeriesController.query_db() |> json
 end
 
 route("/api/web/time_series/dispatch_generate_polyphonic", method = POST) do

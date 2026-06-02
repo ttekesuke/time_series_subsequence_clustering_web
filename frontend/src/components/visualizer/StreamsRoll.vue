@@ -299,6 +299,16 @@ const onMouseLeave = () => {
   hoverInfo.value = null
 }
 
+const scrollToStep = (step: number, windowSize = 1) => {
+  if (!scrollWrapper.value) return
+  const safeStep = Math.max(0, Number(step) || 0)
+  const safeWindow = Math.max(1, Number(windowSize) || 1)
+  const highlightCenter = (safeStep + safeWindow / 2) * props.stepWidth
+  const nextLeft = highlightCenter - scrollWrapper.value.clientWidth / 2
+  const maxLeft = Math.max(0, scrollWrapper.value.scrollWidth - scrollWrapper.value.clientWidth)
+  scrollWrapper.value.scrollLeft = clamp(nextLeft, 0, maxLeft)
+}
+
 watch(
   () => [
     props.streamValues,
@@ -319,7 +329,7 @@ onMounted(() => {
   setTimeout(draw, 100)
 })
 
-defineExpose({ scrollWrapper, redraw: draw })
+defineExpose({ scrollWrapper, redraw: draw, scrollToStep })
 </script>
 
 <style scoped>

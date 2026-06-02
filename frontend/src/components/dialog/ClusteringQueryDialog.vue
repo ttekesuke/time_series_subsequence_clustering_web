@@ -15,10 +15,7 @@
             />
           </div>
 
-          <div style="height:240px; overflow:auto;" class="mb-4">
-            <div style="margin-bottom:8px">Database preview (showing first 10 of {{dbSeries.length}})</div>
-            <StreamsRoll :streamValues="dbSeriesPreview" :minValue="0" :maxValue="11" :stepWidth="computedDbStepWidth" title="DB Preview"/>
-          </div>
+                  <!-- DB preview removed: DB is provided by server-side InfluxDB -->
 
           <v-row class="mt-4">
             <v-col cols="3">
@@ -78,26 +75,7 @@ const mergeThreshold = ref(0.02)
 const minMatchWindow = ref(3)
 const loading = ref(false)
 
-// build JS DB: create 100 series length 100
-const dbSeries = ref<number[][]>([])
-const generateDb = (count = 100, len = 100) => {
-  const out: number[][] = []
-  const min = Number(rangeMin.value)
-  const max = Number(rangeMax.value)
-  for (let i = 0; i < count; i++) {
-    const s: number[] = []
-    for (let j = 0; j < len; j++) {
-      const v = Math.floor(Math.random() * (max - min + 1)) + min
-      s.push(v)
-    }
-    out.push(s)
-  }
-  return out
-}
-
-onMounted(() => { dbSeries.value = generateDb(100, 100) })
-
-// Keep query row length in sync when steps change (DB is independent)
+// Keep query row length in sync when steps change
 watch(() => querySteps.value, (len) => {
   const v = Math.max(1, Number(len) || 1)
   const row = queryRows.value[0]
@@ -113,14 +91,7 @@ watch(() => querySteps.value, (len) => {
   }
 })
 
-const dbSeriesPreview = computed(() => dbSeries.value.slice(0,10))
-
-const computedDbStepWidth = computed(() => {
-  const len = (dbSeries.value[0] && dbSeries.value[0].length) || querySteps.value || 100
-  const dialogWidth = 1000
-  const padding = 60
-  return Math.max(4, Math.floor((dialogWidth - padding) / Math.max(1, len)))
-})
+// no DB preview step width anymore
 
 const euclidDist = (a: number[], b: number[]) => {
   let s = 0
@@ -136,7 +107,8 @@ const handleQuery = async () => {
     const payload = {
       query: {
         query_series: querySeries,
-        db_series: dbSeries.value,
+        measurement: 'timeseries',
+        batch_size: 500,
         merge_threshold_ratio: mergeThreshold.value,
         range_min: rangeMin.value,
         range_max: rangeMax.value,
@@ -144,7 +116,7 @@ const handleQuery = async () => {
       }
     }
 
-    const resp = await axios.post('/api/web/time_series/query', payload)
+    const resp = await axios.post('/api/web/time_series/query_db', payload)
     // pass through response
     const data = resp.data
     emit('queried', data)

@@ -18,11 +18,20 @@
         <div v-else>
           <div v-for="(info, idx) in seriesSummaries" :key="idx" style="margin-bottom:12px">
             <div style="display:flex; align-items:center; gap:12px;">
-              <div><strong>DB series #{{info.seriesIndex}}</strong> — matches: {{info.matches.length}}</div>
+              <div><strong>DB series {{info.seriesLabel}}</strong> — matches: {{info.matches.length}} / score: {{info.matchScore}}</div>
               <v-btn small @click="showSeries(info.seriesIndex)">View</v-btn>
             </div>
             <div v-if="visibleSeries === info.seriesIndex" style="margin-top:6px">
-              <StreamsRoll :streamValues="[results.dbSeries[info.seriesIndex]]" :minValue="0" :maxValue="11" :stepWidth="computedDbStepWidth" :highlightIndices="highlightDBIndices" :highlightWindowSize="highlightWindowSize" title="DB Series"></StreamsRoll>
+              <StreamsRoll
+                :ref="(el) => setDbStreamsRollRef(el, info.seriesIndex)"
+                :streamValues="[results.dbSeries[info.seriesIndex]]"
+                :minValue="0"
+                :maxValue="11"
+                :stepWidth="sharedStepWidth"
+                :highlightIndices="highlightDBIndices"
+                :highlightWindowSize="highlightWindowSize"
+                title="DB Series"
+              ></StreamsRoll>
               <div style="margin-top:6px">
                 <div class="matches-row">
                   <v-card
@@ -30,7 +39,7 @@
                     :key="mi"
                     class="match-card"
                     outlined
-                    @mouseenter="hoveredMatch = m"
+                    @mouseenter="handleMatchHover(m, info.seriesIndex)"
                     @mouseleave="hoveredMatch = null"
                     style="cursor:default"
                   >
@@ -62,7 +71,11 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClusteringQueryDialog from '../dialog/ClusteringQueryDialog.vue'
-import { useScrollSync } from '../../composables/useScrollSync'
+
+const STREAMS_ROLL_LABEL_WIDTH = 80
+type StreamsRollExpose = {
+  scrollToStep?: (step: number, windowSize?: number) => void
+}
 
 const openDialog = ref(false)
 const query = ref({ timeseries: [] })
@@ -70,11 +83,10 @@ const results = ref({ dbSeries: [], bySeries: {} as Record<number, any[]> })
 const visibleSeries = ref<number | null>(null)
 
 const containerRef = ref<HTMLElement | null>(null)
-const queryStreamsRollRef = ref(null)
+const queryStreamsRollRef = ref<StreamsRollExpose | null>(null)
+const dbStreamsRollRefs = ref<Record<number, StreamsRollExpose | null>>({})
 const containerWidth = ref(0)
 let resizeObserver: ResizeObserver | null = null
-const { syncScroll } = useScrollSync([queryStreamsRollRef])
-const onScroll = (e) => syncScroll(e)
 
 onMounted(() => {
   nextTick(() => { if (containerRef.value) containerWidth.value = containerRef.value.clientWidth })
@@ -87,12 +99,13 @@ onMounted(() => {
 })
 onUnmounted(() => { if (resizeObserver) resizeObserver.disconnect() })
 
-const computedQueryStepWidth = computed(() => Math.max(4, (containerWidth.value || 800) / Math.max(1, (query.value.timeseries.length || 100))))
-
-const computedDbStepWidth = computed(() => {
-  const len = (visibleSeries.value !== null && results.value.dbSeries[visibleSeries.value]) ? results.value.dbSeries[visibleSeries.value].length : (query.value.timeseries.length || 100)
-  return Math.max(4, (containerWidth.value || 800) / Math.max(1, len))
+const availableRollWidth = computed(() => {
+  const width = containerWidth.value || 800
+  return Math.max(1, width - STREAMS_ROLL_LABEL_WIDTH)
 })
+
+const sharedStepWidth = computed(() => Math.max(4, availableRollWidth.value / Math.max(1, (query.value.timeseries.length || 100))))
+const computedQueryStepWidth = sharedStepWidth
 
 const handleQueried = (payload) => {
   query.value.timeseries = payload.query || []
@@ -122,19 +135,38 @@ const seriesSummaries = computed(() => {
     }
 
     const grouped = Array.from(groups.values()).map(g => ({ q_start: g.q_start, windowSize: g.windowSize, db_starts: Array.from(g.db_starts).sort((a,b)=>a-b) }))
-    out.push({ seriesIndex: idx, matches: grouped })
+    const sourceLabel = entry && entry.series_id !== undefined
+      ? `#${entry.series_id}`
+      : (entry && entry.source_index !== undefined ? `#${entry.source_index}` : `#${idx}`)
+    const matchScore = entry && entry.match_score !== undefined
+      ? Number(entry.match_score)
+      : grouped.reduce((sum, m) => sum + Number(m.windowSize || 0) * (m.db_starts?.length || 0), 0)
+    out.push({ seriesIndex: idx, seriesLabel: sourceLabel, matchScore, matches: grouped })
   }
-  return out.sort((a,b) => b.matches.length - a.matches.length)
+  return out.sort((a,b) => b.matchScore - a.matchScore)
 })
 
 const showSeries = (i: number) => {
   visibleSeries.value = visibleSeries.value === i ? null : i
 }
 
+const setDbStreamsRollRef = (el: unknown, seriesIndex: number) => {
+  dbStreamsRollRefs.value[seriesIndex] = el as StreamsRollExpose | null
+}
+
 const hoveredMatch = ref<any | null>(null)
 const highlightQIndices = computed(() => hoveredMatch.value ? [hoveredMatch.value.q_start] : [])
 const highlightDBIndices = computed(() => hoveredMatch.value ? (hoveredMatch.value.db_starts || []) : [])
 const highlightWindowSize = computed(() => hoveredMatch.value ? (hoveredMatch.value.windowSize || 0) : 0)
+
+const handleMatchHover = async (match: any, seriesIndex: number) => {
+  hoveredMatch.value = match
+  await nextTick()
+  const windowSize = Number(match?.windowSize || 1)
+  queryStreamsRollRef.value?.scrollToStep?.(Number(match?.q_start || 0), windowSize)
+  const dbStart = Array.isArray(match?.db_starts) && match.db_starts.length > 0 ? Number(match.db_starts[0]) : 0
+  dbStreamsRollRefs.value[seriesIndex]?.scrollToStep?.(dbStart, windowSize)
+}
 
 // expose open dialog from header
 import { defineExpose } from 'vue'

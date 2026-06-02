@@ -46,10 +46,11 @@ function _to_string_dict(raw)
   end
 end
 
-function query()
+function query_db()
   t0 = time()
   payload = _payload()
   p = _subhash(payload, "query")
+  db_series_all = Any[]
 
   raw_query = get(p, "query_series", Any[])
   query_series = Float64[]
@@ -57,115 +58,364 @@ function query()
     push!(query_series, _parse_float(v))
   end
 
-  raw_db = get(p, "db_series", Any[])
-  db_series = Vector{Vector{Float64}}()
-  for s in raw_db
-    arr = Float64[]
-    if s isa AbstractVector
-      for v in s
-        push!(arr, _parse_float(v))
-      end
-    end
-    push!(db_series, arr)
-  end
-
+  # influx params
+  measurement = string(get(p, "measurement", "timeseries"))
+  influx_url = get(ENV, "INFLUX_URL", "http://influxdb:8086")
+  influx_db = string(get(ENV, "INFLUX_DB", "telegraf"))
   merge_threshold = _parse_float(get(p, "merge_threshold_ratio", 0.3))
   min_window = SUBSEQUENCE_MIN_WINDOW_SIZE
-
+  min_match_window = _parse_int(get(p, "min_match_window", 3))
   candidate_min_master = _parse_int(get(p, "range_min", 0))
   candidate_max_master = _parse_int(get(p, "range_max", 24))
-  min_match_window = _parse_int(get(p, "min_match_window", 3))
 
   clusters_per_series = Dict{Int,Any}()
+  matched_series = Any[]
 
-  # normalize/quantize series to Ints as manager expects Int data
+  series_stats = _fetch_series_stats(influx_url, influx_db, measurement)
+
+  if isempty(series_stats)
+    return Dict("query"=>query_series, "dbSeries"=>Any[], "clustersPerSeries"=>Dict{Int,Any}(), "processingTime"=>round(time()-t0;digits=2))
+  end
+
+  chunks = _chunk_series_by_memory_budget(series_stats)
   q_int = [ _parse_int(v) for v in query_series ]
 
-  for si in 1:length(db_series)
-    s = db_series[si]
-    s_int = [ _parse_int(v) for v in s ]
+  query_seed_manager = TimeSeriesClusterManager(
+    copy(q_int),
+    merge_threshold,
+    min_window,
+    true;
+    scale_mode = :range_fixed,
+    range_min = candidate_min_master,
+    range_max = candidate_max_master
+  )
 
-    combined = vcat(q_int, s_int)
+  # Seed all query-side subsequences once, then reuse this state for each DB
+  # series. This preserves the per-series scan behavior while avoiding repeated
+  # query-only clustering work.
+  process_data!(query_seed_manager)
 
-    # create manager with range_fixed so distance scaling uses provided range
-    manager = TimeSeriesClusterManager(
-      copy(combined),
-      merge_threshold,
-      min_window,
-      true;
-      scale_mode = :range_fixed,
-      range_min = candidate_min_master,
-      range_max = candidate_max_master
-    )
+  for chunk in chunks
+    db_series_grouped = _fetch_grouped_db_series(influx_url, influx_db, measurement, chunk)
 
-    process_data!(manager)
+    for series_info in db_series_grouped
+      sid = string(series_info["series_id"])
+      source_index = _parse_int(get(series_info, "source_index", 0))
+      db_series_values = series_info["values"]::Vector{Float64}
 
-    # extract clusters/timeline
-    timeline = clusters_to_timeline(manager.clusters, min_window)
-    clusters_dict = clusters_to_dict(manager.clusters)
+      manager = deepcopy(query_seed_manager)
 
-    # filter timeline entries that include indices from both query and db parts
-    qlen = length(q_int)
-    slen = length(s_int)
-    cross_entries = Any[]
-    for entry in timeline
-      inds = entry["indices"]::Vector{Int}
-      has_q = any(i -> i < qlen, inds)
-      has_db = any(i -> i >= qlen, inds)
-      if has_q && has_db
-        ws = Int(entry["window_size"])  # ensure Int
-        if ws < min_match_window
-          continue
-        end
+      matched_result = nothing
 
-        # raw positions
-        q_raw = [i for i in inds if i < qlen]
-        db_raw = [i for i in inds if i >= qlen]
-
-        # filter starts so that the subsequence of length ws fits entirely within each region
-        q_indices = [i for i in q_raw if i + ws <= qlen]
-        db_indices = [i - qlen for i in db_raw if (i - qlen) + ws <= slen]
-
-        if !isempty(q_indices) && !isempty(db_indices)
-          push!(cross_entries, Dict(
-            "window_size" => ws,
-            "cluster_id" => entry["cluster_id"],
-            "q_indices" => sort(q_indices),
-            "db_indices" => sort(db_indices)
-          ))
-        end
+      for v in db_series_values
+        add_data_point_permanently!(manager, _parse_int(v))
       end
-    end
 
-    if !isempty(cross_entries)
-      # also produce a simple matches list for frontend compatibility
-      simple_matches = Any[]
-      for e in cross_entries
-        ws = e["window_size"]::Int
-        db_idxs = e["db_indices"]::Vector{Int}
-        q_idxs = e["q_indices"]::Vector{Int}
-        for qi in q_idxs
-          for dbi in db_idxs
-            push!(simple_matches, Dict("q_start" => qi, "start" => dbi, "windowSize" => ws))
+      timeline = clusters_to_timeline(manager.clusters, min_window)
+      qlen = length(q_int)
+      slen = length(db_series_values)
+      cross_entries = Any[]
+      for entry in timeline
+        inds = entry["indices"]::Vector{Int}
+        has_q = any(i -> i < qlen, inds)
+        has_db = any(i -> i >= qlen, inds)
+        if has_q && has_db
+          ws = Int(entry["window_size"])
+          if ws < min_match_window
+            continue
+          end
+          q_raw = [i for i in inds if i < qlen]
+          db_raw = [i for i in inds if i >= qlen]
+          q_indices = [i for i in q_raw if i + ws <= qlen]
+          db_indices = [i - qlen for i in db_raw if (i - qlen) + ws <= slen]
+          if !isempty(q_indices) && !isempty(db_indices)
+            push!(cross_entries, Dict("window_size"=>ws, "cluster_id"=>entry["cluster_id"], "q_indices"=>sort(q_indices), "db_indices"=>sort(db_indices)))
           end
         end
       end
 
-      clusters_per_series[si - 1] = Dict(
-        "timeline" => cross_entries,
-        "clusters" => clusters_dict,
-        "matches" => simple_matches
-      )
+      if !isempty(cross_entries)
+        simple_matches = Any[]
+        for e in cross_entries
+          ws = e["window_size"]::Int
+          q_idxs = e["q_indices"]::Vector{Int}
+          db_idxs = e["db_indices"]::Vector{Int}
+          for qi in q_idxs
+            for dbi in db_idxs
+              push!(simple_matches, Dict("q_start"=>qi, "start"=>dbi, "windowSize"=>ws))
+            end
+          end
+        end
+        simple_matches = _filter_contained_matches(simple_matches)
+        match_score = _match_score(simple_matches)
+        matched_result = Dict(
+          "series_id" => sid,
+          "source_index" => source_index,
+          "match_score" => match_score,
+          "timeline" => cross_entries,
+          "clusters" => clusters_to_dict(manager.clusters),
+          "matches" => simple_matches
+        )
+      end
+
+      if matched_result !== nothing
+        push!(matched_series, Dict(
+          "db_series" => db_series_values,
+          "result" => matched_result,
+          "score" => get(matched_result, "match_score", 0)
+        ))
+      end
     end
   end
 
+  sort!(matched_series; by = item -> -_parse_float(item["score"]))
+  for item in matched_series
+    result_index = length(db_series_all)
+    push!(db_series_all, item["db_series"])
+    clusters_per_series[result_index] = item["result"]
+  end
+
   processing_time_s = round(time() - t0; digits=2)
-  return Dict(
-    "query" => query_series,
-    "dbSeries" => db_series,
-    "clustersPerSeries" => clusters_per_series,
-    "processingTime" => processing_time_s
-  )
+  return Dict("query"=>query_series, "dbSeries"=>db_series_all, "clustersPerSeries"=>clusters_per_series, "processingTime"=>processing_time_s)
+end
+
+function _fetch_series_stats(influx_url, influx_db, measurement)::Vector{Any}
+  q_ids = "SHOW TAG VALUES FROM \"$(measurement)\" WITH KEY = \"series_id\""
+  resp_ids = HTTP.get("$influx_url/query", query=Dict("db"=>influx_db, "q"=>q_ids))
+  parsed_ids = try JSON3.read(String(resp_ids.body)) catch
+    return Any[]
+  end
+
+  series_ids = String[]
+  try
+    rows = parsed_ids["results"][1]["series"][1]["values"]
+    for row in rows
+      push!(series_ids, string(row[2]))
+    end
+  catch
+    return Any[]
+  end
+
+  counts = Dict{String,Int}()
+  q_counts = "SELECT COUNT(\"value\") FROM \"$(measurement)\" GROUP BY \"series_id\""
+  resp_counts = HTTP.get("$influx_url/query", query=Dict("db"=>influx_db, "q"=>q_counts))
+  parsed_counts = try JSON3.read(String(resp_counts.body)) catch
+    Dict()
+  end
+  try
+    for s in parsed_counts["results"][1]["series"]
+      sid = string(s["tags"]["series_id"])
+      counts[sid] = _parse_int(s["values"][1][2])
+    end
+  catch
+  end
+
+  stats = Any[]
+  for (idx, sid) in enumerate(series_ids)
+    push!(stats, Dict(
+      "series_id" => sid,
+      "source_index" => idx - 1,
+      "count" => get(counts, sid, 1)
+    ))
+  end
+  return stats
+end
+
+function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_stats)::Vector{Any}
+  isempty(series_stats) && return Any[]
+  series_ids = [string(stat["series_id"]) for stat in series_stats]
+  id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
+  pattern = join([_escape_influx_regex(sid) for sid in series_ids], "|")
+  q = "SELECT \"value\" FROM \"$(measurement)\" WHERE \"series_id\" =~ /^(?:$(pattern))\$/ GROUP BY \"series_id\""
+  resp = HTTP.get("$influx_url/query", query=Dict("db"=>influx_db, "q"=>q, "epoch"=>"ms"))
+  body = String(resp.body)
+  parsed = try JSON3.read(body) catch
+    return Any[]
+  end
+
+  grouped = Any[]
+  try
+    series_list = parsed["results"][1]["series"]
+    for (idx, s) in enumerate(series_list)
+      sid = try
+        string(s["tags"]["series_id"])
+      catch
+        string(idx - 1)
+      end
+
+      values = Float64[]
+      for row in s["values"]
+        push!(values, _parse_float(row[2]))
+      end
+
+      if !isempty(values)
+        push!(grouped, Dict(
+          "series_id" => sid,
+          "source_index" => get(id_to_source_index, sid, idx - 1),
+          "values" => values
+        ))
+      end
+    end
+  catch
+    return Any[]
+  end
+
+  return grouped
+end
+
+function _chunk_series_by_memory_budget(series_stats)::Vector{Any}
+  budget_bytes = _query_memory_budget_bytes()
+  bytes_per_point = max(32, _parse_int(get(ENV, "QUERY_DB_ESTIMATED_BYTES_PER_POINT", 256)))
+  max_points = max(1, Int(floor(budget_bytes / bytes_per_point)))
+
+  chunks = Any[]
+  current = Any[]
+  current_points = 0
+
+  for stat in series_stats
+    point_count = max(1, _parse_int(get(stat, "count", 1)))
+    if !isempty(current) && current_points + point_count > max_points
+      push!(chunks, current)
+      current = Any[]
+      current_points = 0
+    end
+    push!(current, stat)
+    current_points += point_count
+  end
+
+  isempty(current) || push!(chunks, current)
+  return chunks
+end
+
+function _query_memory_budget_bytes()::Int
+  override_mb = get(ENV, "QUERY_DB_MEMORY_BUDGET_MB", "")
+  if !isempty(strip(string(override_mb)))
+    return max(1, _parse_int(override_mb)) * 1024 * 1024
+  end
+
+  available = _available_memory_bytes()
+  if available <= 0
+    return 256 * 1024 * 1024
+  end
+
+  min_budget = 32 * 1024 * 1024
+  max_budget = 512 * 1024 * 1024
+  return Int(clamp(floor(available * 0.25), min_budget, max_budget))
+end
+
+function _available_memory_bytes()::Int
+  sys_free = try
+    Int(Sys.free_memory())
+  catch
+    0
+  end
+
+  cgroup_free = _cgroup_available_memory_bytes()
+  if sys_free > 0 && cgroup_free > 0
+    return min(sys_free, cgroup_free)
+  elseif cgroup_free > 0
+    return cgroup_free
+  else
+    return sys_free
+  end
+end
+
+function _cgroup_available_memory_bytes()::Int
+  v2_max = _read_memory_limit_file("/sys/fs/cgroup/memory.max")
+  v2_current = _read_memory_limit_file("/sys/fs/cgroup/memory.current")
+  if v2_max > 0 && v2_current >= 0
+    return max(0, v2_max - v2_current)
+  end
+
+  v1_max = _read_memory_limit_file("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+  v1_current = _read_memory_limit_file("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+  if v1_max > 0 && v1_current >= 0
+    return max(0, v1_max - v1_current)
+  end
+
+  return 0
+end
+
+function _read_memory_limit_file(path::AbstractString)::Int
+  isfile(path) || return -1
+  raw = strip(read(path, String))
+  raw == "max" && return 0
+  value = tryparse(Int, raw)
+  value === nothing && return -1
+  value > 9_000_000_000_000_000_000 && return 0
+  return value
+end
+
+function _escape_influx_regex(s::AbstractString)::String
+  out = IOBuffer()
+  specials = Set(['\\', '.', '^', '$', '|', '?', '*', '+', '(', ')', '[', ']', '{', '}'])
+  for c in String(s)
+    if c in specials
+      print(out, '\\')
+    end
+    print(out, c)
+  end
+  return String(take!(out))
+end
+
+function _match_score(matches)::Int
+  score = 0
+  for m in matches
+    score += _parse_int(get(m, "windowSize", 0))
+  end
+  return score
+end
+
+function _match_contains(outer, inner)::Bool
+  oq = _parse_int(get(outer, "q_start", 0))
+  od = _parse_int(get(outer, "start", 0))
+  ow = _parse_int(get(outer, "windowSize", 0))
+  iq = _parse_int(get(inner, "q_start", 0))
+  id = _parse_int(get(inner, "start", 0))
+  iw = _parse_int(get(inner, "windowSize", 0))
+
+  return oq <= iq &&
+         od <= id &&
+         iq + iw <= oq + ow &&
+         id + iw <= od + ow &&
+         (ow > iw || oq != iq || od != id)
+end
+
+function _filter_contained_matches(matches)::Vector{Any}
+  isempty(matches) && return Any[]
+
+  deduped = Any[]
+  seen = Set{Tuple{Int,Int,Int}}()
+  for m in matches
+    key = (
+      _parse_int(get(m, "q_start", 0)),
+      _parse_int(get(m, "start", 0)),
+      _parse_int(get(m, "windowSize", 0))
+    )
+    if !(key in seen)
+      push!(seen, key)
+      push!(deduped, m)
+    end
+  end
+
+  kept = Any[]
+  for (i, m) in enumerate(deduped)
+    contained = false
+    for (j, other) in enumerate(deduped)
+      i == j && continue
+      if _match_contains(other, m)
+        contained = true
+        break
+      end
+    end
+    contained || push!(kept, m)
+  end
+
+  return sort(kept; by = m -> (
+    _parse_int(get(m, "q_start", 0)),
+    _parse_int(get(m, "start", 0)),
+    -_parse_int(get(m, "windowSize", 0))
+  ))
 end
 
 function _payload()

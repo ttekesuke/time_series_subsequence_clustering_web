@@ -1,5 +1,6 @@
 services:
   api:
+    mem_limit: "${API_MEM_LIMIT:-2g}"
     user: "1000:1000"
     build:
       context: .
@@ -12,6 +13,8 @@ services:
       GENIE_ENV: "${GENIE_ENV:-dev}"
       HOST: "${HOST:-0.0.0.0}"
       PORT: "${PORT:-9111}"
+      QUERY_DB_MEMORY_BUDGET_MB: "${QUERY_DB_MEMORY_BUDGET_MB:-256}"
+      QUERY_DB_ESTIMATED_BYTES_PER_POINT: "${QUERY_DB_ESTIMATED_BYTES_PER_POINT:-256}"
 
       # IMPORTANT: In Docker + bind-mount environments (especially on WSL/Windows),
       # Revise/AutoReload can trigger continuous re-inference/recompile loops.
@@ -72,5 +75,30 @@ services:
         fi
         exec npm run dev -- --host 0.0.0.0 --port 5173
 
+  influxdb:
+    image: influxdb:1.8
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb
+    environment:
+      INFLUXDB_HTTP_AUTH_ENABLED: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/ping"]
+      interval: 10s
+      retries: 5
+  influx_init:
+    user: "1000:1000"
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    working_dir: /app
+    depends_on:
+      - influxdb
+    volumes:
+      - ./scripts/seed_influx.jl:/app/scripts/seed_influx.jl
+    command: ["julia", "--project=.", "scripts/seed_influx.jl"]
+
 volumes:
   web_node_modules:
+  influxdb_data:
