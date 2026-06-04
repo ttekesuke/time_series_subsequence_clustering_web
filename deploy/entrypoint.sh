@@ -18,6 +18,14 @@ export PORT GENIE_PORT GENIE_HOST GENIE_ENV JULIA_DEPOT_PATH
 echo "[entrypoint] PORT=${PORT} (nginx listen)"
 echo "[entrypoint] GENIE_HOST=${GENIE_HOST} GENIE_PORT=${GENIE_PORT} (genie listen)"
 
+# Optional one-shot seed for hosted environments without shell access.
+# Disable after the first successful run to avoid adding more seed points on every restart.
+if [[ "${SEED_ON_START:-false}" == "true" ]]; then
+  echo "[entrypoint] SEED_ON_START=true; running Influx seed"
+  julia --project=/app /app/scripts/seed_influx.jl
+  echo "[entrypoint] Influx seed finished"
+fi
+
 # Nginx 設定生成（外向き PORT / 内向き GENIE_PORT を埋め込む）
 envsubst '${PORT} ${GENIE_PORT}' \
   < /etc/nginx/templates/app.conf.template \

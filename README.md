@@ -22,9 +22,13 @@ Render の Environment Variables に次を設定してください。
 - `INFLUX_MEASUREMENT`: measurement 名。未設定時は `timeseries`
 - `INFLUX_FIELD`: field 名。未設定時は `value`
 - `INFLUX_RP`: retention policy 名。必要な場合のみ設定
+- `SEED_ON_START`: `true` にするとコンテナ起動時に `scripts/seed_influx.jl` を実行。初回 seed 後は外してください
 
 ローカル開発では従来通り `INFLUX_TOKEN` / `INFLUX_BUCKET` を設定しなければ InfluxDB 1.8 の `/query` API を使います。
 InfluxDB Cloud Serverless では Flux ではなく v1 互換の InfluxQL `/query` API を使います。
+
+Render Shell が使えない場合は、初回だけ `SEED_ON_START=true` を設定してデプロイすると起動時に seed できます。
+成功後は restart のたびに追加 seed されないよう、`SEED_ON_START` を削除してください。
 
 Data Explorer の SQL query で seed データを確認する例:
 
