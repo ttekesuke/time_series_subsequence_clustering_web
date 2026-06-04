@@ -417,6 +417,7 @@ function _fetch_series_stats_from_counts(influx_url, influx_db, measurement)::Ve
   end
 
   parsed_counts = try JSON3.read(String(resp_counts.body)) catch
+    println("Influx query returned non-JSON while fetching cloud series counts: ", String(resp_counts.body))
     return Any[]
   end
 
@@ -430,7 +431,8 @@ function _fetch_series_stats_from_counts(influx_url, influx_db, measurement)::Ve
         "count" => max(1, _parse_int(s["values"][1][2]))
       ))
     end
-  catch
+  catch e
+    println("Influx query returned unexpected shape while fetching cloud series counts: ", e, " body=", String(resp_counts.body))
     return Any[]
   end
   return stats
@@ -507,16 +509,16 @@ end
 
 function _influx_sql_query(influx_url, influx_db, q::AbstractString)::Vector{Any}
   url = string(_trim_trailing_slashes(influx_url), "/api/v3/query_sql")
-  body = JSON3.write(Dict(
+  query = Dict(
     "db" => _influx_query_database(influx_db),
     "q" => String(q),
     "format" => "jsonl",
-  ))
+  )
   headers = [
     "Authorization" => "Bearer $(_influx_v2_token())",
-    "Content-Type" => "application/json",
+    "Accept" => "application/json",
   ]
-  resp = HTTP.post(url, headers, body)
+  resp = HTTP.get(url, headers; query=query)
   return _parse_jsonl_rows(String(resp.body))
 end
 
