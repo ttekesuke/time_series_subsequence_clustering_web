@@ -59,7 +59,7 @@ function query_db()
   end
 
   # influx params
-  measurement = string(get(p, "measurement", "timeseries"))
+  measurement = string(get(p, "measurement", get(ENV, "INFLUX_MEASUREMENT", "timeseries")))
   influx_url = get(ENV, "INFLUX_URL", "http://influxdb:8086")
   influx_db = string(get(ENV, "INFLUX_DB", "telegraf"))
   merge_threshold = _parse_float(get(p, "merge_threshold_ratio", 0.3))
@@ -180,6 +180,10 @@ function query_db()
 end
 
 function _fetch_series_stats(influx_url, influx_db, measurement)::Vector{Any}
+  if _influx_v2_enabled()
+    return _fetch_series_stats_v2(influx_url, measurement)
+  end
+
   q_ids = "SHOW TAG VALUES FROM \"$(measurement)\" WITH KEY = \"series_id\""
   resp_ids = HTTP.get("$influx_url/query", query=Dict("db"=>influx_db, "q"=>q_ids))
   parsed_ids = try JSON3.read(String(resp_ids.body)) catch
@@ -223,6 +227,10 @@ end
 
 function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_stats)::Vector{Any}
   isempty(series_stats) && return Any[]
+  if _influx_v2_enabled()
+    return _fetch_grouped_db_series_v2(influx_url, measurement, series_stats)
+  end
+
   series_ids = [string(stat["series_id"]) for stat in series_stats]
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
   pattern = join([_escape_influx_regex(sid) for sid in series_ids], "|")
@@ -261,6 +269,192 @@ function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_sta
   end
 
   return grouped
+end
+
+function _influx_v2_enabled()::Bool
+  return _env_present("INFLUX_TOKEN") || _env_present("INFLUX_BUCKET")
+end
+
+function _env_present(key::AbstractString)::Bool
+  return !isempty(strip(string(get(ENV, key, ""))))
+end
+
+function _influx_v2_bucket()::String
+  bucket = strip(string(get(ENV, "INFLUX_BUCKET", "")))
+  isempty(bucket) && error("INFLUX_BUCKET is required for InfluxDB Cloud/v2")
+  return bucket
+end
+
+function _influx_v2_token()::String
+  token = strip(string(get(ENV, "INFLUX_TOKEN", "")))
+  isempty(token) && error("INFLUX_TOKEN is required for InfluxDB Cloud/v2")
+  return token
+end
+
+function _influx_v2_org_query()::Dict{String,String}
+  org_id = strip(string(get(ENV, "INFLUX_ORG_ID", "")))
+  !isempty(org_id) && return Dict("orgID" => org_id)
+
+  org = strip(string(get(ENV, "INFLUX_ORG", "")))
+  !isempty(org) && return Dict("org" => org)
+
+  return Dict{String,String}()
+end
+
+function _influx_v2_headers()::Vector{Pair{String,String}}
+  return [
+    "Authorization" => "Token $(_influx_v2_token())",
+    "Content-Type" => "application/json",
+    "Accept" => "application/csv",
+  ]
+end
+
+function _influx_v2_query(influx_url::AbstractString, flux::AbstractString)
+  url = string(_trim_trailing_slashes(influx_url), "/api/v2/query")
+  body = JSON3.write(Dict("query" => flux, "type" => "flux"))
+  return HTTP.post(url, _influx_v2_headers(), body; query=_influx_v2_org_query())
+end
+
+function _trim_trailing_slashes(s::AbstractString)::String
+  out = String(s)
+  while endswith(out, "/")
+    out = chop(out)
+  end
+  return out
+end
+
+function _fetch_series_stats_v2(influx_url, measurement)::Vector{Any}
+  bucket = _influx_v2_bucket()
+  field = string(get(ENV, "INFLUX_FIELD", "value"))
+  flux = """
+from(bucket: "$(_flux_escape(bucket))")
+  |> range(start: 0)
+  |> filter(fn: (r) => r._measurement == "$(_flux_escape(measurement))" and r._field == "$(_flux_escape(field))")
+  |> group(columns: ["series_id"])
+  |> count(column: "_value")
+"""
+
+  resp = try
+    _influx_v2_query(influx_url, flux)
+  catch
+    return Any[]
+  end
+
+  stats = Any[]
+  for row in _influx_csv_rows(String(resp.body))
+    sid = strip(get(row, "series_id", ""))
+    isempty(sid) && continue
+    push!(stats, Dict(
+      "series_id" => sid,
+      "source_index" => length(stats),
+      "count" => max(1, _parse_int(get(row, "_value", "1")))
+    ))
+  end
+  return stats
+end
+
+function _fetch_grouped_db_series_v2(influx_url, measurement, series_stats)::Vector{Any}
+  series_ids = [string(stat["series_id"]) for stat in series_stats]
+  id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
+  field = string(get(ENV, "INFLUX_FIELD", "value"))
+  set_expr = "[" * join(["\"$(_flux_escape(sid))\"" for sid in series_ids], ", ") * "]"
+  flux = """
+from(bucket: "$(_flux_escape(_influx_v2_bucket()))")
+  |> range(start: 0)
+  |> filter(fn: (r) => r._measurement == "$(_flux_escape(measurement))" and r._field == "$(_flux_escape(field))")
+  |> filter(fn: (r) => contains(value: r.series_id, set: $(set_expr)))
+  |> group(columns: ["series_id"])
+  |> sort(columns: ["_time"])
+  |> keep(columns: ["series_id", "_value"])
+"""
+
+  resp = try
+    _influx_v2_query(influx_url, flux)
+  catch
+    return Any[]
+  end
+
+  values_by_id = Dict{String,Vector{Float64}}()
+  for row in _influx_csv_rows(String(resp.body))
+    sid = strip(get(row, "series_id", ""))
+    isempty(sid) && continue
+    values = get!(values_by_id, sid, Float64[])
+    push!(values, _parse_float(get(row, "_value", 0)))
+  end
+
+  grouped = Any[]
+  for sid in series_ids
+    values = get(values_by_id, sid, Float64[])
+    isempty(values) && continue
+    push!(grouped, Dict(
+      "series_id" => sid,
+      "source_index" => get(id_to_source_index, sid, length(grouped)),
+      "values" => values
+    ))
+  end
+  return grouped
+end
+
+function _flux_escape(s)::String
+  out = IOBuffer()
+  for c in String(s)
+    if c == '\\' || c == '"'
+      print(out, '\\')
+    end
+    print(out, c)
+  end
+  return String(take!(out))
+end
+
+function _influx_csv_rows(body::AbstractString)::Vector{Dict{String,String}}
+  header = String[]
+  rows = Dict{String,String}[]
+  for raw_line in split(body, '\n')
+    line = chomp(String(raw_line))
+    isempty(line) && continue
+    startswith(line, "#") && continue
+
+    cells = _parse_csv_line(line)
+    if isempty(header)
+      header = cells
+      continue
+    end
+    cells == header && continue
+
+    row = Dict{String,String}()
+    for (idx, key) in enumerate(header)
+      isempty(key) && continue
+      row[key] = idx <= length(cells) ? cells[idx] : ""
+    end
+    push!(rows, row)
+  end
+  return rows
+end
+
+function _parse_csv_line(line::AbstractString)::Vector{String}
+  cells = String[]
+  buf = IOBuffer()
+  in_quotes = false
+  chars = collect(String(line))
+  i = 1
+  while i <= length(chars)
+    c = chars[i]
+    if c == '"'
+      if in_quotes && i < length(chars) && chars[i + 1] == '"'
+        print(buf, '"')
+        i += 1
+      else
+        in_quotes = !in_quotes
+      end
+    elseif c == ',' && !in_quotes
+      push!(cells, String(take!(buf)))
+    else
+      print(buf, c)
+    end
+    i += 1
+  end
+  push!(cells, String(take!(buf)))
+  return cells
 end
 
 function _chunk_series_by_memory_budget(series_stats)::Vector{Any}
