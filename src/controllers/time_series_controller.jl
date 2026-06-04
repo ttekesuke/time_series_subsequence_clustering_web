@@ -62,6 +62,7 @@ function query_db()
   measurement = string(get(p, "measurement", get(ENV, "INFLUX_MEASUREMENT", "timeseries")))
   influx_url = get(ENV, "INFLUX_URL", "http://influxdb:8086")
   influx_db = string(get(ENV, "INFLUX_DB", "telegraf"))
+  debug_influx = _parse_bool(get(p, "debug", false), false)
   merge_threshold = _parse_float(get(p, "merge_threshold_ratio", 0.3))
   min_window = SUBSEQUENCE_MIN_WINDOW_SIZE
   min_match_window = _parse_int(get(p, "min_match_window", 3))
@@ -74,11 +75,24 @@ function query_db()
   series_stats = _fetch_series_stats(influx_url, influx_db, measurement)
 
   if isempty(series_stats)
-    return Dict("query"=>query_series, "dbSeries"=>Any[], "clustersPerSeries"=>Dict{Int,Any}(), "processingTime"=>round(time()-t0;digits=2))
+    result = Dict("query"=>query_series, "dbSeries"=>Any[], "clustersPerSeries"=>Dict{Int,Any}(), "processingTime"=>round(time()-t0;digits=2))
+    if debug_influx
+      result["debug"] = Dict(
+        "influxCloud" => _influx_cloud_enabled(),
+        "queryMode" => _influx_query_mode(),
+        "measurement" => measurement,
+        "field" => string(get(ENV, "INFLUX_FIELD", "value")),
+        "bucketOrDb" => _influx_query_database(influx_db),
+        "seriesStatsCount" => 0,
+      )
+    end
+    return result
   end
 
   chunks = _chunk_series_by_memory_budget(series_stats)
   q_int = [ _parse_int(v) for v in query_series ]
+  fetched_series_count = 0
+  fetched_point_count = 0
 
   query_seed_manager = TimeSeriesClusterManager(
     copy(q_int),
@@ -97,6 +111,10 @@ function query_db()
 
   for chunk in chunks
     db_series_grouped = _fetch_grouped_db_series(influx_url, influx_db, measurement, chunk)
+    fetched_series_count += length(db_series_grouped)
+    for item in db_series_grouped
+      fetched_point_count += length(item["values"])
+    end
 
     for series_info in db_series_grouped
       sid = string(series_info["series_id"])
@@ -176,7 +194,22 @@ function query_db()
   end
 
   processing_time_s = round(time() - t0; digits=2)
-  return Dict("query"=>query_series, "dbSeries"=>db_series_all, "clustersPerSeries"=>clusters_per_series, "processingTime"=>processing_time_s)
+  result = Dict("query"=>query_series, "dbSeries"=>db_series_all, "clustersPerSeries"=>clusters_per_series, "processingTime"=>processing_time_s)
+  if debug_influx
+    result["debug"] = Dict(
+      "influxCloud" => _influx_cloud_enabled(),
+      "queryMode" => _influx_query_mode(),
+      "measurement" => measurement,
+      "field" => string(get(ENV, "INFLUX_FIELD", "value")),
+      "bucketOrDb" => _influx_query_database(influx_db),
+      "seriesStatsCount" => length(series_stats),
+      "chunksCount" => length(chunks),
+      "fetchedSeriesCount" => fetched_series_count,
+      "fetchedPointCount" => fetched_point_count,
+      "matchedSeriesCount" => length(db_series_all),
+    )
+  end
+  return result
 end
 
 function _fetch_series_stats(influx_url, influx_db, measurement)::Vector{Any}
@@ -189,6 +222,8 @@ function _fetch_series_stats(influx_url, influx_db, measurement)::Vector{Any}
   end
 
   if _influx_cloud_enabled()
+    stats = _fetch_series_stats_sql(influx_url, influx_db, measurement)
+    isempty(stats) || return stats
     return _fetch_series_stats_from_counts(influx_url, influx_db, measurement)
   end
 
@@ -253,6 +288,11 @@ function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_sta
     return _fetch_grouped_db_series_v2(influx_url, measurement, series_stats)
   end
 
+  if _influx_cloud_enabled()
+    grouped = _fetch_grouped_db_series_sql(influx_url, influx_db, measurement, series_stats)
+    isempty(grouped) || return grouped
+  end
+
   series_ids = [string(stat["series_id"]) for stat in series_stats]
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
   pattern = join([_escape_influx_regex(sid) for sid in series_ids], "|")
@@ -308,6 +348,12 @@ end
 
 function _influx_sql_enabled()::Bool
   return lowercase(strip(string(get(ENV, "INFLUX_QUERY_MODE", "")))) == "sql"
+end
+
+function _influx_query_mode()::String
+  mode = lowercase(strip(string(get(ENV, "INFLUX_QUERY_MODE", ""))))
+  isempty(mode) && return _influx_cloud_enabled() ? "sql_then_influxql" : "influxql"
+  return mode
 end
 
 function _env_present(key::AbstractString)::Bool
