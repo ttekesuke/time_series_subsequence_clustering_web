@@ -180,12 +180,17 @@ function query_db()
 end
 
 function _fetch_series_stats(influx_url, influx_db, measurement)::Vector{Any}
-  if _influx_v2_enabled()
+  if _influx_flux_enabled()
     return _fetch_series_stats_v2(influx_url, measurement)
   end
 
   q_ids = "SHOW TAG VALUES FROM \"$(measurement)\" WITH KEY = \"series_id\""
-  resp_ids = HTTP.get("$influx_url/query", query=Dict("db"=>influx_db, "q"=>q_ids))
+  resp_ids = try
+    _influx_query_get(influx_url, influx_db, q_ids)
+  catch e
+    println("Influx query failed while fetching series ids: ", e)
+    return Any[]
+  end
   parsed_ids = try JSON3.read(String(resp_ids.body)) catch
     return Any[]
   end
@@ -202,7 +207,12 @@ function _fetch_series_stats(influx_url, influx_db, measurement)::Vector{Any}
 
   counts = Dict{String,Int}()
   q_counts = "SELECT COUNT(\"value\") FROM \"$(measurement)\" GROUP BY \"series_id\""
-  resp_counts = HTTP.get("$influx_url/query", query=Dict("db"=>influx_db, "q"=>q_counts))
+  resp_counts = try
+    _influx_query_get(influx_url, influx_db, q_counts)
+  catch e
+    println("Influx query failed while fetching series counts: ", e)
+    nothing
+  end
   parsed_counts = try JSON3.read(String(resp_counts.body)) catch
     Dict()
   end
@@ -227,7 +237,7 @@ end
 
 function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_stats)::Vector{Any}
   isempty(series_stats) && return Any[]
-  if _influx_v2_enabled()
+  if _influx_flux_enabled()
     return _fetch_grouped_db_series_v2(influx_url, measurement, series_stats)
   end
 
@@ -235,7 +245,12 @@ function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_sta
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
   pattern = join([_escape_influx_regex(sid) for sid in series_ids], "|")
   q = "SELECT \"value\" FROM \"$(measurement)\" WHERE \"series_id\" =~ /^(?:$(pattern))\$/ GROUP BY \"series_id\""
-  resp = HTTP.get("$influx_url/query", query=Dict("db"=>influx_db, "q"=>q, "epoch"=>"ms"))
+  resp = try
+    _influx_query_get(influx_url, influx_db, q; extra_query=Dict("epoch"=>"ms"))
+  catch e
+    println("Influx query failed while fetching grouped series: ", e)
+    return Any[]
+  end
   body = String(resp.body)
   parsed = try JSON3.read(body) catch
     return Any[]
@@ -271,8 +286,12 @@ function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_sta
   return grouped
 end
 
-function _influx_v2_enabled()::Bool
+function _influx_cloud_enabled()::Bool
   return _env_present("INFLUX_TOKEN") || _env_present("INFLUX_BUCKET")
+end
+
+function _influx_flux_enabled()::Bool
+  return lowercase(strip(string(get(ENV, "INFLUX_QUERY_MODE", "")))) == "flux"
 end
 
 function _env_present(key::AbstractString)::Bool
@@ -289,6 +308,40 @@ function _influx_v2_token()::String
   token = strip(string(get(ENV, "INFLUX_TOKEN", "")))
   isempty(token) && error("INFLUX_TOKEN is required for InfluxDB Cloud/v2")
   return token
+end
+
+function _influx_query_database(influx_db)::String
+  if _influx_cloud_enabled()
+    return _influx_v2_bucket()
+  end
+  return string(influx_db)
+end
+
+function _influx_query_get(influx_url, influx_db, q::AbstractString; extra_query=Dict{String,String}())
+  url = string(_trim_trailing_slashes(influx_url), "/query")
+  query = Dict{String,String}(
+    "db" => _influx_query_database(influx_db),
+    "q" => String(q),
+  )
+  for (k, v) in extra_query
+    query[string(k)] = string(v)
+  end
+
+  rp = strip(string(get(ENV, "INFLUX_RP", "")))
+  isempty(rp) || (query["rp"] = rp)
+
+  return HTTP.get(url, _influx_query_headers(); query=query)
+end
+
+function _influx_query_headers()::Vector{Pair{String,String}}
+  if !_influx_cloud_enabled()
+    return Pair{String,String}[]
+  end
+
+  return [
+    "Authorization" => "Basic $(base64encode("any:$(_influx_v2_token())"))",
+    "Accept" => "application/json",
+  ]
 end
 
 function _influx_v2_org_query()::Dict{String,String}

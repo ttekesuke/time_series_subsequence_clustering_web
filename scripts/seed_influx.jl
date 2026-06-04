@@ -9,6 +9,10 @@ num_series = parse(Int, get(ENV, "SEED_SERIES", "100"))
 series_len = parse(Int, get(ENV, "SEED_LENGTH", "100"))
 minv = parse(Int, get(ENV, "SEED_MIN", "0"))
 maxv = parse(Int, get(ENV, "SEED_MAX", "11"))
+seed_start_unix_s_raw = strip(get(ENV, "SEED_START_UNIX_S", ""))
+seed_start_unix_s = isempty(seed_start_unix_s_raw) ?
+  Int(floor(time())) - (num_series * series_len) :
+  parse(Int, seed_start_unix_s_raw)
 
 influx_v2_enabled() = !isempty(strip(influx_token)) || !isempty(strip(influx_bucket))
 
@@ -82,7 +86,7 @@ for sid in 0:(num_series-1)
   buf = IOBuffer()
   for t in 1:series_len
     v = rand(minv:maxv)
-    timestamp_s = sid * series_len + (t - 1)
+    timestamp_s = seed_start_unix_s + sid * series_len + (t - 1)
     # line protocol: measurement,series_id=SID value=V
     println(buf, "$(measurement),series_id=$(sid) value=$(v) $(timestamp_s)")
   end
