@@ -427,7 +427,7 @@ function _influx_query_headers()::Vector{Pair{String,String}}
   ]
 end
 
-function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,String})
+function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,String}; allow_dbrp_create::Bool=true)
   last_status = 0
   last_body = ""
 
@@ -449,6 +449,16 @@ function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,St
     last_body = String(resp.body)
     if !(resp.status in (401, 403))
       break
+    end
+  end
+
+  if allow_dbrp_create && _should_auto_create_dbrp() && _is_influx_database_not_found(last_body)
+    db = get(base_query, "db", _influx_v2_bucket())
+    rp = get(base_query, "rp", _influx_default_rp())
+    if _ensure_cloud_dbrp_mapping(db, rp)
+      query_with_rp = copy(base_query)
+      query_with_rp["rp"] = rp
+      return _influx_query_get_cloud(url, query_with_rp; allow_dbrp_create=false)
     end
   end
 
@@ -475,6 +485,79 @@ function _influx_v1_auth_headers(scheme::AbstractString)::Vector{Pair{String,Str
     push!(headers, "Authorization" => "Bearer $(token)")
   end
   return headers
+end
+
+function _should_auto_create_dbrp()::Bool
+  return _parse_bool(get(ENV, "INFLUX_AUTO_CREATE_DBRP", "true"), true)
+end
+
+function _is_influx_database_not_found(body::AbstractString)::Bool
+  return occursin("database not found", lowercase(String(body)))
+end
+
+function _influx_default_rp()::String
+  rp = strip(string(get(ENV, "INFLUX_RP", "")))
+  isempty(rp) && return "autogen"
+  return rp
+end
+
+function _ensure_cloud_dbrp_mapping(database::AbstractString, rp::AbstractString)::Bool
+  bucket_id = _influx_bucket_id()
+  isempty(bucket_id) && error("Influx DBRP mapping cannot be created because bucket id was not found for bucket '$(_influx_v2_bucket())'")
+
+  url = string(_trim_trailing_slashes(string(get(ENV, "INFLUX_URL", ""))), "/api/v2/dbrps")
+  org_query = _influx_v2_org_query()
+  body = Dict{String,Any}(
+    "bucketID" => bucket_id,
+    "database" => String(database),
+    "retention_policy" => String(rp),
+    "default" => true,
+  )
+  for (k, v) in org_query
+    body[k] = v
+  end
+
+  headers = [
+    "Authorization" => "Token $(_influx_v2_token())",
+    "Content-Type" => "application/json",
+    "Accept" => "application/json",
+  ]
+  resp = HTTP.post(url, headers, JSON3.write(body); status_exception=false)
+  if resp.status in (200, 201)
+    return true
+  end
+  if resp.status == 422 && occursin("already", lowercase(String(resp.body)))
+    return true
+  end
+  error("Influx DBRP mapping creation failed with HTTP $(resp.status): $(_body_preview(String(resp.body)))")
+end
+
+function _influx_bucket_id()::String
+  explicit = strip(string(get(ENV, "INFLUX_BUCKET_ID", "")))
+  isempty(explicit) || return explicit
+
+  url = string(_trim_trailing_slashes(string(get(ENV, "INFLUX_URL", ""))), "/api/v2/buckets")
+  query = merge(Dict("name" => _influx_v2_bucket()), _influx_v2_org_query())
+  headers = [
+    "Authorization" => "Token $(_influx_v2_token())",
+    "Accept" => "application/json",
+  ]
+  resp = HTTP.get(url, headers; query=query, status_exception=false)
+  if !(200 <= resp.status < 300)
+    error("Influx bucket lookup failed with HTTP $(resp.status): $(_body_preview(String(resp.body)))")
+  end
+
+  parsed = JSON3.read(String(resp.body))
+  try
+    buckets = parsed["buckets"]
+    for b in buckets
+      if string(b["name"]) == _influx_v2_bucket()
+        return string(b["id"])
+      end
+    end
+  catch
+  end
+  return ""
 end
 
 function _fetch_series_stats_from_counts(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
