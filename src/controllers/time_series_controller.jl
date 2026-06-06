@@ -494,9 +494,18 @@ function _fetch_series_stats_from_counts(influx_url, influx_db, measurement; err
     return Any[]
   end
 
+  body = String(resp_counts.body)
+  series_list = _influx_series_list(parsed_counts, body, "cloud series counts")
+  if series_list === nothing
+    stats = _fetch_series_stats_from_sample(influx_url, influx_db, measurement; errors=errors)
+    isempty(stats) || return stats
+    _push_influx_error!(errors, "fetching cloud series counts returned no series: $(_body_preview(body))")
+    return Any[]
+  end
+
   stats = Any[]
   try
-    for s in parsed_counts["results"][1]["series"]
+    for s in series_list
       sid = string(s["tags"]["series_id"])
       push!(stats, Dict(
         "series_id" => sid,
@@ -506,10 +515,68 @@ function _fetch_series_stats_from_counts(influx_url, influx_db, measurement; err
     end
   catch e
     println("Influx query returned unexpected shape while fetching cloud series counts: ", e, " body=", String(resp_counts.body))
-    _push_influx_error!(errors, "fetching cloud series counts returned unexpected shape: $(e)")
+    _push_influx_error!(errors, "fetching cloud series counts returned unexpected shape: $(e) body=$(_body_preview(body))")
     return Any[]
   end
   return stats
+end
+
+function _fetch_series_stats_from_sample(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
+  field = string(get(ENV, "INFLUX_FIELD", "value"))
+  q = "SELECT \"$(field)\" FROM \"$(measurement)\" GROUP BY \"series_id\" LIMIT 1"
+  resp = try
+    _influx_query_get(influx_url, influx_db, q)
+  catch e
+    _push_influx_error!(errors, "fetching cloud series sample failed: $(e)")
+    return Any[]
+  end
+
+  body = String(resp.body)
+  parsed = try JSON3.read(body) catch
+    _push_influx_error!(errors, "fetching cloud series sample returned non-JSON: $(_body_preview(body))")
+    return Any[]
+  end
+
+  series_list = _influx_series_list(parsed, body, "cloud series sample"; errors=errors)
+  series_list === nothing && return Any[]
+
+  stats = Any[]
+  for s in series_list
+    sid = try
+      strip(string(s["tags"]["series_id"]))
+    catch
+      ""
+    end
+    isempty(sid) && continue
+    push!(stats, Dict(
+      "series_id" => sid,
+      "source_index" => length(stats),
+      "count" => 1
+    ))
+  end
+  return stats
+end
+
+function _influx_series_list(parsed, body::AbstractString, context::AbstractString; errors=nothing)
+  result = try
+    parsed["results"][1]
+  catch e
+    _push_influx_error!(errors, "$(context) returned no results: $(e) body=$(_body_preview(body))")
+    return nothing
+  end
+
+  try
+    err = result["error"]
+    _push_influx_error!(errors, "$(context) returned Influx error: $(err)")
+    return nothing
+  catch
+  end
+
+  try
+    return result["series"]
+  catch
+    return nothing
+  end
 end
 
 function _fetch_series_stats_sql(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
