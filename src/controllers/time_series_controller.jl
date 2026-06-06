@@ -4,7 +4,6 @@ using Genie.Requests
 using Dates
 using HTTP
 using JSON3
-using Base64
 using UUIDs
 
 # The manager is defined in the parent module (TimeseriesClusteringAPI)
@@ -72,10 +71,15 @@ function query_db()
   clusters_per_series = Dict{Int,Any}()
   matched_series = Any[]
 
-  series_stats = _fetch_series_stats(influx_url, influx_db, measurement)
+  influx_errors = String[]
+  series_stats = _fetch_series_stats(influx_url, influx_db, measurement; errors=influx_errors)
 
   if isempty(series_stats)
     result = Dict("query"=>query_series, "dbSeries"=>Any[], "clustersPerSeries"=>Dict{Int,Any}(), "processingTime"=>round(time()-t0;digits=2))
+    if !isempty(influx_errors)
+      result["influxError"] = influx_errors[end]
+      result["influxErrors"] = influx_errors
+    end
     if debug_influx
       result["debug"] = Dict(
         "influxCloud" => _influx_cloud_enabled(),
@@ -110,7 +114,7 @@ function query_db()
   process_data!(query_seed_manager)
 
   for chunk in chunks
-    db_series_grouped = _fetch_grouped_db_series(influx_url, influx_db, measurement, chunk)
+    db_series_grouped = _fetch_grouped_db_series(influx_url, influx_db, measurement, chunk; errors=influx_errors)
     fetched_series_count += length(db_series_grouped)
     for item in db_series_grouped
       fetched_point_count += length(item["values"])
@@ -195,6 +199,10 @@ function query_db()
 
   processing_time_s = round(time() - t0; digits=2)
   result = Dict("query"=>query_series, "dbSeries"=>db_series_all, "clustersPerSeries"=>clusters_per_series, "processingTime"=>processing_time_s)
+  if !isempty(influx_errors)
+    result["influxError"] = influx_errors[end]
+    result["influxErrors"] = influx_errors
+  end
   if debug_influx
     result["debug"] = Dict(
       "influxCloud" => _influx_cloud_enabled(),
@@ -207,24 +215,26 @@ function query_db()
       "fetchedSeriesCount" => fetched_series_count,
       "fetchedPointCount" => fetched_point_count,
       "matchedSeriesCount" => length(db_series_all),
+      "influxErrors" => influx_errors,
     )
   end
   return result
 end
 
-function _fetch_series_stats(influx_url, influx_db, measurement)::Vector{Any}
+function _fetch_series_stats(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
   if _influx_sql_enabled()
-    return _fetch_series_stats_sql(influx_url, influx_db, measurement)
+    return _fetch_series_stats_sql(influx_url, influx_db, measurement; errors=errors)
   end
 
   if _influx_flux_enabled()
-    return _fetch_series_stats_v2(influx_url, measurement)
+    return _fetch_series_stats_v2(influx_url, measurement; errors=errors)
   end
 
   if _influx_cloud_enabled()
-    stats = _fetch_series_stats_sql(influx_url, influx_db, measurement)
-    isempty(stats) || return stats
-    return _fetch_series_stats_from_counts(influx_url, influx_db, measurement)
+    # InfluxDB Cloud Serverless supports HTTP queries through the v1-compatible
+    # /query endpoint. The v3 SQL HTTP endpoint is for InfluxDB 3 Core and is
+    # only used when INFLUX_QUERY_MODE=sql is explicitly set.
+    return _fetch_series_stats_from_counts(influx_url, influx_db, measurement; errors=errors)
   end
 
   q_ids = "SHOW TAG VALUES FROM \"$(measurement)\" WITH KEY = \"series_id\""
@@ -232,9 +242,11 @@ function _fetch_series_stats(influx_url, influx_db, measurement)::Vector{Any}
     _influx_query_get(influx_url, influx_db, q_ids)
   catch e
     println("Influx query failed while fetching series ids: ", e)
+    _push_influx_error!(errors, "fetching series ids failed: $(e)")
     return Any[]
   end
   parsed_ids = try JSON3.read(String(resp_ids.body)) catch
+    _push_influx_error!(errors, "fetching series ids returned non-JSON: $(_body_preview(String(resp_ids.body)))")
     return Any[]
   end
 
@@ -244,7 +256,8 @@ function _fetch_series_stats(influx_url, influx_db, measurement)::Vector{Any}
     for row in rows
       push!(series_ids, string(row[2]))
     end
-  catch
+  catch e
+    _push_influx_error!(errors, "fetching series ids returned unexpected shape: $(e)")
     return Any[]
   end
 
@@ -254,9 +267,11 @@ function _fetch_series_stats(influx_url, influx_db, measurement)::Vector{Any}
     _influx_query_get(influx_url, influx_db, q_counts)
   catch e
     println("Influx query failed while fetching series counts: ", e)
+    _push_influx_error!(errors, "fetching series counts failed: $(e)")
     nothing
   end
   parsed_counts = try JSON3.read(String(resp_counts.body)) catch
+    resp_counts === nothing || _push_influx_error!(errors, "fetching series counts returned non-JSON: $(_body_preview(String(resp_counts.body)))")
     Dict()
   end
   try
@@ -278,20 +293,18 @@ function _fetch_series_stats(influx_url, influx_db, measurement)::Vector{Any}
   return stats
 end
 
-function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_stats)::Vector{Any}
+function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_stats; errors=nothing)::Vector{Any}
   isempty(series_stats) && return Any[]
   if _influx_sql_enabled()
-    return _fetch_grouped_db_series_sql(influx_url, influx_db, measurement, series_stats)
+    return _fetch_grouped_db_series_sql(influx_url, influx_db, measurement, series_stats; errors=errors)
   end
 
   if _influx_flux_enabled()
-    return _fetch_grouped_db_series_v2(influx_url, measurement, series_stats)
+    return _fetch_grouped_db_series_v2(influx_url, measurement, series_stats; errors=errors)
   end
 
-  if _influx_cloud_enabled()
-    grouped = _fetch_grouped_db_series_sql(influx_url, influx_db, measurement, series_stats)
-    isempty(grouped) || return grouped
-  end
+  # Cloud Serverless stays on this v1-compatible query path unless an explicit
+  # query mode above selected SQL or Flux.
 
   series_ids = [string(stat["series_id"]) for stat in series_stats]
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
@@ -301,10 +314,12 @@ function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_sta
     _influx_query_get(influx_url, influx_db, q; extra_query=Dict("epoch"=>"ms"))
   catch e
     println("Influx query failed while fetching grouped series: ", e)
+    _push_influx_error!(errors, "fetching grouped series failed: $(e)")
     return Any[]
   end
   body = String(resp.body)
   parsed = try JSON3.read(body) catch
+    _push_influx_error!(errors, "fetching grouped series returned non-JSON: $(_body_preview(body))")
     return Any[]
   end
 
@@ -331,7 +346,8 @@ function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_sta
         ))
       end
     end
-  catch
+  catch e
+    _push_influx_error!(errors, "fetching grouped series returned unexpected shape: $(e)")
     return Any[]
   end
 
@@ -352,7 +368,7 @@ end
 
 function _influx_query_mode()::String
   mode = lowercase(strip(string(get(ENV, "INFLUX_QUERY_MODE", ""))))
-  isempty(mode) && return _influx_cloud_enabled() ? "sql_then_influxql" : "influxql"
+  isempty(mode) && return "influxql"
   return mode
 end
 
@@ -401,23 +417,25 @@ function _influx_query_headers()::Vector{Pair{String,String}}
   end
 
   return [
-    "Authorization" => "Basic $(base64encode("any:$(_influx_v2_token())"))",
+    "Authorization" => "Bearer $(_influx_v2_token())",
     "Accept" => "application/json",
   ]
 end
 
-function _fetch_series_stats_from_counts(influx_url, influx_db, measurement)::Vector{Any}
+function _fetch_series_stats_from_counts(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
   field = string(get(ENV, "INFLUX_FIELD", "value"))
   q_counts = "SELECT COUNT(\"$(field)\") FROM \"$(measurement)\" GROUP BY \"series_id\""
   resp_counts = try
     _influx_query_get(influx_url, influx_db, q_counts)
   catch e
     println("Influx query failed while fetching cloud series counts: ", e)
+    _push_influx_error!(errors, "fetching cloud series counts failed: $(e)")
     return Any[]
   end
 
   parsed_counts = try JSON3.read(String(resp_counts.body)) catch
     println("Influx query returned non-JSON while fetching cloud series counts: ", String(resp_counts.body))
+    _push_influx_error!(errors, "fetching cloud series counts returned non-JSON: $(_body_preview(String(resp_counts.body)))")
     return Any[]
   end
 
@@ -433,12 +451,13 @@ function _fetch_series_stats_from_counts(influx_url, influx_db, measurement)::Ve
     end
   catch e
     println("Influx query returned unexpected shape while fetching cloud series counts: ", e, " body=", String(resp_counts.body))
+    _push_influx_error!(errors, "fetching cloud series counts returned unexpected shape: $(e)")
     return Any[]
   end
   return stats
 end
 
-function _fetch_series_stats_sql(influx_url, influx_db, measurement)::Vector{Any}
+function _fetch_series_stats_sql(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
   field = string(get(ENV, "INFLUX_FIELD", "value"))
   q = """
 SELECT series_id, COUNT($(_sql_identifier(field))) AS count
@@ -451,6 +470,7 @@ ORDER BY series_id
     _influx_sql_query(influx_url, influx_db, q)
   catch e
     println("Influx SQL query failed while fetching series stats: ", e)
+    _push_influx_error!(errors, "fetching SQL series stats failed: $(e)")
     return Any[]
   end
 
@@ -467,7 +487,7 @@ ORDER BY series_id
   return stats
 end
 
-function _fetch_grouped_db_series_sql(influx_url, influx_db, measurement, series_stats)::Vector{Any}
+function _fetch_grouped_db_series_sql(influx_url, influx_db, measurement, series_stats; errors=nothing)::Vector{Any}
   series_ids = [string(stat["series_id"]) for stat in series_stats]
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
   field = string(get(ENV, "INFLUX_FIELD", "value"))
@@ -483,6 +503,7 @@ ORDER BY series_id, time
     _influx_sql_query(influx_url, influx_db, q)
   catch e
     println("Influx SQL query failed while fetching grouped series: ", e)
+    _push_influx_error!(errors, "fetching SQL grouped series failed: $(e)")
     return Any[]
   end
 
@@ -519,7 +540,12 @@ function _influx_sql_query(influx_url, influx_db, q::AbstractString)::Vector{Any
     "Accept" => "application/json",
   ]
   resp = HTTP.get(url, headers; query=query)
-  return _parse_jsonl_rows(String(resp.body))
+  body = String(resp.body)
+  if !_looks_like_jsonl(body)
+    preview = _body_preview(body)
+    error("Influx SQL query returned non-JSONL response from /api/v3/query_sql: ", preview)
+  end
+  return _parse_jsonl_rows(body)
 end
 
 function _parse_jsonl_rows(body::AbstractString)::Vector{Any}
@@ -530,6 +556,30 @@ function _parse_jsonl_rows(body::AbstractString)::Vector{Any}
     push!(rows, _to_string_dict(JSON3.read(line)))
   end
   return rows
+end
+
+function _looks_like_jsonl(body::AbstractString)::Bool
+  for raw_line in split(body, '\n')
+    line = strip(String(raw_line))
+    isempty(line) && continue
+    return startswith(line, "{") || startswith(line, "[")
+  end
+  return true
+end
+
+function _body_preview(body::AbstractString)::String
+  s = replace(strip(String(body)), '\n' => ' ')
+  length(s) <= 240 && return s
+  return string(first(s, 240), "...")
+end
+
+function _push_influx_error!(errors, message::AbstractString)
+  errors === nothing && return nothing
+  try
+    push!(errors, String(message))
+  catch
+  end
+  return nothing
 end
 
 function _sql_identifier(s)::String
@@ -572,7 +622,7 @@ function _trim_trailing_slashes(s::AbstractString)::String
   return out
 end
 
-function _fetch_series_stats_v2(influx_url, measurement)::Vector{Any}
+function _fetch_series_stats_v2(influx_url, measurement; errors=nothing)::Vector{Any}
   bucket = _influx_v2_bucket()
   field = string(get(ENV, "INFLUX_FIELD", "value"))
   flux = """
@@ -585,7 +635,8 @@ from(bucket: "$(_flux_escape(bucket))")
 
   resp = try
     _influx_v2_query(influx_url, flux)
-  catch
+  catch e
+    _push_influx_error!(errors, "fetching Flux series stats failed: $(e)")
     return Any[]
   end
 
@@ -602,7 +653,7 @@ from(bucket: "$(_flux_escape(bucket))")
   return stats
 end
 
-function _fetch_grouped_db_series_v2(influx_url, measurement, series_stats)::Vector{Any}
+function _fetch_grouped_db_series_v2(influx_url, measurement, series_stats; errors=nothing)::Vector{Any}
   series_ids = [string(stat["series_id"]) for stat in series_stats]
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
   field = string(get(ENV, "INFLUX_FIELD", "value"))
@@ -619,7 +670,8 @@ from(bucket: "$(_flux_escape(_influx_v2_bucket()))")
 
   resp = try
     _influx_v2_query(influx_url, flux)
-  catch
+  catch e
+    _push_influx_error!(errors, "fetching Flux grouped series failed: $(e)")
     return Any[]
   end
 
