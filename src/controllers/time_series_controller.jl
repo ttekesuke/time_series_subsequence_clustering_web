@@ -4,6 +4,7 @@ using Genie.Requests
 using Dates
 using HTTP
 using JSON3
+using Base64
 using UUIDs
 
 # The manager is defined in the parent module (TimeseriesClusteringAPI)
@@ -408,6 +409,10 @@ function _influx_query_get(influx_url, influx_db, q::AbstractString; extra_query
   rp = strip(string(get(ENV, "INFLUX_RP", "")))
   isempty(rp) || (query["rp"] = rp)
 
+  if _influx_cloud_enabled()
+    return _influx_query_get_cloud(url, query)
+  end
+
   return HTTP.get(url, _influx_query_headers(); query=query)
 end
 
@@ -417,9 +422,59 @@ function _influx_query_headers()::Vector{Pair{String,String}}
   end
 
   return [
-    "Authorization" => "Bearer $(_influx_v2_token())",
+    "Authorization" => "Token $(_influx_v2_token())",
     "Accept" => "application/json",
   ]
+end
+
+function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,String})
+  last_status = 0
+  last_body = ""
+
+  for scheme in _influx_v1_auth_schemes()
+    query = copy(base_query)
+    headers = _influx_v1_auth_headers(scheme)
+
+    if scheme == "query"
+      query["u"] = string(get(ENV, "INFLUX_V1_USER", "any"))
+      query["p"] = _influx_v2_token()
+    end
+
+    resp = HTTP.get(url, headers; query=query, status_exception=false)
+    if 200 <= resp.status < 300
+      return resp
+    end
+
+    last_status = resp.status
+    last_body = String(resp.body)
+    if !(resp.status in (401, 403))
+      break
+    end
+  end
+
+  error("Influx /query failed with HTTP $(last_status): $(_body_preview(last_body))")
+end
+
+function _influx_v1_auth_schemes()::Vector{String}
+  raw = lowercase(strip(string(get(ENV, "INFLUX_V1_AUTH_SCHEME", ""))))
+  if !isempty(raw)
+    return [strip(s) for s in split(raw, ",") if !isempty(strip(s))]
+  end
+  return ["token", "basic", "query", "bearer"]
+end
+
+function _influx_v1_auth_headers(scheme::AbstractString)::Vector{Pair{String,String}}
+  headers = Pair{String,String}["Accept" => "application/json"]
+  token = _influx_v2_token()
+  if scheme == "token"
+    push!(headers, "Authorization" => "Token $(token)")
+  elseif scheme == "basic"
+    user = string(get(ENV, "INFLUX_V1_USER", "any"))
+    push!(headers, "Authorization" => "Basic $(base64encode("$(user):$(token)"))")
+  elseif scheme == "bearer"
+    push!(headers, "Authorization" => "Bearer $(token)")
+  end
+  return headers
 end
 
 function _fetch_series_stats_from_counts(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
