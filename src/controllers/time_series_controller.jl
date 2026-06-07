@@ -470,6 +470,7 @@ end
 function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,String}; allow_dbrp_create::Bool=true)
   last_status = 0
   last_body = ""
+  last_failure_reason = ""
 
   for scheme in _influx_v1_auth_schemes()
     query = copy(base_query)
@@ -482,17 +483,32 @@ function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,St
 
     _influx_log("v1 query attempt", merge(_influx_query_summary(query), Dict("authScheme" => scheme)))
     resp = HTTP.get(url, headers; query=query, status_exception=false)
+    body = String(resp.body)
     _influx_log("v1 query response", merge(_influx_query_summary(query), Dict(
       "authScheme" => scheme,
       "status" => resp.status,
-      "bodyPreview" => _body_preview(String(resp.body)),
+      "bodyBytes" => sizeof(body),
+      "bodyPreview" => _body_preview(body),
     )))
     if 200 <= resp.status < 300
-      return resp
+      if _influx_query_body_looks_json(body)
+        return resp
+      end
+      last_status = resp.status
+      last_body = body
+      last_failure_reason = "2xx response did not contain a JSON /query body"
+      _influx_log("v1 query response ignored", Dict(
+        "authScheme" => scheme,
+        "reason" => "2xx response did not contain a JSON /query body",
+        "status" => resp.status,
+        "bodyBytes" => sizeof(body),
+      ))
+      continue
     end
 
     last_status = resp.status
-    last_body = String(resp.body)
+    last_body = body
+    last_failure_reason = "HTTP $(resp.status)"
     if !(resp.status in (401, 403))
       break
     end
@@ -509,7 +525,7 @@ function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,St
     end
   end
 
-  error("Influx /query failed with HTTP $(last_status): $(_body_preview(last_body))")
+  error("Influx /query failed with HTTP $(last_status) ($(last_failure_reason), bodyBytes=$(sizeof(last_body))): $(_body_preview(last_body))")
 end
 
 function _influx_v1_auth_schemes()::Vector{String}
@@ -517,7 +533,7 @@ function _influx_v1_auth_schemes()::Vector{String}
   if !isempty(raw)
     return [strip(s) for s in split(raw, ",") if !isempty(strip(s))]
   end
-  return ["token", "basic", "query", "bearer"]
+  return ["query", "basic", "token", "bearer"]
 end
 
 function _influx_v1_auth_headers(scheme::AbstractString)::Vector{Pair{String,String}}
@@ -566,6 +582,12 @@ function _influx_query_summary(query)::Dict{String,Any}
     summary["v1User"] = string(get(query, "u", ""))
   end
   return summary
+end
+
+function _influx_query_body_looks_json(body::AbstractString)::Bool
+  s = strip(String(body))
+  isempty(s) && return false
+  return startswith(s, "{") || startswith(s, "[")
 end
 
 function _influx_log(message::AbstractString, details=Dict{String,Any}())
