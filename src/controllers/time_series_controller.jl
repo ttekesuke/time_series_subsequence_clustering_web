@@ -492,6 +492,18 @@ function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,St
     )))
     if 200 <= resp.status < 300
       if _influx_query_body_looks_json(body)
+        if _is_influx_database_not_found(body)
+          last_status = resp.status
+          last_body = body
+          last_failure_reason = "InfluxQL database not found"
+          _influx_log("v1 query response requires DBRP mapping", Dict(
+            "authScheme" => scheme,
+            "status" => resp.status,
+            "bodyBytes" => sizeof(body),
+            "bodyPreview" => _body_preview(body),
+          ))
+          break
+        end
         return resp
       end
       last_status = resp.status
@@ -703,7 +715,7 @@ function _fetch_series_stats_from_counts(influx_url, influx_db, measurement; err
   end
 
   body = String(resp_counts.body)
-  series_list = _influx_series_list(parsed_counts, body, "cloud series counts")
+  series_list = _influx_series_list(parsed_counts, body, "cloud series counts"; errors=errors)
   if series_list === nothing
     stats = _fetch_series_stats_from_sample(influx_url, influx_db, measurement; errors=errors)
     isempty(stats) || return stats
