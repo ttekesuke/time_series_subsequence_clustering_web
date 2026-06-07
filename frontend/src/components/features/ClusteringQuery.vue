@@ -14,7 +14,16 @@
         />
       </div>
       <div class="viz-row" style="height:55%; overflow:auto; padding:8px">
-        <div v-if="Object.keys(results.bySeries || {}).length === 0">No results yet. Open Query dialog and run a query.</div>
+        <v-alert
+          v-if="queryStatus"
+          class="mb-3"
+          :type="queryStatus.type"
+          density="compact"
+          variant="tonal"
+        >
+          {{ queryStatus.message }}
+        </v-alert>
+        <div v-if="Object.keys(results.bySeries || {}).length === 0">{{ emptyResultsMessage }}</div>
         <div v-else>
           <div v-for="(info, idx) in seriesSummaries" :key="idx" style="margin-bottom:12px">
             <div style="display:flex; align-items:center; gap:12px;">
@@ -80,6 +89,9 @@ type StreamsRollExpose = {
 const openDialog = ref(false)
 const query = ref({ timeseries: [] })
 const results = ref({ dbSeries: [], bySeries: {} as Record<number, any[]> })
+const dbStatus = ref<string | null>(null)
+const dbDiagnostics = ref<Record<string, any> | null>(null)
+const dbError = ref<string | null>(null)
 const visibleSeries = ref<number | null>(null)
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -111,7 +123,43 @@ const handleQueried = (payload) => {
   query.value.timeseries = payload.query || []
   results.value.dbSeries = payload.dbSeries || []
   results.value.bySeries = payload.clustersPerSeries || {}
+  dbStatus.value = payload.dbStatus || null
+  dbDiagnostics.value = payload.dbDiagnostics || null
+  dbError.value = payload.influxError || null
+  if (payload.dbStatus && payload.dbStatus !== 'ok') {
+    console.warn('Query DB status', {
+      status: payload.dbStatus,
+      diagnostics: payload.dbDiagnostics,
+      influxError: payload.influxError,
+      influxErrors: payload.influxErrors,
+    })
+  }
 }
+
+const queryStatus = computed(() => {
+  if (!dbStatus.value) return null
+  if (dbStatus.value === 'ok') return null
+  const diag = dbDiagnostics.value || {}
+  const suffix = `series=${diag.seriesStatsCount ?? 0}, fetched=${diag.fetchedSeriesCount ?? 0}, points=${diag.fetchedPointCount ?? 0}`
+  if (dbStatus.value === 'influx_error') {
+    return { type: 'error', message: `InfluxDB query failed. ${dbError.value || 'Check Render logs for [query_db][influx].'} (${suffix})` }
+  }
+  if (dbStatus.value === 'db_empty') {
+    return { type: 'warning', message: `InfluxDB returned no series for this measurement/field. (${suffix})` }
+  }
+  if (dbStatus.value === 'no_match') {
+    return { type: 'info', message: `InfluxDB data was scanned, but no subsequence matched. (${suffix})` }
+  }
+  return { type: 'info', message: `Query status: ${dbStatus.value}. (${suffix})` }
+})
+
+const emptyResultsMessage = computed(() => {
+  if (!dbStatus.value) return 'No results yet. Open Query dialog and run a query.'
+  if (dbStatus.value === 'no_match') return 'No matching DB series for the current query.'
+  if (dbStatus.value === 'db_empty') return 'No DB series were available from InfluxDB.'
+  if (dbStatus.value === 'influx_error') return 'InfluxDB query failed.'
+  return 'No matching DB series.'
+})
 
 const seriesSummaries = computed(() => {
   const out: Array<any> = []

@@ -73,10 +73,30 @@ function query_db()
   matched_series = Any[]
 
   influx_errors = String[]
+  _influx_log("query_db start", Dict(
+    "cloud" => _influx_cloud_enabled(),
+    "mode" => _influx_query_mode(),
+    "measurement" => measurement,
+    "field" => _influx_field(),
+    "bucketOrDb" => _influx_query_database(influx_db),
+    "queryLength" => length(query_series),
+    "minMatchWindow" => min_match_window,
+  ))
   series_stats = _fetch_series_stats(influx_url, influx_db, measurement; errors=influx_errors)
 
   if isempty(series_stats)
-    result = Dict("query"=>query_series, "dbSeries"=>Any[], "clustersPerSeries"=>Dict{Int,Any}(), "processingTime"=>round(time()-t0;digits=2))
+    processing_time_s = round(time()-t0;digits=2)
+    db_status = isempty(influx_errors) ? "db_empty" : "influx_error"
+    diagnostics = _query_db_diagnostics(influx_db, measurement, 0, 0, 0, 0, db_status)
+    _influx_log("query_db finished", merge(copy(diagnostics), Dict("processingTime" => processing_time_s, "errorCount" => length(influx_errors))))
+    result = Dict(
+      "query"=>query_series,
+      "dbSeries"=>Any[],
+      "clustersPerSeries"=>Dict{Int,Any}(),
+      "processingTime"=>processing_time_s,
+      "dbStatus"=>db_status,
+      "dbDiagnostics"=>diagnostics,
+    )
     if !isempty(influx_errors)
       result["influxError"] = influx_errors[end]
       result["influxErrors"] = influx_errors
@@ -86,7 +106,7 @@ function query_db()
         "influxCloud" => _influx_cloud_enabled(),
         "queryMode" => _influx_query_mode(),
         "measurement" => measurement,
-        "field" => string(get(ENV, "INFLUX_FIELD", "value")),
+        "field" => _influx_field(),
         "bucketOrDb" => _influx_query_database(influx_db),
         "seriesStatsCount" => 0,
       )
@@ -199,7 +219,26 @@ function query_db()
   end
 
   processing_time_s = round(time() - t0; digits=2)
-  result = Dict("query"=>query_series, "dbSeries"=>db_series_all, "clustersPerSeries"=>clusters_per_series, "processingTime"=>processing_time_s)
+  db_status = if !isempty(influx_errors) && fetched_series_count == 0
+    "influx_error"
+  elseif fetched_series_count == 0
+    "db_empty"
+  elseif isempty(db_series_all)
+    "no_match"
+  else
+    "ok"
+  end
+  diagnostics = _query_db_diagnostics(influx_db, measurement, length(series_stats), length(chunks), fetched_series_count, fetched_point_count, db_status)
+  diagnostics["matchedSeriesCount"] = length(db_series_all)
+  _influx_log("query_db finished", merge(copy(diagnostics), Dict("processingTime" => processing_time_s, "errorCount" => length(influx_errors))))
+  result = Dict(
+    "query"=>query_series,
+    "dbSeries"=>db_series_all,
+    "clustersPerSeries"=>clusters_per_series,
+    "processingTime"=>processing_time_s,
+    "dbStatus"=>db_status,
+    "dbDiagnostics"=>diagnostics,
+  )
   if !isempty(influx_errors)
     result["influxError"] = influx_errors[end]
     result["influxErrors"] = influx_errors
@@ -209,7 +248,7 @@ function query_db()
       "influxCloud" => _influx_cloud_enabled(),
       "queryMode" => _influx_query_mode(),
       "measurement" => measurement,
-      "field" => string(get(ENV, "INFLUX_FIELD", "value")),
+      "field" => _influx_field(),
       "bucketOrDb" => _influx_query_database(influx_db),
       "seriesStatsCount" => length(series_stats),
       "chunksCount" => length(chunks),
@@ -310,7 +349,8 @@ function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_sta
   series_ids = [string(stat["series_id"]) for stat in series_stats]
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
   pattern = join([_escape_influx_regex(sid) for sid in series_ids], "|")
-  q = "SELECT \"value\" FROM \"$(measurement)\" WHERE \"series_id\" =~ /^(?:$(pattern))\$/ GROUP BY \"series_id\""
+  field = _influx_field()
+  q = "SELECT \"$(field)\" FROM \"$(measurement)\" WHERE \"series_id\" =~ /^(?:$(pattern))\$/ GROUP BY \"series_id\""
   resp = try
     _influx_query_get(influx_url, influx_db, q; extra_query=Dict("epoch"=>"ms"))
   catch e
@@ -440,7 +480,13 @@ function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,St
       query["p"] = _influx_v2_token()
     end
 
+    _influx_log("v1 query attempt", merge(_influx_query_summary(query), Dict("authScheme" => scheme)))
     resp = HTTP.get(url, headers; query=query, status_exception=false)
+    _influx_log("v1 query response", merge(_influx_query_summary(query), Dict(
+      "authScheme" => scheme,
+      "status" => resp.status,
+      "bodyPreview" => _body_preview(String(resp.body)),
+    )))
     if 200 <= resp.status < 300
       return resp
     end
@@ -455,6 +501,7 @@ function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,St
   if allow_dbrp_create && _should_auto_create_dbrp() && _is_influx_database_not_found(last_body)
     db = get(base_query, "db", _influx_v2_bucket())
     rp = get(base_query, "rp", _influx_default_rp())
+    _influx_log("DBRP mapping missing; attempting create", Dict("db" => db, "rp" => rp, "bucket" => _influx_v2_bucket()))
     if _ensure_cloud_dbrp_mapping(db, rp)
       query_with_rp = copy(base_query)
       query_with_rp["rp"] = rp
@@ -485,6 +532,51 @@ function _influx_v1_auth_headers(scheme::AbstractString)::Vector{Pair{String,Str
     push!(headers, "Authorization" => "Bearer $(token)")
   end
   return headers
+end
+
+function _influx_field()::String
+  return string(get(ENV, "INFLUX_FIELD", "value"))
+end
+
+function _query_db_diagnostics(influx_db, measurement, series_stats_count::Int, chunks_count::Int, fetched_series_count::Int, fetched_point_count::Int, status::AbstractString)
+  return Dict{String,Any}(
+    "status" => String(status),
+    "influxCloud" => _influx_cloud_enabled(),
+    "queryMode" => _influx_query_mode(),
+    "measurement" => String(measurement),
+    "field" => _influx_field(),
+    "bucketOrDb" => _influx_query_database(influx_db),
+    "retentionPolicy" => _influx_default_rp(),
+    "seriesStatsCount" => series_stats_count,
+    "chunksCount" => chunks_count,
+    "fetchedSeriesCount" => fetched_series_count,
+    "fetchedPointCount" => fetched_point_count,
+  )
+end
+
+function _influx_query_summary(query)::Dict{String,Any}
+  q = string(get(query, "q", ""))
+  summary = Dict{String,Any}(
+    "db" => string(get(query, "db", "")),
+    "rp" => string(get(query, "rp", "")),
+    "epoch" => string(get(query, "epoch", "")),
+    "queryPreview" => _body_preview(q),
+  )
+  if haskey(query, "u")
+    summary["v1User"] = string(get(query, "u", ""))
+  end
+  return summary
+end
+
+function _influx_log(message::AbstractString, details=Dict{String,Any}())
+  enabled = _parse_bool(get(ENV, "INFLUX_QUERY_LOG", _influx_cloud_enabled() ? "true" : "false"), false)
+  enabled || return nothing
+  try
+    println("[query_db][influx] ", String(message), " ", JSON3.write(details))
+  catch
+    println("[query_db][influx] ", String(message))
+  end
+  return nothing
 end
 
 function _should_auto_create_dbrp()::Bool
@@ -523,6 +615,12 @@ function _ensure_cloud_dbrp_mapping(database::AbstractString, rp::AbstractString
     "Accept" => "application/json",
   ]
   resp = HTTP.post(url, headers, JSON3.write(body); status_exception=false)
+  _influx_log("DBRP mapping create response", Dict(
+    "db" => String(database),
+    "rp" => String(rp),
+    "status" => resp.status,
+    "bodyPreview" => _body_preview(String(resp.body)),
+  ))
   if resp.status in (200, 201)
     return true
   end
@@ -543,6 +641,11 @@ function _influx_bucket_id()::String
     "Accept" => "application/json",
   ]
   resp = HTTP.get(url, headers; query=query, status_exception=false)
+  _influx_log("bucket lookup response", Dict(
+    "bucket" => _influx_v2_bucket(),
+    "status" => resp.status,
+    "bodyPreview" => _body_preview(String(resp.body)),
+  ))
   if !(200 <= resp.status < 300)
     error("Influx bucket lookup failed with HTTP $(resp.status): $(_body_preview(String(resp.body)))")
   end
@@ -561,7 +664,7 @@ function _influx_bucket_id()::String
 end
 
 function _fetch_series_stats_from_counts(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
-  field = string(get(ENV, "INFLUX_FIELD", "value"))
+  field = _influx_field()
   q_counts = "SELECT COUNT(\"$(field)\") FROM \"$(measurement)\" GROUP BY \"series_id\""
   resp_counts = try
     _influx_query_get(influx_url, influx_db, q_counts)
@@ -605,7 +708,7 @@ function _fetch_series_stats_from_counts(influx_url, influx_db, measurement; err
 end
 
 function _fetch_series_stats_from_sample(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
-  field = string(get(ENV, "INFLUX_FIELD", "value"))
+  field = _influx_field()
   q = "SELECT \"$(field)\" FROM \"$(measurement)\" GROUP BY \"series_id\" LIMIT 1"
   resp = try
     _influx_query_get(influx_url, influx_db, q)
@@ -663,7 +766,7 @@ function _influx_series_list(parsed, body::AbstractString, context::AbstractStri
 end
 
 function _fetch_series_stats_sql(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
-  field = string(get(ENV, "INFLUX_FIELD", "value"))
+  field = _influx_field()
   q = """
 SELECT series_id, COUNT($(_sql_identifier(field))) AS count
 FROM $(_sql_identifier(measurement))
@@ -695,7 +798,7 @@ end
 function _fetch_grouped_db_series_sql(influx_url, influx_db, measurement, series_stats; errors=nothing)::Vector{Any}
   series_ids = [string(stat["series_id"]) for stat in series_stats]
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
-  field = string(get(ENV, "INFLUX_FIELD", "value"))
+  field = _influx_field()
   ids_sql = join([_sql_literal(sid) for sid in series_ids], ", ")
   q = """
 SELECT series_id, $(_sql_identifier(field)) AS value
@@ -829,7 +932,7 @@ end
 
 function _fetch_series_stats_v2(influx_url, measurement; errors=nothing)::Vector{Any}
   bucket = _influx_v2_bucket()
-  field = string(get(ENV, "INFLUX_FIELD", "value"))
+  field = _influx_field()
   flux = """
 from(bucket: "$(_flux_escape(bucket))")
   |> range(start: 0)
@@ -861,7 +964,7 @@ end
 function _fetch_grouped_db_series_v2(influx_url, measurement, series_stats; errors=nothing)::Vector{Any}
   series_ids = [string(stat["series_id"]) for stat in series_stats]
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
-  field = string(get(ENV, "INFLUX_FIELD", "value"))
+  field = _influx_field()
   set_expr = "[" * join(["\"$(_flux_escape(sid))\"" for sid in series_ids], ", ") * "]"
   flux = """
 from(bucket: "$(_flux_escape(_influx_v2_bucket()))")
