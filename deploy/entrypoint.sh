@@ -18,6 +18,12 @@ export PORT GENIE_PORT GENIE_HOST GENIE_ENV JULIA_DEPOT_PATH
 echo "[entrypoint] PORT=${PORT} (nginx listen)"
 echo "[entrypoint] GENIE_HOST=${GENIE_HOST} GENIE_PORT=${GENIE_PORT} (genie listen)"
 
+if [[ "${ENSURE_INFLUX_DBRP_ON_START:-false}" == "true" ]]; then
+  echo "[entrypoint] ENSURE_INFLUX_DBRP_ON_START=true; ensuring Influx DBRP mapping"
+  julia --project=/app /app/scripts/ensure_influx_dbrp.jl
+  echo "[entrypoint] Influx DBRP mapping ensured"
+fi
+
 # Optional one-shot seed for hosted environments without shell access.
 # Disable after the first successful run to avoid adding more seed points on every restart.
 if [[ "${SEED_ON_START:-false}" == "true" ]]; then

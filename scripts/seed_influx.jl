@@ -1,7 +1,7 @@
 using HTTP, JSON3, Dates
 
 influx_url = get(ENV, "INFLUX_URL", "http://influxdb:8086")
-influx_db = get(ENV, "INFLUX_DB", "telegraf")
+influx_db = get(ENV, "INFLUX_DB", "timeseries")
 influx_bucket = get(ENV, "INFLUX_BUCKET", "")
 influx_token = get(ENV, "INFLUX_TOKEN", "")
 measurement = get(ENV, "INFLUX_MEASUREMENT", "timeseries")

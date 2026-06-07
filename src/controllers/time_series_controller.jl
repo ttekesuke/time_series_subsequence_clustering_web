@@ -61,7 +61,7 @@ function query_db()
   # influx params
   measurement = string(get(p, "measurement", get(ENV, "INFLUX_MEASUREMENT", "timeseries")))
   influx_url = get(ENV, "INFLUX_URL", "http://influxdb:8086")
-  influx_db = string(get(ENV, "INFLUX_DB", "telegraf"))
+  influx_db = string(get(ENV, "INFLUX_DB", "timeseries"))
   debug_influx = _parse_bool(get(p, "debug", false), false)
   merge_threshold = _parse_float(get(p, "merge_threshold_ratio", 0.3))
   min_window = SUBSEQUENCE_MIN_WINDOW_SIZE
@@ -431,9 +431,20 @@ end
 
 function _influx_query_database(influx_db)::String
   if _influx_cloud_enabled()
-    return _influx_v2_bucket()
+    return _influx_v1_database(influx_db)
   end
   return string(influx_db)
+end
+
+function _influx_v1_database(influx_db)::String
+  explicit = strip(string(get(ENV, "INFLUX_V1_DB", "")))
+  !isempty(explicit) && return explicit
+
+  if _env_present("INFLUX_DB")
+    return strip(string(get(ENV, "INFLUX_DB", "")))
+  end
+
+  return _influx_v2_bucket()
 end
 
 function _influx_query_get(influx_url, influx_db, q::AbstractString; extra_query=Dict{String,String}())
@@ -526,15 +537,18 @@ function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,St
     end
   end
 
-  if allow_dbrp_create && _should_auto_create_dbrp() && _is_influx_database_not_found(last_body)
+  if _is_influx_database_not_found(last_body)
     db = get(base_query, "db", _influx_v2_bucket())
     rp = get(base_query, "rp", _influx_default_rp())
-    _influx_log("DBRP mapping missing; attempting create", Dict("db" => db, "rp" => rp, "bucket" => _influx_v2_bucket()))
-    if _ensure_cloud_dbrp_mapping(db, rp)
-      query_with_rp = copy(base_query)
-      query_with_rp["rp"] = rp
-      return _influx_query_get_cloud(url, query_with_rp; allow_dbrp_create=false)
+    if allow_dbrp_create && _should_auto_create_dbrp()
+      _influx_log("DBRP mapping missing; attempting create", Dict("db" => db, "rp" => rp, "bucket" => _influx_v2_bucket()))
+      if _ensure_cloud_dbrp_mapping(db, rp)
+        query_with_rp = copy(base_query)
+        query_with_rp["rp"] = rp
+        return _influx_query_get_cloud(url, query_with_rp; allow_dbrp_create=false)
+      end
     end
+    error(_missing_dbrp_message(db, rp))
   end
 
   error("Influx /query failed with HTTP $(last_status) ($(last_failure_reason), bodyBytes=$(sizeof(last_body))): $(_body_preview(last_body))")
@@ -614,7 +628,7 @@ function _influx_log(message::AbstractString, details=Dict{String,Any}())
 end
 
 function _should_auto_create_dbrp()::Bool
-  return _parse_bool(get(ENV, "INFLUX_AUTO_CREATE_DBRP", "true"), true)
+  return _parse_bool(get(ENV, "INFLUX_AUTO_CREATE_DBRP", "false"), false)
 end
 
 function _is_influx_database_not_found(body::AbstractString)::Bool
@@ -625,6 +639,15 @@ function _influx_default_rp()::String
   rp = strip(string(get(ENV, "INFLUX_RP", "")))
   isempty(rp) && return "autogen"
   return rp
+end
+
+function _missing_dbrp_message(db::AbstractString, rp::AbstractString)::String
+  return string(
+    "InfluxDB Cloud DBRP mapping is missing for db='", db, "', rp='", rp, "'. ",
+    "Create a one-time mapping from that DB/RP pair to bucket='", _influx_v2_bucket(), "' ",
+    "or run scripts/ensure_influx_dbrp.jl with INFLUX_URL, INFLUX_TOKEN, INFLUX_BUCKET, INFLUX_ORG_ID, INFLUX_DB, and INFLUX_RP set. ",
+    "Set INFLUX_AUTO_CREATE_DBRP=true only if the app token is allowed to manage DBRP mappings."
+  )
 end
 
 function _ensure_cloud_dbrp_mapping(database::AbstractString, rp::AbstractString)::Bool
@@ -642,13 +665,24 @@ function _ensure_cloud_dbrp_mapping(database::AbstractString, rp::AbstractString
   for (k, v) in org_query
     body[k] = v
   end
+  body_json = JSON3.write(body)
 
   headers = [
     "Authorization" => "Token $(_influx_v2_token())",
     "Content-Type" => "application/json",
     "Accept" => "application/json",
   ]
-  resp = HTTP.post(url, headers, JSON3.write(body); status_exception=false)
+  _influx_log("DBRP mapping create attempt", Dict(
+    "db" => String(database),
+    "rp" => String(rp),
+    "bucketID" => bucket_id,
+    "orgKeys" => collect(keys(org_query)),
+  ))
+  resp = try
+    HTTP.post(url, headers, body_json; status_exception=false)
+  catch e
+    error("Influx DBRP mapping creation request failed before response: $(e)")
+  end
   _influx_log("DBRP mapping create response", Dict(
     "db" => String(database),
     "rp" => String(rp),
@@ -675,26 +709,67 @@ function _influx_bucket_id()::String
     "Accept" => "application/json",
   ]
   resp = HTTP.get(url, headers; query=query, status_exception=false)
+  bucket_body = String(resp.body)
   _influx_log("bucket lookup response", Dict(
     "bucket" => _influx_v2_bucket(),
     "status" => resp.status,
-    "bodyPreview" => _body_preview(String(resp.body)),
+    "bodyBytes" => sizeof(bucket_body),
+    "bodyPreview" => _body_preview(bucket_body),
   ))
   if !(200 <= resp.status < 300)
-    error("Influx bucket lookup failed with HTTP $(resp.status): $(_body_preview(String(resp.body)))")
+    error("Influx bucket lookup failed with HTTP $(resp.status): $(_body_preview(bucket_body))")
   end
 
-  parsed = JSON3.read(String(resp.body))
+  parsed = try
+    JSON3.read(bucket_body)
+  catch e
+    fallback_id = _bucket_id_from_lookup_body(bucket_body, _influx_v2_bucket())
+    if !isempty(fallback_id)
+      _influx_log("bucket lookup JSON parse failed; using fallback bucket id", Dict(
+        "bucket" => _influx_v2_bucket(),
+        "bucketID" => fallback_id,
+        "error" => string(e),
+      ))
+      return fallback_id
+    end
+    error("Influx bucket lookup returned unparsable JSON: $(e) bodyBytes=$(sizeof(bucket_body)) preview=$(_body_preview(bucket_body))")
+  end
   try
     buckets = parsed["buckets"]
     for b in buckets
       if string(b["name"]) == _influx_v2_bucket()
-        return string(b["id"])
+        bucket_id = string(b["id"])
+        _influx_log("bucket lookup matched bucket", Dict("bucket" => _influx_v2_bucket(), "bucketID" => bucket_id))
+        return bucket_id
       end
     end
   catch
   end
   return ""
+end
+
+function _bucket_id_from_lookup_body(body::AbstractString, bucket_name::AbstractString)::String
+  s = String(body)
+  name_pattern = Regex("\"name\"\\s*:\\s*\"" * _regex_escape_literal(String(bucket_name)) * "\"")
+  name_match = match(name_pattern, s)
+  name_match === nothing && return ""
+
+  before_name = s[1:name_match.offset]
+  id_matches = collect(eachmatch(Regex("\"id\"\\s*:\\s*\"([^\"]+)\""), before_name))
+  isempty(id_matches) && return ""
+  return String(id_matches[end].captures[1])
+end
+
+function _regex_escape_literal(s::AbstractString)::String
+  out = IOBuffer()
+  specials = Set(['\\', '"', '.', '^', '$', '|', '?', '*', '+', '(', ')', '[', ']', '{', '}'])
+  for c in String(s)
+    if c in specials
+      print(out, '\\')
+    end
+    print(out, c)
+  end
+  return String(take!(out))
 end
 
 function _fetch_series_stats_from_counts(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
