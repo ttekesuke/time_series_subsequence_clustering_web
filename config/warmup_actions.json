@@ -1,0 +1,86 @@
+{
+  "actions": [
+    {
+      "name": "analyse",
+      "path": "/api/web/time_series/analyse",
+      "payload": {
+        "analyse": {
+          "time_series": [0, 1, 3, 2, 4, 5, 3, 1],
+          "skip_empty": true,
+          "merge_threshold_ratio": 0.02,
+          "job_id": "warmup-analyse"
+        }
+      }
+    },
+    {
+      "name": "query_db",
+      "path": "/api/web/time_series/query_db",
+      "payload": {
+        "query": {
+          "query_series": [0, 1, 3, 2, 4, 5, 3, 1],
+          "measurement": "timeseries",
+          "merge_threshold_ratio": 0.02,
+          "range_min": 0,
+          "range_max": 11,
+          "min_match_window": 3
+        }
+      }
+    },
+    {
+      "name": "generate",
+      "path": "/api/web/time_series/generate",
+      "payload": {
+        "generate": {
+          "first_elements": "0,1,3",
+          "complexity_transition": "0.2,0.5",
+          "range_min": 0,
+          "range_max": 11,
+          "merge_threshold_ratio": 0.02,
+          "use_recent_position_weight": false,
+          "job_id": "warmup-generate"
+        }
+      }
+    },
+    {
+      "name": "generate_polyphonic",
+      "path": "/api/web/time_series/generate_polyphonic",
+      "payload": {
+        "generate_polyphonic": {
+          "initial_context": [
+            [
+              [[60], 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 0.0, 0.5]
+            ],
+            [
+              [[62], 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 0.0, 0.5]
+            ]
+          ],
+          "stream_counts": [1],
+          "stream_strength_target": [0.5],
+          "stream_strength_spread": [0.2],
+          "dissonance_target": [0.3],
+          "vol_global": [0.5],
+          "vol_center": [0.5],
+          "vol_spread": [0.2],
+          "vol_conc": [0.5],
+          "bri_global": [0.5],
+          "bri_center": [0.5],
+          "bri_spread": [0.2],
+          "bri_conc": [0.5],
+          "hrd_global": [0.5],
+          "hrd_center": [0.5],
+          "hrd_spread": [0.2],
+          "hrd_conc": [0.5],
+          "tex_global": [0.5],
+          "tex_center": [0.5],
+          "tex_spread": [0.2],
+          "tex_conc": [0.5],
+          "note_global": [0.5],
+          "note_center": [0.5],
+          "note_spread": [0.2],
+          "note_conc": [0.5],
+          "job_id": "warmup-generate-polyphonic"
+        }
+      }
+    }
+  ]
+}
