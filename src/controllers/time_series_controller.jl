@@ -515,7 +515,7 @@ function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,St
           ))
           break
         end
-        return resp
+        return _cached_influx_response(resp.status, body)
       end
       last_status = resp.status
       last_body = body
@@ -552,6 +552,13 @@ function _influx_query_get_cloud(url::AbstractString, base_query::Dict{String,St
   end
 
   error("Influx /query failed with HTTP $(last_status) ($(last_failure_reason), bodyBytes=$(sizeof(last_body))): $(_body_preview(last_body))")
+end
+
+function _cached_influx_response(status::Integer, body::AbstractString)
+  return (
+    status = Int(status),
+    body = Vector{UInt8}(codeunits(String(body))),
+  )
 end
 
 function _influx_v1_auth_schemes()::Vector{String}
@@ -783,13 +790,16 @@ function _fetch_series_stats_from_counts(influx_url, influx_db, measurement; err
     return Any[]
   end
 
-  parsed_counts = try JSON3.read(String(resp_counts.body)) catch
-    println("Influx query returned non-JSON while fetching cloud series counts: ", String(resp_counts.body))
-    _push_influx_error!(errors, "fetching cloud series counts returned non-JSON: $(_body_preview(String(resp_counts.body)))")
+  counts_body = String(resp_counts.body)
+  parsed_counts = try
+    JSON3.read(counts_body)
+  catch e
+    println("Influx query returned non-JSON while fetching cloud series counts: ", counts_body)
+    _push_influx_error!(errors, "fetching cloud series counts returned non-JSON: $(e) bodyBytes=$(sizeof(counts_body)) body=$(_body_preview(counts_body))")
     return Any[]
   end
 
-  body = String(resp_counts.body)
+  body = counts_body
   series_list = _influx_series_list(parsed_counts, body, "cloud series counts"; errors=errors)
   if series_list === nothing
     stats = _fetch_series_stats_from_sample(influx_url, influx_db, measurement; errors=errors)
