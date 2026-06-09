@@ -28,7 +28,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 
 type StreamCellValue = number | number[] | null | undefined
 
@@ -70,6 +70,7 @@ type RectInfo = {
 const rects = ref<RectInfo[]>([])
 const hoverInfo = ref<null | { x: number; y: number; step: number; value: number; streamIndex: number }>(null)
 const cursorStyle = ref<string>('default')
+let resizeObserver: ResizeObserver | null = null
 
 const onScroll = (e: Event) => emit('scroll', e)
 const getStreamLabel = (streamIndex: number) => {
@@ -78,6 +79,7 @@ const getStreamLabel = (streamIndex: number) => {
 }
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
+const MAX_CANVAS_WIDTH = 30000
 
 /**
  * 小数ステップ対策:
@@ -109,8 +111,14 @@ const draw = () => {
 
   const maxStep = Math.max(0, ...values.map(s => (Array.isArray(s) ? s.length : 0)))
 
+  const rawStepWidth = Number(props.stepWidth)
+  const safeStepWidth = Number.isFinite(rawStepWidth) && rawStepWidth > 0 ? rawStepWidth : 1
+  const effectiveStepWidth = maxStep > 0
+    ? Math.max(1, Math.min(safeStepWidth, MAX_CANVAS_WIDTH / maxStep))
+    : safeStepWidth
+
   const wrapperWidth = scrollWrapper.value.clientWidth
-  const contentWidth = Math.max(1, maxStep * props.stepWidth)
+  const contentWidth = Math.max(1, maxStep * effectiveStepWidth)
   const width = Math.max(1, wrapperWidth, contentWidth)
 
   const baseCanvasHeight = scrollWrapper.value.clientHeight || 200
@@ -156,7 +164,7 @@ const draw = () => {
   ctx.strokeStyle = '#eeeeee'
   ctx.lineWidth = 1
   for (let i = 0; i <= maxStep; i++) {
-    const x = i * props.stepWidth
+    const x = i * effectiveStepWidth
     ctx.beginPath()
     ctx.moveTo(x, 0)
     ctx.lineTo(x, canvasHeight)
@@ -177,7 +185,7 @@ const draw = () => {
 
       if (notes.length === 0) return
 
-      const xBase = step * props.stepWidth
+      const xBase = step * effectiveStepWidth
 
       let alpha = 0.8
       if (velocities[sIdx] && velocities[sIdx][step] !== undefined) {
@@ -189,7 +197,7 @@ const draw = () => {
         hIdx => step >= hIdx && step < hIdx + props.highlightWindowSize
       )
 
-      const fullBarWidth = Math.max(1, props.stepWidth - 2)
+      const fullBarWidth = Math.max(1, effectiveStepWidth - 2)
       const rectX = xBase + 1
       const barHeight = Math.min(slotHeight, Math.max(0.5, slotHeight * 0.8))
 
@@ -228,15 +236,15 @@ const draw = () => {
   if (props.highlightIndices.length > 0 && props.highlightWindowSize > 0) {
     ctx.fillStyle = 'rgba(255, 200, 200, 0.25)'
     props.highlightIndices.forEach(idx => {
-      const x = idx * props.stepWidth
-      const w = props.highlightWindowSize * props.stepWidth
+      const x = idx * effectiveStepWidth
+      const w = props.highlightWindowSize * effectiveStepWidth
       ctx.fillRect(x, 0, w, canvasHeight)
     })
   }
 
   // Playback step cursor (discrete per-step)
   if (props.playheadStep >= 0) {
-    const x = props.playheadStep * props.stepWidth
+    const x = props.playheadStep * effectiveStepWidth
     ctx.save()
     ctx.beginPath()
     ctx.moveTo(x, 0)
@@ -327,6 +335,17 @@ watch(
 
 onMounted(() => {
   setTimeout(draw, 100)
+  if (scrollWrapper.value) {
+    resizeObserver = new ResizeObserver(() => {
+      nextTick(draw)
+    })
+    resizeObserver.observe(scrollWrapper.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
 })
 
 defineExpose({ scrollWrapper, redraw: draw, scrollToStep })

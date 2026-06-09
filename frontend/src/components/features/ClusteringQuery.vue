@@ -36,7 +36,7 @@
                 :streamValues="displaySeries(results.dbSeries[info.seriesIndex])"
                 :minValue="0"
                 :maxValue="queryMaxValue"
-                :stepWidth="sharedStepWidth"
+                :stepWidth="dbStepWidth(info.seriesIndex)"
                 :highlightIndices="highlightDBIndices"
                 :highlightWindowSize="highlightWindowSize"
                 title="DB Series"
@@ -116,7 +116,12 @@ const availableRollWidth = computed(() => {
   return Math.max(1, width - STREAMS_ROLL_LABEL_WIDTH)
 })
 
-const sharedStepWidth = computed(() => Math.max(4, availableRollWidth.value / Math.max(1, (query.value.timeseries.length || 100))))
+const queryLength = computed(() => {
+  const vectors = query.value.vectors || []
+  if (Array.isArray(vectors) && vectors.length > 0 && Array.isArray(vectors[0])) return vectors[0].length
+  return query.value.timeseries.length || 100
+})
+const sharedStepWidth = computed(() => Math.max(4, availableRollWidth.value / Math.max(1, queryLength.value)))
 const computedQueryStepWidth = sharedStepWidth
 const queryDisplaySeries = computed(() => {
   const vectors = query.value.vectors || []
@@ -137,6 +142,16 @@ const displaySeries = (series: any) => {
     return [notes, vols]
   }
   return [series]
+}
+
+const seriesLength = (series: any) => {
+  if (!Array.isArray(series)) return 1
+  return series.length
+}
+
+const dbStepWidth = (seriesIndex: number) => {
+  const len = seriesLength(results.value.dbSeries?.[seriesIndex])
+  return Math.max(4, availableRollWidth.value / Math.max(1, len))
 }
 
 const handleQueried = (payload) => {
