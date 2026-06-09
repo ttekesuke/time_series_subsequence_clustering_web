@@ -7,8 +7,10 @@ influx_token = get(ENV, "INFLUX_TOKEN", "")
 measurement = get(ENV, "INFLUX_MEASUREMENT", "timeseries")
 num_series = parse(Int, get(ENV, "SEED_SERIES", "100"))
 series_len = parse(Int, get(ENV, "SEED_LENGTH", "100"))
-minv = parse(Int, get(ENV, "SEED_MIN", "0"))
-maxv = parse(Int, get(ENV, "SEED_MAX", "11"))
+minv = parse(Int, get(ENV, "SEED_MIN", "48"))
+maxv = parse(Int, get(ENV, "SEED_MAX", "72"))
+note_field = get(ENV, "INFLUX_NOTE_FIELD", "note")
+vol_field = get(ENV, "INFLUX_VOL_FIELD", "vol")
 seed_start_unix_s_raw = strip(get(ENV, "SEED_START_UNIX_S", ""))
 seed_start_unix_s = isempty(seed_start_unix_s_raw) ?
   Int(floor(time())) - (num_series * series_len) :
@@ -84,11 +86,18 @@ end
 # Give every point in a series a deterministic unique timestamp.
 for sid in 0:(num_series-1)
   buf = IOBuffer()
+  previous_note = rand(minv:maxv)
   for t in 1:series_len
-    v = rand(minv:maxv)
+    vol = rand(0:1)
+    note = if vol == 0
+      previous_note
+    else
+      rand(minv:maxv)
+    end
+    previous_note = note
     timestamp_s = seed_start_unix_s + sid * series_len + (t - 1)
-    # line protocol: measurement,series_id=SID value=V
-    println(buf, "$(measurement),series_id=$(sid) value=$(v) $(timestamp_s)")
+    # line protocol: measurement,series_id=SID note=N,vol=0|1
+    println(buf, "$(measurement),series_id=$(sid) $(note_field)=$(note),$(vol_field)=$(vol) $(timestamp_s)")
   end
   body = String(take!(buf))
   try

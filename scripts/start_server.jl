@@ -51,6 +51,102 @@ function _bool_env(key::AbstractString, default::Bool)::Bool
   return default
 end
 
+function _trim_trailing_slashes(s::AbstractString)::String
+  out = String(s)
+  while endswith(out, "/")
+    out = chop(out)
+  end
+  return out
+end
+
+function _influx_v1_db()::String
+  explicit = strip(get(ENV, "INFLUX_V1_DB", ""))
+  !isempty(explicit) && return explicit
+  db = strip(get(ENV, "INFLUX_DB", ""))
+  !isempty(db) && return db
+  bucket = strip(get(ENV, "INFLUX_BUCKET", ""))
+  !isempty(bucket) && return bucket
+  return "timeseries"
+end
+
+function _influx_query_headers()
+  token = strip(get(ENV, "INFLUX_TOKEN", ""))
+  isempty(token) && return Pair{String,String}[]
+  return ["Authorization" => "Token $(token)"]
+end
+
+function _influx_query(q::AbstractString)
+  influx_url = get(ENV, "INFLUX_URL", "http://influxdb:8086")
+  query = Dict{String,String}("db" => _influx_v1_db(), "q" => String(q))
+  rp = strip(get(ENV, "INFLUX_RP", ""))
+  isempty(rp) || (query["rp"] = rp)
+  return HTTP.get(
+    string(_trim_trailing_slashes(influx_url), "/query"),
+    _influx_query_headers();
+    query=query,
+    status_exception=false,
+    readtimeout=10,
+  )
+end
+
+function _influx_series_count(measurement::AbstractString)::Union{Int,Nothing}
+  q = "SHOW TAG VALUES FROM \"$(measurement)\" WITH KEY = \"series_id\""
+  resp = _influx_query(q)
+  200 <= resp.status < 300 || error("HTTP $(resp.status): $(String(resp.body))")
+  parsed = JSON3.read(String(resp.body))
+  rows = try
+    parsed["results"][1]["series"][1]["values"]
+  catch
+    return 0
+  end
+  return length(rows)
+end
+
+function _influx_point_count(measurement::AbstractString)::Union{Int,Nothing}
+  for field in (get(ENV, "INFLUX_NOTE_FIELD", "note"), get(ENV, "INFLUX_FIELD", "value"))
+    q = "SELECT COUNT(\"$(field)\") FROM \"$(measurement)\""
+    resp = _influx_query(q)
+    200 <= resp.status < 300 || continue
+    parsed = try
+      JSON3.read(String(resp.body))
+    catch
+      continue
+    end
+    val = try
+      parsed["results"][1]["series"][1]["values"][1][2]
+    catch
+      nothing
+    end
+    val === nothing && continue
+    return parse(Int, string(val))
+  end
+  return nothing
+end
+
+function _log_startup_influx_counts()
+  measurement = get(ENV, "INFLUX_MEASUREMENT", "timeseries")
+  seed_on_start = get(ENV, "SEED_ON_START", "(unset)")
+  println("[startup_db] SEED_ON_START=$(seed_on_start) measurement=$(measurement) db=$(_influx_v1_db()) url=$(get(ENV, "INFLUX_URL", "http://influxdb:8086"))")
+  flush(stdout)
+
+  last_err = nothing
+  for attempt in 1:10
+    try
+      series_count = _influx_series_count(measurement)
+      point_count = _influx_point_count(measurement)
+      point_text = point_count === nothing ? "unknown" : string(point_count)
+      println("[startup_db] measurement=$(measurement) series_count=$(series_count) point_count=$(point_text)")
+      flush(stdout)
+      return
+    catch err
+      last_err = err
+      attempt < 10 && sleep(1)
+    end
+  end
+  println("[startup_db] failed to count measurement=$(measurement): $(last_err)")
+  flush(stdout)
+end
+
 function _warmup_base_url(host::AbstractString, port::Integer)::String
   connect_host = host in ("0.0.0.0", "::", "") ? "127.0.0.1" : host
   return "http://$(connect_host):$(port)"
@@ -163,6 +259,8 @@ end
 
 println("[start_server] starting on http://$host:$port")
 flush(stdout)
+
+_log_startup_influx_counts()
 
 @async _run_startup_warmup(_warmup_base_url(host, port))
 

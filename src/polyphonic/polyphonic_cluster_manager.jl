@@ -111,6 +111,8 @@ mutable struct Manager
   value_max::Float64
   value_width::Float64
   max_set_size::Int
+  point_distance_mode::Symbol
+  point_axis_ranges::Vector{Float64}
 
   clusters::Dict{Int,PolyClusterNode}
   cluster_id_counter::Int
@@ -166,6 +168,8 @@ function Manager(
   value_min::Real = 0.0,
   value_max::Real = 1.0,
   max_set_size::Int = last(PolyphonicConfig.CHORD_SIZE_RANGE),
+  point_distance_mode::Symbol = :set,
+  point_axis_ranges::Vector{Float64} = Float64[],
   importance_decay_tau::Real = PolyphonicConfig.CLUSTER_IMPORTANCE_DECAY_TAU,
   importance_threshold::Real = PolyphonicConfig.CLUSTER_IMPORTANCE_THRESHOLD,
 )
@@ -211,6 +215,8 @@ function Manager(
     vmax,
     vwidth,
     mss,
+    point_distance_mode,
+    copy(point_axis_ranges),
     clusters,
     1,
     Tuple{Vector{Int},Int}[],
@@ -242,6 +248,10 @@ Rails:
   - count normalized by max_set_size
 """
 function min_avg_distance(mgr::Manager, a::PolySet, b::PolySet)::Float64
+  if mgr.point_distance_mode == :ordered_vector
+    return ordered_vector_distance01(mgr, a, b)
+  end
+
   isempty(a) && isempty(b) && return 0.0
   (isempty(a) || isempty(b)) && return 1.0
 
@@ -280,6 +290,31 @@ function min_avg_distance(mgr::Manager, a::PolySet, b::PolySet)::Float64
   else
     return (pitch_norm + count_norm) / 2.0
   end
+end
+
+"""Ordered vector distance normalized to 0..1-ish.
+
+Used when a single timestep is a fixed feature vector, e.g. [note, vol01],
+rather than an unordered pitch set/chord.
+"""
+function ordered_vector_distance01(mgr::Manager, a::PolySet, b::PolySet)::Float64
+  isempty(a) && isempty(b) && return 0.0
+
+  dims = max(length(a), length(b), length(mgr.point_axis_ranges), 1)
+  s = 0.0
+  @inbounds for i in 1:dims
+    av = i <= length(a) ? a[i] : 0.0
+    bv = i <= length(b) ? b[i] : 0.0
+    width = if i <= length(mgr.point_axis_ranges)
+      abs(mgr.point_axis_ranges[i])
+    else
+      mgr.value_width
+    end
+    width = width <= 0.0 ? 1.0 : width
+    d = (av - bv) / width
+    s += d * d
+  end
+  return clamp01(sqrt(s) / sqrt(float(dims)))
 end
 
 """Per-step distance used for cluster-internal complexity."""
@@ -380,6 +415,20 @@ function average_sequences(mgr::Manager, sequences::Vector{PolySeq})::PolySeq
     end
 
     if all_same
+      if mgr.point_distance_mode == :ordered_vector
+        avg_set = zeros(Float64, first_count)
+        for s in sets_at_t
+          @inbounds for i in 1:first_count
+            avg_set[i] += s[i]
+          end
+        end
+        @inbounds for i in 1:first_count
+          avg_set[i] /= float(length(sets_at_t))
+        end
+        result[t] = avg_set
+        continue
+      end
+
       # average index-wise on sorted sets
       sorted_sets = [sort(copy(s)) for s in sets_at_t]
       avg_set = zeros(Float64, first_count)

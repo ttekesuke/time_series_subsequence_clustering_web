@@ -4,9 +4,9 @@
       <div class="viz-row" style="height:30%">
         <StreamsRoll
           ref="queryStreamsRollRef"
-          :streamValues="[query.timeseries]"
+          :streamValues="queryDisplaySeries"
           :minValue="0"
-          :maxValue="11"
+          :maxValue="queryMaxValue"
           :stepWidth="computedQueryStepWidth"
           :highlightIndices="highlightQIndices"
           :highlightWindowSize="highlightWindowSize"
@@ -33,9 +33,9 @@
             <div v-if="visibleSeries === info.seriesIndex" style="margin-top:6px">
               <StreamsRoll
                 :ref="(el) => setDbStreamsRollRef(el, info.seriesIndex)"
-                :streamValues="[results.dbSeries[info.seriesIndex]]"
+                :streamValues="displaySeries(results.dbSeries[info.seriesIndex])"
                 :minValue="0"
-                :maxValue="11"
+                :maxValue="queryMaxValue"
                 :stepWidth="sharedStepWidth"
                 :highlightIndices="highlightDBIndices"
                 :highlightWindowSize="highlightWindowSize"
@@ -87,7 +87,7 @@ type StreamsRollExpose = {
 }
 
 const openDialog = ref(false)
-const query = ref({ timeseries: [] })
+const query = ref({ timeseries: [], vectors: [] as any[], axes: [] as any[], mode: 'single' })
 const results = ref({ dbSeries: [], bySeries: {} as Record<number, any[]> })
 const dbStatus = ref<string | null>(null)
 const dbDiagnostics = ref<Record<string, any> | null>(null)
@@ -118,9 +118,32 @@ const availableRollWidth = computed(() => {
 
 const sharedStepWidth = computed(() => Math.max(4, availableRollWidth.value / Math.max(1, (query.value.timeseries.length || 100))))
 const computedQueryStepWidth = sharedStepWidth
+const queryDisplaySeries = computed(() => {
+  const vectors = query.value.vectors || []
+  if (Array.isArray(vectors) && vectors.length > 0) return vectors
+  return [query.value.timeseries]
+})
+const queryMaxValue = computed(() => {
+  const series = queryDisplaySeries.value.flat ? queryDisplaySeries.value.flat() : []
+  const max = Math.max(11, ...series.map(v => Number(v) || 0))
+  return Math.min(127, max)
+})
+
+const displaySeries = (series: any) => {
+  if (!Array.isArray(series)) return [[]]
+  if (series.length > 0 && Array.isArray(series[0])) {
+    const notes = series.map((pt: any) => Array.isArray(pt) ? Number(pt[0] || 0) : Number(pt || 0))
+    const vols = series.map((pt: any) => Array.isArray(pt) ? Number(pt[1] || 0) : 0)
+    return [notes, vols]
+  }
+  return [series]
+}
 
 const handleQueried = (payload) => {
   query.value.timeseries = payload.query || []
+  query.value.vectors = payload.queryVectors || []
+  query.value.axes = payload.queryAxes || []
+  query.value.mode = payload.queryModeInput || 'single'
   results.value.dbSeries = payload.dbSeries || []
   results.value.bySeries = payload.clustersPerSeries || {}
   dbStatus.value = payload.dbStatus || null

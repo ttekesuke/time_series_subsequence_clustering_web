@@ -57,6 +57,13 @@ function query_db()
   for v in raw_query
     push!(query_series, _parse_float(v))
   end
+  query_vectors = get(p, "query_vectors", Any[])
+  query_axes = get(p, "query_axes", Any[])
+  query_mode = string(get(p, "query_mode", "single"))
+  query_points = _parse_note_vol_query_points(p)
+  if !isempty(query_points)
+    return _query_db_note_vol(t0, p, query_points)
+  end
 
   # influx params
   measurement = string(get(p, "measurement", get(ENV, "INFLUX_MEASUREMENT", "timeseries")))
@@ -80,6 +87,7 @@ function query_db()
     "field" => _influx_field(),
     "bucketOrDb" => _influx_query_database(influx_db),
     "queryLength" => length(query_series),
+    "queryModeInput" => query_mode,
     "minMatchWindow" => min_match_window,
   ))
   series_stats = _fetch_series_stats(influx_url, influx_db, measurement; errors=influx_errors)
@@ -91,6 +99,9 @@ function query_db()
     _influx_log("query_db finished", merge(copy(diagnostics), Dict("processingTime" => processing_time_s, "errorCount" => length(influx_errors))))
     result = Dict(
       "query"=>query_series,
+      "queryVectors"=>query_vectors,
+      "queryAxes"=>query_axes,
+      "queryModeInput"=>query_mode,
       "dbSeries"=>Any[],
       "clustersPerSeries"=>Dict{Int,Any}(),
       "processingTime"=>processing_time_s,
@@ -233,6 +244,9 @@ function query_db()
   _influx_log("query_db finished", merge(copy(diagnostics), Dict("processingTime" => processing_time_s, "errorCount" => length(influx_errors))))
   result = Dict(
     "query"=>query_series,
+    "queryVectors"=>query_vectors,
+    "queryAxes"=>query_axes,
+    "queryModeInput"=>query_mode,
     "dbSeries"=>db_series_all,
     "clustersPerSeries"=>clusters_per_series,
     "processingTime"=>processing_time_s,
@@ -249,6 +263,230 @@ function query_db()
       "queryMode" => _influx_query_mode(),
       "measurement" => measurement,
       "field" => _influx_field(),
+      "bucketOrDb" => _influx_query_database(influx_db),
+      "seriesStatsCount" => length(series_stats),
+      "chunksCount" => length(chunks),
+      "fetchedSeriesCount" => fetched_series_count,
+      "fetchedPointCount" => fetched_point_count,
+      "matchedSeriesCount" => length(db_series_all),
+      "influxErrors" => influx_errors,
+    )
+  end
+  return result
+end
+
+function _parse_note_vol_query_points(p)::Vector{Vector{Float64}}
+  raw_points = get(p, "query_points", nothing)
+  points = Vector{Vector{Float64}}()
+  if raw_points isa AbstractVector
+    for pt in raw_points
+      pt isa AbstractVector || continue
+      length(pt) >= 2 || continue
+      push!(points, Float64[_parse_float(pt[1]), _parse_float(pt[2])])
+    end
+    !isempty(points) && return points
+  end
+
+  raw_vectors = get(p, "query_vectors", nothing)
+  if raw_vectors isa AbstractVector && length(raw_vectors) >= 2
+    notes = raw_vectors[1]
+    vols = raw_vectors[2]
+    if notes isa AbstractVector && vols isa AbstractVector
+      n = min(length(notes), length(vols))
+      for i in 1:n
+        push!(points, Float64[_parse_float(notes[i]), _parse_float(vols[i])])
+      end
+    end
+  end
+  return points
+end
+
+function _new_note_vol_manager(data::Vector{Vector{Float64}}, merge_threshold::Real, min_window::Int)
+  return PolyphonicClusterManager.Manager(
+    data,
+    merge_threshold,
+    min_window;
+    value_min=0.0,
+    value_max=127.0,
+    max_set_size=2,
+    point_distance_mode=:ordered_vector,
+    point_axis_ranges=Float64[127.0, 1.0]
+  )
+end
+
+function _note_vol_points_to_rows(points::Vector{Vector{Float64}})::Vector{Vector{Float64}}
+  notes = Float64[]
+  vols = Float64[]
+  sizehint!(notes, length(points))
+  sizehint!(vols, length(points))
+  for pt in points
+    push!(notes, length(pt) >= 1 ? pt[1] : 0.0)
+    push!(vols, length(pt) >= 2 ? pt[2] : 0.0)
+  end
+  return Vector{Vector{Float64}}([notes, vols])
+end
+
+function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
+  db_series_all = Any[]
+  measurement = string(get(p, "measurement", get(ENV, "INFLUX_MEASUREMENT", "timeseries")))
+  influx_url = get(ENV, "INFLUX_URL", "http://influxdb:8086")
+  influx_db = string(get(ENV, "INFLUX_DB", "timeseries"))
+  debug_influx = _parse_bool(get(p, "debug", false), false)
+  merge_threshold = _parse_float(get(p, "merge_threshold_ratio", 0.3))
+  min_window = SUBSEQUENCE_MIN_WINDOW_SIZE
+  min_match_window = _parse_int(get(p, "min_match_window", 3))
+
+  clusters_per_series = Dict{Int,Any}()
+  matched_series = Any[]
+  influx_errors = String[]
+
+  _influx_log("query_db note_vol start", Dict(
+    "cloud" => _influx_cloud_enabled(),
+    "mode" => _influx_query_mode(),
+    "measurement" => measurement,
+    "noteField" => _influx_note_field(),
+    "volField" => _influx_vol_field(),
+    "bucketOrDb" => _influx_query_database(influx_db),
+    "queryLength" => length(query_points),
+    "minMatchWindow" => min_match_window,
+  ))
+
+  series_stats = _fetch_series_stats_note_vol(influx_url, influx_db, measurement; errors=influx_errors)
+  if isempty(series_stats)
+    processing_time_s = round(time()-t0;digits=2)
+    db_status = isempty(influx_errors) ? "db_empty" : "influx_error"
+    diagnostics = _query_db_diagnostics(influx_db, measurement, 0, 0, 0, 0, db_status)
+    diagnostics["queryValueShape"] = "note_vol"
+    return Dict(
+      "query"=>query_points,
+      "queryPoints"=>query_points,
+      "queryVectors"=>_note_vol_points_to_rows(query_points),
+      "queryAxes"=>["midiPitch", "midiVol"],
+      "queryModeInput"=>"midi_note_vol",
+      "dbSeries"=>Any[],
+      "clustersPerSeries"=>Dict{Int,Any}(),
+      "processingTime"=>processing_time_s,
+      "dbStatus"=>db_status,
+      "dbDiagnostics"=>diagnostics,
+      "influxError"=>isempty(influx_errors) ? nothing : influx_errors[end],
+      "influxErrors"=>influx_errors,
+    )
+  end
+
+  chunks = _chunk_series_by_memory_budget(series_stats)
+  fetched_series_count = 0
+  fetched_point_count = 0
+
+  query_seed_manager = _new_note_vol_manager(deepcopy(query_points), merge_threshold, min_window)
+  PolyphonicClusterManager.process_data!(query_seed_manager)
+
+  for chunk in chunks
+    db_series_grouped = _fetch_grouped_db_series_note_vol(influx_url, influx_db, measurement, chunk; errors=influx_errors)
+    fetched_series_count += length(db_series_grouped)
+    for item in db_series_grouped
+      fetched_point_count += length(item["values"])
+    end
+
+    for series_info in db_series_grouped
+      sid = string(series_info["series_id"])
+      source_index = _parse_int(get(series_info, "source_index", 0))
+      db_series_values = series_info["values"]::Vector{Vector{Float64}}
+      manager = deepcopy(query_seed_manager)
+
+      for v in db_series_values
+        PolyphonicClusterManager.add_data_point_permanently!(manager, copy(v))
+      end
+
+      timeline = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window)
+      qlen = length(query_points)
+      slen = length(db_series_values)
+      cross_entries = Any[]
+      for entry in timeline
+        inds = entry["indices"]::Vector{Int}
+        has_q = any(i -> i < qlen, inds)
+        has_db = any(i -> i >= qlen, inds)
+        if has_q && has_db
+          ws = Int(entry["window_size"])
+          ws < min_match_window && continue
+          q_raw = [i for i in inds if i < qlen]
+          db_raw = [i for i in inds if i >= qlen]
+          q_indices = [i for i in q_raw if i + ws <= qlen]
+          db_indices = [i - qlen for i in db_raw if (i - qlen) + ws <= slen]
+          if !isempty(q_indices) && !isempty(db_indices)
+            push!(cross_entries, Dict("window_size"=>ws, "cluster_id"=>entry["cluster_id"], "q_indices"=>sort(q_indices), "db_indices"=>sort(db_indices)))
+          end
+        end
+      end
+
+      isempty(cross_entries) && continue
+
+      simple_matches = Any[]
+      for e in cross_entries
+        ws = e["window_size"]::Int
+        q_idxs = e["q_indices"]::Vector{Int}
+        db_idxs = e["db_indices"]::Vector{Int}
+        for qi in q_idxs
+          for dbi in db_idxs
+            push!(simple_matches, Dict("q_start"=>qi, "start"=>dbi, "windowSize"=>ws))
+          end
+        end
+      end
+      simple_matches = _filter_contained_matches(simple_matches)
+      match_score = _match_score(simple_matches)
+      matched_result = Dict(
+        "series_id" => sid,
+        "source_index" => source_index,
+        "match_score" => match_score,
+        "timeline" => cross_entries,
+        "matches" => simple_matches
+      )
+      push!(matched_series, Dict("db_series" => db_series_values, "result" => matched_result, "score" => match_score))
+    end
+  end
+
+  sort!(matched_series; by = item -> -_parse_float(item["score"]))
+  for item in matched_series
+    result_index = length(db_series_all)
+    push!(db_series_all, item["db_series"])
+    clusters_per_series[result_index] = item["result"]
+  end
+
+  processing_time_s = round(time() - t0; digits=2)
+  db_status = if !isempty(influx_errors) && fetched_series_count == 0
+    "influx_error"
+  elseif fetched_series_count == 0
+    "db_empty"
+  elseif isempty(db_series_all)
+    "no_match"
+  else
+    "ok"
+  end
+  diagnostics = _query_db_diagnostics(influx_db, measurement, length(series_stats), length(chunks), fetched_series_count, fetched_point_count, db_status)
+  diagnostics["matchedSeriesCount"] = length(db_series_all)
+  diagnostics["queryValueShape"] = "note_vol"
+  result = Dict(
+    "query"=>query_points,
+    "queryPoints"=>query_points,
+    "queryVectors"=>_note_vol_points_to_rows(query_points),
+    "queryAxes"=>["midiPitch", "midiVol"],
+    "queryModeInput"=>"midi_note_vol",
+    "dbSeries"=>db_series_all,
+    "clustersPerSeries"=>clusters_per_series,
+    "processingTime"=>processing_time_s,
+    "dbStatus"=>db_status,
+    "dbDiagnostics"=>diagnostics,
+  )
+  if !isempty(influx_errors)
+    result["influxError"] = influx_errors[end]
+    result["influxErrors"] = influx_errors
+  end
+  if debug_influx
+    result["debug"] = Dict(
+      "influxCloud" => _influx_cloud_enabled(),
+      "queryMode" => _influx_query_mode(),
+      "measurement" => measurement,
+      "noteField" => _influx_note_field(),
+      "volField" => _influx_vol_field(),
       "bucketOrDb" => _influx_query_database(influx_db),
       "seriesStatsCount" => length(series_stats),
       "chunksCount" => length(chunks),
@@ -392,6 +630,120 @@ function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_sta
     return Any[]
   end
 
+  return grouped
+end
+
+function _fetch_series_stats_note_vol(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
+  if _influx_sql_enabled()
+    return _fetch_series_stats_note_vol_sql(influx_url, influx_db, measurement; errors=errors)
+  end
+  if _influx_flux_enabled()
+    return _fetch_series_stats_note_vol_v2(influx_url, measurement; errors=errors)
+  end
+
+  note_field = _influx_note_field()
+  q_counts = "SELECT COUNT(\"$(note_field)\") FROM \"$(measurement)\" GROUP BY \"series_id\""
+  resp_counts = try
+    _influx_query_get(influx_url, influx_db, q_counts)
+  catch e
+    _push_influx_error!(errors, "fetching note/vol series counts failed: $(e)")
+    return Any[]
+  end
+
+  body = String(resp_counts.body)
+  parsed_counts = try JSON3.read(body) catch
+    _push_influx_error!(errors, "fetching note/vol series counts returned non-JSON: $(_body_preview(body))")
+    return Any[]
+  end
+
+  series_list = _influx_series_list(parsed_counts, body, "note/vol series counts"; errors=errors)
+  series_list === nothing && return Any[]
+
+  stats = Any[]
+  try
+    for s in series_list
+      sid = string(s["tags"]["series_id"])
+      push!(stats, Dict(
+        "series_id" => sid,
+        "source_index" => length(stats),
+        "count" => max(1, _parse_int(s["values"][1][2]))
+      ))
+    end
+  catch e
+    _push_influx_error!(errors, "fetching note/vol series counts returned unexpected shape: $(e)")
+    return Any[]
+  end
+  return stats
+end
+
+function _column_index(columns, name::AbstractString)::Int
+  for (i, col) in enumerate(columns)
+    string(col) == name && return i
+  end
+  return 0
+end
+
+function _fetch_grouped_db_series_note_vol(influx_url, influx_db, measurement, series_stats; errors=nothing)::Vector{Any}
+  isempty(series_stats) && return Any[]
+  if _influx_sql_enabled()
+    return _fetch_grouped_db_series_note_vol_sql(influx_url, influx_db, measurement, series_stats; errors=errors)
+  end
+  if _influx_flux_enabled()
+    return _fetch_grouped_db_series_note_vol_v2(influx_url, measurement, series_stats; errors=errors)
+  end
+
+  series_ids = [string(stat["series_id"]) for stat in series_stats]
+  id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
+  pattern = join([_escape_influx_regex(sid) for sid in series_ids], "|")
+  note_field = _influx_note_field()
+  vol_field = _influx_vol_field()
+  q = "SELECT \"$(note_field)\", \"$(vol_field)\" FROM \"$(measurement)\" WHERE \"series_id\" =~ /^(?:$(pattern))\$/ GROUP BY \"series_id\""
+  resp = try
+    _influx_query_get(influx_url, influx_db, q; extra_query=Dict("epoch"=>"ms"))
+  catch e
+    _push_influx_error!(errors, "fetching note/vol grouped series failed: $(e)")
+    return Any[]
+  end
+
+  body = String(resp.body)
+  parsed = try JSON3.read(body) catch
+    _push_influx_error!(errors, "fetching note/vol grouped series returned non-JSON: $(_body_preview(body))")
+    return Any[]
+  end
+
+  grouped = Any[]
+  try
+    series_list = parsed["results"][1]["series"]
+    for (idx, s) in enumerate(series_list)
+      sid = try
+        string(s["tags"]["series_id"])
+      catch
+        string(idx - 1)
+      end
+      columns = s["columns"]
+      note_idx = _column_index(columns, note_field)
+      vol_idx = _column_index(columns, vol_field)
+      if note_idx <= 0 || vol_idx <= 0
+        continue
+      end
+
+      values = Vector{Vector{Float64}}()
+      for row in s["values"]
+        push!(values, Float64[_parse_float(row[note_idx]), _parse_float(row[vol_idx])])
+      end
+
+      if !isempty(values)
+        push!(grouped, Dict(
+          "series_id" => sid,
+          "source_index" => get(id_to_source_index, sid, idx - 1),
+          "values" => values
+        ))
+      end
+    end
+  catch e
+    _push_influx_error!(errors, "fetching note/vol grouped series returned unexpected shape: $(e)")
+    return Any[]
+  end
   return grouped
 end
 
@@ -585,6 +937,14 @@ end
 
 function _influx_field()::String
   return string(get(ENV, "INFLUX_FIELD", "value"))
+end
+
+function _influx_note_field()::String
+  return string(get(ENV, "INFLUX_NOTE_FIELD", "note"))
+end
+
+function _influx_vol_field()::String
+  return string(get(ENV, "INFLUX_VOL_FIELD", "vol"))
 end
 
 function _query_db_diagnostics(influx_db, measurement, series_stats_count::Int, chunks_count::Int, fetched_series_count::Int, fetched_point_count::Int, status::AbstractString)
@@ -914,6 +1274,35 @@ ORDER BY series_id
   return stats
 end
 
+function _fetch_series_stats_note_vol_sql(influx_url, influx_db, measurement; errors=nothing)::Vector{Any}
+  note_field = _influx_note_field()
+  q = """
+SELECT series_id, COUNT($(_sql_identifier(note_field))) AS count
+FROM $(_sql_identifier(measurement))
+GROUP BY series_id
+ORDER BY series_id
+"""
+
+  rows = try
+    _influx_sql_query(influx_url, influx_db, q)
+  catch e
+    _push_influx_error!(errors, "fetching SQL note/vol series stats failed: $(e)")
+    return Any[]
+  end
+
+  stats = Any[]
+  for row in rows
+    sid = strip(string(get(row, "series_id", "")))
+    isempty(sid) && continue
+    push!(stats, Dict(
+      "series_id" => sid,
+      "source_index" => length(stats),
+      "count" => max(1, _parse_int(get(row, "count", 1)))
+    ))
+  end
+  return stats
+end
+
 function _fetch_grouped_db_series_sql(influx_url, influx_db, measurement, series_stats; errors=nothing)::Vector{Any}
   series_ids = [string(stat["series_id"]) for stat in series_stats]
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
@@ -945,6 +1334,47 @@ ORDER BY series_id, time
   grouped = Any[]
   for sid in series_ids
     values = get(values_by_id, sid, Float64[])
+    isempty(values) && continue
+    push!(grouped, Dict(
+      "series_id" => sid,
+      "source_index" => get(id_to_source_index, sid, length(grouped)),
+      "values" => values
+    ))
+  end
+  return grouped
+end
+
+function _fetch_grouped_db_series_note_vol_sql(influx_url, influx_db, measurement, series_stats; errors=nothing)::Vector{Any}
+  series_ids = [string(stat["series_id"]) for stat in series_stats]
+  id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
+  note_field = _influx_note_field()
+  vol_field = _influx_vol_field()
+  ids_sql = join([_sql_literal(sid) for sid in series_ids], ", ")
+  q = """
+SELECT series_id, $(_sql_identifier(note_field)) AS note, $(_sql_identifier(vol_field)) AS vol
+FROM $(_sql_identifier(measurement))
+WHERE series_id IN ($(ids_sql))
+ORDER BY series_id, time
+"""
+
+  rows = try
+    _influx_sql_query(influx_url, influx_db, q)
+  catch e
+    _push_influx_error!(errors, "fetching SQL note/vol grouped series failed: $(e)")
+    return Any[]
+  end
+
+  values_by_id = Dict{String,Vector{Vector{Float64}}}()
+  for row in rows
+    sid = strip(string(get(row, "series_id", "")))
+    isempty(sid) && continue
+    values = get!(values_by_id, sid, Vector{Vector{Float64}}())
+    push!(values, Float64[_parse_float(get(row, "note", 0)), _parse_float(get(row, "vol", 0))])
+  end
+
+  grouped = Any[]
+  for sid in series_ids
+    values = get(values_by_id, sid, Vector{Vector{Float64}}())
     isempty(values) && continue
     push!(grouped, Dict(
       "series_id" => sid,
@@ -1080,6 +1510,37 @@ from(bucket: "$(_flux_escape(bucket))")
   return stats
 end
 
+function _fetch_series_stats_note_vol_v2(influx_url, measurement; errors=nothing)::Vector{Any}
+  bucket = _influx_v2_bucket()
+  note_field = _influx_note_field()
+  flux = """
+from(bucket: "$(_flux_escape(bucket))")
+  |> range(start: 0)
+  |> filter(fn: (r) => r._measurement == "$(_flux_escape(measurement))" and r._field == "$(_flux_escape(note_field))")
+  |> group(columns: ["series_id"])
+  |> count(column: "_value")
+"""
+
+  resp = try
+    _influx_v2_query(influx_url, flux)
+  catch e
+    _push_influx_error!(errors, "fetching Flux note/vol series stats failed: $(e)")
+    return Any[]
+  end
+
+  stats = Any[]
+  for row in _influx_csv_rows(String(resp.body))
+    sid = strip(get(row, "series_id", ""))
+    isempty(sid) && continue
+    push!(stats, Dict(
+      "series_id" => sid,
+      "source_index" => length(stats),
+      "count" => max(1, _parse_int(get(row, "_value", "1")))
+    ))
+  end
+  return stats
+end
+
 function _fetch_grouped_db_series_v2(influx_url, measurement, series_stats; errors=nothing)::Vector{Any}
   series_ids = [string(stat["series_id"]) for stat in series_stats]
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
@@ -1113,6 +1574,51 @@ from(bucket: "$(_flux_escape(_influx_v2_bucket()))")
   grouped = Any[]
   for sid in series_ids
     values = get(values_by_id, sid, Float64[])
+    isempty(values) && continue
+    push!(grouped, Dict(
+      "series_id" => sid,
+      "source_index" => get(id_to_source_index, sid, length(grouped)),
+      "values" => values
+    ))
+  end
+  return grouped
+end
+
+function _fetch_grouped_db_series_note_vol_v2(influx_url, measurement, series_stats; errors=nothing)::Vector{Any}
+  series_ids = [string(stat["series_id"]) for stat in series_stats]
+  id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
+  note_field = _influx_note_field()
+  vol_field = _influx_vol_field()
+  set_expr = "[" * join(["\"$(_flux_escape(sid))\"" for sid in series_ids], ", ") * "]"
+  flux = """
+from(bucket: "$(_flux_escape(_influx_v2_bucket()))")
+  |> range(start: 0)
+  |> filter(fn: (r) => r._measurement == "$(_flux_escape(measurement))" and (r._field == "$(_flux_escape(note_field))" or r._field == "$(_flux_escape(vol_field))"))
+  |> filter(fn: (r) => contains(value: r.series_id, set: $(set_expr)))
+  |> pivot(rowKey: ["_time", "series_id"], columnKey: ["_field"], valueColumn: "_value")
+  |> group(columns: ["series_id"])
+  |> sort(columns: ["_time"])
+  |> keep(columns: ["series_id", "$(_flux_escape(note_field))", "$(_flux_escape(vol_field))"])
+"""
+
+  resp = try
+    _influx_v2_query(influx_url, flux)
+  catch e
+    _push_influx_error!(errors, "fetching Flux note/vol grouped series failed: $(e)")
+    return Any[]
+  end
+
+  values_by_id = Dict{String,Vector{Vector{Float64}}}()
+  for row in _influx_csv_rows(String(resp.body))
+    sid = strip(get(row, "series_id", ""))
+    isempty(sid) && continue
+    values = get!(values_by_id, sid, Vector{Vector{Float64}}())
+    push!(values, Float64[_parse_float(get(row, note_field, 0)), _parse_float(get(row, vol_field, 0))])
+  end
+
+  grouped = Any[]
+  for sid in series_ids
+    values = get(values_by_id, sid, Vector{Vector{Float64}}())
     isempty(values) && continue
     push!(grouped, Dict(
       "series_id" => sid,
