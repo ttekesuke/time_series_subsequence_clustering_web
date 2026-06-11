@@ -5,8 +5,8 @@
         <StreamsRoll
           ref="queryStreamsRollRef"
           :streamValues="queryDisplaySeries"
-          :minValue="0"
-          :maxValue="queryMaxValue"
+          :minValue="queryRangeMin"
+          :maxValue="queryRangeMax"
           :stepWidth="computedQueryStepWidth"
           :highlightIndices="highlightQIndices"
           :highlightWindowSize="highlightWindowSize"
@@ -27,15 +27,15 @@
         <div v-else>
           <div v-for="(info, idx) in seriesSummaries" :key="idx" style="margin-bottom:12px">
             <div style="display:flex; align-items:center; gap:12px;">
-              <div><strong>DB series {{info.seriesLabel}}</strong> — matches: {{info.matches.length}} / score: {{info.matchScore}}</div>
+              <div><strong>{{info.seriesLabel}}</strong> — matches: {{info.matches.length}} / score: {{info.matchScore}}</div>
               <v-btn small @click="showSeries(info.seriesIndex)">View</v-btn>
             </div>
             <div v-if="visibleSeries === info.seriesIndex" style="margin-top:6px">
               <StreamsRoll
                 :ref="(el) => setDbStreamsRollRef(el, info.seriesIndex)"
                 :streamValues="displaySeries(results.dbSeries[info.seriesIndex])"
-                :minValue="0"
-                :maxValue="queryMaxValue"
+                :minValue="queryRangeMin"
+                :maxValue="queryRangeMax"
                 :stepWidth="dbStepWidth(info.seriesIndex)"
                 :highlightIndices="highlightDBIndices"
                 :highlightWindowSize="highlightWindowSize"
@@ -93,6 +93,8 @@ const dbStatus = ref<string | null>(null)
 const dbDiagnostics = ref<Record<string, any> | null>(null)
 const dbError = ref<string | null>(null)
 const visibleSeries = ref<number | null>(null)
+const queryRangeMin = 0
+const queryRangeMax = 127
 
 const containerRef = ref<HTMLElement | null>(null)
 const queryStreamsRollRef = ref<StreamsRollExpose | null>(null)
@@ -127,11 +129,6 @@ const queryDisplaySeries = computed(() => {
   const vectors = query.value.vectors || []
   if (Array.isArray(vectors) && vectors.length > 0) return vectors
   return [query.value.timeseries]
-})
-const queryMaxValue = computed(() => {
-  const series = queryDisplaySeries.value.flat ? queryDisplaySeries.value.flat() : []
-  const max = Math.max(11, ...series.map(v => Number(v) || 0))
-  return Math.min(127, max)
 })
 
 const displaySeries = (series: any) => {
@@ -221,9 +218,9 @@ const seriesSummaries = computed(() => {
     }
 
     const grouped = Array.from(groups.values()).map(g => ({ q_start: g.q_start, windowSize: g.windowSize, db_starts: Array.from(g.db_starts).sort((a,b)=>a-b) }))
-    const sourceLabel = entry && entry.series_id !== undefined
-      ? `#${entry.series_id}`
-      : (entry && entry.source_index !== undefined ? `#${entry.source_index}` : `#${idx}`)
+    const sourceLabel = entry && entry.series_label
+      ? entry.series_label
+      : (entry && entry.series_id !== undefined ? `#${entry.series_id}` : `#${idx}`)
     const matchScore = entry && entry.match_score !== undefined
       ? Number(entry.match_score)
       : grouped.reduce((sum, m) => sum + Number(m.windowSize || 0) * (m.db_starts?.length || 0), 0)

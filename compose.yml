@@ -97,6 +97,7 @@ services:
       - influxdb
     volumes:
       - ./scripts/seed_influx.jl:/app/scripts/seed_influx.jl
+      - ./data/asap-dataset:/app/data/asap-dataset:ro
     command: ["julia", "--project=.", "scripts/seed_influx.jl"]
 
 volumes:

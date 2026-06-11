@@ -61,7 +61,7 @@ function query_db()
   query_axes = get(p, "query_axes", Any[])
   query_mode = string(get(p, "query_mode", "single"))
   query_points = _parse_note_vol_query_points(p)
-  if !isempty(query_points)
+  if !isempty(query_points) || query_mode == "midi_note_vol"
     return _query_db_note_vol(t0, p, query_points)
   end
 
@@ -155,6 +155,7 @@ function query_db()
     for series_info in db_series_grouped
       sid = string(series_info["series_id"])
       source_index = _parse_int(get(series_info, "source_index", 0))
+      series_label = string(get(series_info, "label", sid))
       db_series_values = series_info["values"]::Vector{Float64}
 
       manager = deepcopy(query_seed_manager)
@@ -204,6 +205,7 @@ function query_db()
         match_score = _match_score(simple_matches)
         matched_result = Dict(
           "series_id" => sid,
+          "series_label" => series_label,
           "source_index" => source_index,
           "match_score" => match_score,
           "timeline" => cross_entries,
@@ -295,6 +297,13 @@ function _parse_note_vol_query_points(p)::Vector{Vector{Float64}}
       n = min(length(notes), length(vols))
       for i in 1:n
         push!(points, Float64[_parse_float(notes[i]), _parse_float(vols[i])])
+      end
+    end
+  elseif raw_vectors isa AbstractVector && length(raw_vectors) == 1
+    notes = raw_vectors[1]
+    if notes isa AbstractVector
+      for note in notes
+        push!(points, Float64[_parse_float(note), 0.0])
       end
     end
   end
@@ -390,6 +399,7 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
     for series_info in db_series_grouped
       sid = string(series_info["series_id"])
       source_index = _parse_int(get(series_info, "source_index", 0))
+      series_label = string(get(series_info, "label", sid))
       db_series_values = series_info["values"]::Vector{Vector{Float64}}
       manager = deepcopy(query_seed_manager)
 
@@ -435,6 +445,7 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
       match_score = _match_score(simple_matches)
       matched_result = Dict(
         "series_id" => sid,
+        "series_label" => series_label,
         "source_index" => source_index,
         "match_score" => match_score,
         "timeline" => cross_entries,
@@ -588,7 +599,7 @@ function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_sta
   id_to_source_index = Dict(string(stat["series_id"]) => _parse_int(get(stat, "source_index", 0)) for stat in series_stats)
   pattern = join([_escape_influx_regex(sid) for sid in series_ids], "|")
   field = _influx_field()
-  q = "SELECT \"$(field)\" FROM \"$(measurement)\" WHERE \"series_id\" =~ /^(?:$(pattern))\$/ GROUP BY \"series_id\""
+  q = "SELECT \"$(field)\" FROM \"$(measurement)\" WHERE \"series_id\" =~ /^(?:$(pattern))\$/ GROUP BY \"series_id\",\"composer\",\"title\",\"part_name\",\"staff\",\"voice\",\"phrase_index\""
   resp = try
     _influx_query_get(influx_url, influx_db, q; extra_query=Dict("epoch"=>"ms"))
   catch e
@@ -611,6 +622,13 @@ function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_sta
       catch
         string(idx - 1)
       end
+      composer  = try string(s["tags"]["composer"]) catch _ "" end
+      title     = try string(s["tags"]["title"]) catch _ "" end
+      part_name = try string(s["tags"]["part_name"]) catch _ "" end
+      staff     = try string(s["tags"]["staff"]) catch _ "" end
+      voice     = try string(s["tags"]["voice"]) catch _ "" end
+      phrase    = try string(s["tags"]["phrase_index"]) catch _ "" end
+      label = _series_label(composer, title, part_name, staff, voice, phrase)
 
       values = Float64[]
       for row in s["values"]
@@ -621,6 +639,7 @@ function _fetch_grouped_db_series(influx_url, influx_db, measurement, series_sta
         push!(grouped, Dict(
           "series_id" => sid,
           "source_index" => get(id_to_source_index, sid, idx - 1),
+          "label" => label,
           "values" => values
         ))
       end
@@ -697,7 +716,7 @@ function _fetch_grouped_db_series_note_vol(influx_url, influx_db, measurement, s
   pattern = join([_escape_influx_regex(sid) for sid in series_ids], "|")
   note_field = _influx_note_field()
   vol_field = _influx_vol_field()
-  q = "SELECT \"$(note_field)\", \"$(vol_field)\" FROM \"$(measurement)\" WHERE \"series_id\" =~ /^(?:$(pattern))\$/ GROUP BY \"series_id\""
+  q = "SELECT \"$(note_field)\", \"$(vol_field)\" FROM \"$(measurement)\" WHERE \"series_id\" =~ /^(?:$(pattern))\$/ GROUP BY \"series_id\",\"composer\",\"title\",\"part_name\",\"staff\",\"voice\",\"phrase_index\""
   resp = try
     _influx_query_get(influx_url, influx_db, q; extra_query=Dict("epoch"=>"ms"))
   catch e
@@ -720,22 +739,31 @@ function _fetch_grouped_db_series_note_vol(influx_url, influx_db, measurement, s
       catch
         string(idx - 1)
       end
+      composer  = try string(s["tags"]["composer"]) catch _ "" end
+      title     = try string(s["tags"]["title"]) catch _ "" end
+      part_name = try string(s["tags"]["part_name"]) catch _ "" end
+      staff     = try string(s["tags"]["staff"]) catch _ "" end
+      voice     = try string(s["tags"]["voice"]) catch _ "" end
+      phrase    = try string(s["tags"]["phrase_index"]) catch _ "" end
+      label = _series_label(composer, title, part_name, staff, voice, phrase)
       columns = s["columns"]
       note_idx = _column_index(columns, note_field)
       vol_idx = _column_index(columns, vol_field)
-      if note_idx <= 0 || vol_idx <= 0
+      if note_idx <= 0
         continue
       end
 
       values = Vector{Vector{Float64}}()
       for row in s["values"]
-        push!(values, Float64[_parse_float(row[note_idx]), _parse_float(row[vol_idx])])
+        vol = vol_idx > 0 ? _parse_float(row[vol_idx]) : 0.0
+        push!(values, Float64[_parse_float(row[note_idx]), vol])
       end
 
       if !isempty(values)
         push!(grouped, Dict(
           "series_id" => sid,
           "source_index" => get(id_to_source_index, sid, idx - 1),
+          "label" => label,
           "values" => values
         ))
       end
@@ -939,12 +967,25 @@ function _influx_field()::String
   return string(get(ENV, "INFLUX_FIELD", "value"))
 end
 
+function _influxql_string_literal(s::AbstractString)::String
+  return "'" * replace(String(s), "\\" => "\\\\", "'" => "\\'") * "'"
+end
+
 function _influx_note_field()::String
   return string(get(ENV, "INFLUX_NOTE_FIELD", "note"))
 end
 
 function _influx_vol_field()::String
   return string(get(ENV, "INFLUX_VOL_FIELD", "vol"))
+end
+
+function _series_label(composer::AbstractString, title::AbstractString, part_name::AbstractString, staff::AbstractString, voice::AbstractString, phrase::AbstractString)::String
+  base_parts = filter(!isempty, [String(composer), String(title)])
+  base = isempty(base_parts) ? "unknown" : join(base_parts, " - ")
+  detail_parts = filter(!isempty, [String(part_name), isempty(staff) ? "" : "staff $(staff)", isempty(voice) ? "" : "voice $(voice)"])
+  isempty(detail_parts) || (base = string(base, " / ", join(detail_parts, " ")))
+  isempty(phrase) && return base
+  return string(base, " [phrase ", phrase, "]")
 end
 
 function _query_db_diagnostics(influx_db, measurement, series_stats_count::Int, chunks_count::Int, fetched_series_count::Int, fetched_point_count::Int, status::AbstractString)
@@ -1311,7 +1352,6 @@ function _fetch_grouped_db_series_sql(influx_url, influx_db, measurement, series
   q = """
 SELECT series_id, $(_sql_identifier(field)) AS value
 FROM $(_sql_identifier(measurement))
-WHERE series_id IN ($(ids_sql))
 ORDER BY series_id, time
 """
 
@@ -1353,7 +1393,6 @@ function _fetch_grouped_db_series_note_vol_sql(influx_url, influx_db, measuremen
   q = """
 SELECT series_id, $(_sql_identifier(note_field)) AS note, $(_sql_identifier(vol_field)) AS vol
 FROM $(_sql_identifier(measurement))
-WHERE series_id IN ($(ids_sql))
 ORDER BY series_id, time
 """
 

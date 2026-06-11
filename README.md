@@ -25,6 +25,12 @@ Render の Environment Variables に次を設定してください。
 - `INFLUX_BUCKET_ID`: bucket ID。設定しておくと bucket lookup を省略できます
 - `INFLUX_MEASUREMENT`: `timeseries`
 - `INFLUX_FIELD`: `value`
+- `INFLUX_NOTE_FIELD`: `note`
+- `INFLUX_VOL_FIELD`: `vol`
+- `ASAP_DATASET_DIR`: ASAP dataset のパス。未設定時は `data/asap-dataset`
+- `ASAP_MAX_SCORES`: seed する MusicXML スコア数。未設定または `0` で全件
+- `ASAP_MEASURE_GAP_THRESHOLD_MEASURES`: フレーズを区切る連続休符長（小節単位）。未設定時は `1`
+- `SEED_RESET_MEASUREMENT`: seed 前に measurement を削除するか。未設定時は `true`
 - `INFLUX_RP`: `autogen`
 - `INFLUX_AUTO_CREATE_DBRP`: 通常は未設定または `false`
 - `ENSURE_INFLUX_DBRP_ON_START`: `true` にすると起動時に `scripts/ensure_influx_dbrp.jl` を実行。成功後は外してください
@@ -50,8 +56,20 @@ julia --project=. scripts/ensure_influx_dbrp.jl
 Render Shell が使えない場合は、管理権限を持つ token を一時的に設定し、`ENSURE_INFLUX_DBRP_ON_START=true` で一度だけデプロイしてください。
 ログに `Influx DBRP mapping ensured` が出たら、`ENSURE_INFLUX_DBRP_ON_START` を削除し、token も通常の read/write 用に戻してください。
 
+ASAP dataset は Git submodule として `data/asap-dataset` に配置します。ローカルでは初回に次を実行してください。
+
+```bash
+git submodule update --init --recursive
+```
+
+Render の Docker build では、checkout に submodule の中身が含まれていない場合に `Dockerfile.prod` が `data/asap-dataset` を取得します。
+
 Render Shell が使えない場合は、初回だけ `SEED_ON_START=true` を設定してデプロイすると起動時に seed できます。
 成功後は restart のたびに追加 seed されないよう、`SEED_ON_START` を削除してください。
+
+seed は ASAP の `metadata.csv` からユニークな `xml_score.musicxml` を読み、`part/staff/voice` ごとに最高音系列をフレーズ化して InfluxDB に書き込みます。
+InfluxDB には `note` と `vol` のほか、譜面上の位置として `measure`、`measure_tick`、`score_tick`、`point_index`、`unit_ticks` を保存します。
+`composer`、`title`、`folder`、`xml_score` はタグとして保存されます。
 
 Data Explorer の SQL query で seed データを確認する例:
 

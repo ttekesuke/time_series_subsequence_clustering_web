@@ -121,7 +121,7 @@ const queryRows = ref<GridRowData[]>([
 ])
 
 const rangeMin = ref(0)
-const rangeMax = ref(11)
+const rangeMax = ref(127)
 const mergeThreshold = ref(0.02)
 const minMatchWindow = ref(3)
 const loading = ref(false)
@@ -478,7 +478,7 @@ const handleQuery = async () => {
     const resp = await axios.post('/api/web/time_series/query_db', payload)
     // pass through response
     const data = resp.data
-    emit('queried', data)
+    emit('queried', { ...data, rangeMin: rangeMin.value, rangeMax: rangeMax.value })
     open.value = false
   } catch (err) {
     console.error('Query request failed', err)

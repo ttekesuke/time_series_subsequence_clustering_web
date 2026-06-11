@@ -51,6 +51,24 @@
             <li>Author: Takuya SHIMIZU <a href="https://tekesuke1986.tumblr.com/" target="_blank">https://tekesuke1986.tumblr.com/</a></li>
           </ul>
         </section>
+
+        <section class="mt-6">
+          <h3>Dataset credit</h3>
+          <p>
+            The score-derived database uses MusicXML data from the
+            <a href="https://github.com/fosfrancesco/asap-dataset" target="_blank" rel="noopener">ASAP dataset</a>,
+            distributed under the
+            <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noopener">Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License</a>.
+            This site uses the data for non-commercial purposes and preserves attribution under the same license terms.
+          </p>
+          <pre v-pre class="citation">@inproceedings{asap-dataset,
+  title={{ASAP}: a dataset of aligned scores and performances for piano transcription},
+  author={Foscarin, Francesco and McLeod, Andrew and Rigaux, Philippe and Jacquemard, Florent and Sakai, Masahiko},
+  booktitle={International Society for Music Information Retrieval Conference {(ISMIR)}},
+  year={2020},
+  pages={534--541}
+}</pre>
+        </section>
       </v-card-text>
     </v-card>
   </v-dialog>
@@ -73,5 +91,14 @@ const open = computed({
 
 .custom-list li + li {
   margin-top: 0.5rem;
+}
+
+.citation {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  overflow-x: auto;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.04);
+  white-space: pre;
 }
 </style>
