@@ -75,6 +75,7 @@ function query_db()
   min_match_window = _parse_int(get(p, "min_match_window", 3))
   candidate_min_master = _parse_int(get(p, "range_min", 0))
   candidate_max_master = _parse_int(get(p, "range_max", 24))
+  max_series = _parse_int(get(p, "max_series", 0))
 
   clusters_per_series = Dict{Int,Any}()
   matched_series = Any[]
@@ -91,6 +92,9 @@ function query_db()
     "minMatchWindow" => min_match_window,
   ))
   series_stats = _fetch_series_stats(influx_url, influx_db, measurement; errors=influx_errors)
+  if max_series > 0 && length(series_stats) > max_series
+    series_stats = series_stats[1:max_series]
+  end
 
   if isempty(series_stats)
     processing_time_s = round(time()-t0;digits=2)
@@ -145,7 +149,10 @@ function query_db()
   # query-only clustering work.
   process_data!(query_seed_manager)
 
-  for chunk in chunks
+  series_scan_count = 0
+  for (chunk_idx, chunk) in enumerate(chunks)
+    println("[query_db] fetching chunk $(chunk_idx)/$(length(chunks)) series=$(length(chunk))")
+    flush(stdout)
     db_series_grouped = _fetch_grouped_db_series(influx_url, influx_db, measurement, chunk; errors=influx_errors)
     fetched_series_count += length(db_series_grouped)
     for item in db_series_grouped
@@ -156,6 +163,9 @@ function query_db()
       sid = string(series_info["series_id"])
       source_index = _parse_int(get(series_info, "source_index", 0))
       series_label = string(get(series_info, "label", sid))
+      series_scan_count += 1
+      println("[query_db] $(series_scan_count)/$(length(series_stats)) $(series_label)")
+      flush(stdout)
       db_series_values = series_info["values"]::Vector{Float64}
 
       manager = deepcopy(query_seed_manager)
@@ -224,7 +234,7 @@ function query_db()
     end
   end
 
-  sort!(matched_series; by = item -> -_parse_float(item["score"]))
+  sort!(matched_series; by = item -> item["score"], rev=true)
   for item in matched_series
     result_index = length(db_series_all)
     push!(db_series_all, item["db_series"])
@@ -344,6 +354,7 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
   merge_threshold = _parse_float(get(p, "merge_threshold_ratio", 0.3))
   min_window = SUBSEQUENCE_MIN_WINDOW_SIZE
   min_match_window = _parse_int(get(p, "min_match_window", 3))
+  max_series = _parse_int(get(p, "max_series", 0))
 
   clusters_per_series = Dict{Int,Any}()
   matched_series = Any[]
@@ -361,6 +372,9 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
   ))
 
   series_stats = _fetch_series_stats_note_vol(influx_url, influx_db, measurement; errors=influx_errors)
+  if max_series > 0 && length(series_stats) > max_series
+    series_stats = series_stats[1:max_series]
+  end
   if isempty(series_stats)
     processing_time_s = round(time()-t0;digits=2)
     db_status = isempty(influx_errors) ? "db_empty" : "influx_error"
@@ -389,7 +403,10 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
   query_seed_manager = _new_note_vol_manager(deepcopy(query_points), merge_threshold, min_window)
   PolyphonicClusterManager.process_data!(query_seed_manager)
 
-  for chunk in chunks
+  series_scan_count = 0
+  for (chunk_idx, chunk) in enumerate(chunks)
+    println("[query_db] fetching chunk $(chunk_idx)/$(length(chunks)) series=$(length(chunk))")
+    flush(stdout)
     db_series_grouped = _fetch_grouped_db_series_note_vol(influx_url, influx_db, measurement, chunk; errors=influx_errors)
     fetched_series_count += length(db_series_grouped)
     for item in db_series_grouped
@@ -400,6 +417,9 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
       sid = string(series_info["series_id"])
       source_index = _parse_int(get(series_info, "source_index", 0))
       series_label = string(get(series_info, "label", sid))
+      series_scan_count += 1
+      println("[query_db] $(series_scan_count)/$(length(series_stats)) $(series_label)")
+      flush(stdout)
       db_series_values = series_info["values"]::Vector{Vector{Float64}}
       manager = deepcopy(query_seed_manager)
 
@@ -455,7 +475,7 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
     end
   end
 
-  sort!(matched_series; by = item -> -_parse_float(item["score"]))
+  sort!(matched_series; by = item -> item["score"], rev=true)
   for item in matched_series
     result_index = length(db_series_all)
     push!(db_series_all, item["db_series"])
@@ -1734,6 +1754,7 @@ function _chunk_series_by_memory_budget(series_stats)::Vector{Any}
   budget_bytes = _query_memory_budget_bytes()
   bytes_per_point = max(32, _parse_int(get(ENV, "QUERY_DB_ESTIMATED_BYTES_PER_POINT", 256)))
   max_points = max(1, Int(floor(budget_bytes / bytes_per_point)))
+  max_series_per_chunk = max(1, _parse_int(get(ENV, "QUERY_DB_MAX_SERIES_PER_CHUNK", "50")))
 
   chunks = Any[]
   current = Any[]
@@ -1741,7 +1762,7 @@ function _chunk_series_by_memory_budget(series_stats)::Vector{Any}
 
   for stat in series_stats
     point_count = max(1, _parse_int(get(stat, "count", 1)))
-    if !isempty(current) && current_points + point_count > max_points
+    if !isempty(current) && (current_points + point_count > max_points || length(current) >= max_series_per_chunk)
       push!(chunks, current)
       current = Any[]
       current_points = 0
@@ -1825,12 +1846,16 @@ function _escape_influx_regex(s::AbstractString)::String
   return String(take!(out))
 end
 
-function _match_score(matches)::Int
-  score = 0
+function _match_score(matches)::Vector{Int}
+  isempty(matches) && return Int[]
+  counts = Dict{Int,Int}()
   for m in matches
-    score += _parse_int(get(m, "windowSize", 0))
+    ws = _parse_int(get(m, "windowSize", 0))
+    counts[ws] = get(counts, ws, 0) + 1
   end
-  return score
+  # 降順に並べたwindowSizeごとのcount列を返す（辞書式比較でソート可能）
+  sorted_keys = sort(collect(keys(counts)); rev=true)
+  return [counts[k] for k in sorted_keys]
 end
 
 function _match_contains(outer, inner)::Bool

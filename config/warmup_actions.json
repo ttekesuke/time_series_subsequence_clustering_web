@@ -22,7 +22,8 @@
           "merge_threshold_ratio": 0.02,
           "range_min": 0,
           "range_max": 11,
-          "min_match_window": 3
+          "min_match_window": 3,
+          "max_series": 1
         }
       }
     },

@@ -27,7 +27,7 @@
         <div v-else>
           <div v-for="(info, idx) in seriesSummaries" :key="idx" style="margin-bottom:12px">
             <div style="display:flex; align-items:center; gap:12px;">
-              <div><strong>{{info.seriesLabel}}</strong> — matches: {{info.matches.length}} / score: {{info.matchScore}}</div>
+              <div><strong>{{info.seriesLabel}}</strong> — matches: {{info.matches.length}} / score: {{info.matchScore.join(', ')}}</div>
               <v-btn small @click="showSeries(info.seriesIndex)">View</v-btn>
             </div>
             <div v-if="visibleSeries === info.seriesIndex" style="margin-top:6px">
@@ -221,12 +221,19 @@ const seriesSummaries = computed(() => {
     const sourceLabel = entry && entry.series_label
       ? entry.series_label
       : (entry && entry.series_id !== undefined ? `#${entry.series_id}` : `#${idx}`)
-    const matchScore = entry && entry.match_score !== undefined
-      ? Number(entry.match_score)
-      : grouped.reduce((sum, m) => sum + Number(m.windowSize || 0) * (m.db_starts?.length || 0), 0)
+    const rawScore = entry && entry.match_score !== undefined ? entry.match_score : null
+    const matchScore: number[] = Array.isArray(rawScore) ? rawScore : (rawScore !== null ? [Number(rawScore)] : [])
     out.push({ seriesIndex: idx, seriesLabel: sourceLabel, matchScore, matches: grouped })
   }
-  return out.sort((a,b) => b.matchScore - a.matchScore)
+  return out.sort((a, b) => {
+    const as = a.matchScore, bs = b.matchScore
+    const len = Math.max(as.length, bs.length)
+    for (let i = 0; i < len; i++) {
+      const diff = (bs[i] ?? 0) - (as[i] ?? 0)
+      if (diff !== 0) return diff
+    }
+    return 0
+  })
 })
 
 const showSeries = (i: number) => {

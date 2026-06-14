@@ -12,6 +12,7 @@ const measurement = get(ENV, "INFLUX_MEASUREMENT", "timeseries") # measurement n
 const note_field = get(ENV, "INFLUX_NOTE_FIELD", "note") # field name for pitch
 const dataset_dir = normpath(get(ENV, "ASAP_DATASET_DIR", joinpath(@__DIR__, "..", "data", "asap-dataset")))
 const measure_gap_threshold_measures = parse(Int, get(ENV, "ASAP_MEASURE_GAP_THRESHOLD_MEASURES", "1"))
+const phrase_max_measures = parse(Int, get(ENV, "ASAP_PHRASE_MAX_MEASURES", "8"))
 const max_scores = parse(Int, get(ENV, "ASAP_MAX_SCORES", "0"))
 const write_batch_lines = parse(Int, get(ENV, "INFLUX_WRITE_BATCH_LINES", "5000"))
 const seed_start_unix_s = parse(Int, get(ENV, "SEED_START_UNIX_S", "946684800"))
@@ -363,28 +364,40 @@ function split_phrase_events(events::Vector{NoteEvent}, measure_starts::Vector{T
   isempty(events) && return phrases
 
   current_phrase = NoteEvent[]
+  phrase_start_measure = ""
 
-  # Calculate the threshold for a phrase break (e.g., 1 measure duration)
   measure_duration_threshold_ticks = get_average_measure_duration_ticks(measure_starts) * measure_gap_threshold_measures
 
   for i in 1:length(events)
     event = events[i]
     if isempty(current_phrase)
       push!(current_phrase, event)
+      phrase_start_measure = event.measure_number
       continue
     end
 
     previous_event = current_phrase[end]
-    # The end of the previous note, considering its duration
     previous_note_end_tick = previous_event.start_tick + previous_event.duration
-
-    # The gap between the end of the previous note and the start of the current note
     gap = event.start_tick - previous_note_end_tick
 
+    # 休符によるフレーズ区切り
     if gap >= measure_duration_threshold_ticks
       push!(phrases, current_phrase)
       current_phrase = NoteEvent[event]
+      phrase_start_measure = event.measure_number
       continue
+    end
+
+    # 小節数による強制区切り
+    if phrase_max_measures > 0
+      start_m = tryparse(Int, phrase_start_measure)
+      cur_m   = tryparse(Int, event.measure_number)
+      if start_m !== nothing && cur_m !== nothing && (cur_m - start_m) >= phrase_max_measures
+        push!(phrases, current_phrase)
+        current_phrase = NoteEvent[event]
+        phrase_start_measure = event.measure_number
+        continue
+      end
     end
 
     push!(current_phrase, event)
