@@ -14,7 +14,9 @@ const dataset_dir = normpath(get(ENV, "ASAP_DATASET_DIR", joinpath(@__DIR__, "..
 const measure_gap_threshold_measures = parse(Int, get(ENV, "ASAP_MEASURE_GAP_THRESHOLD_MEASURES", "1"))
 const phrase_max_measures = parse(Int, get(ENV, "ASAP_PHRASE_MAX_MEASURES", "8"))
 const max_scores = parse(Int, get(ENV, "ASAP_MAX_SCORES", "0"))
-const write_batch_lines = parse(Int, get(ENV, "INFLUX_WRITE_BATCH_LINES", "5000"))
+const write_batch_lines = parse(Int, get(ENV, "INFLUX_WRITE_BATCH_LINES", "250"))
+const write_window_seconds = parse(Int, get(ENV, "INFLUX_WRITE_WINDOW_SECONDS", "300"))
+const write_window_bytes = parse(Int, get(ENV, "INFLUX_WRITE_WINDOW_BYTES", "3500000"))
 const reset_measurement = lowercase(strip(get(ENV, "SEED_RESET_MEASUREMENT", "true"))) in ("1", "true", "yes", "on")
 
 struct ScoreInfo
@@ -540,6 +542,35 @@ function seed_start_unix_s()
   return floor(Int, time())
 end
 
+mutable struct WriteWindowState
+  entries::Vector{Tuple{Float64,Int}}
+end
+
+function WriteWindowState()
+  return WriteWindowState(Tuple{Float64,Int}[])
+end
+
+function _prune_write_window!(state::WriteWindowState, now_s::Float64)
+  cutoff = now_s - float(write_window_seconds)
+  while !isempty(state.entries) && state.entries[1][1] <= cutoff
+    popfirst!(state.entries)
+  end
+end
+
+function _wait_for_write_window!(state::WriteWindowState, body_bytes::Int)
+  while true
+    now_s = time()
+    _prune_write_window!(state, now_s)
+    used_bytes = sum(x -> x[2], state.entries)
+    used_bytes + body_bytes <= write_window_bytes && return
+    isempty(state.entries) && (println("Influx write batch is larger than the configured write window budget; continuing anyway"); return)
+    oldest_ts = state.entries[1][1]
+    wait_s = max(1, ceil(Int, (oldest_ts + write_window_seconds) - now_s))
+    println("Influx write budget reached; sleeping $(wait_s)s before next batch")
+    sleep(wait_s)
+  end
+end
+
 function line_for_point(score::ScoreInfo, series_id::String, part_id::String, part_name::String, staff::String, voice::String, phrase_index::Int, point, timestamp_s::Int)
   pname = isempty(strip(part_name)) ? part_id : part_name
   tags = [
@@ -565,11 +596,13 @@ function line_for_point(score::ScoreInfo, series_id::String, part_id::String, pa
   return "$(lp_escape_measurement(measurement)),$(join(tags, ",")) $(join(fields, ",")) $(timestamp_s)"
 end
 
-function flush_lines!(lines::Vector{String})
+function flush_lines!(lines::Vector{String}, state::WriteWindowState)
   isempty(lines) && return
   body = join(lines, "\n") * "\n"
+  _wait_for_write_window!(state, sizeof(body))
   resp = write_influx(body)
   println("Wrote ", length(lines), " points -> status ", resp.status)
+  push!(state.entries, (time(), sizeof(body)))
   empty!(lines)
 end
 
@@ -579,6 +612,7 @@ function main()
   println("Loaded ASAP scores: ", length(scores), " from ", dataset_dir)
   reset_influx_measurement()
   timestamp_base_s = seed_start_unix_s()
+  write_window_state = WriteWindowState()
 
   lines = String[]
   total_points = 0
@@ -611,7 +645,7 @@ function main()
         timestamp_s = timestamp_base_s + total_points
         push!(lines, line_for_point(score, series_id, part_id, part_name, staff, voice, phrase_index, point, timestamp_s))
         total_points += 1
-        length(lines) >= write_batch_lines && flush_lines!(lines)
+        length(lines) >= write_batch_lines && flush_lines!(lines, write_window_state)
         end
       end
     end
@@ -619,7 +653,7 @@ function main()
     println("Processed score $(score_index)/$(length(scores)): $(score.composer) - $(score.title)")
   end
 
-  flush_lines!(lines)
+  flush_lines!(lines, write_window_state)
   println("Seeding complete: phrases=$(total_phrases), points=$(total_points)")
 end
 
