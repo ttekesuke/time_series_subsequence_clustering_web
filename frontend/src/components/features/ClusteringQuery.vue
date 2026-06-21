@@ -27,10 +27,19 @@
         <div v-else>
           <div v-for="(info, idx) in seriesSummaries" :key="idx" style="margin-bottom:12px">
             <div style="display:flex; align-items:center; gap:12px;">
-              <div><strong>{{info.seriesLabel}}</strong> — matches: {{info.matches.length}} / score: {{info.matchScore.join(', ')}}</div>
-              <v-btn small @click="showSeries(info.seriesIndex)">View</v-btn>
+              <div style="flex:1"><strong>{{info.seriesLabel}}</strong> — matches: {{info.matches.length}}</div>
+              <v-btn-toggle :model-value="getSeriesViewType(info.seriesIndex)" mandatory density="compact">
+                <v-btn small value="stream" @click="showSeries(info.seriesIndex, 'stream')">
+                  <v-icon start>mdi-chart-line</v-icon>Stream
+                </v-btn>
+                <v-btn small value="score" @click="showSeries(info.seriesIndex, 'score')" :disabled="!info.hasXml">
+                  <v-icon start>mdi-music-clef-treble</v-icon>Score
+                </v-btn>
+              </v-btn-toggle>
+              <v-btn icon size="small" @click="toggleVisible(info.seriesIndex)"><v-icon>{{ visibleSeries === info.seriesIndex ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon></v-btn>
             </div>
-            <div v-if="visibleSeries === info.seriesIndex" style="margin-top:6px">
+            <div v-if="visibleSeries === info.seriesIndex" style="margin-top:12px; border: 1px solid #eee; border-radius: 8px; padding: 12px; background: #fafafa;">
+              <div v-show="getSeriesViewType(info.seriesIndex) === 'stream'">
               <StreamsRoll
                 :ref="(el) => setDbStreamsRollRef(el, info.seriesIndex)"
                 :streamValues="displaySeries(results.dbSeries[info.seriesIndex])"
@@ -41,16 +50,32 @@
                 :highlightWindowSize="highlightWindowSize"
                 title="DB Series"
               ></StreamsRoll>
+              </div>
+              <div v-show="getSeriesViewType(info.seriesIndex) === 'score'" style="height:200px; overflow:auto; background:#fff">
+                <SheetMusicDisplay
+                  :composer="info.metadata.composer"
+                  :title="info.metadata.title"
+                  :folder="info.metadata.folder"
+                  :xmlScore="info.metadata.xml_score"
+                  :seriesId="info.metadata.series_id"
+                  :part="info.metadata.part"
+                  :staff="info.metadata.staff"
+                  :voice="info.metadata.voice"
+                  :phraseIndex="info.metadata.phrase_index"
+                  :match="scoreMatchFor(info)"
+                />
+              </div>
+
               <div style="margin-top:6px">
                 <div class="matches-row">
                   <v-card
                     v-for="(m,mi) in info.matches"
                     :key="mi"
                     class="match-card"
+                    :class="{ 'match-card-selected': isMatchSelected(m, info.seriesIndex) }"
                     outlined
-                    @mouseenter="handleMatchHover(m, info.seriesIndex)"
-                    @mouseleave="hoveredMatch = null"
-                    style="cursor:default"
+                    @click="toggleMatchSelection(m, info.seriesIndex)"
+                    style="cursor:pointer"
                   >
                     <v-card-text style="font-size:12px; line-height:1.2">
                       <div><strong>q_start:</strong> {{m.q_start}}</div>
@@ -80,6 +105,7 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClusteringQueryDialog from '../dialog/ClusteringQueryDialog.vue'
+import SheetMusicDisplay from '../visualizer/SheetMusicDisplay.vue'
 
 const STREAMS_ROLL_LABEL_WIDTH = 80
 type StreamsRollExpose = {
@@ -93,6 +119,7 @@ const dbStatus = ref<string | null>(null)
 const dbDiagnostics = ref<Record<string, any> | null>(null)
 const dbError = ref<string | null>(null)
 const visibleSeries = ref<number | null>(null)
+const seriesViewTypes = ref<Record<number, 'stream' | 'score'>>({})
 const queryRangeMin = 0
 const queryRangeMax = 127
 
@@ -151,7 +178,7 @@ const dbStepWidth = (seriesIndex: number) => {
   return Math.max(4, availableRollWidth.value / Math.max(1, len))
 }
 
-const handleQueried = (payload) => {
+const handleQueried = (payload: any) => {
   query.value.timeseries = payload.query || []
   query.value.vectors = payload.queryVectors || []
   query.value.axes = payload.queryAxes || []
@@ -201,8 +228,8 @@ const seriesSummaries = computed(() => {
   const by = results.value.bySeries || {}
   for (const k of Object.keys(by)) {
     const idx = Number(k)
-    const entry = by[idx]
-    let matches = []
+    const entry: any = (by as Record<string, any>)[k]
+    let matches: any[] = []
     if (Array.isArray(entry)) matches = entry
     else if (entry && entry.matches) matches = entry.matches
 
@@ -217,13 +244,38 @@ const seriesSummaries = computed(() => {
       groups.get(key).db_starts.add(db)
     }
 
-    const grouped = Array.from(groups.values()).map(g => ({ q_start: g.q_start, windowSize: g.windowSize, db_starts: Array.from(g.db_starts).sort((a,b)=>a-b) }))
+    const grouped = Array.from(groups.values()).map((g: any) => ({
+      q_start: g.q_start,
+      windowSize: g.windowSize,
+      db_starts: Array.from(g.db_starts).sort((a: any, b: any) => Number(a) - Number(b))
+    }))
     const sourceLabel = entry && entry.series_label
       ? entry.series_label
       : (entry && entry.series_id !== undefined ? `#${entry.series_id}` : `#${idx}`)
     const rawScore = entry && entry.match_score !== undefined ? entry.match_score : null
     const matchScore: number[] = Array.isArray(rawScore) ? rawScore : (rawScore !== null ? [Number(rawScore)] : [])
-    out.push({ seriesIndex: idx, seriesLabel: sourceLabel, matchScore, matches: grouped })
+
+    // 楽譜表示用のメタデータを抽出
+    const metadata = entry?.metadata || (entry?.matches?.[0]?.metadata) || {}
+
+    out.push({
+      seriesIndex: idx,
+      seriesLabel: sourceLabel,
+      matchScore,
+      matches: grouped,
+      hasXml: !!metadata.xml_score,
+      metadata: {
+        composer: metadata.composer || "",
+        title: metadata.title || "",
+        folder: metadata.folder || "",
+        xml_score: metadata.xml_score || "",
+        series_id: entry?.series_id || metadata.series_id || "",
+        part: String(metadata.part || "P1"),
+        staff: String(metadata.staff || "1"),
+        voice: String(metadata.voice || "1"),
+        phrase_index: Number(metadata.phrase_index || 1)
+      }
+    })
   }
   return out.sort((a, b) => {
     const as = a.matchScore, bs = b.matchScore
@@ -236,26 +288,57 @@ const seriesSummaries = computed(() => {
   })
 })
 
-const showSeries = (i: number) => {
+const showSeries = (i: number, type: 'stream' | 'score' = 'stream') => {
+  seriesViewTypes.value[i] = type
+  visibleSeries.value = i
+}
+
+const toggleVisible = (i: number) => {
   visibleSeries.value = visibleSeries.value === i ? null : i
+}
+
+const getSeriesViewType = (i: number) => {
+  return seriesViewTypes.value[i] || 'stream'
 }
 
 const setDbStreamsRollRef = (el: unknown, seriesIndex: number) => {
   dbStreamsRollRefs.value[seriesIndex] = el as StreamsRollExpose | null
 }
 
-const hoveredMatch = ref<any | null>(null)
-const highlightQIndices = computed(() => hoveredMatch.value ? [hoveredMatch.value.q_start] : [])
-const highlightDBIndices = computed(() => hoveredMatch.value ? (hoveredMatch.value.db_starts || []) : [])
-const highlightWindowSize = computed(() => hoveredMatch.value ? (hoveredMatch.value.windowSize || 0) : 0)
+const selectedMatch = ref<any | null>(null)
+const selectedMatchSeries = ref<number | null>(null)
+const highlightQIndices = computed(() => selectedMatch.value ? [selectedMatch.value.q_start] : [])
+const highlightDBIndices = computed(() => selectedMatch.value ? (selectedMatch.value.db_starts || []) : [])
+const highlightWindowSize = computed(() => selectedMatch.value ? (selectedMatch.value.windowSize || 0) : 0)
 
-const handleMatchHover = async (match: any, seriesIndex: number) => {
-  hoveredMatch.value = match
+const matchKey = (match: any, seriesIndex: number) => {
+  const starts = Array.isArray(match?.db_starts) ? match.db_starts.map((v: any) => Number(v)).join(',') : ''
+  return `${seriesIndex}:${Number(match?.q_start || 0)}:${Number(match?.windowSize || 0)}:${starts}`
+}
+
+const isMatchSelected = (match: any, seriesIndex: number) => {
+  return !!selectedMatch.value && selectedMatchSeries.value === seriesIndex && matchKey(selectedMatch.value, seriesIndex) === matchKey(match, seriesIndex)
+}
+
+const toggleMatchSelection = async (match: any, seriesIndex: number) => {
+  if (isMatchSelected(match, seriesIndex)) {
+    selectedMatch.value = null
+    selectedMatchSeries.value = null
+    return
+  }
+
+  selectedMatch.value = match
+  selectedMatchSeries.value = seriesIndex
   await nextTick()
   const windowSize = Number(match?.windowSize || 1)
   queryStreamsRollRef.value?.scrollToStep?.(Number(match?.q_start || 0), windowSize)
   const dbStart = Array.isArray(match?.db_starts) && match.db_starts.length > 0 ? Number(match.db_starts[0]) : 0
   dbStreamsRollRefs.value[seriesIndex]?.scrollToStep?.(dbStart, windowSize)
+}
+
+const scoreMatchFor = (info: any) => {
+  if (selectedMatch.value && selectedMatchSeries.value === info.seriesIndex) return selectedMatch.value
+  return null
 }
 
 // expose open dialog from header
@@ -269,4 +352,5 @@ defineExpose({ openParams })
 .viz-row { width:100% }
  .matches-row { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-start }
  .match-card { width:180px; min-width:140px }
+ .match-card-selected { outline: 2px solid #1976d2; background: #e3f2fd; }
 </style>

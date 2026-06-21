@@ -16,6 +16,7 @@
     "@pdanpdan/virtual-scroll": "^0.10.3",
     "axios": "^1.7.7",
     "decimal.js": "^10.4.0",
+    "opensheetmusicdisplay": "^1.9.9",
     "uuid": "^11.1.0",
     "vue": "^3.5.26",
     "vuetify": "^3.11.6"

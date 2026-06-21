@@ -341,6 +341,32 @@ function measure_at(measure_starts::Vector{Tuple{Int,String}}, tick::Int)
   return (number, tick - start_tick) # Returns (measure_number_string, tick_within_measure)
 end
 
+function collapse_to_highest_notes(events::Vector{NoteEvent})::Vector{NoteEvent}
+  isempty(events) && return NoteEvent[]
+
+  grouped = Dict{Int, NoteEvent}()
+  for event in events
+    existing = get(grouped, event.start_tick, nothing)
+    if existing === nothing || event.pitch > existing.pitch
+      grouped[event.start_tick] = event
+    elseif event.pitch == existing.pitch && event.duration > existing.duration
+      grouped[event.start_tick] = event
+    elseif event.duration > existing.duration
+      grouped[event.start_tick] = NoteEvent(
+        existing.start_tick,
+        event.duration,
+        existing.pitch,
+        existing.measure_number,
+        existing.measure_tick,
+      )
+    end
+  end
+
+  collapsed = collect(values(grouped))
+  sort!(collapsed, by = e -> e.start_tick)
+  return collapsed
+end
+
 function get_average_measure_duration_ticks(measure_starts::Vector{Tuple{Int,String}})::Int
     if length(measure_starts) < 2
         # Fallback to a reasonable default if not enough measures to calculate
@@ -430,7 +456,8 @@ end
 
 function phrase_points(events::Vector{NoteEvent}, measure_starts::Vector{Tuple{Int,String}})
   phrases_data = Vector{NamedTuple{(:points,), Tuple{Vector{NamedTuple}}}}()
-  for phrase_events in split_phrase_events(events, measure_starts)
+  highest_events = collapse_to_highest_notes(events)
+  for phrase_events in split_phrase_events(highest_events, measure_starts)
     points = materialize_phrase_points(phrase_events, measure_starts)
     isempty(points) && continue
     push!(phrases_data, (points = points,))

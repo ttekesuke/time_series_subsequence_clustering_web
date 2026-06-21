@@ -41,6 +41,21 @@ route("/api/web/time_series/dispatch_generate_polyphonic", method = POST) do
 end
 
 # ------------------------------------------------------------
+# XML and SVG coordinate endpoints
+# ------------------------------------------------------------
+route("/api/web/time_series/get_xml", method=POST) do
+  TimeSeriesController.get_xml() |> json
+end
+
+route("/api/web/time_series/get_note_positions", method=POST) do
+  TimeSeriesController.get_note_positions() |> json
+end
+
+route("/api/web/time_series/map_note_positions_to_db_points", method=POST) do
+  TimeSeriesController.map_note_positions_to_db_points() |> json
+end
+
+# ------------------------------------------------------------
 # SuperCollider endpoints (Rails compatible)
 #   POST   /api/web/supercolliders/render_polyphonic
 #   DELETE /api/web/supercolliders/cleanup

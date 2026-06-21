@@ -41,6 +41,7 @@ services:
       - ./Project.toml:/app/Project.toml
       - ./Manifest.toml:/app/Manifest.toml
       - ./scripts/start_server.jl:/app/scripts/start_server.jl
+      - ./data/asap-dataset:/app/data/asap-dataset:ro
     command: ["julia", "--project=.", "scripts/start_server.jl"]
 
   web:
