@@ -15,7 +15,6 @@ const measure_gap_threshold_measures = parse(Int, get(ENV, "ASAP_MEASURE_GAP_THR
 const phrase_max_measures = parse(Int, get(ENV, "ASAP_PHRASE_MAX_MEASURES", "8"))
 const max_scores = parse(Int, get(ENV, "ASAP_MAX_SCORES", "0"))
 const write_batch_lines = parse(Int, get(ENV, "INFLUX_WRITE_BATCH_LINES", "5000"))
-const seed_start_unix_s = parse(Int, get(ENV, "SEED_START_UNIX_S", "946684800"))
 const reset_measurement = lowercase(strip(get(ENV, "SEED_RESET_MEASUREMENT", "true"))) in ("1", "true", "yes", "on")
 
 struct ScoreInfo
@@ -481,6 +480,14 @@ function stable_id(parts::AbstractString...)
   return bytes2hex(sha1(join(parts, "\u001f")))[1:16]
 end
 
+function seed_start_unix_s()
+  override = strip(get(ENV, "SEED_START_UNIX_S", ""))
+  if !isempty(override)
+    return parse(Int, override)
+  end
+  return floor(Int, time())
+end
+
 function line_for_point(score::ScoreInfo, series_id::String, part_id::String, part_name::String, staff::String, voice::String, phrase_index::Int, point, timestamp_s::Int)
   pname = isempty(strip(part_name)) ? part_id : part_name
   tags = [
@@ -519,6 +526,7 @@ function main()
   scores = load_scores()
   println("Loaded ASAP scores: ", length(scores), " from ", dataset_dir)
   reset_influx_measurement()
+  timestamp_base_s = seed_start_unix_s()
 
   lines = String[]
   total_points = 0
@@ -546,12 +554,12 @@ function main()
         points = phrase.points
         isempty(points) && continue
         series_id = stable_id(score.xml_score, part_id, staff, voice, string(phrase_index))
-        total_phrases += 1
-        for point in points
-          timestamp_s = seed_start_unix_s + total_points
-          push!(lines, line_for_point(score, series_id, part_id, part_name, staff, voice, phrase_index, point, timestamp_s))
-          total_points += 1
-          length(lines) >= write_batch_lines && flush_lines!(lines)
+      total_phrases += 1
+      for point in points
+        timestamp_s = timestamp_base_s + total_points
+        push!(lines, line_for_point(score, series_id, part_id, part_name, staff, voice, phrase_index, point, timestamp_s))
+        total_points += 1
+        length(lines) >= write_batch_lines && flush_lines!(lines)
         end
       end
     end
