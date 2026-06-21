@@ -73,13 +73,65 @@ function influx_v2_json_headers()
   ]
 end
 
+function response_header(resp, key::AbstractString)::String
+  headers = try
+    getproperty(resp, :headers)
+  catch
+    return ""
+  end
+  try
+    for h in headers
+      if h isa Pair
+        if lowercase(String(first(h))) == lowercase(String(key))
+          return String(last(h))
+        end
+      elseif h isa Tuple && length(h) >= 2
+        if lowercase(String(h[1])) == lowercase(String(key))
+          return String(h[2])
+        end
+      end
+    end
+  catch
+  end
+  return ""
+end
+
+function retry_after_seconds(resp; default::Int=0)::Int
+  raw = strip(response_header(resp, "retry-after"))
+  isempty(raw) && return default
+  parsed = tryparse(Int, raw)
+  return parsed === nothing ? default : max(parsed, 0)
+end
+
+function post_influx_with_retry(url, headers, body; query=Dict{String,String}(), max_attempts::Int=6)
+  attempt = 1
+  backoff_s = 1
+  while true
+    resp = HTTP.post(url, headers, body; query=query, status_exception=false)
+    if 200 <= resp.status < 300
+      return resp
+    end
+
+    if resp.status == 429 && attempt < max_attempts
+      wait_s = retry_after_seconds(resp; default=backoff_s)
+      println("Influx write rate-limited (HTTP 429); retrying in $(wait_s)s (attempt $(attempt)/$(max_attempts))")
+      sleep(wait_s)
+      attempt += 1
+      backoff_s = min(backoff_s * 2, 60)
+      continue
+    end
+
+    error("Influx write failed with HTTP $(resp.status): $(String(resp.body))")
+  end
+end
+
 function write_influx(body)
   if influx_v2_enabled()
     url = string(strip_trailing_slashes(influx_url), "/api/v2/write")
     query = merge(Dict("bucket" => influx_bucket, "precision" => "s"), influx_v2_org_query())
-    return HTTP.post(url, influx_v2_headers(), body; query=query)
+    return post_influx_with_retry(url, influx_v2_headers(), body; query=query)
   else
-    return HTTP.post(string(strip_trailing_slashes(influx_url), "/write"), [], body; query=Dict("db" => influx_db, "precision" => "s"))
+    return post_influx_with_retry(string(strip_trailing_slashes(influx_url), "/write"), [], body; query=Dict("db" => influx_db, "precision" => "s"))
   end
 end
 
