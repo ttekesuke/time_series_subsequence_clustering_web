@@ -561,7 +561,7 @@ function _wait_for_write_window!(state::WriteWindowState, body_bytes::Int)
   while true
     now_s = time()
     _prune_write_window!(state, now_s)
-    used_bytes = sum(x -> x[2], state.entries)
+    used_bytes = sum(x -> x[2], state.entries; init=0)
     used_bytes + body_bytes <= write_window_bytes && return
     isempty(state.entries) && (println("Influx write batch is larger than the configured write window budget; continuing anyway"); return)
     oldest_ts = state.entries[1][1]
