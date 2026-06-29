@@ -17,10 +17,8 @@
 
 module MultiStreamManager
 
-using ..PolyphonicConfig
+using ..Config
 using ..PolyphonicClusterManager
-
-const INACTIVE_STRENGTH_DECAY::Float64 = 0.98
 
 @inline function _create_quadratic_integer_array(start_val::Real, end_val::Real, count::Int)::Vector{Int}
   count <= 1 && return Int[ceil(Int, start_val) + 1]
@@ -344,7 +342,7 @@ function Manager(
   min_window_size::Int;
   use_complexity_mapping::Bool=true,
   value_range::Union{Nothing,AbstractVector{<:Real}}=nothing,
-  max_set_size::Int=last(PolyphonicConfig.CHORD_SIZE_RANGE),
+  max_set_size::Int=last(Config.CHORD_SIZE_RANGE),
   track_presence::Bool=false
 )::Manager
   mtr = float(merge_threshold_ratio)
@@ -624,7 +622,7 @@ function presence_of_id(m::Manager, id::Int)::Float64
   end
 end
 
-function decay_inactive_strengths!(m::Manager; factor::Float64=INACTIVE_STRENGTH_DECAY)::Nothing
+function decay_inactive_strengths!(m::Manager; factor::Float64=Config.INACTIVE_STRENGTH_DECAY)::Nothing
   f = clamp(float(factor), 0.0, 1.0)
   for id in m.inactive_ids
     c = get(m.containers_by_id, id, nothing)
@@ -1095,7 +1093,7 @@ function resolve_mapping_and_score(
   abs_width = 1.0
   if absolute_bases !== nothing
     bases = [float(x) for x in absolute_bases]
-    pc_width = abs(float(last(PolyphonicConfig.NOTE_RANGE)) - float(first(PolyphonicConfig.NOTE_RANGE)))
+    pc_width = abs(float(last(Config.NOTE_RANGE)) - float(first(Config.NOTE_RANGE)))
     pc_width = pc_width <= 0.0 ? 1.0 : pc_width
     abs_width = abs(maximum(bases) - minimum(bases)) + pc_width
     abs_width = abs_width <= 0.0 ? 1.0 : abs_width
@@ -1110,13 +1108,13 @@ function resolve_mapping_and_score(
       if absolute_bases !== nothing
         base = absolute_bases[i]
         # Rails: pc.to_i (truncate) % STEPS_PER_OCTAVE
-        abs_candidate = [base + (trunc(Int, pc) % PolyphonicConfig.STEPS_PER_OCTAVE) for pc in v]
+        abs_candidate = [base + (trunc(Int, pc) % Config.STEPS_PER_OCTAVE) for pc in v]
 
         last_abs = stream.last_abs_pitch
         if last_abs === nothing
           last = stream.last_value
           # Rails: pc.to_i (truncate)
-          last_abs = [base + (trunc(Int, pc) % PolyphonicConfig.STEPS_PER_OCTAVE) for pc in last]
+          last_abs = [base + (trunc(Int, pc) % Config.STEPS_PER_OCTAVE) for pc in last]
         end
 
         pitch_dist01 = set_distance01(abs_candidate, last_abs; width=abs_width, max_count=m.max_simultaneous_notes)
@@ -1263,7 +1261,7 @@ function commit_state!(
     if m.pending_absolute_bases !== nothing
       base = m.pending_absolute_bases[i]
       # Rails: pc.to_i (truncate)
-      stream.last_abs_pitch = [base + (trunc(Int, pc) % PolyphonicConfig.STEPS_PER_OCTAVE) for pc in v]
+      stream.last_abs_pitch = [base + (trunc(Int, pc) % Config.STEPS_PER_OCTAVE) for pc in v]
     end
 
     if m.track_presence && length(v) == 1

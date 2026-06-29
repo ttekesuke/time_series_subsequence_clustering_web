@@ -22,14 +22,10 @@ import ..euclidean_distance
 import ..calculate_cluster_complexity
 
 # polyphonic modules (Stage5+)
-import ..PolyphonicConfig
+import ..Config
 import ..PolyphonicClusterManager
 import ..MultiStreamManager
 import ..DissonanceStmManager
-
-const SUBSEQUENCE_MIN_WINDOW_SIZE = 2
-const DEFAULT_USE_RECENT_POSITION_WEIGHT = false
-const UNIFORM_QUANTITY_WEIGHT = 2
 
 # ------------------------------------------------------------
 # Utilities
@@ -71,11 +67,11 @@ function query_db()
   influx_url = get(ENV, "INFLUX_URL", "http://influxdb:8086")
   influx_db = string(get(ENV, "INFLUX_DB", "timeseries"))
   debug_influx = _parse_bool(get(p, "debug", false), false)
-  merge_threshold = _parse_float(get(p, "merge_threshold_ratio", 0.3))
-  min_window = SUBSEQUENCE_MIN_WINDOW_SIZE
-  min_match_window = _parse_int(get(p, "min_match_window", 3))
-  candidate_min_master = _parse_int(get(p, "range_min", 0))
-  candidate_max_master = _parse_int(get(p, "range_max", 24))
+  merge_threshold = _parse_float(get(p, "merge_threshold_ratio", Config.DEFAULT_MERGE_THRESHOLD_RATIO))
+  min_window = Config.SUBSEQUENCE_MIN_WINDOW_SIZE
+  min_match_window = _parse_int(get(p, "min_match_window", Config.DEFAULT_QUERY_MIN_MATCH_WINDOW))
+  candidate_min_master = _parse_int(get(p, "range_min", Config.DEFAULT_RANGE_MIN))
+  candidate_max_master = _parse_int(get(p, "range_max", Config.DEFAULT_RANGE_MAX))
   max_series = _parse_int(get(p, "max_series", 0))
 
   clusters_per_series = Dict{Int,Any}()
@@ -98,7 +94,7 @@ function query_db()
   end
 
   if isempty(series_stats)
-    processing_time_s = round(time()-t0;digits=2)
+    processing_time_s = round(time()-t0;digits=Config.PROCESSING_TIME_DIGITS)
     db_status = isempty(influx_errors) ? "db_empty" : "influx_error"
     diagnostics = _query_db_diagnostics(influx_db, measurement, 0, 0, 0, 0, db_status)
     _influx_log("query_db finished", merge(copy(diagnostics), Dict("processingTime" => processing_time_s, "errorCount" => length(influx_errors))))
@@ -243,7 +239,7 @@ function query_db()
     clusters_per_series[result_index] = item["result"]
   end
 
-  processing_time_s = round(time() - t0; digits=2)
+  processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
   db_status = if !isempty(influx_errors) && fetched_series_count == 0
     "influx_error"
   elseif fetched_series_count == 0
@@ -327,11 +323,11 @@ function _new_note_vol_manager(data::Vector{Vector{Float64}}, merge_threshold::R
     data,
     merge_threshold,
     min_window;
-    value_min=0.0,
-    value_max=127.0,
-    max_set_size=2,
+    value_min=Config.MIDI_NOTE_VOL_VALUE_MIN,
+    value_max=Config.MIDI_NOTE_VOL_VALUE_MAX,
+    max_set_size=Config.MIDI_NOTE_VOL_MAX_SET_SIZE,
     point_distance_mode=:ordered_vector,
-    point_axis_ranges=Float64[127.0, 1.0]
+    point_axis_ranges=Config.MIDI_NOTE_VOL_AXIS_RANGES
   )
 end
 
@@ -353,9 +349,9 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
   influx_url = get(ENV, "INFLUX_URL", "http://influxdb:8086")
   influx_db = string(get(ENV, "INFLUX_DB", "timeseries"))
   debug_influx = _parse_bool(get(p, "debug", false), false)
-  merge_threshold = _parse_float(get(p, "merge_threshold_ratio", 0.3))
-  min_window = SUBSEQUENCE_MIN_WINDOW_SIZE
-  min_match_window = _parse_int(get(p, "min_match_window", 3))
+  merge_threshold = _parse_float(get(p, "merge_threshold_ratio", Config.DEFAULT_MERGE_THRESHOLD_RATIO))
+  min_window = Config.SUBSEQUENCE_MIN_WINDOW_SIZE
+  min_match_window = _parse_int(get(p, "min_match_window", Config.DEFAULT_QUERY_MIN_MATCH_WINDOW))
   max_series = _parse_int(get(p, "max_series", 0))
 
   clusters_per_series = Dict{Int,Any}()
@@ -378,7 +374,7 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
     series_stats = series_stats[1:max_series]
   end
   if isempty(series_stats)
-    processing_time_s = round(time()-t0;digits=2)
+    processing_time_s = round(time()-t0;digits=Config.PROCESSING_TIME_DIGITS)
     db_status = isempty(influx_errors) ? "db_empty" : "influx_error"
     diagnostics = _query_db_diagnostics(influx_db, measurement, 0, 0, 0, 0, db_status)
     diagnostics["queryValueShape"] = "note_vol"
@@ -485,7 +481,7 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
     clusters_per_series[result_index] = item["result"]
   end
 
-  processing_time_s = round(time() - t0; digits=2)
+  processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
   db_status = if !isempty(influx_errors) && fetched_series_count == 0
     "influx_error"
   elseif fetched_series_count == 0
@@ -2074,13 +2070,13 @@ function create_quantity_weight_array(
   start_val::Real,
   end_val::Real,
   count::Int;
-  use_recent_position_weight::Bool=DEFAULT_USE_RECENT_POSITION_WEIGHT
+  use_recent_position_weight::Bool=Config.DEFAULT_USE_RECENT_POSITION_WEIGHT
 )
   n = max(count, 1)
   if use_recent_position_weight
     return create_quadratic_integer_array(start_val, end_val, n)
   end
-  return fill(UNIFORM_QUANTITY_WEIGHT, n)
+  return fill(Config.UNIFORM_QUANTITY_WEIGHT, n)
 end
 
 @inline cluster_quantity_score(cluster_size::Int, window_size::Int)::Float64 = float(cluster_size * window_size)
@@ -2092,7 +2088,7 @@ function initial_calc_values!(
   max_master::Real,
   min_master::Real,
   len::Int;
-  use_recent_position_weight::Bool=DEFAULT_USE_RECENT_POSITION_WEIGHT
+  use_recent_position_weight::Bool=Config.DEFAULT_USE_RECENT_POSITION_WEIGHT
 )
   for (window_size, same_ws) in clusters_each_window_size
     all_ids = collect(keys(same_ws))
@@ -2155,7 +2151,7 @@ function analyse()
   end
 
   if isempty(data)
-    processing_time_s = round(time() - t0; digits=2)
+    processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
     return Dict(
       "clusteredSubsequences" => Any[],
       "timeSeries" => Int[],
@@ -2165,9 +2161,9 @@ function analyse()
     )
   end
 
-  merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", 0.3))
-  contextual_min_width = _parse_float(get(p, "contextual_min_width", 1.0))
-  min_window_size = SUBSEQUENCE_MIN_WINDOW_SIZE
+  merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", Config.DEFAULT_MERGE_THRESHOLD_RATIO))
+  contextual_min_width = _parse_float(get(p, "contextual_min_width", Config.DEFAULT_CONTEXTUAL_MIN_WIDTH))
+  min_window_size = Config.SUBSEQUENCE_MIN_WINDOW_SIZE
   calculate_distance_when_added_subsequence_to_cluster = true
 
   manager = TimeSeriesClusterManager(
@@ -2182,7 +2178,7 @@ function analyse()
   process_data!(manager)
 
   timeline = clusters_to_timeline(manager.clusters, min_window_size)
-  processing_time_s = round(time() - t0; digits=2)
+  processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
   println("analyse processing time (s): ", processing_time_s)
 
   return Dict(
@@ -2201,21 +2197,21 @@ function generate()
 
   first_elements = _parse_csv_ints(string(get(p, "first_elements", "")))
   complexity_targets = _parse_csv_floats(string(get(p, "complexity_transition", "")))
-  merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", 0.3))
-  contextual_min_width = _parse_float(get(p, "contextual_min_width", 1.0))
+  merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", Config.DEFAULT_MERGE_THRESHOLD_RATIO))
+  contextual_min_width = _parse_float(get(p, "contextual_min_width", Config.DEFAULT_CONTEXTUAL_MIN_WIDTH))
   use_recent_position_weight = _parse_bool(
     get(
       p,
       "use_recent_position_weight",
-      get(p, "use_most_recent_adding_weight", get(p, "user_most_recent_adding_weight", DEFAULT_USE_RECENT_POSITION_WEIGHT))
+      get(p, "use_most_recent_adding_weight", get(p, "user_most_recent_adding_weight", Config.DEFAULT_USE_RECENT_POSITION_WEIGHT))
     ),
-    DEFAULT_USE_RECENT_POSITION_WEIGHT
+    Config.DEFAULT_USE_RECENT_POSITION_WEIGHT
   )
 
-  candidate_min_master = _parse_int(get(p, "range_min", 0))
-  candidate_max_master = _parse_int(get(p, "range_max", 24))
+  candidate_min_master = _parse_int(get(p, "range_min", Config.DEFAULT_RANGE_MIN))
+  candidate_max_master = _parse_int(get(p, "range_max", Config.DEFAULT_RANGE_MAX))
 
-  min_window_size = SUBSEQUENCE_MIN_WINDOW_SIZE
+  min_window_size = Config.SUBSEQUENCE_MIN_WINDOW_SIZE
   calculate_distance_when_added_subsequence_to_cluster = false
 
   manager = TimeSeriesClusterManager(
@@ -2289,7 +2285,7 @@ function generate()
   end
 
   timeline = clusters_to_timeline(manager.clusters, min_window_size)
-  processing_time_s = round(time() - t0; digits=2)
+  processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
 
   complexity_transition_stream = Any[missing for _ in first_elements]
   append!(complexity_transition_stream, complexity_targets)
@@ -2332,12 +2328,12 @@ function array_param(raw::AbstractDict, key::String, idx0::Int)
   return array_param(_to_string_dict(raw), key, idx0)
 end
 
-function _normalize_bpm_value(raw; fallback::Real=PolyphonicConfig.POLYPHONIC_BPM)::Float64
+function _normalize_bpm_value(raw; fallback::Real=Config.POLYPHONIC_BPM)::Float64
   source = raw === nothing ? fallback : raw
-  return PolyphonicConfig.sanitize_bpm(_parse_float(source))
+  return Config.sanitize_bpm(_parse_float(source))
 end
 
-function _normalize_bpm_series(raw, expected_len::Int; fallback::Real=PolyphonicConfig.POLYPHONIC_BPM)::Vector{Float64}
+function _normalize_bpm_series(raw, expected_len::Int; fallback::Real=Config.POLYPHONIC_BPM)::Vector{Float64}
   fallback_bpm = _normalize_bpm_value(fallback; fallback=fallback)
   source = Any[]
 
@@ -2363,7 +2359,7 @@ function _normalize_bpm_series(raw, expected_len::Int; fallback::Real=Polyphonic
 end
 
 function _step_durations_from_bpm_series(bpm_series::AbstractVector)::Vector{Float64}
-  return Float64[PolyphonicConfig.step_duration_from_bpm(bpm) for bpm in bpm_series]
+  return Float64[Config.step_duration_from_bpm(bpm) for bpm in bpm_series]
 end
 
 function _step_onsets_from_durations(step_durations::AbstractVector)::Vector{Float64}
@@ -2614,11 +2610,11 @@ function select_best_chord_for_dimension_with_cost(
   global_metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
   stream_metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
   debug_prefix::Union{Nothing,String} = nothing,
-  debug_top_n::Int = 10,
+  debug_top_n::Int = Config.DEFAULT_DEBUG_TOP_N,
   absolute_bases::Union{Nothing,Vector{Int}} = nothing,
   active_note_counts::Union{Nothing,Vector{Int}} = nothing,
   active_total_notes::Union{Nothing,Int} = nothing,
-  max_simultaneous_notes::Int = last(PolyphonicConfig.CHORD_SIZE_RANGE),
+  max_simultaneous_notes::Int = last(Config.CHORD_SIZE_RANGE),
   preserve_stream_order::Bool = false,
   use_global_score::Bool = true
 )
@@ -2766,7 +2762,7 @@ function generate_polyphonic()
     end
   end
 
-  bpm = _normalize_bpm_value(get(gp, "bpm", PolyphonicConfig.POLYPHONIC_BPM))
+  bpm = _normalize_bpm_value(get(gp, "bpm", Config.POLYPHONIC_BPM))
 
   ctx_raw = get(gp, "initial_context", Any[])
 
@@ -2794,7 +2790,21 @@ function generate_polyphonic()
 
   # Defaults
   if isempty(results)
-    push!(results, [Any[[Int(PolyphonicConfig.abs_pitch_min())], 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 0.0, 0.5]])
+    push!(results, [Any[
+      [Int(Config.abs_pitch_min())],
+      Config.UNIT_MAX,
+      Config.UNIT_MID,
+      Config.UNIT_MID,
+      Config.UNIT_MID,
+      Config.UNIT_MID,
+      Config.UNIT_MID,
+      Config.UNIT_MID,
+      Config.UNIT_MID,
+      Config.UNIT_MID,
+      Config.CHORD_RANGE_VALUE_MIN,
+      Config.UNIT_MIN,
+      Config.UNIT_MID
+    ]])
   end
 
   initial_context_bpm = _normalize_bpm_series(get(gp, "initial_context_bpm", nothing), length(results); fallback=bpm)
@@ -2824,18 +2834,18 @@ function generate_polyphonic()
   sustain_idx     = 13
 
   # --- MIDI range (keep consistent across AREA/tmp_anchor and NOTE) ---
-  ABS_MIN = Int(PolyphonicConfig.abs_pitch_min())
-  ABS_MAX = Int(PolyphonicConfig.abs_pitch_max())
+  ABS_MIN = Int(Config.abs_pitch_min())
+  ABS_MAX = Int(Config.abs_pitch_max())
 
-  BAND_SIZE = PolyphonicConfig.AREA_BAND_SIZE
-  BAND_LOW_MIN = PolyphonicConfig.area_band_low_min()
-  BAND_LOW_MAX = PolyphonicConfig.area_band_low_max()
+  BAND_SIZE = Config.AREA_BAND_SIZE
+  BAND_LOW_MIN = Config.area_band_low_min()
+  BAND_LOW_MAX = Config.area_band_low_max()
   BAND_WIDTH  = max(float(BAND_LOW_MAX - BAND_LOW_MIN), 1.0)
-  CHORD_RANGE_MIN = PolyphonicConfig.CHORD_RANGE_VALUE_MIN
-  CHORD_RANGE_MAX = PolyphonicConfig.CHORD_RANGE_VALUE_MAX
+  CHORD_RANGE_MIN = Config.CHORD_RANGE_VALUE_MIN
+  CHORD_RANGE_MAX = Config.CHORD_RANGE_VALUE_MAX
 
   function _quantize_sustain(x)::Float64
-    return PolyphonicConfig.quantize_sustain(_parse_float(x))
+    return Config.quantize_sustain(_parse_float(x))
   end
 
   function _canonical_dim_key(raw_key)::Union{Nothing,String}
@@ -2958,7 +2968,7 @@ function generate_polyphonic()
         return abs_notes[cld(length(abs_notes), 2)]
       end
     end
-    return Int(PolyphonicConfig.abs_pitch_min())
+    return Int(Config.abs_pitch_min())
   end
 
   function _fixed_area_band_low_for_stream(stream_idx::Int)::Int
@@ -2966,7 +2976,7 @@ function generate_polyphonic()
       last_step = isempty(results) ? Vector{Vector{Any}}() : results[end]
       if 1 <= stream_idx <= length(last_step)
         anchor = _anchor_from_stream(last_step[stream_idx])
-        return PolyphonicConfig.area_band_low(anchor)
+        return Config.area_band_low(anchor)
       end
     end
 
@@ -3074,7 +3084,7 @@ function generate_polyphonic()
       push!(out, clamp(_parse_int(x), ABS_MIN, ABS_MAX))
     end
     sort!(out)
-    isempty(out) && push!(out, Int(PolyphonicConfig.abs_pitch_min()))
+    isempty(out) && push!(out, Int(Config.abs_pitch_min()))
     return out
   end
   function _normalize_pcs(x)::Vector{Int}
@@ -3156,7 +3166,7 @@ function generate_polyphonic()
       # legacy
       oct = _parse_int(st[1])
       pcs = _normalize_pcs(st[2])
-      base_c = PolyphonicConfig.base_c_midi(oct)
+      base_c = Config.base_c_midi(oct)
       abs_notes = _normalize_abs_notes(Int[base_c + pc for pc in pcs])
       vol = clamp(_parse_float(length(st) >= 3 ? st[3] : 1.0), 0.0, 1.0)
       brightness = clamp(_parse_float(length(st) >= 4 ? st[4] : 0.5), 0.0, 1.0)
@@ -3215,16 +3225,16 @@ function generate_polyphonic()
     end
   end
 
-  merge_threshold_ratio = _parse_float(get(gp, "merge_threshold_ratio", PolyphonicConfig.DEFAULT_POLYPHONIC_MERGE_THRESHOLD_RATIO))
+  merge_threshold_ratio = _parse_float(get(gp, "merge_threshold_ratio", Config.DEFAULT_POLYPHONIC_MERGE_THRESHOLD_RATIO))
   use_recent_position_weight = _parse_bool(
     get(
       gp,
       "use_recent_position_weight",
-      get(gp, "use_most_recent_adding_weight", get(gp, "user_most_recent_adding_weight", DEFAULT_USE_RECENT_POSITION_WEIGHT))
+      get(gp, "use_most_recent_adding_weight", get(gp, "user_most_recent_adding_weight", Config.DEFAULT_USE_RECENT_POSITION_WEIGHT))
     ),
-    DEFAULT_USE_RECENT_POSITION_WEIGHT
+    Config.DEFAULT_USE_RECENT_POSITION_WEIGHT
   )
-  min_window = PolyphonicConfig.POLYPHONIC_MIN_WINDOW_SIZE
+  min_window = Config.POLYPHONIC_MIN_WINDOW_SIZE
 
   function pad_history!(mat, fallback_row)
     if length(mat) < (min_window + 1)
@@ -3251,7 +3261,7 @@ function generate_polyphonic()
       s = sort(Int[_parse_int(x) for x in abs_notes])
       return clamp(s[cld(length(s), 2)], ABS_MIN, ABS_MAX)
     else
-      return Int(PolyphonicConfig.abs_pitch_min())
+      return Int(Config.abs_pitch_min())
     end
   end
 
@@ -3324,7 +3334,7 @@ function generate_polyphonic()
         end
       end
     end
-    isempty(alln) && push!(alln, Int(PolyphonicConfig.abs_pitch_min()))
+    isempty(alln) && push!(alln, Int(Config.abs_pitch_min()))
     sort!(alln)
     return alln[cld(length(alln), 2)]
   end
@@ -3380,7 +3390,7 @@ function generate_polyphonic()
   for row in hist_note_anchor
     tmp = Int[]
     for a in row
-      push!(tmp, PolyphonicConfig.area_band_low(a))
+      push!(tmp, Config.area_band_low(a))
     end
     push!(hist_area_tmp_anchor, tmp)
   end
@@ -3400,13 +3410,13 @@ function generate_polyphonic()
   pad_history!(hist_cr,           [0   for _ in 1:first_streams])
   pad_history!(hist_den,          [0.0 for _ in 1:first_streams])
   pad_history!(hist_sus,          [0.5 for _ in 1:first_streams])
-  pad_history!(hist_note_anchor, [Int(PolyphonicConfig.abs_pitch_min()) for _ in 1:first_streams])
-  pad_history!(hist_area_tmp_anchor, [PolyphonicConfig.area_band_low(PolyphonicConfig.abs_pitch_min()) for _ in 1:first_streams])
+  pad_history!(hist_note_anchor, [Int(Config.abs_pitch_min()) for _ in 1:first_streams])
+  pad_history!(hist_area_tmp_anchor, [Config.area_band_low(Config.abs_pitch_min()) for _ in 1:first_streams])
 
   pad_series!(hist_cr_global, Float64[0.0])
   pad_series!(hist_den_global, Float64[0.0])
 
-  pad_series!(note_global_series, Float64[float(PolyphonicConfig.abs_pitch_min())])
+  pad_series!(note_global_series, Float64[float(Config.abs_pitch_min())])
 
   max_streams = first_streams
   if !isempty(stream_counts)
@@ -3505,7 +3515,7 @@ function generate_polyphonic()
       _setup_dimension_manager!(
         key,
         history,
-        PolyphonicConfig.FLOAT_STEPS;
+        Config.FLOAT_STEPS;
         value_min=0.0,
         value_max=1.0,
         track_presence=track_presence
@@ -3513,9 +3523,9 @@ function generate_polyphonic()
     end
   end
 
-  cr_values = collect(PolyphonicConfig.CHORD_RANGE_SEARCH_RANGE)
-  cr_min = float(first(PolyphonicConfig.CHORD_RANGE_SEARCH_RANGE))
-  cr_max = float(last(PolyphonicConfig.CHORD_RANGE_SEARCH_RANGE))
+  cr_values = collect(Config.CHORD_RANGE_SEARCH_RANGE)
+  cr_min = float(first(Config.CHORD_RANGE_SEARCH_RANGE))
+  cr_max = float(last(Config.CHORD_RANGE_SEARCH_RANGE))
   if get(dim_accept, "chord_range", true)
     _setup_dimension_manager!(
       "chord_range",
@@ -3532,7 +3542,7 @@ function generate_polyphonic()
     _setup_dimension_manager!(
       "density",
       hist_den,
-      PolyphonicConfig.FLOAT_STEPS;
+      Config.FLOAT_STEPS;
       value_min=0.0,
       value_max=1.0,
       track_presence=true,
@@ -3544,7 +3554,7 @@ function generate_polyphonic()
     _setup_dimension_manager!(
       "sustain",
       hist_sus,
-      PolyphonicConfig.SUSTAIN_LEVELS;
+      Config.SUSTAIN_LEVELS;
       value_min=0.0,
       value_max=1.0,
       track_presence=true
@@ -3583,10 +3593,10 @@ function generate_polyphonic()
   # Dissonance STM seed
   # ----------------------------------------------------------
   stm_mgr = DissonanceStmManager.Manager(
-    memory_span=PolyphonicConfig.DISSONANCE_STM_MEMORY_SPAN,
-    memory_weight=PolyphonicConfig.DISSONANCE_STM_MEMORY_WEIGHT,
-    n_partials=PolyphonicConfig.DISSONANCE_STM_N_PARTIALS,
-    amp_profile=PolyphonicConfig.DISSONANCE_STM_AMP_PROFILE
+    memory_span=Config.DISSONANCE_STM_MEMORY_SPAN,
+    memory_weight=Config.DISSONANCE_STM_MEMORY_WEIGHT,
+    n_partials=Config.DISSONANCE_STM_N_PARTIALS,
+    amp_profile=Config.DISSONANCE_STM_AMP_PROFILE
   )
 
   for (i, step) in enumerate(results)
@@ -3639,7 +3649,7 @@ function generate_polyphonic()
 
     stream = note_stream_mgr.stream_pool[stream_idx]
     anchors = Int[]
-    recent_steps = max(Int(PolyphonicConfig.NOTE_REGISTER_MEMORY_STEPS), 1)
+    recent_steps = max(Int(Config.NOTE_REGISTER_MEMORY_STEPS), 1)
     data_len = length(stream.manager.data)
     start_idx = max(data_len - recent_steps + 1, 1)
 
@@ -3739,8 +3749,8 @@ function generate_polyphonic()
   for step_idx in 1:steps_to_generate
     desired_stream_count = max(stream_counts[step_idx], 1)
 
-    st_target = step_idx <= length(strength_targets) ? strength_targets[step_idx] : PolyphonicConfig.DEFAULT_TARGET_01
-    st_spread = step_idx <= length(strength_spreads) ? strength_spreads[step_idx] : PolyphonicConfig.DEFAULT_SPREAD_01
+    st_target = step_idx <= length(strength_targets) ? strength_targets[step_idx] : Config.DEFAULT_TARGET_01
+    st_spread = step_idx <= length(strength_spreads) ? strength_spreads[step_idx] : Config.DEFAULT_SPREAD_01
 
     lifecycle_mgr = haskey(managers, "vol") ? managers["vol"][:stream] : managers["note"][:stream]
     plan = MultiStreamManager.build_stream_lifecycle_plan(lifecycle_mgr, desired_stream_count; target=st_target, spread=st_spread)
@@ -3770,23 +3780,23 @@ function generate_polyphonic()
     idx0 = step_idx - 1
 
     vol_search_values = Float64[0.0, 1.0]
-    density_search_values = Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS]
+    density_search_values = Float64[float(v) for v in Config.FLOAT_STEPS]
     chord_range_search_values = Float64[float(v) for v in cr_values]
-    sustain_search_values = Float64[float(v) for v in PolyphonicConfig.SUSTAIN_LEVELS]
+    sustain_search_values = Float64[float(v) for v in Config.SUSTAIN_LEVELS]
 
     dim_order = [
       ("vol",         vol_search_values,         vol_idx),
       ("chord_range", chord_range_search_values, chord_range_idx),
       ("density",     density_search_values,     density_idx),
       ("sustain",     sustain_search_values,     sustain_idx),
-      ("brightness",   Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], brightness_idx),
-      ("articulation", Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], articulation_idx),
-      ("tonalness",    Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], tonalness_idx),
-      ("resonance",    Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], resonance_idx),
-      ("periodicity",  Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], periodicity_idx),
-      ("harmonicity",  Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], harmonicity_idx),
-      ("spectral_focus", Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], spectral_focus_idx),
-      ("nonlinearity", Float64[float(v) for v in PolyphonicConfig.FLOAT_STEPS], nonlinearity_idx),
+      ("brightness",   Float64[float(v) for v in Config.FLOAT_STEPS], brightness_idx),
+      ("articulation", Float64[float(v) for v in Config.FLOAT_STEPS], articulation_idx),
+      ("tonalness",    Float64[float(v) for v in Config.FLOAT_STEPS], tonalness_idx),
+      ("resonance",    Float64[float(v) for v in Config.FLOAT_STEPS], resonance_idx),
+      ("periodicity",  Float64[float(v) for v in Config.FLOAT_STEPS], periodicity_idx),
+      ("harmonicity",  Float64[float(v) for v in Config.FLOAT_STEPS], harmonicity_idx),
+      ("spectral_focus", Float64[float(v) for v in Config.FLOAT_STEPS], spectral_focus_idx),
+      ("nonlinearity", Float64[float(v) for v in Config.FLOAT_STEPS], nonlinearity_idx),
     ]
 
     for (key, range_vec, out_idx) in dim_order
@@ -3875,7 +3885,7 @@ function generate_polyphonic()
         global_metric_weights=global_metric_weights,
         stream_metric_weights=stream_metric_weights,
         debug_prefix=debug_prefix,
-        debug_top_n=20,
+        debug_top_n=Config.DETAILED_DEBUG_TOP_N,
         preserve_stream_order=preserve_stream_order,
         use_global_score=use_global_score,
       )
@@ -3936,8 +3946,8 @@ function generate_polyphonic()
     elseif note_register_freedom <= 1e-9
       0.0
     else
-      min_allow = float(PolyphonicConfig.NOTE_REGISTER_MIN_ALLOWANCE)
-      max_allow = float(PolyphonicConfig.NOTE_REGISTER_MAX_ALLOWANCE)
+      min_allow = float(Config.NOTE_REGISTER_MIN_ALLOWANCE)
+      max_allow = float(Config.NOTE_REGISTER_MAX_ALLOWANCE)
       min_allow + (max_allow - min_allow) * note_register_freedom
     end
 
@@ -3964,14 +3974,14 @@ function generate_polyphonic()
     pa = prev_tmp_anchors[s]
     cand = Int[]
     seen = Set{Int}()
-    for (lo, hi) in PolyphonicConfig.AREA_MOVE_BINS
+    for (lo, hi) in Config.AREA_MOVE_BINS
       for d in lo:hi
         a = pa + d
         # skip deltas that go out of configured MIDI range (no clamp, no sticking)
         (a < ABS_MIN || a > ABS_MAX) && continue
 
         # quantize to AREA band base
-        band_low = PolyphonicConfig.area_band_low(a)
+        band_low = Config.area_band_low(a)
         if !(band_low in seen)
           push!(cand, band_low)
           push!(seen, band_low)
@@ -3981,7 +3991,7 @@ function generate_polyphonic()
 
     if isempty(cand)
       # fallback: stay at current anchor's band
-      push!(cand, PolyphonicConfig.area_band_low(pa))
+      push!(cand, Config.area_band_low(pa))
     end
 
     sort!(cand)
@@ -3999,8 +4009,8 @@ function generate_polyphonic()
 # - 1stream だけなら TOP=1 でもOK
 top_bins_per_stream =
   desired_stream_count == 1 ?
-  PolyphonicConfig.AREA_TOP_BINS_PER_STREAM_SINGLE :
-  PolyphonicConfig.AREA_TOP_BINS_PER_STREAM_MULTI
+  Config.AREA_TOP_BINS_PER_STREAM_SINGLE :
+  Config.AREA_TOP_BINS_PER_STREAM_MULTI
 
 per_stream_comp01 = Vector{Dict{Int,Float64}}()
 top_anchors = Vector{Vector{Int}}()
@@ -4228,7 +4238,7 @@ end
     onset = step_idx <= length(future_step_onsets) ? future_step_onsets[step_idx] : base_onset
 
     dis_target_raw = array_param(gp, "dissonance_target", idx0)
-    target01 = dis_target_raw === nothing ? PolyphonicConfig.DEFAULT_TARGET_01 : clamp(_parse_float(dis_target_raw), 0.0, 1.0)
+    target01 = dis_target_raw === nothing ? Config.DEFAULT_TARGET_01 : clamp(_parse_float(dis_target_raw), 0.0, 1.0)
 
     # vols for amplitude (already decided in dim_order)
     vols = Float64[clamp(_parse_float(current_step_values[s][vol_idx]), 0.0, 1.0) for s in 1:desired_stream_count]
@@ -4386,7 +4396,7 @@ end
     step_decisions["note_anchor"] = global_anchor_note
 
     push!(results, current_step_values)
-    elapsed = round(time() - t0; digits=2)
+    elapsed = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
     println("[generate_polyphonic] step $(step_idx)/$(steps_to_generate) elapsed=$(elapsed)s")
     flush(stdout)
   end
@@ -4413,7 +4423,7 @@ end
     end
   end
 
-  processing_time_s = round(time() - t0; digits=2)
+  processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
 
   timbre_series = Dict(
     "brightness" => Any[
@@ -4478,7 +4488,7 @@ end
     "streamStrengths" => nothing,
     "timbreSeries" => timbre_series,
     "bpm" => isempty(future_bpm) ? bpm : future_bpm[1],
-    "stepDuration" => isempty(future_step_durations) ? PolyphonicConfig.step_duration_from_bpm(bpm) : future_step_durations[1],
+    "stepDuration" => isempty(future_step_durations) ? Config.step_duration_from_bpm(bpm) : future_step_durations[1],
     "initialContextBpm" => initial_context_bpm,
     "futureBpm" => future_bpm,
     "bpmSeries" => bpm_series,
@@ -4519,7 +4529,7 @@ function _github_dispatch_workflow!(; workflow::AbstractString, ref::AbstractStr
   return res
 end
 
-function _github_list_workflow_runs(; workflow::AbstractString, ref::AbstractString, per_page::Int=10)
+function _github_list_workflow_runs(; workflow::AbstractString, ref::AbstractString, per_page::Int=Config.GITHUB_WORKFLOW_RUNS_PER_PAGE)
   owner = _env_required("GITHUB_OWNER")
   repo  = _env_required("GITHUB_REPO")
   url = "$(_github_repo_base(owner, repo))/actions/workflows/$(workflow)/runs?event=workflow_dispatch&branch=$(ref)&per_page=$(per_page)"
@@ -4539,7 +4549,7 @@ function _find_new_run_after(obj, dispatched_at_utc::DateTime)
     catch
       continue
     end
-    if created_dt >= (dispatched_at_utc - Dates.Second(5))
+    if created_dt >= (dispatched_at_utc - Dates.Second(Config.GITHUB_WORKFLOW_DISPATCH_TOLERANCE_SECONDS))
       return r
     end
   end
@@ -4591,7 +4601,7 @@ function dispatch_generate_polyphonic()
 
   if html_url === nothing
     for _ in 1:8
-      obj = _github_list_workflow_runs(workflow=workflow, ref=ref, per_page=10)
+      obj = _github_list_workflow_runs(workflow=workflow, ref=ref, per_page=Config.GITHUB_WORKFLOW_RUNS_PER_PAGE)
       r = _find_new_run_after(obj, dispatched_at)
       if r !== nothing
         run_id = get(r, "id", run_id)
@@ -4599,7 +4609,7 @@ function dispatch_generate_polyphonic()
         run_url = get(r, "url", run_url)
         break
       end
-      sleep(1.0)
+      sleep(Config.GITHUB_WORKFLOW_POLL_INTERVAL_SECONDS)
     end
   end
 

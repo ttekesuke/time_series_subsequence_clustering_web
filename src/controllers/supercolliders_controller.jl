@@ -5,7 +5,7 @@ using UUIDs
 using Base64
 using Dates
 using Printf
-import ..PolyphonicConfig
+import ..Config
 
 const RENDER_POLYPHONIC_TEMPLATE_PATH = normpath(joinpath(@__DIR__, "..", "supercollider", "render_polyphonic.scd.tpl"))
 
@@ -23,12 +23,12 @@ function build_score_events_scd(
   tail_pad_seconds::Float64
 )::String
   io = IOBuffer()
-  mix_bus = 16
+  mix_bus = Config.SC_MIX_BUS
 
   # ---------- Parse input and generate note events ----------
   current_time = 0.0
-  node_id = 1000
-  midi_to_freq(m) = 440.0 * 2.0^((m - 69.0) / 12.0)
+  node_id = Config.SC_INITIAL_NODE_ID
+  midi_to_freq(m) = Config.A4_FREQ * 2.0^((m - float(Config.MIDI_A4)) / float(Config.STEPS_PER_OCTAVE))
 
     # Parse one stream entry in the strict timbre format.
   # Returns: (abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release)
@@ -36,29 +36,39 @@ function build_score_events_scd(
   #   [abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release]
   #   [abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, chord_range, density]
   function _parse_stream(s)::Tuple{Vector{Int},Float64,Float64,Float64,Float64,Float64,Float64,Float64}
-    s isa AbstractVector || return (Int[], 0.0, 0.5, 0.0, 1.0, 0.05, 0.20, 0.75)
-    isempty(s) && return (Int[], 0.0, 0.5, 0.0, 1.0, 0.05, 0.20, 0.75)
+    default_stream = (
+      Int[],
+      Config.SC_DEFAULT_VOLUME,
+      Config.SC_DEFAULT_BRIGHTNESS,
+      Config.SC_DEFAULT_NOISE,
+      Config.SC_DEFAULT_HARMONICITY,
+      Config.SC_DEFAULT_ATTACK,
+      Config.SC_DEFAULT_DECAY,
+      Config.SC_DEFAULT_SUSTAIN_RELEASE
+    )
+    s isa AbstractVector || return default_stream
+    isempty(s) && return default_stream
 
     if length(s) >= 1 && s[1] isa AbstractVector
       abs_notes = Int[]
       for v in s[1]
         v === nothing && continue
-        push!(abs_notes, clamp(_parse_int(v), PolyphonicConfig.abs_pitch_min(), PolyphonicConfig.abs_pitch_max()))
+        push!(abs_notes, clamp(_parse_int(v), Config.abs_pitch_min(), Config.abs_pitch_max()))
       end
       sort!(abs_notes)
       unique!(abs_notes)
 
-      vol = clamp(length(s) >= 2 ? _parse_float(s[2]) : 0.0, 0.0, 1.0)
-      brightness = clamp(length(s) >= 3 ? _parse_float(s[3]) : 0.5, 0.0, 1.0)
-      noise = clamp(length(s) >= 4 ? _parse_float(s[4]) : 0.2, 0.0, 1.0)
-      harmonicity = clamp(length(s) >= 5 ? _parse_float(s[5]) : 1.0, 0.0, 1.0)
-      attack = clamp(length(s) >= 6 ? _parse_float(s[6]) : 0.05, 0.0, 1.0)
-      decay = clamp(length(s) >= 7 ? _parse_float(s[7]) : 0.20, 0.0, 1.0)
-      sustain_release = clamp(length(s) >= 8 ? _parse_float(s[8]) : 0.75, 0.0, 1.0)
+      vol = clamp(length(s) >= 2 ? _parse_float(s[2]) : Config.SC_DEFAULT_VOLUME, Config.UNIT_MIN, Config.UNIT_MAX)
+      brightness = clamp(length(s) >= 3 ? _parse_float(s[3]) : Config.SC_DEFAULT_BRIGHTNESS, Config.UNIT_MIN, Config.UNIT_MAX)
+      noise = clamp(length(s) >= 4 ? _parse_float(s[4]) : Config.SC_DEFAULT_NOISE, Config.UNIT_MIN, Config.UNIT_MAX)
+      harmonicity = clamp(length(s) >= 5 ? _parse_float(s[5]) : Config.SC_DEFAULT_HARMONICITY, Config.UNIT_MIN, Config.UNIT_MAX)
+      attack = clamp(length(s) >= 6 ? _parse_float(s[6]) : Config.SC_DEFAULT_ATTACK, Config.UNIT_MIN, Config.UNIT_MAX)
+      decay = clamp(length(s) >= 7 ? _parse_float(s[7]) : Config.SC_DEFAULT_DECAY, Config.UNIT_MIN, Config.UNIT_MAX)
+      sustain_release = clamp(length(s) >= 8 ? _parse_float(s[8]) : Config.SC_DEFAULT_SUSTAIN_RELEASE, Config.UNIT_MIN, Config.UNIT_MAX)
       return (abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release)
     end
 
-    return (Int[], 0.0, 0.5, 0.0, 1.0, 0.05, 0.20, 0.75)
+    return default_stream
   end
 
   Event = NamedTuple{
@@ -70,7 +80,7 @@ function build_score_events_scd(
     Tuple{Int,Vector{Int},Float64,Float64,Float64,Float64,Float64,Float64,Float64}
   }
   events = Event[]
-  base_voice_gain = 0.30
+  base_voice_gain = Config.SC_BASE_VOICE_GAIN
 
   for (step_idx, step_streams) in enumerate(time_series isa AbstractVector ? time_series : Any[])
     step_duration = float(step_durations[clamp(step_idx, 1, length(step_durations))])
@@ -82,7 +92,7 @@ function build_score_events_scd(
       for (stream_idx, s) in enumerate(step_streams)
         s === nothing && continue
         abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release = _parse_stream(s)
-        (vol > 0.01 && !isempty(abs_notes)) || continue
+        (vol > Config.SC_MIN_AUDIBLE_VOLUME && !isempty(abs_notes)) || continue
         push!(step_voices, (
           stream_idx = stream_idx,
           abs_notes = abs_notes,
@@ -102,7 +112,7 @@ function build_score_events_scd(
         step_note_mass += float(v.vol) * float(length(v.abs_notes))
       end
       step_gain = step_note_mass > 0 ? (1.0 / sqrt(step_note_mass)) : 1.0
-      step_gain = clamp(step_gain, 0.20, 1.0)
+      step_gain = clamp(step_gain, Config.SC_STEP_GAIN_MIN, Config.UNIT_MAX)
 
       for voice in step_voices
         @printf("Step %d, Stream %d: vol=%.3f, notes=%s, bri=%.2f, noi=%.2f, har=%.2f, atk=%.2f, dec=%.2f, sr=%.2f\n",
@@ -142,7 +152,7 @@ function build_score_events_scd(
   total_duration_pad = total_duration + max(0.0, tail_pad_seconds)
   score_events = String(take!(io))
   template = _read_render_polyphonic_template()
-  default_step_duration = isempty(step_durations) ? PolyphonicConfig.step_duration_from_bpm(PolyphonicConfig.POLYPHONIC_BPM) : float(step_durations[1])
+  default_step_duration = isempty(step_durations) ? Config.step_duration_from_bpm(Config.POLYPHONIC_BPM) : float(step_durations[1])
 
   return replace(
     template,
@@ -180,16 +190,16 @@ end
 _parse_float(x) = x isa Real ? float(x) : (x === nothing ? 0.0 : parse(Float64, string(x)))
 _parse_int(x) = x isa Integer ? Int(x) : (x === nothing ? 0 : parse(Int, string(x)))
 
-function _normalize_bpm_value(raw; fallback=PolyphonicConfig.POLYPHONIC_BPM)::Float64
+function _normalize_bpm_value(raw; fallback=Config.POLYPHONIC_BPM)::Float64
   bpm = try
     _parse_float(raw)
   catch
     float(fallback)
   end
-  return PolyphonicConfig.sanitize_bpm(bpm)
+  return Config.sanitize_bpm(bpm)
 end
 
-function _normalize_bpm_series(raw, expected_len::Int; fallback=PolyphonicConfig.POLYPHONIC_BPM, align_tail::Bool=false)::Vector{Float64}
+function _normalize_bpm_series(raw, expected_len::Int; fallback=Config.POLYPHONIC_BPM, align_tail::Bool=false)::Vector{Float64}
   target_len = max(expected_len, 1)
   source = raw isa AbstractVector ? collect(raw) : (raw === nothing ? Any[] : Any[raw])
 
@@ -214,10 +224,10 @@ function _normalize_bpm_series(raw, expected_len::Int; fallback=PolyphonicConfig
 end
 
 function _step_durations_from_bpm_series(bpm_series::AbstractVector{<:Real})::Vector{Float64}
-  return [PolyphonicConfig.step_duration_from_bpm(float(bpm)) for bpm in bpm_series]
+  return [Config.step_duration_from_bpm(float(bpm)) for bpm in bpm_series]
 end
 
-function _combine_bpm_series(initial_raw, future_raw, expected_len::Int; fallback=PolyphonicConfig.POLYPHONIC_BPM)::Union{Nothing,Vector{Float64}}
+function _combine_bpm_series(initial_raw, future_raw, expected_len::Int; fallback=Config.POLYPHONIC_BPM)::Union{Nothing,Vector{Float64}}
   if initial_raw === nothing && future_raw === nothing
     return nothing
   end
@@ -265,20 +275,20 @@ function render_polyphonic()
             abs_notes = Int[]
             for v in s[1]
               v === nothing && continue
-              push!(abs_notes, clamp(_parse_int(v), PolyphonicConfig.abs_pitch_min(), PolyphonicConfig.abs_pitch_max()))
+              push!(abs_notes, clamp(_parse_int(v), Config.abs_pitch_min(), Config.abs_pitch_max()))
             end
-            vol = clamp(length(s) >= 2 ? _parse_float(s[2]) : 0.0, 0.0, 1.0)
+            vol = clamp(length(s) >= 2 ? _parse_float(s[2]) : Config.SC_DEFAULT_VOLUME, Config.UNIT_MIN, Config.UNIT_MAX)
             # skip near-zero volume or empty chords
-            if vol > 0.001 && !isempty(abs_notes)
+            if vol > Config.SC_SANITIZE_MIN_AUDIBLE_VOLUME && !isempty(abs_notes)
               push!(step_out, [
                 abs_notes,
                 vol,
-                length(s) >= 3 ? _parse_float(s[3]) : 0.5,
-                length(s) >= 4 ? _parse_float(s[4]) : 0.0,
-                length(s) >= 5 ? _parse_float(s[5]) : 1.0,
-                length(s) >= 6 ? _parse_float(s[6]) : 0.05,
-                length(s) >= 7 ? _parse_float(s[7]) : 0.20,
-                length(s) >= 8 ? _parse_float(s[8]) : 0.75
+                length(s) >= 3 ? _parse_float(s[3]) : Config.SC_DEFAULT_BRIGHTNESS,
+                length(s) >= 4 ? _parse_float(s[4]) : Config.SC_DEFAULT_NOISE,
+                length(s) >= 5 ? _parse_float(s[5]) : Config.SC_DEFAULT_HARMONICITY,
+                length(s) >= 6 ? _parse_float(s[6]) : Config.SC_DEFAULT_ATTACK,
+                length(s) >= 7 ? _parse_float(s[7]) : Config.SC_DEFAULT_DECAY,
+                length(s) >= 8 ? _parse_float(s[8]) : Config.SC_DEFAULT_SUSTAIN_RELEASE
               ])
             end
           end
@@ -302,7 +312,7 @@ function render_polyphonic()
   if raw_bpm_series === nothing
     raw_bpm_series = get(gp, "future_bpm", get(gp, "bpm_series", nothing))
   end
-  bpm = _normalize_bpm_value(raw_bpm === nothing ? PolyphonicConfig.POLYPHONIC_BPM : raw_bpm)
+  bpm = _normalize_bpm_value(raw_bpm === nothing ? Config.POLYPHONIC_BPM : raw_bpm)
   step_count = length(time_series_any)
   combined_bpm_series = _combine_bpm_series(get(payload, "initial_context_bpm", nothing), get(payload, "future_bpm", nothing), step_count; fallback=bpm)
   if combined_bpm_series === nothing
@@ -316,8 +326,8 @@ function render_polyphonic()
     _normalize_bpm_series(nothing, step_count; fallback=bpm, align_tail=true)
   end
   step_durations = _step_durations_from_bpm_series(bpm_series)
-  raw_tail_pad_seconds = get(payload, "tail_pad_seconds", get(gp, "tail_pad_seconds", 2.0))
-  tail_pad_seconds = clamp(_parse_float(raw_tail_pad_seconds), 0.0, 10.0)
+  raw_tail_pad_seconds = get(payload, "tail_pad_seconds", get(gp, "tail_pad_seconds", Config.SC_DEFAULT_TAIL_PAD_SECONDS))
+  tail_pad_seconds = clamp(_parse_float(raw_tail_pad_seconds), Config.UNIT_MIN, Config.SC_MAX_TAIL_PAD_SECONDS)
 
   scd_path = _safe_tmp_path("supercollider_render_polyphonic", ".scd")
   wav_path = _safe_tmp_path("supercollider_render_polyphonic", ".wav")
@@ -347,7 +357,7 @@ function render_polyphonic()
       "sound_file_path" => wav_path,
       "bpm" => (isempty(bpm_series) ? bpm : bpm_series[1]),
       "bpmSeries" => bpm_series,
-      "stepDuration" => (isempty(step_durations) ? PolyphonicConfig.step_duration_from_bpm(bpm) : step_durations[1]),
+      "stepDuration" => (isempty(step_durations) ? Config.step_duration_from_bpm(bpm) : step_durations[1]),
       "stepDurations" => step_durations,
       "tailPadSeconds" => tail_pad_seconds,
     )
@@ -367,7 +377,7 @@ function render_polyphonic()
       "sound_file_path" => wav_path,
       "bpm" => (isempty(bpm_series) ? bpm : bpm_series[1]),
       "bpmSeries" => bpm_series,
-      "stepDuration" => (isempty(step_durations) ? PolyphonicConfig.step_duration_from_bpm(bpm) : step_durations[1]),
+      "stepDuration" => (isempty(step_durations) ? Config.step_duration_from_bpm(bpm) : step_durations[1]),
       "stepDurations" => step_durations,
       "tailPadSeconds" => tail_pad_seconds,
     )

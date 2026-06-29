@@ -2,13 +2,13 @@ module TimeseriesClusteringAPI
 
 using Genie
 
+include("config.jl")
 include("timeseries/statistics_calculator.jl")
 include("timeseries/time_series_cluster_manager.jl")
 
 # ------------------------------------------------------------
 # Polyphonic modules (partial import)
 # ------------------------------------------------------------
-include("polyphonic/polyphonic_config.jl")
 include("polyphonic/dissonance_models.jl")
 include("polyphonic/dissonance.jl")
 include("polyphonic/dissonance_tuning.jl")

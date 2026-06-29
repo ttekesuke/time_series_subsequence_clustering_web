@@ -1,5 +1,7 @@
 module DissonanceTuning
 
+using ..Config
+
 """DissonanceTuning
 
 Rails 旧システム (f2da) の `lib/dissonance/tuning.rb` の部分移植。
@@ -10,15 +12,15 @@ STM/roughness 検証や将来拡張で有用なため同梱します。
 """Generate harmonic partials for base frequencies.
 Returns (freqs, amps) as flat vectors.
 """
-function harmonic_tone(base_freqs::Vector{Float64}; n_partials::Int=1, profile::String="exp")
+function harmonic_tone(base_freqs::Vector{Float64}; n_partials::Int=1, profile::String=Config.HARMONIC_PROFILE_EXP)
   n_partials < 1 && return (Float64[], Float64[])
   idx = collect(1:n_partials)
 
-  amp_profile::Vector{Float64} = if profile == "exp"
-    [0.88^i for i in idx]
-  elseif profile == "inverse"
+  amp_profile::Vector{Float64} = if profile == Config.HARMONIC_PROFILE_EXP
+    [Config.HARMONIC_PARTIAL_EXP_PROFILE_BASE^i for i in idx]
+  elseif profile == Config.HARMONIC_PROFILE_INVERSE
     [1.0 / i for i in idx]
-  elseif profile == "constant"
+  elseif profile == Config.HARMONIC_PROFILE_CONSTANT
     fill(1.0, n_partials)
   else
     error("Invalid profile: $(profile)")
@@ -40,16 +42,16 @@ function harmonic_tone(base_freqs::Vector{Float64}; n_partials::Int=1, profile::
 end
 
 """Harmonic tone with per-note levels."""
-function harmonic_tone_with_levels(base_freqs::Vector{Float64}, levels::Vector{Float64}; n_partials::Int=1, profile::String="exp")
+function harmonic_tone_with_levels(base_freqs::Vector{Float64}, levels::Vector{Float64}; n_partials::Int=1, profile::String=Config.HARMONIC_PROFILE_EXP)
   length(base_freqs) == length(levels) || error("base_freqs.size must equal levels.size")
   n_partials < 1 && return (Float64[], Float64[])
 
   idx = collect(1:n_partials)
-  amp_profile::Vector{Float64} = if profile == "exp"
-    [0.88^i for i in idx]
-  elseif profile == "inverse"
+  amp_profile::Vector{Float64} = if profile == Config.HARMONIC_PROFILE_EXP
+    [Config.HARMONIC_PARTIAL_EXP_PROFILE_BASE^i for i in idx]
+  elseif profile == Config.HARMONIC_PROFILE_INVERSE
     [1.0 / i for i in idx]
-  elseif profile == "constant"
+  elseif profile == Config.HARMONIC_PROFILE_CONSTANT
     fill(1.0, n_partials)
   else
     error("Invalid profile: $(profile)")
@@ -74,12 +76,12 @@ function harmonic_tone_with_levels(base_freqs::Vector{Float64}, levels::Vector{F
 end
 
 """Convert pitch steps to frequency."""
-function pitch_to_freq(pitches::Vector{Float64}; base_freq::Float64=440.0, steps_per_octave::Int=12)
+function pitch_to_freq(pitches::Vector{Float64}; base_freq::Float64=Config.A4_FREQ, steps_per_octave::Int=Config.STEPS_PER_OCTAVE)
   return [base_freq * (2.0^(p / steps_per_octave)) for p in pitches]
 end
 
 """Convert frequency to pitch steps."""
-function freq_to_pitch(freqs::Vector{Float64}; base_freq::Float64=440.0, steps_per_octave::Int=12)
+function freq_to_pitch(freqs::Vector{Float64}; base_freq::Float64=Config.A4_FREQ, steps_per_octave::Int=Config.STEPS_PER_OCTAVE)
   return [log2(f / base_freq) * steps_per_octave for f in freqs]
 end
 

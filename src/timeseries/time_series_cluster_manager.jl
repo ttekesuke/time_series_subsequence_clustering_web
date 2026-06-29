@@ -55,9 +55,9 @@ function TimeSeriesClusterManager(
   min_window_size::Int,
   calculate_distance_when_added_subsequence_to_cluster::Bool;
   scale_mode::Symbol = :contextual_global_halves,
-  range_min::Int = 0,
-  range_max::Int = 24,
-  contextual_min_width::Real = 1.0
+  range_min::Int = Config.DEFAULT_RANGE_MIN,
+  range_max::Int = Config.DEFAULT_RANGE_MAX,
+  contextual_min_width::Real = Config.DEFAULT_CONTEXTUAL_MIN_WIDTH
 )
   mtr = float(merge_threshold_ratio)
   seed_as =

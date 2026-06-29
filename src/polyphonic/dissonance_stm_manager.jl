@@ -11,7 +11,7 @@ Rails 旧システム (f2da) の `app/models/dissonance_stm_manager.rb` を 1:1 
 重要: Rails と完全一致させるため、(freq,amp) の freq 昇順ソートを Dissonance 側で必ず実施する。
 """
 
-using ..PolyphonicConfig
+using ..Config
 using ..Dissonance
 
 struct MemoryEvent
@@ -35,7 +35,14 @@ end
 
 Parameters are Rails defaults.
 """
-function Manager(; memory_span::Float64=1.5, memory_weight::Float64=1.0, n_partials::Int=8, amp_profile::Float64=0.88, model::String="sethares1993", prune_threshold::Float64=0.01)
+function Manager(;
+  memory_span::Float64=Config.DISSONANCE_STM_MEMORY_SPAN,
+  memory_weight::Float64=Config.DISSONANCE_STM_MEMORY_WEIGHT,
+  n_partials::Int=Config.DISSONANCE_STM_N_PARTIALS,
+  amp_profile::Float64=Config.DISSONANCE_STM_AMP_PROFILE,
+  model::String=Config.DISSONANCE_MODEL_SETHARES1993,
+  prune_threshold::Float64=Config.DISSONANCE_STM_PRUNE_THRESHOLD
+)
   return Manager(memory_span, memory_weight, n_partials, amp_profile, model, prune_threshold, MemoryEvent[])
 end
 
@@ -101,7 +108,7 @@ end
 # ---- internal ----
 
 @inline function midi_to_freq(midi::Int)::Float64
-  return PolyphonicConfig.A4_FREQ * (2.0 ^ ((float(midi) - float(PolyphonicConfig.MIDI_A4)) / float(PolyphonicConfig.STEPS_PER_OCTAVE)))
+  return Config.A4_FREQ * (2.0 ^ ((float(midi) - float(Config.MIDI_A4)) / float(Config.STEPS_PER_OCTAVE)))
 end
 
 function dissonance_current(mgr::Manager, midi_notes::Vector{Int}, amps::Vector{Float64})::Float64
@@ -117,7 +124,7 @@ function dissonance_current(mgr::Manager, midi_notes::Vector{Int}, amps::Vector{
 
   @inbounds for i in 1:n
     amp = float(amps[i])
-    if amp <= PolyphonicConfig.AMP_EPS
+    if amp <= Config.AMP_EPS
       continue
     end
 
@@ -216,10 +223,10 @@ function build_chord_midi_and_amps_for_all_streams(octaves::Vector{Int}, vols::V
     v = float(vols[s])
     a_each = v / float(length(pcs))
 
-    base_c = PolyphonicConfig.base_c_midi(octaves[s])
+    base_c = Config.base_c_midi(octaves[s])
 
     for pc in pcs
-      m = base_c + mod(Int(pc), PolyphonicConfig.STEPS_PER_OCTAVE)
+      m = base_c + mod(Int(pc), Config.STEPS_PER_OCTAVE)
       push!(midi_notes, m)      
       push!(amps, a_each)
     end

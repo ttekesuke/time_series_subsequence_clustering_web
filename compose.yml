@@ -2,6 +2,8 @@ services:
   api:
     mem_limit: "${API_MEM_LIMIT:-2g}"
     user: "1000:1000"
+    env_file:
+      - .env
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -90,6 +92,8 @@ services:
       retries: 5
   influx_init:
     user: "1000:1000"
+    env_file:
+      - .env
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -99,7 +103,14 @@ services:
     volumes:
       - ./scripts/seed_influx.jl:/app/scripts/seed_influx.jl
       - ./data/asap-dataset:/app/data/asap-dataset:ro
-    command: ["julia", "--project=.", "scripts/seed_influx.jl"]
+    command:
+      - bash
+      - -lc
+      - |
+        if [[ "${SEED_ON_START:-false}" == "true" ]]; then
+          exec /usr/local/julia/bin/julia --project=. scripts/seed_influx.jl
+        fi
+        echo "[influx_init] skipped: SEED_ON_START=${SEED_ON_START:-unset}"
 
 volumes:
   web_node_modules:

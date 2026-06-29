@@ -16,7 +16,7 @@
 
 module PolyphonicClusterManager
 
-using ..PolyphonicConfig
+using ..Config
 
 # Types
 
@@ -164,14 +164,14 @@ function Manager(
   merge_threshold_ratio::Real,
   min_window_size::Int;
   use_streamwise_surface_average::Bool = false,
-  stream_axis_offset::Real = 0.0,
-  value_min::Real = 0.0,
-  value_max::Real = 1.0,
-  max_set_size::Int = last(PolyphonicConfig.CHORD_SIZE_RANGE),
+  stream_axis_offset::Real = Config.UNIT_MIN,
+  value_min::Real = Config.UNIT_MIN,
+  value_max::Real = Config.UNIT_MAX,
+  max_set_size::Int = last(Config.CHORD_SIZE_RANGE),
   point_distance_mode::Symbol = :set,
   point_axis_ranges::Vector{Float64} = Float64[],
-  importance_decay_tau::Real = PolyphonicConfig.CLUSTER_IMPORTANCE_DECAY_TAU,
-  importance_threshold::Real = PolyphonicConfig.CLUSTER_IMPORTANCE_THRESHOLD,
+  importance_decay_tau::Real = Config.CLUSTER_IMPORTANCE_DECAY_TAU,
+  importance_threshold::Real = Config.CLUSTER_IMPORTANCE_THRESHOLD,
 )
   mtr = float(merge_threshold_ratio)
 

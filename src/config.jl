@@ -1,12 +1,29 @@
-module PolyphonicConfig
+module Config
 
-"""PolyphonicConfig
+"""Config
 
-Rails 旧システム (f2da) の `PolyphonicConfig` を 1:1 で移植。
-`generate_polyphonic` 系で参照される定数・ユーティリティを提供する。
+System-wide constants and small utility functions.
+Polyphonic constants were originally ported from the Rails f2da system; this
+module now also owns single-stream clustering and controller defaults.
 
 本モジュールは計算カーネルとなるため、Any を使わず型を固定する。
 """
+
+# --- common numeric defaults ---
+const UNIT_MIN::Float64 = 0.0
+const UNIT_MID::Float64 = 0.5
+const UNIT_MAX::Float64 = 1.0
+const PROCESSING_TIME_DIGITS::Int = 2
+
+# --- single-stream clustering defaults ---
+const SUBSEQUENCE_MIN_WINDOW_SIZE::Int = 2
+const DEFAULT_MERGE_THRESHOLD_RATIO::Float64 = 0.3
+const DEFAULT_CONTEXTUAL_MIN_WIDTH::Float64 = 1.0
+const DEFAULT_RANGE_MIN::Int = 0
+const DEFAULT_RANGE_MAX::Int = 24
+const DEFAULT_QUERY_MIN_MATCH_WINDOW::Int = 3
+const DEFAULT_USE_RECENT_POSITION_WEIGHT::Bool = false
+const UNIFORM_QUANTITY_WEIGHT::Int = 2
 
 # --- musical / midi constants ---
 const STEPS_PER_OCTAVE::Int = 12
@@ -18,6 +35,12 @@ const MIDI_NOTE_MIN::Int = 36
 const MIDI_NOTE_MAX::Int = 120
 
 const AMP_EPS::Float64 = 1e-6
+
+# --- query/vector dimensions ---
+const MIDI_NOTE_VOL_VALUE_MIN::Float64 = 0.0
+const MIDI_NOTE_VOL_VALUE_MAX::Float64 = 127.0
+const MIDI_NOTE_VOL_MAX_SET_SIZE::Int = 2
+const MIDI_NOTE_VOL_AXIS_RANGES::Vector{Float64} = [127.0, 1.0]
 
 # --- dimension ranges ---
 const OCTAVE_RANGE = 0:7
@@ -63,13 +86,53 @@ const DISSONANCE_STM_MEMORY_SPAN::Float64 = 1.5
 const DISSONANCE_STM_MEMORY_WEIGHT::Float64 = 1.0
 const DISSONANCE_STM_N_PARTIALS::Int = 8
 const DISSONANCE_STM_AMP_PROFILE::Float64 = 0.88
+const DISSONANCE_MODEL_SETHARES1993::String = "sethares1993"
+const DISSONANCE_STM_PRUNE_THRESHOLD::Float64 = 0.01
+
+# Sethares1993 model parameters
+const SETHARES1993_A::Float64 = 3.5
+const SETHARES1993_B::Float64 = 5.75
+const SETHARES1993_D_MAX::Float64 = 0.24
+const SETHARES1993_S1::Float64 = 0.0207
+const SETHARES1993_S2::Float64 = 18.96
+
+# Harmonic partial profiles
+const HARMONIC_PROFILE_EXP::String = "exp"
+const HARMONIC_PROFILE_INVERSE::String = "inverse"
+const HARMONIC_PROFILE_CONSTANT::String = "constant"
+const HARMONIC_PARTIAL_EXP_PROFILE_BASE::Float64 = 0.88
 
 # --- cluster forgetting (importance score) ---
 const CLUSTER_IMPORTANCE_DECAY_TAU::Float64 = 100.0
 const CLUSTER_IMPORTANCE_THRESHOLD::Float64 = 0
+const INACTIVE_STRENGTH_DECAY::Float64 = 0.98
 
 # safety caps
 const MAX_NOTE_CANDIDATES::Int = 8_000
+const DEFAULT_DEBUG_TOP_N::Int = 10
+const DETAILED_DEBUG_TOP_N::Int = 20
+
+# --- SuperCollider rendering defaults ---
+const SC_MIX_BUS::Int = 16
+const SC_INITIAL_NODE_ID::Int = 1000
+const SC_BASE_VOICE_GAIN::Float64 = 0.30
+const SC_MIN_AUDIBLE_VOLUME::Float64 = 0.01
+const SC_SANITIZE_MIN_AUDIBLE_VOLUME::Float64 = 0.001
+const SC_STEP_GAIN_MIN::Float64 = 0.20
+const SC_DEFAULT_VOLUME::Float64 = 0.0
+const SC_DEFAULT_BRIGHTNESS::Float64 = 0.5
+const SC_DEFAULT_NOISE::Float64 = 0.2
+const SC_DEFAULT_HARMONICITY::Float64 = 1.0
+const SC_DEFAULT_ATTACK::Float64 = 0.05
+const SC_DEFAULT_DECAY::Float64 = 0.20
+const SC_DEFAULT_SUSTAIN_RELEASE::Float64 = 0.75
+const SC_DEFAULT_TAIL_PAD_SECONDS::Float64 = 2.0
+const SC_MAX_TAIL_PAD_SECONDS::Float64 = 10.0
+
+# --- GitHub workflow polling defaults ---
+const GITHUB_WORKFLOW_RUNS_PER_PAGE::Int = 10
+const GITHUB_WORKFLOW_POLL_INTERVAL_SECONDS::Float64 = 1.0
+const GITHUB_WORKFLOW_DISPATCH_TOLERANCE_SECONDS::Int = 5
 
 """base C (MIDI) for given octave index in this system"""
 base_c_midi(octave::Integer)::Int = (Int(octave) + OCTAVE_TO_MIDI_C_OFFSET) * STEPS_PER_OCTAVE

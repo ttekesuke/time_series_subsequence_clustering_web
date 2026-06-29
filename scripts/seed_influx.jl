@@ -15,6 +15,7 @@ const measure_gap_threshold_measures = parse(Int, get(ENV, "ASAP_MEASURE_GAP_THR
 const phrase_max_measures = parse(Int, get(ENV, "ASAP_PHRASE_MAX_MEASURES", "8"))
 const max_scores = parse(Int, get(ENV, "ASAP_MAX_SCORES", "0"))
 const write_batch_lines = parse(Int, get(ENV, "INFLUX_WRITE_BATCH_LINES", "250"))
+const write_window_wait_enabled = lowercase(strip(get(ENV, "INFLUX_WRITE_WINDOW_WAIT_ENABLED", "false"))) in ("1", "true", "yes", "y", "on")
 const write_window_seconds = parse(Int, get(ENV, "INFLUX_WRITE_WINDOW_SECONDS", "300"))
 const write_window_bytes = parse(Int, get(ENV, "INFLUX_WRITE_WINDOW_BYTES", "3500000"))
 const reset_measurement = lowercase(strip(get(ENV, "SEED_RESET_MEASUREMENT", "true"))) in ("1", "true", "yes", "on")
@@ -599,10 +600,10 @@ end
 function flush_lines!(lines::Vector{String}, state::WriteWindowState)
   isempty(lines) && return
   body = join(lines, "\n") * "\n"
-  _wait_for_write_window!(state, sizeof(body))
+  write_window_wait_enabled && _wait_for_write_window!(state, sizeof(body))
   resp = write_influx(body)
   println("Wrote ", length(lines), " points -> status ", resp.status)
-  push!(state.entries, (time(), sizeof(body)))
+  write_window_wait_enabled && push!(state.entries, (time(), sizeof(body)))
   empty!(lines)
 end
 

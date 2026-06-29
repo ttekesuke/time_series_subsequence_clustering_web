@@ -12,12 +12,11 @@ Rails 旧システム (f2da) の `lib/dissonance/dissonance.rb` の移植。
 本関数は STM roughness 計算の最小核となるため、Any を使わず型を固定。
 """
 
+using ..Config
 using ..DissonanceModels
 
-const AMP_FILTER_EPS::Float64 = 1e-6
-
 """Compute total dissonance of a collection of partials."""
-function dissonance(freqs::Vector{Float64}, amps::Vector{Float64}; model::String="sethares1993")::Float64
+function dissonance(freqs::Vector{Float64}, amps::Vector{Float64}; model::String=Config.DISSONANCE_MODEL_SETHARES1993)::Float64
   n_in = length(freqs)
   if n_in < 2 || n_in != length(amps)
     return 0.0
@@ -27,7 +26,7 @@ function dissonance(freqs::Vector{Float64}, amps::Vector{Float64}; model::String
   idxs = Int[]
   sizehint!(idxs, n_in)
   @inbounds for i in 1:n_in
-    if amps[i] >= AMP_FILTER_EPS
+    if amps[i] >= Config.AMP_EPS
       push!(idxs, i)
     end
   end
@@ -52,7 +51,7 @@ function dissonance(freqs::Vector{Float64}, amps::Vector{Float64}; model::String
     for j in (i+1):m
       f2 = pairs[j][1]
       a2 = pairs[j][2]
-      if model == "sethares1993"
+      if model == Config.DISSONANCE_MODEL_SETHARES1993
         total += DissonanceModels.sethares1993_pair(f1, f2, a1, a2)
       else
         # 将来拡張用：Rails は model String/obj 両方許容だが、現段階は sethares1993 のみ

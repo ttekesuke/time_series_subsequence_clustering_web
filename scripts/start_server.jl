@@ -1,5 +1,6 @@
 # scripts/start_server.jl
-cd(joinpath(@__DIR__, ".."))  # repo root
+const REPO_ROOT = normpath(joinpath(@__DIR__, ".."))
+cd(REPO_ROOT)  # repo root
 
 # --- local .env loader (optional) ---
 function _load_dotenv(path::AbstractString)
@@ -23,7 +24,7 @@ function _load_dotenv(path::AbstractString)
   end
 end
 
-_load_dotenv(joinpath(pwd(), ".env"))
+_load_dotenv(joinpath(REPO_ROOT, ".env"))
 
 println("[start_server] ENV HOST=$(get(ENV,"HOST","(none)")) PORT=$(get(ENV,"PORT","(none)")) GENIE_HOST=$(get(ENV,"GENIE_HOST","(none)")) GENIE_PORT=$(get(ENV,"GENIE_PORT","(none)")) GENIE_ENV=$(get(ENV,"GENIE_ENV","(none)"))")
 println("[start_server] ENV RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS=$(get(ENV,"RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS","(none)"))")
@@ -199,7 +200,7 @@ function _run_startup_warmup(base_url::AbstractString)
     return
   end
 
-  config_path = get(ENV, "STARTUP_WARMUP_CONFIG", joinpath(pwd(), "config", "warmup_actions.json"))
+  config_path = get(ENV, "STARTUP_WARMUP_CONFIG", joinpath(REPO_ROOT, "config", "warmup_actions.json"))
   if !isfile(config_path)
     println("[warmup] skipped: config not found at $(config_path)")
     flush(stdout)

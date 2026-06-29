@@ -15,6 +15,31 @@ set -euo pipefail
 # envsubst は export された環境変数だけ置換するので必ず export
 export PORT GENIE_PORT GENIE_HOST GENIE_ENV JULIA_DEPOT_PATH
 
+if [[ -f /app/.env ]]; then
+  while IFS= read -r rawline || [[ -n "${rawline}" ]]; do
+    line="${rawline#"${rawline%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "${line}" || "${line}" == \#* ]] && continue
+    [[ "${line,,}" == export\ * ]] && line="${line#export }"
+    [[ "${line}" == *"="* ]] || continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+    if [[ "${val}" == \"*\" && "${val}" == *\" ]]; then
+      val="${val:1:${#val}-2}"
+    elif [[ "${val}" == \'*\' && "${val}" == *\' ]]; then
+      val="${val:1:${#val}-2}"
+    fi
+    [[ -z "${key}" ]] && continue
+    if [[ -z "${!key+x}" ]]; then
+      export "${key}=${val}"
+    fi
+  done < /app/.env
+fi
+
 echo "[entrypoint] PORT=${PORT} (nginx listen)"
 echo "[entrypoint] GENIE_HOST=${GENIE_HOST} GENIE_PORT=${GENIE_PORT} (genie listen)"
 
