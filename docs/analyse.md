@@ -25,6 +25,8 @@
   - 各要素は `_parse_int` で `Int` に変換され、変換失敗は無視されます。
 - `analyse.merge_threshold_ratio`
   - クラスタへ統合する閾値（デフォルト `0.3`）。
+- `analyse.contextual_min_width`
+  - 履歴分布の幅が 0 または極端に狭い時に使う最小スケール幅（デフォルト `1.0`）。
 
 ## 3. `analyse` 本体の流れ
 
@@ -36,7 +38,8 @@
 4. `TimeSeriesClusterManager` を以下設定で生成。
    - `min_window_size = 2`
    - `calculate_distance_when_added_subsequence_to_cluster = true`
-   - `scale_mode = :global_halves`（analyse専用スケール）
+   - `scale_mode = :contextual_global_halves`（履歴文脈スケール）
+   - `contextual_min_width = 1.0`
 5. `process_data!(manager)` を実行して、系列全体を逐次クラスタリング。
 6. 結果を
    - `clusters_to_timeline`
@@ -87,12 +90,13 @@
 
 ## 6. 距離判定ルール（「入る/入らない」を決める式）
 
-`analyse` では `scale_mode = :global_halves` のため、部分列長 `len` ごとに次を使います。
+`analyse` では `scale_mode = :contextual_global_halves` のため、部分列長 `len` ごとに次を使います。
 
-- 入力全体の平均 `data_mean` を計算
+- その時点までの履歴の平均 `data_mean` を計算
 - `<= data_mean` 群の平均を `lower_half_average`
 - `>= data_mean` 群の平均を `upper_half_average`
 - `delta = |upper_half_average - lower_half_average|`
+- `delta = max(delta, contextual_min_width)`
 - `max_distance = delta * sqrt(len)`
 
 実際の判定は次です。

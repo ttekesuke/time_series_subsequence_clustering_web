@@ -20,12 +20,14 @@ mutable struct TimeSeriesClusterManager
 
   # ------------------------------------------------------------
   # scale behavior
-  #   :global_halves ... analyse用（全体分布から lower/upper を作る）
-  #   :range_fixed   ... generate用（range_max-range_min で固定）
+  #   :contextual_global_halves ... 履歴分布から lower/upper を作り、最小知覚幅で下支えする
+  #   :global_halves            ... 履歴分布から lower/upper を作る（互換用）
+  #   :range_fixed              ... range_max-range_min で固定（query用）
   # ------------------------------------------------------------
   scale_mode::Symbol
   range_min::Int
   range_max::Int
+  contextual_min_width::Float64
 
   clusters::Dict{Int,ClusterNode}
   cluster_id_counter::Int
@@ -52,9 +54,10 @@ function TimeSeriesClusterManager(
   merge_threshold_ratio::Real,
   min_window_size::Int,
   calculate_distance_when_added_subsequence_to_cluster::Bool;
-  scale_mode::Symbol = :global_halves,
+  scale_mode::Symbol = :contextual_global_halves,
   range_min::Int = 0,
-  range_max::Int = 24
+  range_max::Int = 24,
+  contextual_min_width::Real = 1.0
 )
   mtr = float(merge_threshold_ratio)
   seed_as =
@@ -81,6 +84,7 @@ function TimeSeriesClusterManager(
     scale_mode,
     range_min,
     range_max,
+    float(contextual_min_width),
     clusters,
     1,                         # next id
     Tuple{Vector{Int},Int}[],  # tasks
@@ -104,17 +108,18 @@ max_distance_for_length
 
 距離の正規化用スケールを「部分列長 len」に合わせて返す。
 
-- analyse（:global_halves）:
+- analyse/generate（:contextual_global_halves）:
     delta = |upper_half_average - lower_half_average|
+    delta = max(delta, contextual_min_width)
     scale = delta * sqrt(len)
 
-- generate（:range_fixed）:
+- query（:range_fixed）:
     delta = |range_max - range_min|
     scale = delta * sqrt(len)
 
 ※ユークリッド距離は長さに対して sqrt(len) スケールするため、この形が自然。
 """
-function max_distance_for_length(mgr::TimeSeriesClusterManager, len::Int)::Float64
+function max_distance_for_length(mgr::TimeSeriesClusterManager, len::Int; upto_index::Union{Nothing,Int}=nothing)::Float64
   len <= 0 && return 0.0
 
   if mgr.scale_mode == :range_fixed
@@ -122,18 +127,23 @@ function max_distance_for_length(mgr::TimeSeriesClusterManager, len::Int)::Float
     return float(delta) * sqrt(float(len))
   end
 
-  # :global_halves (analyse)
   isempty(mgr.data) && return 0.0
 
-  # グローバルの平均・上下代表
-  data_mean = mean_value(mgr.data)
-  lower = [x for x in mgr.data if x <= data_mean]
-  upper = [x for x in mgr.data if x >= data_mean]
+  last_idx = upto_index === nothing ? length(mgr.data) : clamp(Int(upto_index) + 1, 1, length(mgr.data))
+  context_data = @view mgr.data[1:last_idx]
+
+  # 履歴文脈の平均・上下代表
+  data_mean = mean_value(context_data)
+  lower = [x for x in context_data if x <= data_mean]
+  upper = [x for x in context_data if x >= data_mean]
 
   lower_half_average = mean_value(lower)
   upper_half_average = mean_value(upper)
 
   delta = abs(upper_half_average - lower_half_average)
+  if mgr.scale_mode == :contextual_global_halves
+    delta = max(delta, max(mgr.contextual_min_width, 0.0))
+  end
   return delta * sqrt(float(len))
 end
 
@@ -454,10 +464,6 @@ end
 # incremental clustering core
 # ---------------------------
 function clustering_subsequences_incremental!(mgr::TimeSeriesClusterManager, data_index::Int)
-  # mean calc uses current data up to data_index inclusive (0-based)
-  prefix = mgr.data[1:(data_index+1)]
-  data_mean = mean_value(prefix)
-
   # NOTE:
   # 以前はここで max_distance_between_lower_and_upper を
   # (data_index+1) の長さで作っていましたが、
@@ -484,8 +490,8 @@ function clustering_subsequences_incremental!(mgr::TimeSeriesClusterManager, dat
     valid_si = [s for s in parent.si if (s + new_length <= data_index + 1) && (s != latest_start)]
     isempty(valid_si) && continue
 
-    # ★new_lengthに合わせた scale を使う
-    max_distance = max_distance_for_length(mgr, new_length)
+    # new_length と現在までの履歴文脈に合わせた scale を使う
+    max_distance = max_distance_for_length(mgr, new_length; upto_index=data_index)
 
     if !isempty(parent.cc)
       process_existing_clusters!(mgr, parent, latest_seq, max_distance, latest_start, new_length, keys_to_parent)
@@ -495,7 +501,7 @@ function clustering_subsequences_incremental!(mgr::TimeSeriesClusterManager, dat
   end
 
   # update root clusters (window=min_window_size)
-  root_max_distance = max_distance_for_length(mgr, mgr.min_window_size)
+  root_max_distance = max_distance_for_length(mgr, mgr.min_window_size; upto_index=data_index)
   process_root_clusters!(mgr, data_index, root_max_distance)
 end
 

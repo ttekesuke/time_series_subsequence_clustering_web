@@ -2166,6 +2166,7 @@ function analyse()
   end
 
   merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", 0.3))
+  contextual_min_width = _parse_float(get(p, "contextual_min_width", 1.0))
   min_window_size = SUBSEQUENCE_MIN_WINDOW_SIZE
   calculate_distance_when_added_subsequence_to_cluster = true
 
@@ -2174,7 +2175,8 @@ function analyse()
     merge_threshold_ratio,
     min_window_size,
     calculate_distance_when_added_subsequence_to_cluster;
-    scale_mode = :global_halves
+    scale_mode = :contextual_global_halves,
+    contextual_min_width = contextual_min_width
   )
 
   process_data!(manager)
@@ -2200,6 +2202,7 @@ function generate()
   first_elements = _parse_csv_ints(string(get(p, "first_elements", "")))
   complexity_targets = _parse_csv_floats(string(get(p, "complexity_transition", "")))
   merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", 0.3))
+  contextual_min_width = _parse_float(get(p, "contextual_min_width", 1.0))
   use_recent_position_weight = _parse_bool(
     get(
       p,
@@ -2220,9 +2223,10 @@ function generate()
     merge_threshold_ratio,
     min_window_size,
     calculate_distance_when_added_subsequence_to_cluster;
-    scale_mode = :range_fixed,
+    scale_mode = :contextual_global_halves,
     range_min = candidate_min_master,
-    range_max = candidate_max_master
+    range_max = candidate_max_master,
+    contextual_min_width = contextual_min_width
   )
 
   process_data!(manager)
