@@ -9,17 +9,6 @@ using UUIDs
 using EzXML
 
 # The manager is defined in the parent module (TimeseriesClusteringAPI)
-# after include("timeseries/time_series_cluster_manager.jl").
-import ..TimeSeriesClusterManager
-import ..process_data!
-import ..clusters_to_timeline
-import ..clusters_to_dict
-import ..transform_clusters
-import ..simulate_add_and_calculate
-import ..add_data_point_permanently!
-import ..update_caches_permanently!
-import ..euclidean_distance
-import ..calculate_cluster_complexity
 
 # polyphonic modules (Stage5+)
 import ..Config
@@ -131,8 +120,8 @@ function query_db()
   fetched_series_count = 0
   fetched_point_count = 0
 
-  query_seed_manager = TimeSeriesClusterManager(
-    copy(q_int),
+  query_seed_manager = PolyphonicClusterManager.Manager(
+    Vector{Float64}[[float(v)] for v in q_int],
     merge_threshold,
     min_window,
     true;
@@ -144,7 +133,7 @@ function query_db()
   # Seed all query-side subsequences once, then reuse this state for each DB
   # series. This preserves the per-series scan behavior while avoiding repeated
   # query-only clustering work.
-  process_data!(query_seed_manager)
+  PolyphonicClusterManager.process_data!(query_seed_manager)
 
   series_scan_count = 0
   for (chunk_idx, chunk) in enumerate(chunks)
@@ -170,10 +159,10 @@ function query_db()
       matched_result = nothing
 
       for v in db_series_values
-        add_data_point_permanently!(manager, _parse_int(v))
+        PolyphonicClusterManager.add_data_point_permanently!(manager, Float64[_parse_int(v)])
       end
 
-      timeline = clusters_to_timeline(manager.clusters, min_window)
+      timeline = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window)
       qlen = length(q_int)
       slen = length(db_series_values)
       cross_entries = Any[]
@@ -216,7 +205,7 @@ function query_db()
           "source_index" => source_index,
           "match_score" => match_score,
           "timeline" => cross_entries,
-          "clusters" => clusters_to_dict(manager.clusters),
+          "clusters" => PolyphonicClusterManager.clusters_to_dict(manager.clusters),
           "matches" => simple_matches,
           "metadata" => get(series_info, "metadata", Dict())
         )
@@ -399,7 +388,7 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
   fetched_point_count = 0
 
   query_seed_manager = _new_note_vol_manager(deepcopy(query_points), merge_threshold, min_window)
-  PolyphonicClusterManager.process_data!(query_seed_manager)
+  PolyphonicClusterManager.PolyphonicClusterManager.process_data!(query_seed_manager)
 
   series_scan_count = 0
   for (chunk_idx, chunk) in enumerate(chunks)
@@ -2101,7 +2090,7 @@ function initial_calc_values!(
         as1 = same_ws[cid1]["as"]
         as2 = same_ws[cid2]["as"]
         key = cid1 < cid2 ? (cid1,cid2) : (cid2,cid1)
-        cache[key] = euclidean_distance(as1, as2)
+        cache[key] = PolyphonicClusterManager.euclidean_distance(manager, as1, as2)
       end
     end
 
@@ -2112,7 +2101,7 @@ function initial_calc_values!(
       length(si) > 1 || continue
       q = cluster_quantity_score(length(si), window_size)
       q_cache[cid] = q
-      c_cache[cid] = calculate_cluster_complexity(cluster)
+      c_cache[cid] = PolyphonicClusterManager.calculate_cluster_complexity(manager, cluster)
     end
   end
 
@@ -2166,8 +2155,8 @@ function analyse()
   min_window_size = Config.SUBSEQUENCE_MIN_WINDOW_SIZE
   calculate_distance_when_added_subsequence_to_cluster = true
 
-  manager = TimeSeriesClusterManager(
-    copy(data),
+  manager = PolyphonicClusterManager.Manager(
+    Vector{Float64}[[float(v)] for v in data],
     merge_threshold_ratio,
     min_window_size,
     calculate_distance_when_added_subsequence_to_cluster;
@@ -2175,16 +2164,16 @@ function analyse()
     contextual_min_width = contextual_min_width
   )
 
-  process_data!(manager)
+  PolyphonicClusterManager.process_data!(manager)
 
-  timeline = clusters_to_timeline(manager.clusters, min_window_size)
+  timeline = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window_size)
   processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
   println("analyse processing time (s): ", processing_time_s)
 
   return Dict(
     "clusteredSubsequences" => timeline,
     "timeSeries" => data,
-    "clusters" => clusters_to_dict(manager.clusters),
+    "clusters" => PolyphonicClusterManager.clusters_to_dict(manager.clusters),
     "processingTime" => processing_time_s
   )
 end
@@ -2214,8 +2203,8 @@ function generate()
   min_window_size = Config.SUBSEQUENCE_MIN_WINDOW_SIZE
   calculate_distance_when_added_subsequence_to_cluster = false
 
-  manager = TimeSeriesClusterManager(
-    copy(first_elements),
+  manager = PolyphonicClusterManager.Manager(
+    Vector{Float64}[[float(v)] for v in first_elements],
     merge_threshold_ratio,
     min_window_size,
     calculate_distance_when_added_subsequence_to_cluster;
@@ -2225,9 +2214,9 @@ function generate()
     contextual_min_width = contextual_min_width
   )
 
-  process_data!(manager)
+  PolyphonicClusterManager.process_data!(manager)
 
-  clusters_each = transform_clusters(manager.clusters, min_window_size)
+  clusters_each = PolyphonicClusterManager.transform_clusters(manager.clusters, min_window_size)
   initial_calc_values!(
     manager,
     clusters_each,
@@ -2253,7 +2242,7 @@ function generate()
     )
 
     for (idx, candidate) in enumerate(candidates)
-      avg_dist, quantity, complexity = simulate_add_and_calculate(manager, candidate, qarr)
+      avg_dist, quantity, complexity = PolyphonicClusterManager.simulate_add_and_calculate(manager, Float64[candidate], qarr)
       push!(indexed_metrics, Dict(
         "index" => idx-1,
         "dist" => avg_dist,
@@ -2280,11 +2269,11 @@ function generate()
     result_value = candidates[result_index + 1]
 
     push!(results, result_value)
-    add_data_point_permanently!(manager, result_value)
-    update_caches_permanently!(manager, qarr)
+    PolyphonicClusterManager.add_data_point_permanently!(manager, Float64[result_value])
+    PolyphonicClusterManager.update_caches_permanently!(manager, qarr)
   end
 
-  timeline = clusters_to_timeline(manager.clusters, min_window_size)
+  timeline = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window_size)
   processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
 
   complexity_transition_stream = Any[missing for _ in first_elements]
@@ -2294,7 +2283,7 @@ function generate()
     "clusteredSubsequences" => timeline,
     "timeSeries" => results,
     "complexityTransition" => complexity_transition_stream,
-    "clusters" => clusters_to_dict(manager.clusters),
+    "clusters" => PolyphonicClusterManager.clusters_to_dict(manager.clusters),
     "processingTime" => processing_time_s
   )
 end

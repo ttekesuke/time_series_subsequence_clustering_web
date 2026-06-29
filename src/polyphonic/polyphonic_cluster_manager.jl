@@ -114,6 +114,9 @@ mutable struct Manager
   point_distance_mode::Symbol
   point_axis_ranges::Vector{Float64}
 
+  scale_mode::Symbol
+  contextual_min_width::Float64
+
   clusters::Dict{Int,PolyClusterNode}
   cluster_id_counter::Int
   tasks::Vector{Tuple{Vector{Int},Int}}
@@ -162,7 +165,8 @@ end
 function Manager(
   data::Vector{PolySet},
   merge_threshold_ratio::Real,
-  min_window_size::Int;
+  min_window_size::Int,
+  calculate_distance_when_added_subsequence_to_cluster::Bool = false;
   use_streamwise_surface_average::Bool = false,
   stream_axis_offset::Real = Config.UNIT_MIN,
   value_min::Real = Config.UNIT_MIN,
@@ -172,11 +176,15 @@ function Manager(
   point_axis_ranges::Vector{Float64} = Float64[],
   importance_decay_tau::Real = Config.CLUSTER_IMPORTANCE_DECAY_TAU,
   importance_threshold::Real = Config.CLUSTER_IMPORTANCE_THRESHOLD,
+  scale_mode::Symbol = :range_fixed,
+  contextual_min_width::Real = Config.DEFAULT_CONTEXTUAL_MIN_WIDTH,
+  range_min::Real = Config.DEFAULT_RANGE_MIN,
+  range_max::Real = Config.DEFAULT_RANGE_MAX,
 )
   mtr = float(merge_threshold_ratio)
 
-  vmin = float(value_min)
-  vmax = float(value_max)
+  vmin = scale_mode == :range_fixed ? float(range_min) : float(value_min)
+  vmax = scale_mode == :range_fixed ? float(range_max) : float(value_max)
   vwidth = abs(vmax - vmin)
   if vwidth <= 0.0
     vwidth = 1.0
@@ -208,7 +216,7 @@ function Manager(
     data,
     mtr,
     min_window_size,
-    false, # calculate_distance_when_added_subsequence_to_cluster (Polyphonic == false)
+    calculate_distance_when_added_subsequence_to_cluster,
     Bool(use_streamwise_surface_average),
     float(stream_axis_offset),
     vmin,
@@ -217,6 +225,8 @@ function Manager(
     mss,
     point_distance_mode,
     copy(point_axis_ranges),
+    scale_mode,
+    float(contextual_min_width),
     clusters,
     1,
     Tuple{Vector{Int},Int}[],
@@ -1054,10 +1064,57 @@ function simulate_add_and_calculate(mgr::Manager, candidate::PolySet, _quadratic
   end
 end
 
+@inline function _flat_mean(data_view)
+    sum_val = 0.0
+    count = 0
+    for set in data_view
+        for v in set
+            sum_val += v
+            count += 1
+        end
+    end
+    count == 0 ? 0.0 : sum_val / count
+end
+
+function update_value_width!(mgr::Manager, upto_index::Int)
+  mgr.scale_mode == :range_fixed && return
+
+  last_idx = clamp(upto_index + 1, 1, length(mgr.data))
+  context_data = @view mgr.data[1:last_idx]
+
+  data_mean = _flat_mean(context_data)
+
+  sum_lower = 0.0; count_lower = 0
+  sum_upper = 0.0; count_upper = 0
+  for set in context_data
+      for v in set
+          if v <= data_mean
+              sum_lower += v
+              count_lower += 1
+          end
+          if v >= data_mean
+              sum_upper += v
+              count_upper += 1
+          end
+      end
+  end
+
+  lower_half_average = count_lower == 0 ? 0.0 : sum_lower / count_lower
+  upper_half_average = count_upper == 0 ? 0.0 : sum_upper / count_upper
+
+  delta = abs(upper_half_average - lower_half_average)
+  if mgr.scale_mode == :contextual_global_halves
+    delta = max(delta, mgr.contextual_min_width)
+  end
+  mgr.value_width = delta <= 0.0 ? 1.0 : delta
+end
+
 # Incremental clustering core (polyphonic override)
 @inline max_distance_for_length(len::Int)::Float64 = sqrt(float(max(len, 1)))
 
 function clustering_subsequences_incremental!(mgr::Manager, data_index::Int)
+  update_value_width!(mgr, data_index)
+
   current_tasks = copy(mgr.tasks)
   empty!(mgr.tasks)
 
@@ -1269,5 +1326,17 @@ transform_clusters(mgr::Manager, clusters::Dict{Int,PolyClusterNode}, min_window
 
 clusters_to_timeline(mgr::Manager, clusters::Dict{Int,PolyClusterNode}, min_window_size::Int) =
   clusters_to_timeline(clusters, min_window_size)
+
+function cluster_to_dict(node::PolyClusterNode)
+  Dict(
+    "si" => sort(copy(node.si)),
+    "as" => node.as,
+    "cc" => Dict(string(cid) => cluster_to_dict(child) for (cid, child) in node.cc)
+  )
+end
+
+function clusters_to_dict(clusters::Dict{Int,PolyClusterNode})
+  Dict(string(cid) => cluster_to_dict(cl) for (cid, cl) in clusters)
+end
 
 end # module
