@@ -24,6 +24,9 @@ const DEFAULT_RANGE_MAX::Int = 24
 const DEFAULT_QUERY_MIN_MATCH_WINDOW::Int = 3
 const DEFAULT_USE_RECENT_POSITION_WEIGHT::Bool = false
 const UNIFORM_QUANTITY_WEIGHT::Int = 2
+const DEFAULT_RECENCY_TAU_MIN::Float64 = 64.0
+const DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER::Float64 = 16.0
+const DEFAULT_RECENCY_WEIGHT_STRENGTH::Float64 = 0
 
 # --- musical / midi constants ---
 const STEPS_PER_OCTAVE::Int = 12
@@ -102,9 +105,6 @@ const HARMONIC_PROFILE_INVERSE::String = "inverse"
 const HARMONIC_PROFILE_CONSTANT::String = "constant"
 const HARMONIC_PARTIAL_EXP_PROFILE_BASE::Float64 = 0.88
 
-# --- cluster forgetting (importance score) ---
-const CLUSTER_IMPORTANCE_DECAY_TAU::Float64 = 100.0
-const CLUSTER_IMPORTANCE_THRESHOLD::Float64 = 0
 const INACTIVE_STRENGTH_DECAY::Float64 = 0.98
 
 # safety caps

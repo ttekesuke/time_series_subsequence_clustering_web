@@ -124,6 +124,10 @@ mutable struct Manager
   value_width::Float64
   fixed_value_range::Bool
 
+  recency_tau_min::Float64
+  recency_tau_window_multiplier::Float64
+  recency_weight_strength::Float64
+
   pending_absolute_bases::Union{Nothing,Vector{Int}}
 end
 
@@ -242,7 +246,10 @@ function build_stream_manager(
   min_window_size::Int;
   value_min::Float64,
   value_max::Float64,
-  max_set_size::Int
+  max_set_size::Int,
+  recency_tau_min::Float64,
+  recency_tau_window_multiplier::Float64,
+  recency_weight_strength::Float64
 )::PolyphonicClusterManager.Manager
   mgr = PolyphonicClusterManager.Manager(
     series,
@@ -250,7 +257,12 @@ function build_stream_manager(
     min_window_size;
     value_min=value_min,
     value_max=value_max,
+    range_min=value_min,
+    range_max=value_max,
     max_set_size=max_set_size,
+    recency_tau_min=recency_tau_min,
+    recency_tau_window_multiplier=recency_tau_window_multiplier,
+    recency_weight_strength=recency_weight_strength,
   )
   try
     PolyphonicClusterManager.process_data(mgr)
@@ -299,6 +311,9 @@ function build_initial_streams_from_history!(m::Manager)::Nothing
       value_min=m.value_min,
       value_max=m.value_max,
       max_set_size=m.max_simultaneous_notes,
+      recency_tau_min=m.recency_tau_min,
+      recency_tau_window_multiplier=m.recency_tau_window_multiplier,
+      recency_weight_strength=m.recency_weight_strength,
     )
 
     pres_sum = 0.0
@@ -343,7 +358,10 @@ function Manager(
   use_complexity_mapping::Bool=true,
   value_range::Union{Nothing,AbstractVector{<:Real}}=nothing,
   max_set_size::Int=last(Config.CHORD_SIZE_RANGE),
-  track_presence::Bool=false
+  track_presence::Bool=false,
+  recency_tau_min::Real=Config.DEFAULT_RECENCY_TAU_MIN,
+  recency_tau_window_multiplier::Real=Config.DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER,
+  recency_weight_strength::Real=Config.DEFAULT_RECENCY_WEIGHT_STRENGTH
 )::Manager
   mtr = float(merge_threshold_ratio)
   mws = Int(min_window_size)
@@ -352,6 +370,9 @@ function Manager(
 
   max_set = Int(max_set_size)
   max_set = max(max_set, 1)
+  rt_min = max(float(recency_tau_min), 1.0)
+  rt_mul = max(float(recency_tau_window_multiplier), 0.0)
+  rw_strength = clamp(float(recency_weight_strength), 0.0, 1.0)
 
   mgr = Manager(
     mtr,
@@ -369,6 +390,9 @@ function Manager(
     1.0,
     1.0,
     false,
+    rt_min,
+    rt_mul,
+    rw_strength,
     nothing,
   )
 
@@ -432,6 +456,9 @@ function add_new_stream_with_id!(m::Manager, id::Int)::Nothing
     value_min=m.value_min,
     value_max=m.value_max,
     max_set_size=m.max_simultaneous_notes,
+    recency_tau_min=m.recency_tau_min,
+    recency_tau_window_multiplier=m.recency_tau_window_multiplier,
+    recency_weight_strength=m.recency_weight_strength,
   )
 
   container = StreamContainer(

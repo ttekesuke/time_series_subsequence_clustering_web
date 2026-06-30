@@ -2196,6 +2196,9 @@ function generate()
     ),
     Config.DEFAULT_USE_RECENT_POSITION_WEIGHT
   )
+  recency_tau_min = max(_parse_float(get(p, "recency_tau_min", get(p, "recency_tau_steps", Config.DEFAULT_RECENCY_TAU_MIN))), 1.0)
+  recency_tau_window_multiplier = max(_parse_float(get(p, "recency_tau_window_multiplier", Config.DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER)), 0.0)
+  recency_weight_strength = clamp(_parse_float(get(p, "recency_weight_strength", Config.DEFAULT_RECENCY_WEIGHT_STRENGTH)), 0.0, 1.0)
 
   candidate_min_master = _parse_int(get(p, "range_min", Config.DEFAULT_RANGE_MIN))
   candidate_max_master = _parse_int(get(p, "range_max", Config.DEFAULT_RANGE_MAX))
@@ -2208,10 +2211,13 @@ function generate()
     merge_threshold_ratio,
     min_window_size,
     calculate_distance_when_added_subsequence_to_cluster;
-    scale_mode = :contextual_global_halves,
+    scale_mode = :range_fixed,
     range_min = candidate_min_master,
     range_max = candidate_max_master,
-    contextual_min_width = contextual_min_width
+    contextual_min_width = contextual_min_width,
+    recency_tau_min = recency_tau_min,
+    recency_tau_window_multiplier = recency_tau_window_multiplier,
+    recency_weight_strength = recency_weight_strength
   )
 
   PolyphonicClusterManager.process_data!(manager)
@@ -3223,6 +3229,9 @@ function generate_polyphonic()
     ),
     Config.DEFAULT_USE_RECENT_POSITION_WEIGHT
   )
+  recency_tau_min = max(_parse_float(get(gp, "recency_tau_min", get(gp, "recency_tau_steps", Config.DEFAULT_RECENCY_TAU_MIN))), 1.0)
+  recency_tau_window_multiplier = max(_parse_float(get(gp, "recency_tau_window_multiplier", Config.DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER)), 0.0)
+  recency_weight_strength = clamp(_parse_float(get(gp, "recency_weight_strength", Config.DEFAULT_RECENCY_WEIGHT_STRENGTH)), 0.0, 1.0)
   min_window = Config.POLYPHONIC_MIN_WINDOW_SIZE
 
   function pad_history!(mat, fallback_row)
@@ -3464,7 +3473,10 @@ function generate_polyphonic()
       min_window;
       use_complexity_mapping=true,
       value_range=value_range,
-      track_presence=track_presence
+      track_presence=track_presence,
+      recency_tau_min=recency_tau_min,
+      recency_tau_window_multiplier=recency_tau_window_multiplier,
+      recency_weight_strength=recency_weight_strength
     )
     g_mgr = PolyphonicClusterManager.Manager(
       global_series_from_matrix(global_history_src, offset),
@@ -3474,7 +3486,12 @@ function generate_polyphonic()
       stream_axis_offset=offset,
       value_min=float(value_min),
       value_max=float(value_max) + (float(global_row_width - 1) * offset),
-      max_set_size=global_row_width
+      range_min=float(value_min),
+      range_max=float(value_max) + (float(global_row_width - 1) * offset),
+      max_set_size=global_row_width,
+      recency_tau_min=recency_tau_min,
+      recency_tau_window_multiplier=recency_tau_window_multiplier,
+      recency_weight_strength=recency_weight_strength
     )
     PolyphonicClusterManager.process_data!(g_mgr)
     PolyphonicClusterManager.update_caches_permanently(
@@ -3564,8 +3581,30 @@ function generate_polyphonic()
   # note (global: scalar anchor, stream: anchor per stream)
   note_min = float(ABS_MIN)
   note_max = float(ABS_MAX)
-  s_note = MultiStreamManager.Manager(hist_note_anchor, merge_threshold_ratio, min_window; use_complexity_mapping=true, value_range=collect(ABS_MIN:ABS_MAX), track_presence=true)
-  g_note = PolyphonicClusterManager.Manager(note_global_series, merge_threshold_ratio, min_window; value_min=note_min, value_max=note_max, max_set_size=1)
+  s_note = MultiStreamManager.Manager(
+    hist_note_anchor,
+    merge_threshold_ratio,
+    min_window;
+    use_complexity_mapping=true,
+    value_range=collect(ABS_MIN:ABS_MAX),
+    track_presence=true,
+    recency_tau_min=recency_tau_min,
+    recency_tau_window_multiplier=recency_tau_window_multiplier,
+    recency_weight_strength=recency_weight_strength
+  )
+  g_note = PolyphonicClusterManager.Manager(
+    note_global_series,
+    merge_threshold_ratio,
+    min_window;
+    value_min=note_min,
+    value_max=note_max,
+    range_min=note_min,
+    range_max=note_max,
+    max_set_size=1,
+    recency_tau_min=recency_tau_min,
+    recency_tau_window_multiplier=recency_tau_window_multiplier,
+    recency_weight_strength=recency_weight_strength
+  )
   PolyphonicClusterManager.process_data!(g_note)
   PolyphonicClusterManager.update_caches_permanently(
     g_note,

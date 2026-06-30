@@ -31,8 +31,6 @@ mutable struct PolyClusterNode
   si::Vector{Int}                     # start indices (0-based)
   cc::Dict{Int,PolyClusterNode}       # child clusters
   as::PolySeq                         # representative sequence
-  importance_raw::Float64             # unnormalized importance score
-  last_seen::Int                      # last seen start index (0-based)
 end
 
 """Rollback snapshot (typed)."""
@@ -128,8 +126,9 @@ mutable struct Manager
   cluster_quantity_cache::Dict{Int,Dict{Int,Float64}}
   cluster_complexity_cache::Dict{Int,Dict{Int,Float64}}
 
-  importance_decay_tau::Float64
-  importance_threshold::Float64
+  recency_tau_min::Float64
+  recency_tau_window_multiplier::Float64
+  recency_weight_strength::Float64
 
   recording_mode::Bool
   journal::Vector{PolyJournalEntry}
@@ -144,21 +143,8 @@ deep_copy_seq(seq::PolySeq)::PolySeq = [copy(s) for s in seq]
 """Ensure a PolySet is non-nil and compact."""
 normalize_set(x::PolySet)::PolySet = x
 
-@inline function _new_cluster_node(starts::Vector{Int}, as::PolySeq, last_seen::Int)::PolyClusterNode
-  raw = float(max(length(starts), 1))
-  return PolyClusterNode(starts, Dict{Int,PolyClusterNode}(), as, raw, last_seen)
-end
-
-@inline function _touch_cluster!(mgr::Manager, node::PolyClusterNode, now_index::Int)
-  tau = mgr.importance_decay_tau
-  if tau > 0
-    delta = now_index - node.last_seen
-    if delta > 0
-      node.importance_raw *= exp(-float(delta) / tau)
-    end
-  end
-  node.importance_raw += 1.0
-  node.last_seen = now_index
+@inline function _new_cluster_node(starts::Vector{Int}, as::PolySeq)::PolyClusterNode
+  return PolyClusterNode(starts, Dict{Int,PolyClusterNode}(), as)
 end
 
 """Create manager. `data` must be Vector{Vector{Float64}}."""
@@ -174,8 +160,9 @@ function Manager(
   max_set_size::Int = last(Config.CHORD_SIZE_RANGE),
   point_distance_mode::Symbol = :set,
   point_axis_ranges::Vector{Float64} = Float64[],
-  importance_decay_tau::Real = Config.CLUSTER_IMPORTANCE_DECAY_TAU,
-  importance_threshold::Real = Config.CLUSTER_IMPORTANCE_THRESHOLD,
+  recency_tau_min::Real = Config.DEFAULT_RECENCY_TAU_MIN,
+  recency_tau_window_multiplier::Real = Config.DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER,
+  recency_weight_strength::Real = Config.DEFAULT_RECENCY_WEIGHT_STRENGTH,
   scale_mode::Symbol = :range_fixed,
   contextual_min_width::Real = Config.DEFAULT_CONTEXTUAL_MIN_WIDTH,
   range_min::Real = Config.DEFAULT_RANGE_MIN,
@@ -203,7 +190,7 @@ function Manager(
       [Float64[] for _ in 1:min_window_size]
     end
 
-  clusters = Dict{Int,PolyClusterNode}(0 => PolyClusterNode([0], Dict{Int,PolyClusterNode}(), seed_as, 1.0, 0))
+  clusters = Dict{Int,PolyClusterNode}(0 => PolyClusterNode([0], Dict{Int,PolyClusterNode}(), seed_as))
 
   updated_dist = Dict{Int,Set{Int}}(min_window_size => Set([0]))
   updated_qty  = Dict{Int,Set{Int}}(min_window_size => Set([0]))
@@ -235,8 +222,9 @@ function Manager(
     dist_cache,
     qty_cache,
     comp_cache,
-    float(importance_decay_tau),
-    float(importance_threshold),
+    max(float(recency_tau_min), 1.0),
+    max(float(recency_tau_window_multiplier), 0.0),
+    clamp(float(recency_weight_strength), 0.0, 1.0),
     false,
     PolyJournalEntry[],
     nothing
@@ -532,132 +520,88 @@ function add_data_point_permanently!(mgr::Manager, val::PolySet)
   clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
 end
 
-@inline function _remove_cluster_id_from_caches!(mgr::Manager, window_size::Int, cluster_id::Int)
-  cache = get(mgr.cluster_distance_cache, window_size, nothing)
-  if cache !== nothing
-    for key in collect(keys(cache))
-      if key[1] == cluster_id || key[2] == cluster_id
-        delete!(cache, key)
-      end
-    end
-  end
-
-  q_cache = get(mgr.cluster_quantity_cache, window_size, nothing)
-  q_cache !== nothing && delete!(q_cache, cluster_id)
-
-  c_cache = get(mgr.cluster_complexity_cache, window_size, nothing)
-  c_cache !== nothing && delete!(c_cache, cluster_id)
-
-  if haskey(mgr.updated_cluster_ids_per_window_for_calculate_distance, window_size)
-    delete!(mgr.updated_cluster_ids_per_window_for_calculate_distance[window_size], cluster_id)
-  end
-  if haskey(mgr.updated_cluster_ids_per_window_for_calculate_quantities, window_size)
-    delete!(mgr.updated_cluster_ids_per_window_for_calculate_quantities[window_size], cluster_id)
-  end
-end
-
-function _collect_subtree_ids(root_node::PolyClusterNode, root_ws::Int, root_id::Int)
-  out = Vector{Tuple{Int,Int}}()
-  push!(out, (root_ws, root_id))
-  stack = Vector{Tuple{Int,Int,PolyClusterNode}}()
-  for (child_id, child) in root_node.cc
-    push!(stack, (root_ws + 1, child_id, child))
-  end
-  while !isempty(stack)
-    (ws, cid, node) = pop!(stack)
-    push!(out, (ws, cid))
-    for (child_id, child) in node.cc
-      push!(stack, (ws + 1, child_id, child))
-    end
-  end
-  return out
-end
-
-function _prune_tasks!(mgr::Manager)
-  isempty(mgr.tasks) && return
-  kept = Vector{Tuple{Vector{Int},Int}}()
-  sizehint!(kept, length(mgr.tasks))
-  for task in mgr.tasks
-    keys_to_parent = task[1]
-    dig_cluster_by_keys(mgr.clusters, keys_to_parent) === nothing && continue
-    push!(kept, task)
-  end
-  mgr.tasks = kept
-end
-
-function _prune_clusters_by_importance!(mgr::Manager, now_index::Int)
-  thr = mgr.importance_threshold
-  thr <= 0 && return
-
-  tau = mgr.importance_decay_tau
-  entries_by_ws = Dict{Int,Vector{Tuple{Dict{Int,PolyClusterNode},Int,PolyClusterNode,Float64}}}()
-
-  stack = Vector{Tuple{Int,Dict{Int,PolyClusterNode},Int,PolyClusterNode}}()
-  sizehint!(stack, length(mgr.clusters))
-  for (cid, cl) in mgr.clusters
-    push!(stack, (mgr.min_window_size, mgr.clusters, cid, cl))
-  end
-
-  while !isempty(stack)
-    (ws, parent_cc, cid, node) = pop!(stack)
-    score = node.importance_raw
-    if tau > 0
-      delta = now_index - node.last_seen
-      if delta > 0
-        score *= exp(-float(delta) / tau)
-      end
-    end
-    node.importance_raw = score
-    node.last_seen = now_index
-
-    same_ws = get!(entries_by_ws, ws, Tuple{Dict{Int,PolyClusterNode},Int,PolyClusterNode,Float64}[])
-    push!(same_ws, (parent_cc, cid, node, score))
-
-    for (child_id, child) in node.cc
-      push!(stack, (ws + 1, node.cc, child_id, child))
-    end
-  end
-
-  deletions = Vector{Tuple{Dict{Int,PolyClusterNode},Int,PolyClusterNode,Int}}()
-  for (ws, entries) in entries_by_ws
-    total = 0.0
-    for (_, _, _, score) in entries
-      total += score
-    end
-    total <= 0 && continue
-    for (parent_cc, cid, node, score) in entries
-      if parent_cc === mgr.clusters && cid == 0
-        continue
-      end
-      norm = score / total
-      norm < thr && push!(deletions, (parent_cc, cid, node, ws))
-    end
-  end
-
-  isempty(deletions) && return
-
-  for (parent_cc, cid, node, ws) in deletions
-    haskey(parent_cc, cid) || continue
-    subtree_ids = _collect_subtree_ids(node, ws, cid)
-    delete!(parent_cc, cid)
-    for (wsi, cidi) in subtree_ids
-      _remove_cluster_id_from_caches!(mgr, wsi, cidi)
-    end
-  end
-
-  _prune_tasks!(mgr)
-end
-
 """Update caches after permanent append.
 
 Identical to scalar TimeSeriesClusterManager, but uses polyphonic distances.
 """
 @inline cluster_quantity_score(cluster_size::Int, window_size::Int)::Float64 = float(cluster_size * window_size)
 
-function update_caches_permanently!(mgr::Manager, _quadratic_integer_array::Vector{Int})
-  now_index = length(mgr.data) - 1
-  now_index >= 0 && _prune_clusters_by_importance!(mgr, now_index)
+@inline recency_tau_for_window(mgr::Manager, window_size::Int)::Float64 =
+  max(mgr.recency_tau_min, mgr.recency_tau_window_multiplier * float(max(window_size, 1)))
 
+@inline function recency_weight(mgr::Manager, now_index::Int, start_index::Int, tau::Float64)::Float64
+  strength = mgr.recency_weight_strength
+  strength <= 0.0 && return 1.0
+  age = max(now_index - start_index, 0)
+  return (1.0 - strength) + (strength * exp(-float(age) / tau))
+end
+
+@inline function cluster_last_occurrence(node::PolyClusterNode)::Int
+  isempty(node.si) && return 0
+  return maximum(node.si)
+end
+
+@inline function cluster_recency_weight(mgr::Manager, node::PolyClusterNode, now_index::Int, tau::Float64)::Float64
+  return recency_weight(mgr, now_index, cluster_last_occurrence(node), tau)
+end
+
+function recent_quantity_score(mgr::Manager, node::PolyClusterNode, window_size::Int, now_index::Int, tau::Float64)::Float64
+  total = 0.0
+  @inbounds for s in node.si
+    total += recency_weight(mgr, now_index, s, tau)
+  end
+  return total * float(window_size)
+end
+
+function weighted_distance_score(
+  mgr::Manager,
+  cache::Dict{Tuple{Int,Int},Float64},
+  same_ws::Dict{Int,PolyClusterNode},
+  now_index::Int,
+  tau::Float64
+)::Float64
+  weighted = 0.0
+  weight_sum = 0.0
+  for (key, dist) in cache
+    n1 = get(same_ws, key[1], nothing)
+    n2 = get(same_ws, key[2], nothing)
+    (n1 === nothing || n2 === nothing) && continue
+    w = sqrt(cluster_recency_weight(mgr, n1, now_index, tau) * cluster_recency_weight(mgr, n2, now_index, tau))
+    weighted += float(dist) * w
+    weight_sum += w
+  end
+  return weight_sum > 0.0 ? (weighted / weight_sum) : 0.0
+end
+
+function weighted_quantity_score(mgr::Manager, same_ws::Dict{Int,PolyClusterNode}, window_size::Int, now_index::Int, tau::Float64)::Float64
+  total = 0.0
+  for (_, node) in same_ws
+    length(node.si) <= 1 && continue
+    total += recent_quantity_score(mgr, node, window_size, now_index, tau)
+  end
+  return total
+end
+
+function weighted_complexity_score(
+  mgr::Manager,
+  c_cache::Dict{Int,Float64},
+  same_ws::Dict{Int,PolyClusterNode},
+  now_index::Int,
+  tau::Float64
+)::Float64
+  weighted = 0.0
+  weight_sum = 0.0
+  for (cid, comp) in c_cache
+    node = get(same_ws, cid, nothing)
+    node === nothing && continue
+    w = cluster_recency_weight(mgr, node, now_index, tau)
+    weighted += float(comp) * w
+    weight_sum += w
+  end
+  return weight_sum > 0.0 ? (weighted / weight_sum) : 0.0
+end
+
+function update_caches_permanently!(mgr::Manager, _quadratic_integer_array::Vector{Int})
   # Avoid Dict{String,Any} transforms: traverse typed nodes and update caches.
   clusters_each = Dict{Int,Dict{Int,PolyClusterNode}}()
   stack = Vector{Tuple{Int,Int,PolyClusterNode}}()
@@ -1014,10 +958,6 @@ function simulate_add_and_calculate(mgr::Manager, candidate::PolySet, _quadratic
         end
       end
 
-      if !isempty(cache)
-        sum_distances += (sum(values(cache)) / float(window_size))
-      end
-
       updated_quant_ids = collect(get(mgr.updated_cluster_ids_per_window_for_calculate_quantities, window_size, Set{Int}()))
 
       q_old = get(mgr.cluster_quantity_cache, window_size, nothing)
@@ -1050,11 +990,25 @@ function simulate_add_and_calculate(mgr::Manager, candidate::PolySet, _quadratic
         record!(mgr, PJCacheWriteComp(c_cache, cid, old_c))
       end
 
-      if !isempty(q_cache)
-        sum_quantities += sum(values(q_cache))
-      end
-      if !isempty(c_cache)
-        sum_complexities += sum(values(c_cache))
+      if mgr.recency_weight_strength <= 0.0
+        if !isempty(cache)
+          sum_distances += (sum(values(cache)) / float(window_size))
+        end
+        if !isempty(q_cache)
+          sum_quantities += sum(values(q_cache))
+        end
+        if !isempty(c_cache)
+          sum_complexities += sum(values(c_cache))
+        end
+      else
+        tau = recency_tau_for_window(mgr, window_size)
+        if !isempty(cache)
+          sum_distances += weighted_distance_score(mgr, cache, same_ws, length(mgr.data) - 1, tau)
+        end
+        sum_quantities += weighted_quantity_score(mgr, same_ws, window_size, length(mgr.data) - 1, tau)
+        if !isempty(c_cache)
+          sum_complexities += weighted_complexity_score(mgr, c_cache, same_ws, length(mgr.data) - 1, tau)
+        end
       end
     end
 
@@ -1177,8 +1131,6 @@ function process_existing_clusters!(
   if best_child !== nothing && ratio <= mgr.merge_threshold_ratio
     push!(best_child.si, latest_start)
     record!(mgr, PJSiPush(best_child))
-    _touch_cluster!(mgr, best_child, latest_start)
-
     old_as = deep_copy_seq(best_child.as)
     starts = best_child.si
     sequences = [mgr.data[(s+1):(s+new_length)] for s in starts]
@@ -1192,7 +1144,7 @@ function process_existing_clusters!(
 
     push!(mgr.tasks, (vcat(copy(keys_to_parent), [best_cluster_id]), new_length))
   else
-    new_cluster = _new_cluster_node([latest_start], deep_copy_seq(latest_seq), latest_start)
+    new_cluster = _new_cluster_node([latest_start], deep_copy_seq(latest_seq))
     parent.cc[mgr.cluster_id_counter] = new_cluster
     record!(mgr, PJCcAdd(parent.cc, mgr.cluster_id_counter))
 
@@ -1228,15 +1180,18 @@ function process_new_clusters!(
   if !isempty(valid_group)
     starts = vcat(valid_group, [latest_start])
     sequences = [mgr.data[(s+1):(s+new_length)] for s in starts]
-    new_cluster = _new_cluster_node(starts, average_sequences(mgr, sequences), latest_start)
+    new_cluster = _new_cluster_node(starts, average_sequences(mgr, sequences))
     parent.cc[mgr.cluster_id_counter] = new_cluster
     record!(mgr, PJCcAdd(parent.cc, mgr.cluster_id_counter))
 
     add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_distance, new_length, mgr.cluster_id_counter)
+    if mgr.recency_weight_strength > 0.0
+      add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_quantities, new_length, mgr.cluster_id_counter)
+    end
     push!(mgr.tasks, (vcat(copy(keys_to_parent), [mgr.cluster_id_counter]), new_length))
     mgr.cluster_id_counter += 1
   else
-    new_cluster = _new_cluster_node([latest_start], deep_copy_seq(latest_seq), latest_start)
+    new_cluster = _new_cluster_node([latest_start], deep_copy_seq(latest_seq))
     parent.cc[mgr.cluster_id_counter] = new_cluster
     record!(mgr, PJCcAdd(parent.cc, mgr.cluster_id_counter))
 
@@ -1246,7 +1201,7 @@ function process_new_clusters!(
 
   for s in invalid_group
     seq = deep_copy_seq(mgr.data[(s+1):(s+new_length)])
-    new_cluster = _new_cluster_node([s], seq, s)
+    new_cluster = _new_cluster_node([s], seq)
     parent.cc[mgr.cluster_id_counter] = new_cluster
     record!(mgr, PJCcAdd(parent.cc, mgr.cluster_id_counter))
 
@@ -1283,8 +1238,6 @@ function process_root_clusters!(mgr::Manager, data_index::Int, max_distance::Flo
   if best_cluster !== nothing && ratio <= mgr.merge_threshold_ratio
     push!(best_cluster.si, latest_start)
     record!(mgr, PJSiPush(best_cluster))
-    _touch_cluster!(mgr, best_cluster, latest_start)
-
     old_as = deep_copy_seq(best_cluster.as)
     sequences = [mgr.data[(s+1):(s+mgr.min_window_size)] for s in best_cluster.si]
     best_cluster.as = average_sequences(mgr, sequences)
@@ -1297,7 +1250,7 @@ function process_root_clusters!(mgr::Manager, data_index::Int, max_distance::Flo
 
     push!(mgr.tasks, ([best_cluster_id], mgr.min_window_size))
   else
-    new_cluster = _new_cluster_node([latest_start], deep_copy_seq(latest_seq), latest_start)
+    new_cluster = _new_cluster_node([latest_start], deep_copy_seq(latest_seq))
     mgr.clusters[mgr.cluster_id_counter] = new_cluster
     record!(mgr, PJRootAdd(mgr.cluster_id_counter))
 
