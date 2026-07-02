@@ -22,7 +22,7 @@ import { computed, type PropType } from 'vue'
 const inputType = computed(() => props.config?.inputMode === 'note-array' ? 'text' : 'number')
 
 const props = defineProps({
-  modelValue: { type: [Number, String] as PropType<number | string | null>, default: 0 },
+  modelValue: { type: [Number, String] as PropType<number | string | null> },
   rowIndex: { type: Number, required: true },
   colIndex: { type: Number, required: true },
   selected: { type: Boolean, default: false },
@@ -43,7 +43,7 @@ const onInput = (e: Event) => {
   }
 
   let val = parseFloat(target.value)
-  if (isNaN(val)) val = 0
+
   emit('update:modelValue', val)
 }
 

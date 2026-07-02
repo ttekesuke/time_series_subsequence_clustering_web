@@ -124,16 +124,18 @@ const positiveNumberRules = [
   (value: unknown) => Number(value) > 0 || '0 より大きい値を入力してください'
 ]
 
-const validateTimeSeries = (raw: unknown[]) => {
-  if (!Array.isArray(raw) || raw.length !== steps.value) return null
-  const values: number[] = []
-  for (const v of raw) {
-    if (v == null || v === '') return null
-    const n = Number(v)
-    if (!Number.isFinite(n)) return null
-    values.push(Math.round(n))
+const timeSeriesRules = [
+  (values: unknown) => (Array.isArray(values) && values.length === steps.value) || '分析する値のセル数が一致していません',
+  (values: unknown) => (Array.isArray(values) && values.every(v => v != null && v !== '')) || '分析する値は全セル必須です',
+  (values: unknown) => (Array.isArray(values) && values.every(v => Number.isFinite(Number(v)))) || '分析する値は数値で入力してください'
+]
+
+const applyRules = (rules: Array<(value: unknown) => true | string>, value: unknown) => {
+  for (const rule of rules) {
+    const result = rule(value)
+    if (result !== true) return result
   }
-  return values
+  return ''
 }
 
 const handleAnalyseTimeseries = async () => {
@@ -142,14 +144,15 @@ const handleAnalyseTimeseries = async () => {
   if (formResult && formResult.valid === false) return
 
   const raw = (rows.value && rows.value[0] && rows.value[0].data) ? rows.value[0].data : []
-  const time_series = validateTimeSeries(raw)
+  const timeSeriesError = applyRules(timeSeriesRules, raw)
   const contextualMinWidthValue = Number(contextualMinWidth.value)
   const mergeThresholdValue = Number(mergeThreshold.value)
-  if (!time_series || !Number.isFinite(contextualMinWidthValue) || contextualMinWidthValue <= 0 || !Number.isFinite(mergeThresholdValue)) {
-    validationError.value = '分析する値は全セル必須です。空欄や数値以外の値を修正してください。'
+  if (timeSeriesError || !Number.isFinite(contextualMinWidthValue) || contextualMinWidthValue <= 0 || !Number.isFinite(mergeThresholdValue)) {
+    validationError.value = timeSeriesError || '入力値を修正してください。'
     console.error('Analyse validation failed')
     return
   }
+  const time_series = raw.map(v => Math.round(Number(v)))
 
   loading.value = true
   try {
