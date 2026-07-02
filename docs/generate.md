@@ -4,6 +4,8 @@
 
 `generate()` は、既存の初期系列をクラスタリングした上で、候補値を 1 つずつ仮追加し、候補ごとの単純/複雑スコアが `complexity_transition` の目標値に近いものを選びます。
 
+現在の単純/複雑スコアは `dist`, `quantity`, `complexity`, `usage` の 4 指標を合成します。
+
 ## 1. エンドポイント
 
 - ルート: `POST /api/web/time_series/generate`
@@ -105,8 +107,8 @@ abs(3 - 0) / 9 = 0.333...
 各生成ステップで、候補 `range_min:range_max` を全て試します。
 
 ```julia
-avg_dist, quantity, complexity =
-  PolyphonicClusterManager.simulate_add_and_calculate(manager, Float64[candidate])
+avg_dist, quantity, complexity, usage =
+  PolyphonicClusterManager.simulate_add_and_calculate_all(manager, Float64[candidate])
 ```
 
 返る値は次です。
@@ -121,8 +123,14 @@ avg_dist, quantity, complexity =
 - `complexity`
   - クラスタ代表系列そのものの隣接変化量です。
   - 大きいほど複雑側として扱います。
+- `usage`
+  - 候補を仮追加したあと、最新部分列が入ったクラスタの使用密度です。
+  - そのクラスタの `si` にある過去 start index を、直近性ウェイト付きで数えます。
+  - 大きいほど「似た近傍が最近よく使われている」ため、複雑度判定では小さいほど複雑側として扱います。
 
 重要なのは、`avg_dist` は `abs(candidate - current_value) / range` の直接値ではないことです。候補追加後のクラスタ木とキャッシュを使った集計値です。
+
+`usage` も候補値の完全一致ヒストグラムではありません。例えば過去に `50` 近傍の部分列が多くあり、候補 `51` が同じクラスタへ入るなら、`51` の `usage` は高くなります。つまり「50 ではないから 51 は新しい」とは扱いません。
 
 ## 6. 正規化と信頼度ウェイト
 
@@ -145,6 +153,7 @@ normalized = (value - min_value) / (max_value - min_value)
 - `dist`: 大きいほど複雑
 - `quantity`: 小さいほど複雑
 - `complexity`: 大きいほど複雑
+- `usage`: 小さいほど複雑
 
 例えば候補 `0..4` に対して、ある指標の raw が次だったとします。
 
@@ -162,13 +171,13 @@ normalized = [0.0, 0.0, 0.5, 1.0, 1.0]
 
 ## 7. target へのマッチング
 
-`find_complex_candidate_by_value(criteria, target_val)` は、各候補の正規化済みスコアを合算し、信頼度ウェイト合計で割ります。
+`combine_complexity_metric_scores(...)` は、各候補の正規化済みスコアを合算し、信頼度ウェイト合計で割ります。その後 `select_candidate_by_complexity_score(...)` が target に最も近い候補を選びます。
 
 概念的には次です。
 
 ```text
 candidate_score =
-  (dist_score + quantity_score + complexity_score) / total_weight
+  (dist_score + quantity_score + complexity_score + usage_score) / total_weight
 ```
 
 そして次を最小化する候補を選びます。
@@ -226,7 +235,7 @@ age = 128 -> weight = 0.9 + 0.1 * exp(-2) = 0.9135
 2. 候補を一時的に `mgr.data` へ追加。
 3. 追加分だけクラスタリング。
 4. 更新されたクラスタのキャッシュを更新。
-5. `dist/quantity/complexity` を集計して返す。
+5. `dist/quantity/complexity/usage` を集計して返す。
 6. rollback して試算前の状態へ戻す。
 
 候補が選ばれた後だけ、`add_data_point_permanently!` と `update_caches_permanently!` で本当に状態を進めます。
@@ -271,5 +280,6 @@ age = 128 -> weight = 0.9 + 0.1 * exp(-2) = 0.9135
 
 - `generate()` は `range_fixed` なので、候補範囲が距離スケールを決めます。
 - `complexity_transition` は候補値そのものではなく、候補追加後の構造スコアの目標です。
+- `usage` は「似た値そのもの」ではなく「似た部分列クラスタの近傍がどれだけ使われたか」を見ます。
 - 初期値が完全反復の場合、低 target では既存反復に乗る候補が強く選ばれやすくなります。
 - `recency_weight_strength=0.0` で直近性ウェイトは無効になります。

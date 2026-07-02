@@ -893,45 +893,75 @@ function rollback!(mgr::Manager)
   mgr.snapshot_state = nothing
 end
 
+function collect_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,PolyClusterNode}}
+  clusters_each = Dict{Int,Dict{Int,PolyClusterNode}}()
+  stack = Vector{Tuple{Int,Int,PolyClusterNode}}()
+  sizehint!(stack, length(mgr.clusters))
+  for (cid, cl) in mgr.clusters
+    push!(stack, (mgr.min_window_size, cid, cl))
+  end
+
+  while !isempty(stack)
+    (depth, cluster_id, node) = pop!(stack)
+    same_ws = get!(clusters_each, depth, Dict{Int,PolyClusterNode}())
+    same_ws[cluster_id] = node
+    for (child_id, child_cluster) in node.cc
+      push!(stack, (depth + 1, child_id, child_cluster))
+    end
+  end
+  return clusters_each
+end
+
+function latest_cluster_usage_score(
+  mgr::Manager,
+  clusters_each::Dict{Int,Dict{Int,PolyClusterNode}},
+  now_index::Int
+)::Float64
+  usage = 0.0
+  for (window_size, same_ws) in clusters_each
+    latest_start = now_index - window_size + 1
+    latest_start < 0 && continue
+
+    target::Union{Nothing,PolyClusterNode} = nothing
+    for (_, node) in same_ws
+      if latest_start in node.si
+        target = node
+        break
+      end
+    end
+    target === nothing && continue
+
+    tau = recency_tau_for_window(mgr, window_size)
+    local_usage = 0.0
+    @inbounds for s in target.si
+      s == latest_start && continue
+      local_usage += recency_weight(mgr, now_index, s, tau)
+    end
+    usage += local_usage / sqrt(float(max(window_size, 1)))
+  end
+  return usage
+end
+
 # Simulation with rollback
 
-function simulate_add_and_calculate(mgr::Manager, candidate::PolySet)
+function simulate_add_and_calculate_all(mgr::Manager, candidate::PolySet)
   start_transaction!(mgr)
   reset_updated_ids_for_simulation!(mgr)
 
   # NOTE: This function is on the hottest path (called for every candidate).
   # Avoid JSON-facing transforms (Dict{String,Any}) here; we traverse typed nodes directly.
 
-  # Collect clusters by window size (typed)
-  @inline function _collect_clusters_each()
-    clusters_each = Dict{Int,Dict{Int,PolyClusterNode}}()
-    stack = Vector{Tuple{Int,Int,PolyClusterNode}}()
-    sizehint!(stack, length(mgr.clusters))
-    for (cid, cl) in mgr.clusters
-      push!(stack, (mgr.min_window_size, cid, cl))
-    end
-
-    while !isempty(stack)
-      (depth, cluster_id, node) = pop!(stack)
-      same_ws = get!(clusters_each, depth, Dict{Int,PolyClusterNode}())
-      same_ws[cluster_id] = node
-      for (child_id, child_cluster) in node.cc
-        push!(stack, (depth + 1, child_id, child_cluster))
-      end
-    end
-    return clusters_each
-  end
-
   try
     push!(mgr.data, candidate)
     record!(mgr, PJDataPush())
 
     clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
-    clusters_each = _collect_clusters_each()
+    clusters_each = collect_clusters_each(mgr)
 
     sum_distances = 0.0
     sum_quantities = 0.0
     sum_complexities = 0.0
+    usage = latest_cluster_usage_score(mgr, clusters_each, length(mgr.data) - 1)
 
     for (window_size, same_ws) in clusters_each
       all_ids = collect(keys(same_ws))
@@ -1012,10 +1042,15 @@ function simulate_add_and_calculate(mgr::Manager, candidate::PolySet)
       end
     end
 
-    return (sum_distances, sum_quantities, sum_complexities)
+    return (sum_distances, sum_quantities, sum_complexities, usage)
   finally
     rollback!(mgr)
   end
+end
+
+function simulate_add_and_calculate(mgr::Manager, candidate::PolySet)
+  d, q, c, _u = simulate_add_and_calculate_all(mgr, candidate)
+  return (d, q, c)
 end
 
 @inline function _flat_mean(data_view)

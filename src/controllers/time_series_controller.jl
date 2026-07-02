@@ -2005,34 +2005,53 @@ function normalize_scores(raw_values::Vector{Float64}, is_complex_when_larger::B
   return (scores, weight)
 end
 
-function find_complex_candidate_by_value(criteria::Vector{Dict{String,Any}}, target_val::Float64)
-  candidates_score = Dict{Int,Float64}()
-  total_weight = 0.0
+function combine_complexity_metric_scores(
+  raw_dist::Vector{Float64},
+  raw_quantity::Vector{Float64},
+  raw_complexity::Vector{Float64},
+  raw_usage::Vector{Float64};
+  metric_weights::NTuple{4,Float64} = (1.0, 1.0, 1.0, 1.0)
+)::Vector{Float64}
+  n = maximum([length(raw_dist), length(raw_quantity), length(raw_complexity), length(raw_usage), 0])
+  n <= 0 && return Float64[]
 
-  for criterion in criteria
-    data = criterion["data"]::Vector{Tuple{Float64,Int}}
-    raw_values = [d[1] for d in data]
-    scores, weight = normalize_scores(raw_values, criterion["is_complex_when_larger"])
-    for (i, item) in enumerate(data)
-      idx = item[2]
-      candidates_score[idx] = get(candidates_score, idx, 0.0) + scores[i]
-    end
-    total_weight += weight
+  dist_scores, dist_reliability = normalize_scores(raw_dist, true)
+  quantity_scores, quantity_reliability = normalize_scores(raw_quantity, false)
+  complexity_scores, complexity_reliability = normalize_scores(raw_complexity, true)
+  usage_scores, usage_reliability = normalize_scores(raw_usage, false)
+
+  dw = max(metric_weights[1], 0.0)
+  qw = max(metric_weights[2], 0.0)
+  cw = max(metric_weights[3], 0.0)
+  uw = max(metric_weights[4], 0.0)
+
+  denom =
+    (dw * dist_reliability) +
+    (qw * quantity_reliability) +
+    (cw * complexity_reliability) +
+    (uw * usage_reliability)
+
+  denom <= 0.0 && return fill(0.0, n)
+
+  combined = Vector{Float64}(undef, n)
+  @inbounds for i in 1:n
+    d = i <= length(dist_scores) ? dist_scores[i] : 0.0
+    q = i <= length(quantity_scores) ? quantity_scores[i] : 0.0
+    c = i <= length(complexity_scores) ? complexity_scores[i] : 0.0
+    u = i <= length(usage_scores) ? usage_scores[i] : 0.0
+    combined[i] = ((dw * d) + (qw * q) + (cw * c) + (uw * u)) / denom
   end
+  return combined
+end
 
-  if total_weight > 0.0
-    for (k,v) in candidates_score
-      candidates_score[k] = v / total_weight
-    end
-  end
-
+function select_candidate_by_complexity_score(scores::Vector{Float64}, target_val::Float64)::Int
   best_index = 0
   min_diff = Inf
-  for (idx, score) in candidates_score
+  for (idx0, score) in enumerate(scores)
     diff = abs(score - target_val)
     if diff < min_diff
       min_diff = diff
-      best_index = idx
+      best_index = idx0 - 1
     end
   end
   return best_index
@@ -2165,32 +2184,25 @@ function generate()
 
   for target_val in complexity_targets
     candidates = collect(candidate_min_master:candidate_max_master)
-    indexed_metrics = Vector{Dict{String,Any}}()
-    for (idx, candidate) in enumerate(candidates)
-      avg_dist, quantity, complexity = PolyphonicClusterManager.simulate_add_and_calculate(manager, Float64[candidate])
-      push!(indexed_metrics, Dict(
-        "index" => idx-1,
-        "dist" => avg_dist,
-        "quantity" => quantity,
-        "complexity" => complexity
-      ))
+    raw_dist = Float64[]
+    raw_quantity = Float64[]
+    raw_complexity = Float64[]
+    raw_usage = Float64[]
+    sizehint!(raw_dist, length(candidates))
+    sizehint!(raw_quantity, length(candidates))
+    sizehint!(raw_complexity, length(candidates))
+    sizehint!(raw_usage, length(candidates))
+
+    for candidate in candidates
+      avg_dist, quantity, complexity, usage = PolyphonicClusterManager.simulate_add_and_calculate_all(manager, Float64[candidate])
+      push!(raw_dist, avg_dist)
+      push!(raw_quantity, quantity)
+      push!(raw_complexity, complexity)
+      push!(raw_usage, usage)
     end
 
-    criteria = Vector{Dict{String,Any}}()
-    push!(criteria, Dict(
-      "is_complex_when_larger" => true,
-      "data" => [(float(m["dist"]), Int(m["index"])) for m in indexed_metrics]
-    ))
-    push!(criteria, Dict(
-      "is_complex_when_larger" => false,
-      "data" => [(float(m["quantity"]), Int(m["index"])) for m in indexed_metrics]
-    ))
-    push!(criteria, Dict(
-      "is_complex_when_larger" => true,
-      "data" => [(float(m["complexity"]), Int(m["index"])) for m in indexed_metrics]
-    ))
-
-    result_index = find_complex_candidate_by_value(criteria, float(target_val))
+    scores = combine_complexity_metric_scores(raw_dist, raw_quantity, raw_complexity, raw_usage)
+    result_index = select_candidate_by_complexity_score(scores, float(target_val))
     result_value = candidates[result_index + 1]
 
     push!(results, result_value)
@@ -2360,9 +2372,11 @@ struct CandidateMetric
   global_dist::Float64
   global_qty::Float64
   global_comp::Float64
+  global_usage::Float64
   stream_dists::Vector{Float64}
   stream_qtys::Vector{Float64}
   stream_comps::Vector{Float64}
+  stream_usages::Vector{Float64}
   discordance::Float64
 end
 
@@ -2383,6 +2397,22 @@ function _normalize_metric_weights(dw::Real, qw::Real, cw::Real)::NTuple{3,Float
     return (1.0, 1.0, 1.0)
   end
   return (d, q, c)
+end
+
+function _metric_weights4(weights::NTuple{3,Float64})::NTuple{4,Float64}
+  return (weights[1], weights[2], weights[3], 1.0)
+end
+
+function _safe_simulate_add_and_calculate_all(
+  mgr::PolyphonicClusterManager.Manager,
+  value::PolyphonicClusterManager.PolySet
+)::NTuple{4,Float64}
+  try
+    d, q, c, u = PolyphonicClusterManager.simulate_add_and_calculate_all(mgr, value)
+    return (float(d), float(q), float(c), float(u))
+  catch
+    return (0.0, 0.0, 0.0, 0.0)
+  end
 end
 
 function _safe_corrcoef(xs::Vector{Float64}, ys::Vector{Float64})::Float64
@@ -2424,8 +2454,8 @@ function select_best_polyphonic_candidate_unified_with_cost(
   global_target::Float64,
   stream_targets::Vector{Float64},
   concordance_weight::Float64,
-  global_metric_weights::NTuple{3,Float64},
-  stream_metric_weights::NTuple{3,Float64};
+  global_metric_weights::NTuple{4,Float64},
+  stream_metric_weights::NTuple{4,Float64};
   use_global_score::Bool = true,
 )
   best_i = 1
@@ -2433,14 +2463,13 @@ function select_best_polyphonic_candidate_unified_with_cost(
   breakdowns = CandidateCostBreakdown[]
   sizehint!(breakdowns, length(metrics))
 
-  g_dists, _ = normalize_scores([m.global_dist for m in metrics], true)
-  g_qtys,  _ = normalize_scores([m.global_qty  for m in metrics], false)
-  g_comps, _ = normalize_scores([m.global_comp for m in metrics], true)
-
-  g_dw, g_qw, g_cw = _normalize_metric_weights(global_metric_weights[1], global_metric_weights[2], global_metric_weights[3])
-  s_dw, s_qw, s_cw = _normalize_metric_weights(stream_metric_weights[1], stream_metric_weights[2], stream_metric_weights[3])
-  g_wsum = g_dw + g_qw + g_cw
-  s_wsum = s_dw + s_qw + s_cw
+  global_scores = combine_complexity_metric_scores(
+    [m.global_dist for m in metrics],
+    [m.global_qty for m in metrics],
+    [m.global_comp for m in metrics],
+    [m.global_usage for m in metrics];
+    metric_weights=global_metric_weights
+  )
 
   n_stream_metrics = 0
   for m in metrics
@@ -2449,31 +2478,23 @@ function select_best_polyphonic_candidate_unified_with_cost(
       length(m.stream_dists),
       length(m.stream_qtys),
       length(m.stream_comps),
+      length(m.stream_usages),
     )
   end
-  stream_d_norm = Vector{Vector{Float64}}(undef, n_stream_metrics)
-  stream_q_norm = Vector{Vector{Float64}}(undef, n_stream_metrics)
-  stream_c_norm = Vector{Vector{Float64}}(undef, n_stream_metrics)
+  stream_norm = Vector{Vector{Float64}}(undef, n_stream_metrics)
 
   for s_idx in 1:n_stream_metrics
     raw_d = Float64[(s_idx <= length(m.stream_dists)) ? m.stream_dists[s_idx] : 0.0 for m in metrics]
     raw_q = Float64[(s_idx <= length(m.stream_qtys)) ? m.stream_qtys[s_idx] : 0.0 for m in metrics]
     raw_c = Float64[(s_idx <= length(m.stream_comps)) ? m.stream_comps[s_idx] : 0.0 for m in metrics]
-    stream_d_norm[s_idx], _ = normalize_scores(raw_d, true)
-    stream_q_norm[s_idx], _ = normalize_scores(raw_q, false)
-    stream_c_norm[s_idx], _ = normalize_scores(raw_c, true)
+    raw_u = Float64[(s_idx <= length(m.stream_usages)) ? m.stream_usages[s_idx] : 0.0 for m in metrics]
+    stream_norm[s_idx] = combine_complexity_metric_scores(raw_d, raw_q, raw_c, raw_u; metric_weights=stream_metric_weights)
   end
 
   conc_enabled = !isempty(metrics) && length(metrics[1].ordered_cand) > 1
 
   for (i, m) in enumerate(metrics)
-    current_global = use_global_score ? (
-      (
-        (g_dw * g_dists[i]) +
-        (g_qw * g_qtys[i]) +
-        (g_cw * g_comps[i])
-      ) / g_wsum
-    ) : 0.0
+    current_global = use_global_score ? global_scores[i] : 0.0
     cost_a = use_global_score ? abs(current_global - global_target) : 0.0
 
     cost_b = 0.0
@@ -2483,11 +2504,7 @@ function select_best_polyphonic_candidate_unified_with_cost(
       if n > 0
         sizehint!(stream_scores, n)
         for s_idx in 1:n
-          stream_score = (
-            (s_dw * stream_d_norm[s_idx][i]) +
-            (s_qw * stream_q_norm[s_idx][i]) +
-            (s_cw * stream_c_norm[s_idx][i])
-          ) / s_wsum
+          stream_score = stream_norm[s_idx][i]
           cost_b += abs(stream_score - stream_targets[s_idx])
           push!(stream_scores, stream_score)
         end
@@ -2520,8 +2537,8 @@ function select_best_chord_for_dimension_with_cost(
   concordance_weight::Float64,
   n::Int,
   range_vec::Vector{<:Real};
-  global_metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
-  stream_metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
+  global_metric_weights::NTuple{4,Float64} = (1.0, 1.0, 1.0, 1.0),
+  stream_metric_weights::NTuple{4,Float64} = (1.0, 1.0, 1.0, 1.0),
   debug_prefix::Union{Nothing,String} = nothing,
   debug_top_n::Int = Config.DEFAULT_DEBUG_TOP_N,
   absolute_bases::Union{Nothing,Vector{Int}} = nothing,
@@ -2583,7 +2600,7 @@ function select_best_chord_for_dimension_with_cost(
     for (i, v) in enumerate(ordered_vals)
       push!(global_vals, float(v) + (i - 1) * float(g_offset))
     end
-    g_dist, g_qty, g_comp = PolyphonicClusterManager.simulate_add_and_calculate(mgrs[:global], global_vals)
+    g_dist, g_qty, g_comp, g_usage = PolyphonicClusterManager.simulate_add_and_calculate_all(mgrs[:global], global_vals)
     disc =
       if isempty(ordered_vals)
         0.0
@@ -2594,23 +2611,26 @@ function select_best_chord_for_dimension_with_cost(
     stream_dists = Float64[]
     stream_qtys = Float64[]
     stream_comps = Float64[]
+    stream_usages = Float64[]
 
     stream_mgr = mgrs[:stream]
     actives = MultiStreamManager.active_stream_containers(stream_mgr, n)
     for i in 1:n
       if i <= length(actives) && i <= length(ordered_polysets)
-        d_s, q_s, c_s = MultiStreamManager.safe_simulate_add_and_calculate(actives[i].manager, ordered_polysets[i])
+        d_s, q_s, c_s, u_s = _safe_simulate_add_and_calculate_all(actives[i].manager, ordered_polysets[i])
         push!(stream_dists, isfinite(d_s) ? float(d_s) : 0.0)
         push!(stream_qtys, isfinite(q_s) ? float(q_s) : 0.0)
         push!(stream_comps, isfinite(c_s) ? float(c_s) : 0.0)
+        push!(stream_usages, isfinite(u_s) ? float(u_s) : 0.0)
       else
         push!(stream_dists, 0.0)
         push!(stream_qtys, 0.0)
         push!(stream_comps, 0.0)
+        push!(stream_usages, 0.0)
       end
     end
 
-    push!(metrics, CandidateMetric(ordered_vals, g_dist, g_qty, g_comp, stream_dists, stream_qtys, stream_comps, disc))
+    push!(metrics, CandidateMetric(ordered_vals, g_dist, g_qty, g_comp, g_usage, stream_dists, stream_qtys, stream_comps, stream_usages, disc))
   end
 
   isempty(metrics) && return (Float64[], Inf)
@@ -3790,8 +3810,8 @@ function generate_polyphonic()
         conc_w,
         desired_stream_count,
         Float64[float(v) for v in restricted_range];
-        global_metric_weights=global_metric_weights,
-        stream_metric_weights=stream_metric_weights,
+        global_metric_weights=_metric_weights4(global_metric_weights),
+        stream_metric_weights=_metric_weights4(stream_metric_weights),
         debug_prefix=debug_prefix,
         debug_top_n=Config.DETAILED_DEBUG_TOP_N,
         preserve_stream_order=preserve_stream_order,
@@ -3932,46 +3952,33 @@ for s in 1:desired_stream_count
   raw_d = Float64[]  # avg_dist (complex when larger)
   raw_q = Float64[]  # quantity (complex when smaller)
   raw_c = Float64[]  # complexity (complex when larger)
+  raw_u = Float64[]  # usage (complex when smaller)
   sizehint!(raw_d, length(anchors))
   sizehint!(raw_q, length(anchors))
   sizehint!(raw_c, length(anchors))
+  sizehint!(raw_u, length(anchors))
 
   pa = prev_tmp_anchors[s]
 
   for a in anchors
-    _d, _q, c = PolyphonicClusterManager.simulate_add_and_calculate(sm, Float64[float(a)])
+    _d, _q, c, u = PolyphonicClusterManager.simulate_add_and_calculate_all(sm, Float64[float(a)])
 
     dval = (isfinite(_d) ? float(_d) : 0.0)
     qval = (isfinite(_q) ? float(_q) : 0.0)
     cval = (isfinite(c)  ? float(c)  : 0.0)
+    uval = (isfinite(u)  ? float(u)  : 0.0)
 
     push!(raw_d, dval)
     push!(raw_q, qval)
     push!(raw_c, cval)
+    push!(raw_u, uval)
   end
 
-  # normalize each criterion like generate():
-  # d: larger => complex
-  # q: smaller => complex
-  # c: larger => complex
-  d01, wd = normalize_scores(raw_d, true)
-  q01, wq = normalize_scores(raw_q, false)
-  c01, wc = normalize_scores(raw_c, true)
-
-  # unweight back to 0..1 (normalize_scores は weight を掛けて返してくる想定)
-  if wd > 0.0; d01 = d01 ./ wd; end
-  if wq > 0.0; q01 = q01 ./ wq; end
-  if wc > 0.0; c01 = c01 ./ wc; end
-
-  # agreement (weighted by each criterion's reliability weight)
-  denom = wd + wq + wc
-  denom = (denom > 0.0) ? denom : 1.0
+  scores = combine_complexity_metric_scores(raw_d, raw_q, raw_c, raw_u)
 
   m = Dict{Int,Float64}()
   for (i, a) in enumerate(anchors)
-    score =
-      (wd * d01[i] + wq * q01[i] + wc * c01[i]) / denom
-    m[a] = clamp(score, 0.0, 1.0)
+    m[a] = clamp(scores[i], 0.0, 1.0)
   end
   push!(per_stream_comp01, m)
 
@@ -4019,8 +4026,14 @@ end
     area_gl = area_mgrs[:global]
     area_offset = float(get(area_mgrs, :global_offset, offset_for_range(area_min, area_max)))
 
-    global_raws = Float64[]
-    sizehint!(global_raws, length(area_candidates))
+    global_raw_d = Float64[]
+    global_raw_q = Float64[]
+    global_raw_c = Float64[]
+    global_raw_u = Float64[]
+    sizehint!(global_raw_d, length(area_candidates))
+    sizehint!(global_raw_q, length(area_candidates))
+    sizehint!(global_raw_c, length(area_candidates))
+    sizehint!(global_raw_u, length(area_candidates))
 
     for cand in area_candidates
       enc = Float64[]
@@ -4029,14 +4042,14 @@ end
         push!(enc, float(cand[i]) + (i - 1) * area_offset)
       end
 
-      _d, _q, c = PolyphonicClusterManager.simulate_add_and_calculate(area_gl, enc)
-      push!(global_raws, isfinite(c) ? float(c) : 0.0)
+      _d, _q, c, u = PolyphonicClusterManager.simulate_add_and_calculate_all(area_gl, enc)
+      push!(global_raw_d, isfinite(_d) ? float(_d) : 0.0)
+      push!(global_raw_q, isfinite(_q) ? float(_q) : 0.0)
+      push!(global_raw_c, isfinite(c) ? float(c) : 0.0)
+      push!(global_raw_u, isfinite(u) ? float(u) : 0.0)
     end
 
-    global_comp01s, w = normalize_scores(global_raws, true)
-    if w > 0.0
-      global_comp01s = global_comp01s ./ w
-    end
+    global_scores = combine_complexity_metric_scores(global_raw_d, global_raw_q, global_raw_c, global_raw_u)
 
     best_area_idx = 1
     best_area_cost = Inf
@@ -4047,7 +4060,7 @@ end
     best_area_tiebreak = prefer_big_jump ? -Inf : Inf
 
     for (i, cand) in enumerate(area_candidates)
-      g_cost = abs(global_comp01s[i] - area_global_target)
+      g_cost = abs(global_scores[i] - area_global_target)
 
       # stream cost: mean |comp01(stream, anchor) - target(stream)|
       s_cost_sum = 0.0
