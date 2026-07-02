@@ -9,8 +9,8 @@
 - ルート: `POST /api/web/time_series/generate`
 - ルーティング先: `TimeSeriesController.generate()`
 - 主な実装:
-  - [src/controllers/time_series_controller.jl](/home/shimizu/time_series_subsequence_clustering_julia/src/controllers/time_series_controller.jl)
-  - [src/polyphonic/polyphonic_cluster_manager.jl](/home/shimizu/time_series_subsequence_clustering_julia/src/polyphonic/polyphonic_cluster_manager.jl)
+  - [src/controllers/time_series_controller.jl]
+  - [src/polyphonic/polyphonic_cluster_manager.jl]
 
 ## 2. 入力ペイロード
 
