@@ -8,6 +8,7 @@
     :min="inputType === 'number' ? config.min : undefined"
     :max="inputType === 'number' ? config.max : undefined"
     :step="inputType === 'number' ? (config.step || (config.isInt ? 1 : 0.1)) : undefined"
+    required
     @input="onInput"
     @focus="onFocus"
     @dblclick="onDblClick"
@@ -16,12 +17,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 
 const inputType = computed(() => props.config?.inputMode === 'note-array' ? 'text' : 'number')
 
 const props = defineProps({
-  modelValue: { type: [Number, String], default: 0 },
+  modelValue: { type: [Number, String] as PropType<number | string | null>, default: 0 },
   rowIndex: { type: Number, required: true },
   colIndex: { type: Number, required: true },
   selected: { type: Boolean, default: false },

@@ -20,23 +20,6 @@ module MultiStreamManager
 using ..Config
 using ..PolyphonicClusterManager
 
-@inline function _create_quadratic_integer_array(start_val::Real, end_val::Real, count::Int)::Vector{Int}
-  count <= 1 && return Int[ceil(Int, start_val) + 1]
-  out = Int[]
-  sizehint!(out, count)
-  for i in 0:(count - 1)
-    t = float(i) / float(count - 1)
-    curve = t^10
-    value = start_val + (end_val - start_val) * curve
-    if start_val < end_val
-      push!(out, ceil(Int, value) + 1)
-    else
-      push!(out, floor(Int, value) + 1)
-    end
-  end
-  return out
-end
-
 # ============================================================
 # Types
 # ============================================================
@@ -270,11 +253,7 @@ function build_stream_manager(
     # noop
   end
   try
-    len = max(length(mgr.data), 1)
-    width = abs(float(value_max) - float(value_min))
-    width = width <= 0.0 ? 1.0 : width
-    q_array = _create_quadratic_integer_array(0.0, width * float(len), len)
-    PolyphonicClusterManager.update_caches_permanently(mgr, q_array)
+    PolyphonicClusterManager.update_caches_permanently(mgr)
   catch
     # noop
   end
@@ -865,7 +844,6 @@ end
 function precalculate_costs(
   m::Manager,
   candidate_values_raw,
-  q_array::Vector{Int},
   n_raw::Union{Nothing,Int}=nothing
 )::StreamCosts
   # normalize candidates to PolySet
@@ -896,7 +874,7 @@ function precalculate_costs(
     for v in candidate_values
       # This manager only supports scalar candidates; values are stored as 1-element sets.
       key = isempty(v) ? 0.0 : v[1]
-      dist, _qty, comp = safe_simulate_add_and_calculate(c.manager, v, q_array)
+      dist, _qty, comp = safe_simulate_add_and_calculate(c.manager, v)
       raw =
         if m.track_presence && length(v) == 1
           finite_number(dist) ? dist : (finite_number(comp) ? comp : 0.0)
@@ -1242,9 +1220,9 @@ function safe_add_data_point!(mgr::PolyphonicClusterManager.Manager, value::Poly
 end
 
 """Simulate add and calculate (safe)."""
-function safe_simulate_add_and_calculate(mgr::PolyphonicClusterManager.Manager, value::PolyphonicClusterManager.PolySet, q_array::Vector{Int})
+function safe_simulate_add_and_calculate(mgr::PolyphonicClusterManager.Manager, value::PolyphonicClusterManager.PolySet)
   try
-    return PolyphonicClusterManager.simulate_add_and_calculate(mgr, value, q_array)
+    return PolyphonicClusterManager.simulate_add_and_calculate(mgr, value)
   catch
     return 0.0, 0.0, 0.0
   end
@@ -1257,7 +1235,6 @@ end
 function commit_state!(
   m::Manager,
   best_chord_raw,
-  q_array::Vector{Int};
   strength_params=nothing,
   absolute_bases::Union{Nothing,Vector{Int}}=nothing
 )::Bool
@@ -1303,10 +1280,10 @@ function commit_state!(
 end
 
 """Update caches permanently for all streams."""
-function update_caches_permanently!(m::Manager, q_array::Vector{Int})::Nothing
+function update_caches_permanently!(m::Manager)::Nothing
   for c in m.stream_pool
     try
-      PolyphonicClusterManager.update_caches_permanently(c.manager, q_array)
+      PolyphonicClusterManager.update_caches_permanently(c.manager)
     catch
       # noop
     end

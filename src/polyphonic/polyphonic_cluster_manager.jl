@@ -601,7 +601,7 @@ function weighted_complexity_score(
   return weight_sum > 0.0 ? (weighted / weight_sum) : 0.0
 end
 
-function update_caches_permanently!(mgr::Manager, _quadratic_integer_array::Vector{Int})
+function update_caches_permanently!(mgr::Manager)
   # Avoid Dict{String,Any} transforms: traverse typed nodes and update caches.
   clusters_each = Dict{Int,Dict{Int,PolyClusterNode}}()
   stack = Vector{Tuple{Int,Int,PolyClusterNode}}()
@@ -895,7 +895,7 @@ end
 
 # Simulation with rollback
 
-function simulate_add_and_calculate(mgr::Manager, candidate::PolySet, _quadratic_integer_array::Vector{Int})
+function simulate_add_and_calculate(mgr::Manager, candidate::PolySet)
   start_transaction!(mgr)
   reset_updated_ids_for_simulation!(mgr)
 
@@ -1271,7 +1271,7 @@ process_data(mgr::Manager) = process_data!(mgr)
 
 add_data_point_permanently(mgr::Manager, val::PolySet) = add_data_point_permanently!(mgr, val)
 
-update_caches_permanently(mgr::Manager, q_array::Vector{Int}) = update_caches_permanently!(mgr, q_array)
+update_caches_permanently(mgr::Manager) = update_caches_permanently!(mgr)
 
 # Instance-style helper wrappers (argument order parity with Rails)
 transform_clusters(mgr::Manager, clusters::Dict{Int,PolyClusterNode}, min_window_size::Int) =

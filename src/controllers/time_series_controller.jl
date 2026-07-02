@@ -2038,46 +2038,12 @@ function find_complex_candidate_by_value(criteria::Vector{Dict{String,Any}}, tar
   return best_index
 end
 
-# NaN prevention for count<=1
-function create_quadratic_integer_array(start_val::Real, end_val::Real, count::Int)
-  count <= 1 && return [ceil(Int, start_val) + 1]
-  result = Int[]
-  for i in 0:(count-1)
-    t = float(i) / float(count-1)
-    curve = t^10
-    value = start_val + (end_val - start_val) * curve
-    if start_val < end_val
-      push!(result, ceil(Int, value) + 1)
-    else
-      push!(result, floor(Int, value) + 1)
-    end
-  end
-  return result
-end
-
-function create_quantity_weight_array(
-  start_val::Real,
-  end_val::Real,
-  count::Int;
-  use_recent_position_weight::Bool=Config.DEFAULT_USE_RECENT_POSITION_WEIGHT
-)
-  n = max(count, 1)
-  if use_recent_position_weight
-    return create_quadratic_integer_array(start_val, end_val, n)
-  end
-  return fill(Config.UNIFORM_QUANTITY_WEIGHT, n)
-end
-
 @inline cluster_quantity_score(cluster_size::Int, window_size::Int)::Float64 = float(cluster_size * window_size)
 
 # Initialize cache values (we compute "full" caches for stability)
 function initial_calc_values!(
   manager,
-  clusters_each_window_size,
-  max_master::Real,
-  min_master::Real,
-  len::Int;
-  use_recent_position_weight::Bool=Config.DEFAULT_USE_RECENT_POSITION_WEIGHT
+  clusters_each_window_size
 )
   for (window_size, same_ws) in clusters_each_window_size
     all_ids = collect(keys(same_ws))
@@ -2119,35 +2085,9 @@ function analyse()
   p = _subhash(payload, "analyse")
 
   raw_series = get(p, "time_series", Any[])
-  skip_empty = _parse_bool(get(p, "skip_empty", true), true)
   data = Int[]
   for v in raw_series
-    if v === nothing || v === missing || (v isa AbstractString && isempty(strip(v)))
-      if skip_empty
-        continue
-      else
-        push!(data, 0)
-        continue
-      end
-    end
-    try
-      push!(data, _parse_int(v))
-    catch
-      if !skip_empty
-        push!(data, 0)
-      end
-    end
-  end
-
-  if isempty(data)
-    processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
-    return Dict(
-      "clusteredSubsequences" => Any[],
-      "timeSeries" => Int[],
-      "clusters" => Dict{String,Any}(),
-      "processingTime" => processing_time_s,
-      "skippedEmpty" => true
-    )
+    push!(data, _parse_int(v))
   end
 
   merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", Config.DEFAULT_MERGE_THRESHOLD_RATIO))
@@ -2188,14 +2128,6 @@ function generate()
   complexity_targets = _parse_csv_floats(string(get(p, "complexity_transition", "")))
   merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", Config.DEFAULT_MERGE_THRESHOLD_RATIO))
   contextual_min_width = _parse_float(get(p, "contextual_min_width", Config.DEFAULT_CONTEXTUAL_MIN_WIDTH))
-  use_recent_position_weight = _parse_bool(
-    get(
-      p,
-      "use_recent_position_weight",
-      get(p, "use_most_recent_adding_weight", get(p, "user_most_recent_adding_weight", Config.DEFAULT_USE_RECENT_POSITION_WEIGHT))
-    ),
-    Config.DEFAULT_USE_RECENT_POSITION_WEIGHT
-  )
   recency_tau_min = max(_parse_float(get(p, "recency_tau_min", get(p, "recency_tau_steps", Config.DEFAULT_RECENCY_TAU_MIN))), 1.0)
   recency_tau_window_multiplier = max(_parse_float(get(p, "recency_tau_window_multiplier", Config.DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER)), 0.0)
   recency_weight_strength = clamp(_parse_float(get(p, "recency_weight_strength", Config.DEFAULT_RECENCY_WEIGHT_STRENGTH)), 0.0, 1.0)
@@ -2225,11 +2157,7 @@ function generate()
   clusters_each = PolyphonicClusterManager.transform_clusters(manager.clusters, min_window_size)
   initial_calc_values!(
     manager,
-    clusters_each,
-    candidate_max_master,
-    candidate_min_master,
-    length(first_elements);
-    use_recent_position_weight=use_recent_position_weight
+    clusters_each
   )
   empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
 
@@ -2238,17 +2166,8 @@ function generate()
   for target_val in complexity_targets
     candidates = collect(candidate_min_master:candidate_max_master)
     indexed_metrics = Vector{Dict{String,Any}}()
-    current_len = length(results) + 1
-
-    qarr = create_quantity_weight_array(
-      0.0,
-      (candidate_max_master - candidate_min_master) * current_len,
-      current_len;
-      use_recent_position_weight=use_recent_position_weight
-    )
-
     for (idx, candidate) in enumerate(candidates)
-      avg_dist, quantity, complexity = PolyphonicClusterManager.simulate_add_and_calculate(manager, Float64[candidate], qarr)
+      avg_dist, quantity, complexity = PolyphonicClusterManager.simulate_add_and_calculate(manager, Float64[candidate])
       push!(indexed_metrics, Dict(
         "index" => idx-1,
         "dist" => avg_dist,
@@ -2276,7 +2195,7 @@ function generate()
 
     push!(results, result_value)
     PolyphonicClusterManager.add_data_point_permanently!(manager, Float64[result_value])
-    PolyphonicClusterManager.update_caches_permanently!(manager, qarr)
+    PolyphonicClusterManager.update_caches_permanently!(manager)
   end
 
   timeline = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window_size)
@@ -2596,7 +2515,6 @@ function select_best_chord_for_dimension_with_cost(
   mgrs::Dict{Symbol,Any},
   candidates::Vector{<:AbstractVector{<:Real}},
   stream_costs,
-  q_array::Vector{Int},
   global_target::Float64,
   stream_targets::Vector{Float64},
   concordance_weight::Float64,
@@ -2665,7 +2583,7 @@ function select_best_chord_for_dimension_with_cost(
     for (i, v) in enumerate(ordered_vals)
       push!(global_vals, float(v) + (i - 1) * float(g_offset))
     end
-    g_dist, g_qty, g_comp = PolyphonicClusterManager.simulate_add_and_calculate(mgrs[:global], global_vals, q_array)
+    g_dist, g_qty, g_comp = PolyphonicClusterManager.simulate_add_and_calculate(mgrs[:global], global_vals)
     disc =
       if isempty(ordered_vals)
         0.0
@@ -2681,7 +2599,7 @@ function select_best_chord_for_dimension_with_cost(
     actives = MultiStreamManager.active_stream_containers(stream_mgr, n)
     for i in 1:n
       if i <= length(actives) && i <= length(ordered_polysets)
-        d_s, q_s, c_s = MultiStreamManager.safe_simulate_add_and_calculate(actives[i].manager, ordered_polysets[i], q_array)
+        d_s, q_s, c_s = MultiStreamManager.safe_simulate_add_and_calculate(actives[i].manager, ordered_polysets[i])
         push!(stream_dists, isfinite(d_s) ? float(d_s) : 0.0)
         push!(stream_qtys, isfinite(q_s) ? float(q_s) : 0.0)
         push!(stream_comps, isfinite(c_s) ? float(c_s) : 0.0)
@@ -3221,14 +3139,6 @@ function generate_polyphonic()
   end
 
   merge_threshold_ratio = _parse_float(get(gp, "merge_threshold_ratio", Config.DEFAULT_POLYPHONIC_MERGE_THRESHOLD_RATIO))
-  use_recent_position_weight = _parse_bool(
-    get(
-      gp,
-      "use_recent_position_weight",
-      get(gp, "use_most_recent_adding_weight", get(gp, "user_most_recent_adding_weight", Config.DEFAULT_USE_RECENT_POSITION_WEIGHT))
-    ),
-    Config.DEFAULT_USE_RECENT_POSITION_WEIGHT
-  )
   recency_tau_min = max(_parse_float(get(gp, "recency_tau_min", get(gp, "recency_tau_steps", Config.DEFAULT_RECENCY_TAU_MIN))), 1.0)
   recency_tau_window_multiplier = max(_parse_float(get(gp, "recency_tau_window_multiplier", Config.DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER)), 0.0)
   recency_weight_strength = clamp(_parse_float(get(gp, "recency_weight_strength", Config.DEFAULT_RECENCY_WEIGHT_STRENGTH)), 0.0, 1.0)
@@ -3494,15 +3404,7 @@ function generate_polyphonic()
       recency_weight_strength=recency_weight_strength
     )
     PolyphonicClusterManager.process_data!(g_mgr)
-    PolyphonicClusterManager.update_caches_permanently(
-      g_mgr,
-      create_quantity_weight_array(
-        0,
-        _safe_width(value_min, value_max) * length(g_mgr.data),
-        length(g_mgr.data);
-        use_recent_position_weight=use_recent_position_weight
-      )
-    )
+    PolyphonicClusterManager.update_caches_permanently(g_mgr)
     managers[key] = Dict(:global => g_mgr, :stream => s_mgr, :global_offset => offset)
   end
 
@@ -3606,15 +3508,7 @@ function generate_polyphonic()
     recency_weight_strength=recency_weight_strength
   )
   PolyphonicClusterManager.process_data!(g_note)
-  PolyphonicClusterManager.update_caches_permanently(
-    g_note,
-    create_quantity_weight_array(
-      0,
-      (note_max - note_min) * length(g_note.data),
-      length(g_note.data);
-      use_recent_position_weight=use_recent_position_weight
-    )
-  )
+  PolyphonicClusterManager.update_caches_permanently(g_note)
   managers["note"] = Dict(:global => g_note, :stream => s_note)
 
   # ----------------------------------------------------------
@@ -3865,23 +3759,10 @@ function generate_polyphonic()
 
       stream_targets = generate_centered_targets(desired_stream_count, s_center, s_spread)
 
-      gl = mgrs[:global]
-      vmin = float(minimum(range_vec))
-      vmax = float(maximum(range_vec))
-      width = abs(vmax - vmin)
-      width = width <= 0.0 ? 1.0 : width
-      len_next = length(gl.data) + 1
-      q_array = create_quantity_weight_array(
-        0,
-        width * len_next,
-        len_next;
-        use_recent_position_weight=use_recent_position_weight
-      )
-
       restricted_range = _restrict_candidates_with_target_window(key, range_vec, idx0)
       isempty(restricted_range) && (restricted_range = range_vec)
 
-      stream_costs = MultiStreamManager.precalculate_costs(mgrs[:stream], restricted_range, q_array, desired_stream_count)
+      stream_costs = MultiStreamManager.precalculate_costs(mgrs[:stream], restricted_range, desired_stream_count)
 
       candidates = Vector{Vector{Float64}}()
       preserve_stream_order = desired_stream_count > 1
@@ -3904,7 +3785,6 @@ function generate_polyphonic()
         mgrs,
         candidates,
         stream_costs,
-        q_array,
         g_target,
         stream_targets,
         conc_w,
@@ -3922,14 +3802,14 @@ function generate_polyphonic()
       g_offset = get(mgrs, :global_offset, 0.0)
       global_vals = Float64[float(best_vals[i]) + (i - 1) * float(g_offset) for i in 1:desired_stream_count]
       PolyphonicClusterManager.add_data_point_permanently(mgrs[:global], global_vals)
-      PolyphonicClusterManager.update_caches_permanently(mgrs[:global], q_array)
+      PolyphonicClusterManager.update_caches_permanently(mgrs[:global])
 
       if key == "vol"
-        MultiStreamManager.commit_state!(mgrs[:stream], best_vals, q_array; strength_params=(target=st_target, spread=st_spread))
+        MultiStreamManager.commit_state!(mgrs[:stream], best_vals; strength_params=(target=st_target, spread=st_spread))
       else
-        MultiStreamManager.commit_state!(mgrs[:stream], best_vals, q_array)
+        MultiStreamManager.commit_state!(mgrs[:stream], best_vals)
       end
-      MultiStreamManager.update_caches_permanently!(mgrs[:stream], q_array)
+      MultiStreamManager.update_caches_permanently!(mgrs[:stream])
 
       step_decisions[key] = best_vals
 
@@ -4049,15 +3929,6 @@ for s in 1:desired_stream_count
   sm = stream_pool[s].manager
   anchors = per_stream_anchor_candidates[s]
 
-  # q-array for THIS stream manager length
-  len_next_s = length(sm.data) + 1
-  q_s = create_quantity_weight_array(
-    0,
-    (note_max - note_min) * len_next_s,
-    len_next_s;
-    use_recent_position_weight=use_recent_position_weight
-  )
-
   raw_d = Float64[]  # avg_dist (complex when larger)
   raw_q = Float64[]  # quantity (complex when smaller)
   raw_c = Float64[]  # complexity (complex when larger)
@@ -4068,7 +3939,7 @@ for s in 1:desired_stream_count
   pa = prev_tmp_anchors[s]
 
   for a in anchors
-    _d, _q, c = PolyphonicClusterManager.simulate_add_and_calculate(sm, Float64[float(a)], q_s)
+    _d, _q, c = PolyphonicClusterManager.simulate_add_and_calculate(sm, Float64[float(a)])
 
     dval = (isfinite(_d) ? float(_d) : 0.0)
     qval = (isfinite(_q) ? float(_q) : 0.0)
@@ -4148,15 +4019,6 @@ end
     area_gl = area_mgrs[:global]
     area_offset = float(get(area_mgrs, :global_offset, offset_for_range(area_min, area_max)))
 
-    # q-array for global manager length
-    len_next_g = length(area_gl.data) + 1
-    q_g = create_quantity_weight_array(
-      0,
-      (note_max - note_min) * len_next_g,
-      len_next_g;
-      use_recent_position_weight=use_recent_position_weight
-    )
-
     global_raws = Float64[]
     sizehint!(global_raws, length(area_candidates))
 
@@ -4167,7 +4029,7 @@ end
         push!(enc, float(cand[i]) + (i - 1) * area_offset)
       end
 
-      _d, _q, c = PolyphonicClusterManager.simulate_add_and_calculate(area_gl, enc, q_g)
+      _d, _q, c = PolyphonicClusterManager.simulate_add_and_calculate(area_gl, enc)
       push!(global_raws, isfinite(c) ? float(c) : 0.0)
     end
 
@@ -4255,12 +4117,12 @@ end
     # global: stream-offset encoding
     enc_best = Float64[float(chosen_area[i]) + (i - 1) * area_offset for i in 1:desired_stream_count]
     PolyphonicClusterManager.add_data_point_permanently(area_gl, enc_best)
-    PolyphonicClusterManager.update_caches_permanently(area_gl, q_g)
+    PolyphonicClusterManager.update_caches_permanently(area_gl)
 
     # stream: commit per-stream anchors
     chosen_area_f = Float64[float(chosen_area[s]) for s in 1:desired_stream_count]
-    MultiStreamManager.commit_state!(area_mgrs[:stream], chosen_area_f, q_g)
-    MultiStreamManager.update_caches_permanently!(area_mgrs[:stream], q_g)
+    MultiStreamManager.commit_state!(area_mgrs[:stream], chosen_area_f)
+    MultiStreamManager.update_caches_permanently!(area_mgrs[:stream])
 
     # ---- Decide realized notes per stream (within band + chord_range, size by density, choose by dissonance LAST) ----
     onset = step_idx <= length(future_step_onsets) ? future_step_onsets[step_idx] : base_onset
@@ -4400,24 +4262,17 @@ end
 
     # ---- Commit NOTE managers using realized anchors (global scalar + per-stream) ----
     global_anchor_note = _global_anchor_from_step(current_step_values)
-    note_len_next = length(note_mgrs[:global].data) + 1
-    note_q_array = create_quantity_weight_array(
-      0,
-      (note_max - note_min) * note_len_next,
-      note_len_next;
-      use_recent_position_weight=use_recent_position_weight
-    )
 
     PolyphonicClusterManager.add_data_point_permanently(note_mgrs[:global], Float64[float(global_anchor_note)])
-    PolyphonicClusterManager.update_caches_permanently(note_mgrs[:global], note_q_array)
+    PolyphonicClusterManager.update_caches_permanently(note_mgrs[:global])
 
     stream_anchors = Float64[]
     sizehint!(stream_anchors, desired_stream_count)
     for s in 1:desired_stream_count
       push!(stream_anchors, float(_anchor_from_abs(current_step_values[s][note_abs_idx])))
     end
-    MultiStreamManager.commit_state!(note_mgrs[:stream], stream_anchors, note_q_array)
-    MultiStreamManager.update_caches_permanently!(note_mgrs[:stream], note_q_array)
+    MultiStreamManager.commit_state!(note_mgrs[:stream], stream_anchors)
+    MultiStreamManager.update_caches_permanently!(note_mgrs[:stream])
 
     # store decisions
     step_decisions["area_tmp_anchor"] = chosen_area
