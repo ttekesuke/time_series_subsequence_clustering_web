@@ -51,7 +51,35 @@
                 min="0" max="1" step="0.01"
               ></v-text-field>
             </v-col>
-            <v-col cols="4">
+            <v-col cols="2">
+              <v-text-field
+                label="recency strength"
+                type="number"
+                v-model.number="recencyWeightStrength"
+                min="0"
+                max="1"
+                step="0.01"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="2">
+              <v-text-field
+                label="recency tau min"
+                type="number"
+                v-model.number="recencyTauMin"
+                min="1"
+                step="1"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="2">
+              <v-text-field
+                label="recency tau multiplier"
+                type="number"
+                v-model.number="recencyTauWindowMultiplier"
+                min="0"
+                step="1"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="12">
               <v-btn color="success" :loading="loading" @click="handleGenerateTimeseries">Generate</v-btn>
               <span v-if="props.progress && (props.progress.status == 'start' || props.progress.status == 'progress')">{{props.progress.percent}}%</span>
             </v-col>
@@ -121,18 +149,33 @@ const rows = ref<GridRowData[]>([
 const firstSteps = ref(3)
 const complexitySteps = ref(31)
 
+const fallbackFirstRow = (): GridRowData => ({
+  name: 'firstElements',
+  shortName: 'First Elements',
+  data: Array(firstSteps.value).fill(0),
+  config: { min: -9999, max: 9999, isInt: true, step: 1 }
+})
+
+const fallbackComplexityRow = (): GridRowData => ({
+  name: 'complexityTransition',
+  shortName: 'Complexity Transition',
+  data: Array(complexitySteps.value).fill(0),
+  config: { min: 0, max: 1, isInt: false, step: 0.01 }
+})
+
 const firstRows = computed({
-  get: () => [ rows.value[0] || { name: 'firstElements', data: Array(firstSteps.value).fill(0), config: { min: -9999, max: 9999, isInt: true, step: 1 } } ],
-  set: (v) => { rows.value[0] = (v && v[0]) ? v[0] : rows.value[0] }
+  get: () => [rows.value[0] || fallbackFirstRow()],
+  set: (v) => { rows.value[0] = (v && v[0]) ? v[0] : (rows.value[0] || fallbackFirstRow()) }
 })
 const complexityRows = computed({
-  get: () => [ rows.value[1] || { name: 'complexityTransition', data: Array(complexitySteps.value).fill(0), config: { min: -9999, max: 9999, isInt: true, step: 1 } } ],
-  set: (v) => { rows.value[1] = (v && v[0]) ? v[0] : rows.value[1] }
+  get: () => [rows.value[1] || fallbackComplexityRow()],
+  set: (v) => { rows.value[1] = (v && v[0]) ? v[0] : (rows.value[1] || fallbackComplexityRow()) }
 })
 const mergeThreshold = ref(0.02)
+const recencyWeightStrength = ref(0.1)
+const recencyTauMin = ref(64)
+const recencyTauWindowMultiplier = ref(16)
 const loading = ref(false)
-
-const handleFileSelected = (e: Event) => { if (props.onFileSelected) props.onFileSelected(e) }
 
 const handleGenerateTimeseries = async () => {
   loading.value = true
@@ -147,7 +190,9 @@ const handleGenerateTimeseries = async () => {
         range_min: rangeMin.value,
         range_max: rangeMax.value,
         merge_threshold_ratio: mergeThreshold.value,
-        use_recent_position_weight: false,
+        recency_weight_strength: recencyWeightStrength.value,
+        recency_tau_min: recencyTauMin.value,
+        recency_tau_window_multiplier: recencyTauWindowMultiplier.value,
         job_id: props.jobId
       }
     }

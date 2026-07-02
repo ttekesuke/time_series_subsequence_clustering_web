@@ -273,5 +273,3 @@ age = 128 -> weight = 0.9 + 0.1 * exp(-2) = 0.9135
 - `complexity_transition` は候補値そのものではなく、候補追加後の構造スコアの目標です。
 - 初期値が完全反復の場合、低 target では既存反復に乗る候補が強く選ばれやすくなります。
 - `recency_weight_strength=0.0` で直近性ウェイトは無効になります。
-- 現地点から遠いクラスタを prune する処理は `generate()` にはありません。
-- 旧 `q_array` や quadratic quantity weight のような処理は現在の `generate()` にはありません。
