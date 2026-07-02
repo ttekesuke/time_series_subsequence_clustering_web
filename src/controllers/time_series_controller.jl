@@ -2128,7 +2128,7 @@ function generate()
   complexity_targets = _parse_csv_floats(string(get(p, "complexity_transition", "")))
   merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", Config.DEFAULT_MERGE_THRESHOLD_RATIO))
   contextual_min_width = _parse_float(get(p, "contextual_min_width", Config.DEFAULT_CONTEXTUAL_MIN_WIDTH))
-  recency_tau_min = max(_parse_float(get(p, "recency_tau_min", get(p, "recency_tau_steps", Config.DEFAULT_RECENCY_TAU_MIN))), 1.0)
+  recency_tau_min = max(_parse_float(get(p, "recency_tau_min", Config.DEFAULT_RECENCY_TAU_MIN)), 1.0)
   recency_tau_window_multiplier = max(_parse_float(get(p, "recency_tau_window_multiplier", Config.DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER)), 0.0)
   recency_weight_strength = clamp(_parse_float(get(p, "recency_weight_strength", Config.DEFAULT_RECENCY_WEIGHT_STRENGTH)), 0.0, 1.0)
 
@@ -3139,7 +3139,7 @@ function generate_polyphonic()
   end
 
   merge_threshold_ratio = _parse_float(get(gp, "merge_threshold_ratio", Config.DEFAULT_POLYPHONIC_MERGE_THRESHOLD_RATIO))
-  recency_tau_min = max(_parse_float(get(gp, "recency_tau_min", get(gp, "recency_tau_steps", Config.DEFAULT_RECENCY_TAU_MIN))), 1.0)
+  recency_tau_min = max(_parse_float(get(gp, "recency_tau_min", Config.DEFAULT_RECENCY_TAU_MIN)), 1.0)
   recency_tau_window_multiplier = max(_parse_float(get(gp, "recency_tau_window_multiplier", Config.DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER)), 0.0)
   recency_weight_strength = clamp(_parse_float(get(gp, "recency_weight_strength", Config.DEFAULT_RECENCY_WEIGHT_STRENGTH)), 0.0, 1.0)
   min_window = Config.POLYPHONIC_MIN_WINDOW_SIZE

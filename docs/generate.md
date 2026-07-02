@@ -49,7 +49,6 @@
   - `0.0` なら旧来の全履歴集計、`1.0` なら直近性を最大反映します。
 - `generate.recency_tau_min`
   - 直近性の時定数の下限です。
-  - 旧名 `recency_tau_steps` も fallback として読まれます。
 - `generate.recency_tau_window_multiplier`
   - window size から時定数を作る倍率です。
 
