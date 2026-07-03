@@ -715,8 +715,8 @@ type ClusterData = {
   cluster_id: string
   indices: number[]
 }
-// strict server: [abs_notes(Int[]), vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range(Int), density]
-type StepVecStrict = [number[], number, number, number, number, number, number, number, number?, number?]
+// strict server: [abs_notes(Int[]), vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range(Int), density, sustain]
+type StepVecStrict = [number[], number, number, number, number, number, number, number, number?, number?, number?]
 type StepVec = StepVecStrict
 type PolyphonicResponse = {
   timeSeries: StepVec[][];
@@ -894,7 +894,7 @@ const expandTimeSeries = (ts: any[]) => {
     stepStreams.forEach((vec, streamIdx) => {
       if (!vec) return
 
-      // Strict: [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density]
+      // Strict: [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain]
       if (Array.isArray(vec[0])) {
         const absNotes = (vec[0] as any[]).map(n => Number(n)).filter(n => Number.isFinite(n))
         notes[streamIdx][stepIdx] = absNotes.length ? absNotes[0] : null

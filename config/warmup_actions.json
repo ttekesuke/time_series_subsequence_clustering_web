@@ -6,8 +6,8 @@
       "payload": {
         "analyse": {
           "time_series": [0, 1, 3, 2, 4, 5, 3, 1],
-          "skip_empty": true,
           "merge_threshold_ratio": 0.02,
+          "contextual_min_width": 1.0,
           "job_id": "warmup-analyse"
         }
       }
@@ -34,10 +34,13 @@
         "generate": {
           "first_elements": "0,1,3",
           "complexity_transition": "0.2,0.5",
+          "merge_threshold_ratio": 0.02,
           "range_min": 0,
           "range_max": 11,
-          "merge_threshold_ratio": 0.02,
-          "use_recent_position_weight": false,
+          "recency_weight_strength": 0.0,
+          "recency_tau_min": 64,
+          "recency_tau_window_multiplier": 16,
+          "contextual_min_width": 1.0,
           "job_id": "warmup-generate"
         }
       }
@@ -47,12 +50,12 @@
       "path": "/api/web/time_series/generate_polyphonic",
       "payload": {
         "generate_polyphonic": {
+          "bpm": 480,
+          "future_bpm": [480],
+          "initial_context_bpm": [480],
           "initial_context": [
             [
-              [[60], 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 0.0, 0.5]
-            ],
-            [
-              [[62], 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 0.0, 0.5]
+              [[60], 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
             ]
           ],
           "stream_counts": [1],
@@ -63,22 +66,14 @@
           "vol_center": [0.5],
           "vol_spread": [0.2],
           "vol_conc": [0.5],
-          "bri_global": [0.5],
-          "bri_center": [0.5],
-          "bri_spread": [0.2],
-          "bri_conc": [0.5],
-          "hrd_global": [0.5],
-          "hrd_center": [0.5],
-          "hrd_spread": [0.2],
-          "hrd_conc": [0.5],
-          "tex_global": [0.5],
-          "tex_center": [0.5],
-          "tex_spread": [0.2],
-          "tex_conc": [0.5],
-          "note_global": [0.5],
-          "note_center": [0.5],
-          "note_spread": [0.2],
-          "note_conc": [0.5],
+          "vol_target": [0.5],
+          "vol_target_spread": [1.0],
+          "area_global": [0.5],
+          "area_center": [0.5],
+          "area_spread": [0.2],
+          "area_conc": [0.5],
+          "note_register_freedom": [1.0],
+          "merge_threshold_ratio": 0.02,
           "job_id": "warmup-generate-polyphonic"
         }
       }

@@ -403,28 +403,14 @@ const onDimensionPolicyFixedValueSourceChange = (key: ManagedDimKey, e: Event) =
 
 const dimensionPolicyAliases: Record<string, ManagedDimKey> = {
   area: 'area',
-  cr: 'chord_range',
   chord_range: 'chord_range',
-  chordrange: 'chord_range',
-  'chord-range': 'chord_range',
-  den: 'density',
   density: 'density',
   vol: 'vol',
-  volume: 'vol',
-  bri: 'brightness',
   brightness: 'brightness',
-  noi: 'noise',
   noise: 'noise',
-  har: 'harmonicity',
   harmonicity: 'harmonicity',
-  harmonic: 'harmonicity',
-  atk: 'attack',
   attack: 'attack',
-  ds: 'decay_sustain',
   decay_sustain: 'decay_sustain',
-  decaysustain: 'decay_sustain',
-  'decay-sustain': 'decay_sustain',
-  rel: 'release',
   release: 'release'
 }
 
