@@ -140,10 +140,11 @@ function build_score_events_scd(
     current_time += step_duration
   end
 
-  for ev in events
+  for (event_idx, ev) in enumerate(events)
+    suffix = event_idx < length(events) ? "," : ""
     println(io, @sprintf(
-      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\noise, %.6f, \\harmonicity, %.6f, \\attack, %.6f, \\decay, %.6f, \\sustainRelease, %.6f, \\outBus, %d]],",
-      ev.time, node_id, ev.freq, ev.dur, ev.amp, ev.brightness, ev.noise, ev.harmonicity, ev.attack, ev.decay, ev.sustain_release, mix_bus
+      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\noise, %.6f, \\harmonicity, %.6f, \\attack, %.6f, \\decay, %.6f, \\sustainRelease, %.6f, \\outBus, %d]]%s",
+      ev.time, node_id, ev.freq, ev.dur, ev.amp, ev.brightness, ev.noise, ev.harmonicity, ev.attack, ev.decay, ev.sustain_release, mix_bus, suffix
     ))
     node_id += 1
   end
@@ -244,6 +245,44 @@ function _safe_tmp_path(prefix::AbstractString, suffix::AbstractString)
   return joinpath("/tmp", "$(prefix)_$(uuid4())$(suffix)")
 end
 
+function _render_timeout_seconds(render_duration::Real)::Float64
+  estimated = float(render_duration) * Config.SC_RENDER_TIMEOUT_DURATION_MULTIPLIER + Config.SC_RENDER_TIMEOUT_EXTRA_SECONDS
+  return clamp(estimated, Config.SC_RENDER_TIMEOUT_MIN_SECONDS, Config.SC_RENDER_TIMEOUT_MAX_SECONDS)
+end
+
+function _run_sclang_with_timeout(scd_path::AbstractString, timeout_seconds::Real)
+  cmd = `env QT_QPA_PLATFORM=offscreen sclang $scd_path`
+  proc = run(pipeline(cmd; stdin=devnull, stdout=devnull, stderr=devnull); wait=false)
+  wait_task = @async wait(proc)
+  status = timedwait(() -> istaskdone(wait_task), float(timeout_seconds); pollint=0.1)
+
+  if status == :timed_out
+    try
+      kill(proc)
+    catch
+    end
+    try
+      wait(proc)
+    catch
+    end
+    return (
+      ok = false,
+      timed_out = true,
+      exit_code = nothing,
+      timeout_seconds = float(timeout_seconds),
+      command = string(cmd),
+    )
+  end
+
+  return (
+    ok = success(proc),
+    timed_out = false,
+    exit_code = proc.exitcode,
+    timeout_seconds = float(timeout_seconds),
+    command = string(cmd),
+  )
+end
+
 function _is_safe_tmp_file(path::AbstractString)
   p = abspath(path)
   return startswith(p, "/tmp/")
@@ -338,9 +377,25 @@ function render_polyphonic()
       write(f, scd_text)
     end
 
-    # Run sclang headless (QT offscreen)
-    cmd = `bash -c "QT_QPA_PLATFORM=offscreen sclang $(scd_path)"`
-    run(cmd)
+    render_duration = sum(step_durations) + tail_pad_seconds
+    timeout_seconds = _render_timeout_seconds(render_duration)
+    sclang_result = _run_sclang_with_timeout(scd_path, timeout_seconds)
+
+    if !sclang_result.ok
+      return Dict(
+        "error" => sclang_result.timed_out ? "SuperCollider render timed out" : "SuperCollider render failed",
+        "scd_file_path" => scd_path,
+        "sound_file_path" => wav_path,
+        "sc_exit_code" => sclang_result.exit_code,
+        "sc_timed_out" => sclang_result.timed_out,
+        "sc_timeout_seconds" => sclang_result.timeout_seconds,
+        "bpm" => (isempty(bpm_series) ? bpm : bpm_series[1]),
+        "bpmSeries" => bpm_series,
+        "stepDuration" => (isempty(step_durations) ? Config.step_duration_from_bpm(bpm) : step_durations[1]),
+        "stepDurations" => step_durations,
+        "tailPadSeconds" => tail_pad_seconds,
+      )
+    end
 
     if !isfile(wav_path)
       return Dict(
@@ -386,8 +441,9 @@ end
 
 function cleanup()
   payload = _payload()
-  scd_path = string(get(payload, "scd_file_path", ""))
-  wav_path = string(get(payload, "sound_file_path", ""))
+  cleanup_payload = _to_string_dict(get(payload, "cleanup", payload))
+  scd_path = string(get(cleanup_payload, "scd_file_path", ""))
+  wav_path = string(get(cleanup_payload, "sound_file_path", ""))
 
   deleted = String[]
 

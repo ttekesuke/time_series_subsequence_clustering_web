@@ -1,9 +1,5 @@
 // Auto-generated SuperCollider script (NRT render)
-// Placeholders injected by Julia:
-//   {{SCORE_EVENTS}}: Score bundles for /s_new
-//   {{SOUND_FILE_PATH}}: output wav path
-//   {{STEP_DURATION}}: time step duration (sec)
-//   {{TOTAL_DURATION_PAD}}: total render duration incl. tail (sec)
+// Julia injects score events, output path, step duration, and total duration below.
 
 (
 var server = Server(\nrt,

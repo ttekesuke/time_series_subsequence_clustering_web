@@ -917,7 +917,6 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
 
   const normalizeRenderPayload = (ts: any[][]) => {
     const out: any[] = []
-    const chords: any[] = []
 
     const normAbs = (arr: any): number[] => {
       if (!Array.isArray(arr)) return []
@@ -926,7 +925,6 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
 
     for (const step of ts) {
       const stepOut: any[] = []
-      const stepChords: any[] = []
 
       for (const vec of step) {
         if (!vec) continue
@@ -944,31 +942,32 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
             Number(vec[6] ?? 0.5),
             Number(vec[7] ?? 0.3)
           ])
-
-          const pcs = absNotes
-            .map(n => ((n % 12) + 12) % 12)
-            .sort((a, b) => a - b)
-          stepChords.push(pcs)
         }
       }
 
       out.push(stepOut)
-      chords.push(stepChords)
     }
 
-    return { out, chords }
+    return { out }
   }
 
-  const { out, chords } = normalizeRenderPayload(timeSeries)
+  const { out } = normalizeRenderPayload(timeSeries)
   const bpmSeries = resolveGenerationBpmSeries(bpmArg, out.length)
   const bpm = bpmSeries[0] ?? DEFAULT_BPM
   axios.post('/api/web/supercolliders/render_polyphonic', {
     time_series: out,
     bpm,
-    bpm_series: bpmSeries,
-    note_chords_pitch_classes: chords,
+    future_bpm: bpmSeries,
+    initial_context_bpm: bpmSeries.slice(0, Math.min(1, bpmSeries.length)),
+    tail_pad_seconds: 0.05,
   })
     .then(response => {
+      if (response?.data?.error) {
+        console.error("Rendering error:", response.data.error)
+        progress.value.status = 'idle'
+        return
+      }
+
       const { sound_file_path, scd_file_path, audio_data } = response.data
       serverSoundFilePath.value = sound_file_path
       scdFilePath.value = scd_file_path

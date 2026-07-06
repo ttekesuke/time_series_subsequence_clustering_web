@@ -3746,7 +3746,7 @@ function generate_polyphonic()
       PolyphonicClusterManager.update_caches_permanently(mgrs[:global])
 
       if key == "vol"
-        MultiStreamManager.commit_state!(mgrs[:stream], best_vals; strength_params=(target=st_target, spread=st_spread))
+        MultiStreamManager.commit_state!(mgrs[:stream], best_vals, (target=st_target, spread=st_spread))
       else
         MultiStreamManager.commit_state!(mgrs[:stream], best_vals)
       end

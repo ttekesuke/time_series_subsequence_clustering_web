@@ -294,6 +294,12 @@ const renderPolyphonicAudio = (timeSeries) => {
   axios.post('/api/web/supercolliders/render_polyphonic', {
     time_series: timeSeries
   }).then(response => {
+    if (response?.data?.error) {
+      console.error("Rendering error:", response.data.error)
+      music.value.loading = false
+      return
+    }
+
     const { sound_file_path, scd_file_path, audio_data } = response.data
     music.value.soundFilePath = sound_file_path
     const base64 = audio_data.includes(',') ? audio_data.split(',')[1] : audio_data

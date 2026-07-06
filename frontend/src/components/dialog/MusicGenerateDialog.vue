@@ -1578,6 +1578,224 @@ const genRowMetas: GenRowMeta[] = [
   ...makeTimbreDimensionRows('S/R', 'SUSTAIN/RELEASE', 'release', 'SUSTAIN/RELEASE の探索中心値です。Attack / Decay / SustainRelease の比率で音全体の長さに正規化され、この区間のうち 70% を sustain、30% を release に使います。', '0：末尾区間ほぼなし。', '1：Sustain/Release 比率が大きい。'),
 ]
 
+const dimHelp: Record<string, { label: string; value: string; min: string; max: string; note?: string }> = {
+  area: {
+    label: 'AREA',
+    value: '4半音幅の音域バンドの基点（tmp anchor）',
+    min: '低い複雑度では、直近の音域バンドに留まる候補や小さい移動が選ばれやすくなります。',
+    max: '高い複雑度では、直近から離れた音域バンドや大きい移動が選ばれやすくなります。',
+    note: 'AREA は最終音そのものではなく、後段で実音候補を作るための大まかな音域移動を決めます。'
+  },
+  chord_range: {
+    label: 'CHORD_RANGE',
+    value: '各ストリームの和音幅（最低音から最高音までの半音幅）',
+    min: '低い値では単音または狭い和音幅を中心に探索します。',
+    max: '高い値ではオクターブに近い広い和音幅まで探索します。'
+  },
+  density: {
+    label: 'DENSITY',
+    value: '和音内にどれだけ音を詰めるか',
+    min: '低い値では少ない構成音、隙間のある和音が選ばれやすくなります。',
+    max: '高い値では構成音が増え、密な和音が選ばれやすくなります。'
+  },
+  vol: {
+    label: 'VOLUME',
+    value: '各ストリームの音量。0 は休符扱いに近く、1 は最大音量です',
+    min: '低い値ではそのストリームが弱く、場合によっては鳴らない候補が選ばれます。',
+    max: '高い値ではそのストリームが前に出やすく、音量差も大きくなります。'
+  },
+  brightness: {
+    label: 'BRIGHTNESS',
+    value: 'SuperCollider 音色の明るさ。倍音量とフィルタの開きに反映されます',
+    min: '低い値では暗く丸い音色に寄ります。',
+    max: '高い値では高域成分が増え、明るく硬い音色に寄ります。'
+  },
+  noise: {
+    label: 'NOISE',
+    value: 'SuperCollider 音色に混ぜるノイズ量',
+    min: '低い値では純音に近い滑らかな音になります。',
+    max: '高い値ではざらつきや粗さが強くなります。'
+  },
+  harmonicity: {
+    label: 'HARMONICITY',
+    value: '倍音比率の整数倍らしさ',
+    min: '低い値では非整数倍音寄りになり、金属的・不安定な質感が増えます。',
+    max: '高い値では整数倍音寄りになり、基音感が明確になります。'
+  },
+  attack: {
+    label: 'ATTACK',
+    value: '1 step の長さの中で立ち上がりに割く比率',
+    min: '低い値では立ち上がりが短く、すぐ鳴り始めます。',
+    max: '高い値では立ち上がりが長く、フェードインに近くなります。'
+  },
+  decay_sustain: {
+    label: 'DECAY',
+    value: '1 step の長さの中で初期減衰に割く比率',
+    min: '低い値では減衰区間が短く、すぐ sustain/release 側へ移ります。',
+    max: '高い値では減衰区間が長く、音量変化がゆっくりになります。'
+  },
+  release: {
+    label: 'SUSTAIN/RELEASE',
+    value: '1 step の長さの中で保持と余韻に割く比率',
+    min: '低い値では音の末尾が短く切れやすくなります。',
+    max: '高い値では sustain と release が長くなり、余韻が残りやすくなります。'
+  }
+}
+
+const dimKeysForHelp = Object.keys(dimHelp).sort((a, b) => b.length - a.length)
+
+const detectDimKey = (key: string) => dimKeysForHelp.find((dim) => key === dim || key.startsWith(`${dim}_`))
+
+const dimDisabledNote = (dim: string) =>
+  `Dimension Policy で ${dimHelp[dim]?.label ?? dim} を固定値にしている場合、この行の値は生成探索には使われず固定値が出力されます。`
+
+const buildGenHelp = (meta: GenRowMeta): RowHelp | undefined => {
+  const k = meta.key
+
+  if (k === 'stream_counts') {
+    return H(
+      meta,
+      '生成する future step ごとのストリーム数（声部数）です。この配列の長さが生成 step 数になり、各 step で manager の stream lifecycle がこの数に合うように増減します。',
+      '1：単一ストリームで生成します。和音は作れても、独立した声部間の配置や強度差はほぼ発生しません。',
+      '16：最大16ストリームを同時に扱います。声部数は増えますが、候補評価の組み合わせと処理負荷も大きくなります。'
+    )
+  }
+
+  if (k === 'stream_strength_target') {
+    return H(
+      meta,
+      'ストリーム数が変わるときに、どの強さのストリームを残す・復活する・複製するかを決める中心値です。vol manager があれば vol の presence/strength を基準にします。',
+      '0：弱いストリームも残りやすく、声部間の存在感を均しやすい設定です。',
+      '1：強いストリームを優先しやすく、主役になる声部が残りやすい設定です。'
+    )
+  }
+
+  if (k === 'stream_strength_spread') {
+    return H(
+      meta,
+      'Stream Strength Target からストリームごとの強度ターゲットを作るときの広がりです。複数ストリームでは center±spread/2 の範囲に線形配置されます。',
+      '0：全ストリームが同じ強度ターゲットを共有します。',
+      '1：強度ターゲットが最大幅で分散し、強い声部と弱い声部が分かれやすくなります。'
+    )
+  }
+
+  if (k === 'note_register_freedom') {
+    return H(
+      meta,
+      '各ストリームの直近の音域中心から、次の AREA 候補と実音候補がどれだけ離れてよいかを制御します。AREA 選択と最終 chord 選択の両方で音域窓として使われます。',
+      '0：直近の音域中心付近に強く制限します。大きい跳躍や急な音域移動を避けやすくなります。',
+      '1：音域制限をほぼ外します。広いレジスタ移動や大きい跳躍を許します。'
+    )
+  }
+
+  if (k === 'dissonance_target') {
+    return H(
+      meta,
+      'AREA、CHORD_RANGE、DENSITY などで作った実音候補の組み合わせから、短期記憶つき roughness 評価がこの値に近いものを最後に選びます。音量も評価に使われます。',
+      '0：協和寄りの組み合わせを選びます。濁りやぶつかりは少なくなります。',
+      '1：不協和寄りの組み合わせを選びます。近接音程や粗い響きが選ばれやすくなります。'
+    )
+  }
+
+  if (k === 'future_bpm') {
+    return H(
+      meta,
+      '各 future step の BPM です。生成時の dissonance memory の onset と、最終 wav render の step duration（60 / BPM）に使われます。',
+      '1：1 step が非常に長くなります。レンダー時間も長くなります。',
+      '960：1 step が非常に短くなります。音価が詰まり、短いフレーズになります。'
+    )
+  }
+
+  const weightMatch = k.match(/^(global|stream)_(dist|qty|comp)_weight$/)
+  if (weightMatch) {
+    const scope = weightMatch[1] === 'global' ? 'Global' : 'Stream'
+    const metric = weightMatch[2]
+    const metricText =
+      metric === 'dist'
+        ? 'distance metric（既存クラスタからの距離、新規性）'
+        : metric === 'qty'
+          ? 'quantity metric（候補がどの程度の量・頻度として扱われるか）'
+          : 'complexity metric（クラスタ構造上の複雑さ）'
+    const scopeText =
+      weightMatch[1] === 'global'
+        ? '全ストリームをまとめた polyphonic set の評価'
+        : '各ストリームを独立時系列として見た評価'
+    return H(
+      meta,
+      `${scope} 側の ${metricText} の重みです。通常 dimension と AREA の候補スコアを 0..1 に正規化するとき、この重みで dist / qty / comp の効き方を調整します。対象は ${scopeText} です。`,
+      '0：この metric をほぼ無視します。他の weight と usage metric の影響が相対的に強くなります。',
+      '5：この metric を強く見ます。この metric が target に近い候補ほど選ばれやすくなります。'
+    )
+  }
+
+  const dim = detectDimKey(k)
+  if (!dim) return meta.help
+  const info = dimHelp[dim]
+
+  if (k.endsWith('_global')) {
+    return H(
+      meta,
+      `${info.label} の Global Complexity 目標です。${info.value} を全ストリームまとめて polyphonic set として仮追加し、dist / qty / comp / usage を合成した global score がこの値に近い候補を選びます。${info.note ?? ''} ${dimDisabledNote(dim)}`,
+      `0：${info.min}`,
+      `1：${info.max}`
+    )
+  }
+
+  if (k.endsWith('_center')) {
+    return H(
+      meta,
+      `${info.label} の Stream Complexity 目標の中心です。各ストリームを独立した時系列として評価し、stream score が center±spread/2 に線形配置された目標へ近い候補を選びます。${dimDisabledNote(dim)}`,
+      '0：各ストリームを低複雑度寄りの動きにします。変化量や新規性を抑えやすくなります。',
+      '1：各ストリームを高複雑度寄りの動きにします。変化量や新規性を増やしやすくなります。'
+    )
+  }
+
+  if (k.endsWith('_spread') && !k.endsWith('_target_spread')) {
+    return H(
+      meta,
+      `${info.label} の Stream Complexity 目標をストリーム間でどれだけ広げるかです。複数ストリームでは center±spread/2 の範囲に目標値を並べ、声部ごとの複雑度差を作ります。${dimDisabledNote(dim)}`,
+      '0：全ストリームが同じ stream complexity 目標になります。',
+      '1：stream complexity 目標が最大幅で分散し、単純な声部と複雑な声部が分かれやすくなります。'
+    )
+  }
+
+  if (k.endsWith('_conc')) {
+    const areaText = dim === 'area'
+      ? 'AREA では stream 間の band anchor の平均距離を見ます。'
+      : '通常 dimension では同一 step 内の stream 値のばらつきを discordance として見ます。'
+    return H(
+      meta,
+      `${info.label} の stream 間 conformity / concordance の重みです。${areaText} 正の値は揃える方向、負の値は散らす方向に候補コストを加えます。${dimDisabledNote(dim)}`,
+      '-1：stream 間で値や音域を大きく分ける候補を優先します。',
+      '1：stream 間で値や音域を揃える候補を優先します。0 ではこの項を使いません。'
+    )
+  }
+
+  if (k.endsWith('_target')) {
+    return H(
+      meta,
+      `${info.label} の実値探索の中心です。候補値はまず target±target spread の窓で絞られ、その中から global / stream / conc の評価で最終選択されます。${info.value} を直接狙う入口になる値です。${dimDisabledNote(dim)}`,
+      `${meta.min}：${info.min}`,
+      `${meta.max}：${info.max}`
+    )
+  }
+
+  if (k.endsWith('_target_spread')) {
+    return H(
+      meta,
+      `${info.label} の実値探索窓の半幅です。サーバは target - spread から target + spread までの候補だけを残し、空になった場合は target に最も近い候補を使います。${dimDisabledNote(dim)}`,
+      `${meta.min}：target 付近の値だけを探索します。値を固定に近づけたいときに使います。`,
+      `${meta.max}：探索窓が広がり、global / stream / conc の評価で選べる候補が増えます。`
+    )
+  }
+
+  return meta.help
+}
+
+genRowMetas.forEach((meta) => {
+  meta.help = buildGenHelp(meta)
+})
+
 const complexityDimensionKeys = ['area', 'chord_range', 'density', 'vol', 'brightness', 'noise', 'harmonicity', 'attack', 'decay_sustain', 'release'] as const
 const targetWindowDimensionKeys = ['vol', 'chord_range', 'density', 'brightness', 'noise', 'harmonicity', 'attack', 'decay_sustain', 'release'] as const
 
