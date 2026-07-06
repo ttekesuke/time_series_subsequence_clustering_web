@@ -17,43 +17,6 @@
             </span>
           </div>
 
-          <div class="dimension-policy-toolbar mr-4">
-            <div
-              v-for="dimKey in managedDimKeys"
-              :key="dimKey"
-              class="dimension-policy-item"
-            >
-              <label class="dimension-policy-label">
-                <input
-                  type="checkbox"
-                  :checked="getDimensionPolicyValue(dimKey).useFixedValue"
-                  @change="onDimensionPolicyAcceptChange(resolveManagedDimKey(dimKey), $event)"
-                >
-                <span>{{ getDimensionPolicyConfig(dimKey).label }}</span>
-              </label>
-              <template v-if="getDimensionPolicyValue(dimKey).useFixedValue">
-                <select
-                  :value="getDimensionPolicyValue(dimKey).fixedValueSource"
-                  @change="onDimensionPolicyFixedValueSourceChange(resolveManagedDimKey(dimKey), $event)"
-                  class="step-input dim-policy-select"
-                >
-                  <option value="initial_context_last_step">Last Step</option>
-                  <option value="manual_input">Manual</option>
-                </select>
-                <input
-                  v-if="getDimensionPolicyValue(dimKey).fixedValueSource === 'manual_input'"
-                  type="number"
-                  :value="getDimensionPolicyValue(dimKey).fixedValue"
-                  @input="onDimensionPolicyFixedValueInput(resolveManagedDimKey(dimKey), $event)"
-                  :min="getDimensionPolicyConfig(dimKey).min"
-                  :max="getDimensionPolicyConfig(dimKey).max"
-                  :step="getDimensionPolicyConfig(dimKey).step"
-                  class="step-input dim-policy-input"
-                >
-              </template>
-            </div>
-          </div>
-
           <v-btn
             color="primary"
             variant="outlined"
@@ -103,7 +66,42 @@
             v-model:steps="genSteps"
             :showRowsLength="false"
             :showColsLength="true"
+            :rowLabelWidth="276"
+            :rowPrefixWidth="110"
           >
+            <template #row-prefix="{ rowIndex }">
+              <div class="dimension-policy-row-slot">
+                <template v-if="getDimensionPolicyDimForGenRow(rowIndex)">
+                  <input
+                    type="checkbox"
+                    :checked="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).useFixedValue"
+                    @change="onDimensionPolicyAcceptChange(resolveManagedDimKey(getDimensionPolicyDimForGenRow(rowIndex)), $event)"
+                    class="dimension-policy-checkbox"
+                    :title="`${getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).label} fixed value`"
+                  >
+                  <template v-if="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).useFixedValue">
+                    <select
+                      :value="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).fixedValueSource"
+                      @change="onDimensionPolicyFixedValueSourceChange(resolveManagedDimKey(getDimensionPolicyDimForGenRow(rowIndex)), $event)"
+                      class="step-input dim-policy-select"
+                    >
+                      <option value="initial_context_last_step">Last Step</option>
+                      <option value="manual_input">Manual</option>
+                    </select>
+                    <input
+                      v-if="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).fixedValueSource === 'manual_input'"
+                      type="number"
+                      :value="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).fixedValue"
+                      @input="onDimensionPolicyFixedValueInput(resolveManagedDimKey(getDimensionPolicyDimForGenRow(rowIndex)), $event)"
+                      :min="getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).min"
+                      :max="getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).max"
+                      :step="getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).step"
+                      class="step-input dim-policy-input"
+                    >
+                  </template>
+                </template>
+              </div>
+            </template>
             <template #toolbar-extra>
               <div class="d-flex align-center mr-4" style="font-size: 0.9rem;">
                 <span class="mr-2">MergeThresholdRatio:</span>
@@ -436,6 +434,15 @@ const getDimensionPolicyValue = (raw: unknown) => {
 const getManagedDimKeyForGenRow = (metaKey: string): ManagedDimKey | null => {
   for (const key of managedDimKeys) {
     if (metaKey === key || metaKey.indexOf(`${key}_`) === 0) return key
+  }
+  return null
+}
+
+const getDimensionPolicyDimForGenRow = (rowIndex: number): ManagedDimKey | null => {
+  const meta = genRowMetas[rowIndex]
+  if (!meta) return null
+  for (const key of managedDimKeys) {
+    if (meta.key === `${key}_center`) return key
   }
   return null
 }
@@ -2176,39 +2183,30 @@ watch(open, (next, prev) => {
   border-radius: 4px;
   background: white;
 }
-.dimension-policy-toolbar {
+.dimension-policy-row-slot {
+  width: 120px;
+  min-height: 66px;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-  max-width: min(100%, 860px);
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 3px;
+  padding-top: 1px;
+  box-sizing: border-box;
 }
-.dimension-policy-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border: 1px solid #d0d0d0;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.82);
-  font-size: 0.78rem;
-}
-.dimension-policy-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  white-space: nowrap;
+.dimension-policy-checkbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
 }
 .dim-policy-input {
-  width: 64px;
+  width: 36px;
+  height: 20px;
+  font-size: 0.72rem;
 }
 .dim-policy-select {
-  width: 88px;
-}
-.dimension-policy-preview {
-  min-width: 68px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+  width: 66px;
+  height: 20px;
+  font-size: 0.72rem;
 }
 .sound-check-layout {
   display: flex;

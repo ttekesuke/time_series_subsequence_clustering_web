@@ -114,7 +114,14 @@
           <template #item="{ item: row, index: rowIndex, columnRange, offset, getColumnWidth, getCellAriaProps }">
             <div class="param-grid-row" :data-row-index="rowIndex">
               <template v-if="rowIndex === 0">
-                <div class="sticky-col head-col header-col top-left-corner" :style="getStickyLeftStyle(offset?.x)">Steps</div>
+                <div class="sticky-col head-col header-col top-left-corner" :style="getStickyLeftStyle(offset?.x)">
+                  <div
+                    v-if="$slots['row-prefix']"
+                    class="row-prefix-space"
+                    :style="{ inlineSize: `${rowPrefixWidth}px` }"
+                  ></div>
+                  <span>Steps</span>
+                </div>
                 <div
                   class="row-cells"
                   :style="{
@@ -145,7 +152,20 @@
                 @mousedown.prevent
                 @click="onRowHeaderClick(rowIndex - 1, $event)"
               >
-                <span>
+                <div
+                  v-if="$slots['row-prefix']"
+                  class="row-prefix-space"
+                  :style="{ inlineSize: `${rowPrefixWidth}px` }"
+                  @mousedown.stop
+                  @click.stop
+                >
+                  <slot
+                    name="row-prefix"
+                    :row="row"
+                    :row-index="rowIndex - 1"
+                  ></slot>
+                </div>
+                <span class="row-label-text">
                   {{ row.shortName || row.name }}
                   <v-tooltip
                     v-if="row.help"
@@ -254,6 +274,9 @@ const props = defineProps({
   showRowsLength: { type: Boolean, default: true },
   showColsLength: { type: Boolean, default: true },
   showGenerateParametersButton: { type: Boolean, default: true },
+  rowHeight: { type: Number, default: 30 },
+  rowLabelWidth: { type: Number, default: 120 },
+  rowPrefixWidth: { type: Number, default: 0 },
   // 初期コンテキスト用: Streams 入力
   showStreamCount: { type: Boolean, default: false },
   streamCount: { type: Number, default: 0 }
@@ -282,7 +305,7 @@ let copiedTooltipTimer: ReturnType<typeof setTimeout> | null = null
 const stickyIndices = [0]
 const virtualItems = computed(() => [{ __header: true } as const, ...props.rows])
 
-const rowHeight = 30
+const rowHeight = computed(() => props.rowHeight)
 const cellWidth = 56
 
 const canGenerateParameters = computed(() => Boolean(focusedCell.value) && focusedCell.value?.config?.inputMode !== 'note-array')
@@ -333,7 +356,10 @@ watch(selectedColumnIndexes, (cols) => {
 const getStickyLeftStyle = (x: unknown) => {
   const offset = typeof x === 'number' && isFinite(x) ? x : 0
   return {
-    insetInlineStart: `${-Math.max(0, offset)}px`
+    insetInlineStart: `${-Math.max(0, offset)}px`,
+    inlineSize: `${props.rowLabelWidth}px`,
+    minInlineSize: `${props.rowLabelWidth}px`,
+    maxInlineSize: `${props.rowLabelWidth}px`
   }
 }
 
@@ -1005,19 +1031,35 @@ const applyGeneratedParams = async (params: any) => {
   border: 1px solid #e0e0e0;
 }
 .head-col {
-  width: 120px !important;
-  min-width: 120px !important;
-  max-width: 120px !important;
   font-weight: bold;
   text-align: left;
   padding-left: 8px;
 }
 .row-label {
   vertical-align: middle;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
 }
 .row-header {
   user-select: none;
   cursor: pointer;
+}
+.row-prefix-space {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 100%;
+  padding: 0;
+  box-sizing: border-box;
+}
+.row-label-text {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 .selected-header {
   background-color: #e8f5e9 !important;
