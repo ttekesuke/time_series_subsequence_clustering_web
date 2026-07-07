@@ -515,15 +515,16 @@ const contextInputDimensions = [
   { key: 'harmonicity', shortName: 'HARMONICITY', name: 'HARMONICITY' },
   { key: 'attack', shortName: 'ATTACK', name: 'ATTACK' },
   { key: 'decay_sustain', shortName: 'DECAY', name: 'DECAY' },
-  { key: 'release', shortName: 'SUSTAIN_RELEASE', name: 'SUSTAIN/RELEASE' }
+  { key: 'release', shortName: 'SUSTAIN_RELEASE', name: 'SUSTAIN/RELEASE' },
+  { key: 'legato', shortName: 'LEGATO', name: 'LEGATO' }
 ]
 
 
-// Strict server shape remains derived: [abs_note, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density]
+// Strict server shape remains derived: [abs_note, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato]
 // Input rows omit chord_range/density because they are derived per-step from abs notes.
 // Default values still keep strict indices for payload assembly.
-const defaultContextInputBase = [60, 1, 0.5, 0.2, 0.8, 0.05, 0.20, 0.75]
-const defaultContextBase = [60, 1, 0.5, 0.2, 0.8, 0.05, 0.20, 0.75, 0, 0]
+const defaultContextInputBase = [60, 1, 0.5, 0.2, 0.8, 0.05, 0.20, 0.75, 0]
+const defaultContextBase = [60, 1, 0.5, 0.2, 0.8, 0.05, 0.20, 0.75, 0, 0, 0.5, 0]
 const areaBandSize = 4
 const areaBandLowMin = 24
 const areaBandLowMax = 120
@@ -550,7 +551,9 @@ const strictContextIndexByKey = {
   decay_sustain: 6,
   release: 7,
   chord_range: 8,
-  density: 9
+  density: 9,
+  sustain: 10,
+  legato: 11
 } as const
 
 const contextInputIndexByKey = {
@@ -561,7 +564,8 @@ const contextInputIndexByKey = {
   harmonicity: 4,
   attack: 5,
   decay_sustain: 6,
-  release: 7
+  release: 7,
+  legato: 8
 } as const
 
 const contextSteps = ref(3)
@@ -681,6 +685,7 @@ const buildStrictContextVoiceFromRows = (rows: GridRowData[], streamIdx: number,
   const attack = Number(getRowValue('attack', 0.05))
   const decaySustain = Number(getRowValue('decay_sustain', 0.20))
   const release = Number(getRowValue('release', 0.75))
+  const legato = Number(getRowValue('legato', 0))
 
   return [
     absNotes,
@@ -690,7 +695,11 @@ const buildStrictContextVoiceFromRows = (rows: GridRowData[], streamIdx: number,
     Math.max(0, Math.min(1, harmonicity)),
     Math.max(0, Math.min(1, attack)),
     Math.max(0, Math.min(1, decaySustain)),
-    Math.max(0, Math.min(1, release))
+    Math.max(0, Math.min(1, release)),
+    0,
+    0,
+    0.5,
+    Math.max(0, Math.min(1, legato))
   ]
 }
 
@@ -1064,6 +1073,7 @@ type RowHelp = {
   range: string
   atMin: string
   atMax: string
+  note?: string
 }
 
 type GenRowMeta = {
@@ -1087,12 +1097,14 @@ const H = (
   meta: Pick<GenRowMeta, "min" | "max" | "step" | "isInt">,
   overview: string,
   atMin: string,
-  atMax: string
+  atMax: string,
+  note?: string
 ): RowHelp => ({
   overview,
   range: makeRangeText(meta),
   atMin,
-  atMax
+  atMax,
+  note
 })
 
 const stepsDefault = 3
@@ -1187,6 +1199,37 @@ const genRowMetas: GenRowMeta[] = [
       "各stepで同時に扱うストリーム（声部）の本数を指定します。",
       "1：単一ストリーム（モノフォニック寄り）。",
       "16：最大16ストリーム。探索空間と評価の負荷が増える。"
+    )
+  },
+  {
+    shortName: "LEG C",
+    name: "Legato Center",
+    key: "legato_center",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "同じ stream で前 step と同じ note/chord が続くときだけ有効な legato 実値の中心です。生成探索の複雑度には使わず、SuperCollider render 時に同音連打を結合するかを決めます。",
+      "0：全体に step ごとに発音し直す方向です。",
+      "1：全体に同音連打を音響的に切らず、1つの長い音として持続する方向です。",
+      "render では各streamの legato が 0.5 以上で結合します。Attack/Decay は結合 run の先頭、Sustain/Release は末尾 step の値を使います。"
+    )
+  },
+  {
+    shortName: "LEG S",
+    name: "Legato Spread",
+    key: "legato_spread",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "Legato Center を中心に、同一step内のstreamごとの legato 実値をどれだけ広げるかです。center±spread/2 をstream数ぶん線形に割り当てます。",
+      "0：全streamが Legato Center と同じ値になります。",
+      "1：stream間の legato 差が最大になります。"
     )
   },
 
@@ -1585,6 +1628,8 @@ const genRowMetas: GenRowMeta[] = [
   ...makeTimbreDimensionRows('S/R', 'SUSTAIN/RELEASE', 'release', 'SUSTAIN/RELEASE の探索中心値です。Attack / Decay / SustainRelease の比率で音全体の長さに正規化され、この区間のうち 70% を sustain、30% を release に使います。', '0：末尾区間ほぼなし。', '1：Sustain/Release 比率が大きい。'),
 ]
 
+const adsrRenderNote = 'SuperCollider では Attack / Decay / SustainRelease の3値を 0〜1 に clamp し、合計が 1 を超える場合は 1 step 内に収まるよう比率で正規化します。合計が 1 以下の場合はその合計分だけ鳴り、残りは無音になります。SustainRelease は 70% を sustain、30% を release に分けます。例: BPM 480 では 1 step = 0.125 秒です。'
+
 const dimHelp: Record<string, { label: string; value: string; min: string; max: string; note?: string }> = {
   area: {
     label: 'AREA',
@@ -1633,19 +1678,22 @@ const dimHelp: Record<string, { label: string; value: string; min: string; max: 
     label: 'ATTACK',
     value: '1 step の長さの中で立ち上がりに割く比率',
     min: '低い値では立ち上がりが短く、すぐ鳴り始めます。',
-    max: '高い値では立ち上がりが長く、フェードインに近くなります。'
+    max: '高い値では立ち上がりが長く、フェードインに近くなります。',
+    note: adsrRenderNote
   },
   decay_sustain: {
     label: 'DECAY',
     value: '1 step の長さの中で初期減衰に割く比率',
     min: '低い値では減衰区間が短く、すぐ sustain/release 側へ移ります。',
-    max: '高い値では減衰区間が長く、音量変化がゆっくりになります。'
+    max: '高い値では減衰区間が長く、音量変化がゆっくりになります。',
+    note: adsrRenderNote
   },
   release: {
     label: 'SUSTAIN/RELEASE',
     value: '1 step の長さの中で保持と余韻に割く比率',
     min: '低い値では音の末尾が短く切れやすくなります。',
-    max: '高い値では sustain と release が長くなり、余韻が残りやすくなります。'
+    max: '高い値では sustain と release が長くなり、余韻が残りやすくなります。',
+    note: adsrRenderNote
   }
 }
 
@@ -1783,7 +1831,8 @@ const buildGenHelp = (meta: GenRowMeta): RowHelp | undefined => {
       meta,
       `${info.label} の実値探索の中心です。候補値はまず target±target spread の窓で絞られ、その中から global / stream / conc の評価で最終選択されます。${info.value} を直接狙う入口になる値です。${dimDisabledNote(dim)}`,
       `${meta.min}：${info.min}`,
-      `${meta.max}：${info.max}`
+      `${meta.max}：${info.max}`,
+      info.note
     )
   }
 
@@ -1897,6 +1946,8 @@ const buildGenParamsFromRows = () => {
   result.note_register_freedom  = get('note_register_freedom')
   result.dissonance_target      = get('dissonance_target')
   result.future_bpm             = get('future_bpm')
+  result.legato_center          = get('legato_center')
+  result.legato_spread          = get('legato_spread')
 
   complexityDimensionKeys.forEach((key) => {
     result[`${key}_global`] = get(`${key}_global`)
@@ -1971,14 +2022,8 @@ const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
         const streamArr = Array.isArray(stepArr) ? stepArr[s] : null
         let rawVal: any = null
         if (Array.isArray(streamArr)) {
-          if (streamArr.length >= 13) {
+          if (streamArr.length >= 12) {
             rawVal = streamArr[strictIndex]
-          } else if (streamArr.length >= 11) {
-            rawVal = streamArr[contextInputIndexByKey[key as keyof typeof contextInputIndexByKey]]
-          } else if (streamArr.length >= 9) {
-            rawVal = streamArr[strictIndex]
-          } else if (streamArr.length >= 7) {
-            rawVal = streamArr[contextInputIndexByKey[key as keyof typeof contextInputIndexByKey]]
           }
         }
         if (d === 0) {
@@ -2013,10 +2058,15 @@ const applyGenParamsFromPayload = async (payload: any) => {
   }
   applyDimensionPolicyFromPayload(candidate.dimension_policy)
 
+  const getCandidateParam = (key: string) => {
+    if (key === 'future_bpm') return candidate.future_bpm ?? candidate.bpm
+    if (key === 'legato_center') return candidate.legato_center ?? candidate.legato ?? candidate.same_note_legato
+    if (key === 'legato_spread') return candidate.legato_spread
+    return candidate[key]
+  }
+
   const lengths = genRowMetas.map((meta) => {
-    const val = meta.key === 'future_bpm'
-      ? (candidate.future_bpm ?? candidate.bpm)
-      : candidate[meta.key]
+    const val = getCandidateParam(meta.key)
     return Array.isArray(val) ? val.length : (val != null ? 1 : 0)
   })
   const steps = Math.max(1, ...lengths)
@@ -2025,9 +2075,7 @@ const applyGenParamsFromPayload = async (payload: any) => {
   genSteps.value = steps
 
   genRows.value = genRowMetas.map((meta) => {
-    const rawVal = meta.key === 'future_bpm'
-      ? (candidate.future_bpm ?? candidate.bpm)
-      : candidate[meta.key]
+    const rawVal = getCandidateParam(meta.key)
     const arr = normalizeArray(rawVal).map((v: any) => (
       meta.key === 'future_bpm'
         ? normalizeBpm(v)
@@ -2066,6 +2114,8 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       bpm: futureBpm[0] ?? DEFAULT_BPM,
       future_bpm: futureBpm,
       stream_counts: genParams.stream_counts,
+      legato_center: genParams.legato_center,
+      legato_spread: genParams.legato_spread,
       initial_context: initialContext,
       initial_context_bpm: normalizeBpmSeries(initialContextBpm.value, contextSteps.value),
       dimension_policy: buildDimensionPolicyPayload(),

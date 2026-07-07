@@ -20,6 +20,7 @@
             <div><b>範囲:</b> {{ row.help.range }}</div>
             <div class="mt-1"> {{ row.help.atMin }}</div>
             <div class="mt-1"> {{ row.help.atMax }}</div>
+            <div v-if="row.help.note" class="mt-1"> {{ row.help.note }}</div>
           </div>
         </v-tooltip>
       </span>
