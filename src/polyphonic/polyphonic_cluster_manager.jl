@@ -26,6 +26,8 @@ const PolySet = Vector{Float64}
 """A subsequence (length == window_size)."""
 const PolySeq = Vector{PolySet}
 
+const RECENCY_MEMORY_SPAN::Float64 = 64.0
+
 """Cluster node."""
 mutable struct PolyClusterNode
   si::Vector{Int}                     # start indices (0-based)
@@ -126,9 +128,7 @@ mutable struct Manager
   cluster_quantity_cache::Dict{Int,Dict{Int,Float64}}
   cluster_complexity_cache::Dict{Int,Dict{Int,Float64}}
 
-  recency_tau_min::Float64
-  recency_tau_window_multiplier::Float64
-  recency_weight_strength::Float64
+  recency::Float64
 
   recording_mode::Bool
   journal::Vector{PolyJournalEntry}
@@ -160,9 +160,7 @@ function Manager(
   max_set_size::Int = last(Config.CHORD_SIZE_RANGE),
   point_distance_mode::Symbol = :set,
   point_axis_ranges::Vector{Float64} = Float64[],
-  recency_tau_min::Real = Config.DEFAULT_RECENCY_TAU_MIN,
-  recency_tau_window_multiplier::Real = Config.DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER,
-  recency_weight_strength::Real = Config.DEFAULT_RECENCY_WEIGHT_STRENGTH,
+  recency::Real = 0.0,
   scale_mode::Symbol = :range_fixed,
   contextual_min_width::Real = Config.DEFAULT_CONTEXTUAL_MIN_WIDTH,
   range_min::Real = Config.DEFAULT_RANGE_MIN,
@@ -222,9 +220,7 @@ function Manager(
     dist_cache,
     qty_cache,
     comp_cache,
-    max(float(recency_tau_min), 1.0),
-    max(float(recency_tau_window_multiplier), 0.0),
-    clamp(float(recency_weight_strength), 0.0, 1.0),
+    clamp(float(recency), 0.0, 1.0),
     false,
     PolyJournalEntry[],
     nothing
@@ -526,14 +522,17 @@ Identical to scalar TimeSeriesClusterManager, but uses polyphonic distances.
 """
 @inline cluster_quantity_score(cluster_size::Int, window_size::Int)::Float64 = float(cluster_size * window_size)
 
-@inline recency_tau_for_window(mgr::Manager, window_size::Int)::Float64 =
-  max(mgr.recency_tau_min, mgr.recency_tau_window_multiplier * float(max(window_size, 1)))
+@inline function recency_curve(x::Real)::Float64
+  r = clamp(float(x), 0.0, 1.0)
+  return r * r * (3.0 - 2.0 * r)
+end
 
-@inline function recency_weight(mgr::Manager, now_index::Int, start_index::Int, tau::Float64)::Float64
-  strength = mgr.recency_weight_strength
-  strength <= 0.0 && return 1.0
+@inline function recency_weight(mgr::Manager, now_index::Int, start_index::Int)::Float64
+  r = recency_curve(mgr.recency)
+  r <= 0.0 && return 1.0
   age = max(now_index - start_index, 0)
-  return (1.0 - strength) + (strength * exp(-float(age) / tau))
+  span = exp((1.0 - r) * log(RECENCY_MEMORY_SPAN))
+  return (1.0 - r) + (r * exp(-float(age) / span))
 end
 
 @inline function cluster_last_occurrence(node::PolyClusterNode)::Int
@@ -541,14 +540,14 @@ end
   return maximum(node.si)
 end
 
-@inline function cluster_recency_weight(mgr::Manager, node::PolyClusterNode, now_index::Int, tau::Float64)::Float64
-  return recency_weight(mgr, now_index, cluster_last_occurrence(node), tau)
+@inline function cluster_recency_weight(mgr::Manager, node::PolyClusterNode, now_index::Int)::Float64
+  return recency_weight(mgr, now_index, cluster_last_occurrence(node))
 end
 
-function recent_quantity_score(mgr::Manager, node::PolyClusterNode, window_size::Int, now_index::Int, tau::Float64)::Float64
+function recent_quantity_score(mgr::Manager, node::PolyClusterNode, window_size::Int, now_index::Int)::Float64
   total = 0.0
   @inbounds for s in node.si
-    total += recency_weight(mgr, now_index, s, tau)
+    total += recency_weight(mgr, now_index, s)
   end
   return total * float(window_size)
 end
@@ -557,8 +556,7 @@ function weighted_distance_score(
   mgr::Manager,
   cache::Dict{Tuple{Int,Int},Float64},
   same_ws::Dict{Int,PolyClusterNode},
-  now_index::Int,
-  tau::Float64
+  now_index::Int
 )::Float64
   weighted = 0.0
   weight_sum = 0.0
@@ -566,18 +564,18 @@ function weighted_distance_score(
     n1 = get(same_ws, key[1], nothing)
     n2 = get(same_ws, key[2], nothing)
     (n1 === nothing || n2 === nothing) && continue
-    w = sqrt(cluster_recency_weight(mgr, n1, now_index, tau) * cluster_recency_weight(mgr, n2, now_index, tau))
+    w = sqrt(cluster_recency_weight(mgr, n1, now_index) * cluster_recency_weight(mgr, n2, now_index))
     weighted += float(dist) * w
     weight_sum += w
   end
   return weight_sum > 0.0 ? (weighted / weight_sum) : 0.0
 end
 
-function weighted_quantity_score(mgr::Manager, same_ws::Dict{Int,PolyClusterNode}, window_size::Int, now_index::Int, tau::Float64)::Float64
+function weighted_quantity_score(mgr::Manager, same_ws::Dict{Int,PolyClusterNode}, window_size::Int, now_index::Int)::Float64
   total = 0.0
   for (_, node) in same_ws
     length(node.si) <= 1 && continue
-    total += recent_quantity_score(mgr, node, window_size, now_index, tau)
+    total += recent_quantity_score(mgr, node, window_size, now_index)
   end
   return total
 end
@@ -586,15 +584,14 @@ function weighted_complexity_score(
   mgr::Manager,
   c_cache::Dict{Int,Float64},
   same_ws::Dict{Int,PolyClusterNode},
-  now_index::Int,
-  tau::Float64
+  now_index::Int
 )::Float64
   weighted = 0.0
   weight_sum = 0.0
   for (cid, comp) in c_cache
     node = get(same_ws, cid, nothing)
     node === nothing && continue
-    w = cluster_recency_weight(mgr, node, now_index, tau)
+    w = cluster_recency_weight(mgr, node, now_index)
     weighted += float(comp) * w
     weight_sum += w
   end
@@ -931,11 +928,10 @@ function latest_cluster_usage_score(
     end
     target === nothing && continue
 
-    tau = recency_tau_for_window(mgr, window_size)
     local_usage = 0.0
     @inbounds for s in target.si
       s == latest_start && continue
-      local_usage += recency_weight(mgr, now_index, s, tau)
+      local_usage += recency_weight(mgr, now_index, s)
     end
     usage += local_usage / sqrt(float(max(window_size, 1)))
   end
@@ -1020,7 +1016,7 @@ function simulate_add_and_calculate_all(mgr::Manager, candidate::PolySet)
         record!(mgr, PJCacheWriteComp(c_cache, cid, old_c))
       end
 
-      if mgr.recency_weight_strength <= 0.0
+      if mgr.recency <= 0.0
         if !isempty(cache)
           sum_distances += (sum(values(cache)) / float(window_size))
         end
@@ -1031,13 +1027,12 @@ function simulate_add_and_calculate_all(mgr::Manager, candidate::PolySet)
           sum_complexities += sum(values(c_cache))
         end
       else
-        tau = recency_tau_for_window(mgr, window_size)
         if !isempty(cache)
-          sum_distances += weighted_distance_score(mgr, cache, same_ws, length(mgr.data) - 1, tau)
+          sum_distances += weighted_distance_score(mgr, cache, same_ws, length(mgr.data) - 1)
         end
-        sum_quantities += weighted_quantity_score(mgr, same_ws, window_size, length(mgr.data) - 1, tau)
+        sum_quantities += weighted_quantity_score(mgr, same_ws, window_size, length(mgr.data) - 1)
         if !isempty(c_cache)
-          sum_complexities += weighted_complexity_score(mgr, c_cache, same_ws, length(mgr.data) - 1, tau)
+          sum_complexities += weighted_complexity_score(mgr, c_cache, same_ws, length(mgr.data) - 1)
         end
       end
     end
@@ -1220,7 +1215,7 @@ function process_new_clusters!(
     record!(mgr, PJCcAdd(parent.cc, mgr.cluster_id_counter))
 
     add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_distance, new_length, mgr.cluster_id_counter)
-    if mgr.recency_weight_strength > 0.0
+    if mgr.recency > 0.0
       add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_quantities, new_length, mgr.cluster_id_counter)
     end
     push!(mgr.tasks, (vcat(copy(keys_to_parent), [mgr.cluster_id_counter]), new_length))

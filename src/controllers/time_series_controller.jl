@@ -332,40 +332,6 @@ function _note_vol_points_to_rows(points::Vector{Vector{Float64}})::Vector{Vecto
   return Vector{Vector{Float64}}([notes, vols])
 end
 
-function _normalize_note_vol_points_for_octave_invariance(points::Vector{Vector{Float64}})::Vector{Vector{Float64}}
-  normalized = Vector{Vector{Float64}}()
-  sizehint!(normalized, length(points))
-
-  anchor_note = nothing
-  for pt in points
-    vol = length(pt) >= 2 ? _parse_float(pt[2]) : 0.0
-    vol > 0 || continue
-    note = length(pt) >= 1 ? _parse_float(pt[1]) : 0.0
-    anchor_note = note
-    break
-  end
-
-  if anchor_note === nothing
-    for pt in points
-      vol = length(pt) >= 2 ? _parse_float(pt[2]) : 0.0
-      push!(normalized, Float64[0.0, vol])
-    end
-    return normalized
-  end
-
-  for pt in points
-    note = length(pt) >= 1 ? _parse_float(pt[1]) : 0.0
-    vol = length(pt) >= 2 ? _parse_float(pt[2]) : 0.0
-    if vol > 0
-      pitch_class = mod(Int(round(note - anchor_note)), 12)
-      push!(normalized, Float64[pitch_class, vol])
-    else
-      push!(normalized, Float64[0.0, 0.0])
-    end
-  end
-  return normalized
-end
-
 function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
   db_series_all = Any[]
   measurement = string(get(p, "measurement", get(ENV, "INFLUX_MEASUREMENT", "timeseries")))
@@ -376,7 +342,6 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
   min_window = Config.SUBSEQUENCE_MIN_WINDOW_SIZE
   min_match_window = _parse_int(get(p, "min_match_window", Config.DEFAULT_QUERY_MIN_MATCH_WINDOW))
   max_series = _parse_int(get(p, "max_series", 0))
-  search_octave_invariant = _parse_bool(get(p, "search_octave_invariant", false), false)
 
   clusters_per_series = Dict{Int,Any}()
   matched_series = Any[]
@@ -422,8 +387,7 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
   fetched_series_count = 0
   fetched_point_count = 0
 
-  matching_query_points = search_octave_invariant ? _normalize_note_vol_points_for_octave_invariance(query_points) : deepcopy(query_points)
-  query_seed_manager = _new_note_vol_manager(deepcopy(matching_query_points), merge_threshold, min_window)
+  query_seed_manager = _new_note_vol_manager(deepcopy(query_points), merge_threshold, min_window)
   PolyphonicClusterManager.PolyphonicClusterManager.process_data!(query_seed_manager)
 
   series_scan_count = 0
@@ -444,10 +408,9 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
       println("[query_db] $(series_scan_count)/$(length(series_stats)) $(series_label)")
       flush(stdout)
       db_series_values = series_info["values"]::Vector{Vector{Float64}}
-      matching_db_series_values = search_octave_invariant ? _normalize_note_vol_points_for_octave_invariance(db_series_values) : deepcopy(db_series_values)
       manager = deepcopy(query_seed_manager)
 
-      for v in matching_db_series_values
+      for v in db_series_values
         PolyphonicClusterManager.add_data_point_permanently!(manager, copy(v))
       end
 
@@ -2017,6 +1980,39 @@ function _parse_csv_floats(s::AbstractString)
   return [parse(Float64, strip(x)) for x in split(s, ",") if !isempty(strip(x))]
 end
 
+function _unit_series_from_param(raw, len::Int; fallback::Real=0.0)::Vector{Float64}
+  len = max(len, 0)
+  vals = Float64[]
+  if raw isa AbstractVector
+    sizehint!(vals, length(raw))
+    for x in raw
+      push!(vals, clamp(_parse_float(x), 0.0, 1.0))
+    end
+  elseif raw isa AbstractString
+    vals = [clamp(v, 0.0, 1.0) for v in _parse_csv_floats(raw)]
+  elseif raw !== nothing
+    push!(vals, clamp(_parse_float(raw), 0.0, 1.0))
+  end
+
+  if isempty(vals)
+    vals = [clamp(float(fallback), 0.0, 1.0)]
+  end
+  if len == 0
+    return Float64[]
+  end
+
+  out = Vector{Float64}(undef, len)
+  for i in 1:len
+    out[i] = vals[min(i, length(vals))]
+  end
+  return out
+end
+
+function _apply_recency_to_cluster_manager!(mgr::PolyphonicClusterManager.Manager, recency01::Real)
+  mgr.recency = clamp(float(recency01), 0.0, 1.0)
+  return nothing
+end
+
 # Rails-like normalize (0..1 with weighting)
 function normalize_scores(raw_values::Vector{Float64}, is_complex_when_larger::Bool)
   if isempty(raw_values)
@@ -2184,9 +2180,8 @@ function generate()
   complexity_targets = _parse_csv_floats(string(get(p, "complexity_transition", "")))
   merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", Config.DEFAULT_MERGE_THRESHOLD_RATIO))
   contextual_min_width = _parse_float(get(p, "contextual_min_width", Config.DEFAULT_CONTEXTUAL_MIN_WIDTH))
-  recency_tau_min = max(_parse_float(get(p, "recency_tau_min", Config.DEFAULT_RECENCY_TAU_MIN)), 1.0)
-  recency_tau_window_multiplier = max(_parse_float(get(p, "recency_tau_window_multiplier", Config.DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER)), 0.0)
-  recency_weight_strength = clamp(_parse_float(get(p, "recency_weight_strength", Config.DEFAULT_RECENCY_WEIGHT_STRENGTH)), 0.0, 1.0)
+  recency_raw = get(p, "recency_center", get(p, "recency", nothing))
+  recency_series = _unit_series_from_param(recency_raw, length(complexity_targets); fallback=0.0)
 
   candidate_min_master = _parse_int(get(p, "range_min", Config.DEFAULT_RANGE_MIN))
   candidate_max_master = _parse_int(get(p, "range_max", Config.DEFAULT_RANGE_MAX))
@@ -2203,9 +2198,7 @@ function generate()
     range_min = candidate_min_master,
     range_max = candidate_max_master,
     contextual_min_width = contextual_min_width,
-    recency_tau_min = recency_tau_min,
-    recency_tau_window_multiplier = recency_tau_window_multiplier,
-    recency_weight_strength = recency_weight_strength
+    recency = 0.0
   )
 
   PolyphonicClusterManager.process_data!(manager)
@@ -2219,7 +2212,9 @@ function generate()
 
   results = copy(first_elements)
 
-  for target_val in complexity_targets
+  for (step_idx, target_val) in enumerate(complexity_targets)
+    _apply_recency_to_cluster_manager!(manager, recency_series[step_idx])
+
     candidates = collect(candidate_min_master:candidate_max_master)
     raw_dist = Float64[]
     raw_quantity = Float64[]
@@ -2737,14 +2732,15 @@ function generate_polyphonic()
   ctx_raw = get(gp, "initial_context", Any[])
 
   # Stream record (REQUIRED):
-  #   strict full: [abs_notes::Vector{Int}, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range::Int, density::Float64, sustain::Float64, legato::Float64]
+  #   strict full: [abs_notes::Vector{Int}, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range::Int, density::Float64, sustain::Float64]
+  #   strict simplified: [abs_notes::Vector{Int}, vol, brightness, noise, harmonicity, attack, decay_sustain, release]
   #
   # initial_context MUST be a 3-level array:
   #   initial_context[step][stream] = stream_record
   results = Vector{Vector{Vector{Any}}}()
 
   if !(ctx_raw isa AbstractVector)
-    error("generate_polyphonic.initial_context must be an Array of steps; each step is an Array of streams; each stream must be strict [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato].")
+    error("generate_polyphonic.initial_context must be an Array of steps; each step is an Array of streams; each stream must be strict [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, ...].")
   end
 
   for step in ctx_raw
@@ -2770,47 +2766,12 @@ function generate_polyphonic()
       Config.UNIT_MID,
       Config.CHORD_RANGE_VALUE_MIN,
       Config.UNIT_MIN,
-      Config.UNIT_MID,
-      Config.UNIT_MIN
+      Config.UNIT_MID
     ]])
   end
 
   initial_context_bpm = _normalize_bpm_series(get(gp, "initial_context_bpm", nothing), length(results); fallback=bpm)
   future_bpm = _normalize_bpm_series(get(gp, "future_bpm", nothing), length(stream_counts); fallback=bpm)
-  function _normalize_unit_series(raw, n::Int; fallback::Float64=0.0)::Vector{Float64}
-    target_len = max(n, 0)
-    target_len == 0 && return Float64[]
-    vals = Float64[]
-    if raw isa AbstractVector
-      for x in raw
-        push!(vals, clamp(_parse_float(x), 0.0, 1.0))
-      end
-    elseif raw !== nothing
-      push!(vals, clamp(_parse_float(raw), 0.0, 1.0))
-    end
-    isempty(vals) && push!(vals, clamp(fallback, 0.0, 1.0))
-    out = Float64[]
-    fallback_val = vals[end]
-    for i in 1:target_len
-      push!(out, i <= length(vals) ? vals[i] : fallback_val)
-    end
-    return out
-  end
-  legacy_legato_raw = get(gp, "legato", get(gp, "same_note_legato", nothing))
-  legato_center_series = _normalize_unit_series(get(gp, "legato_center", legacy_legato_raw), length(stream_counts); fallback=0.0)
-  legato_spread_series = _normalize_unit_series(get(gp, "legato_spread", nothing), length(stream_counts); fallback=0.0)
-
-  function _legato_values_for_step(step_idx::Int, desired_stream_count::Int)::Vector{Float64}
-    center = step_idx <= length(legato_center_series) ? legato_center_series[step_idx] : 0.0
-    spread = step_idx <= length(legato_spread_series) ? legato_spread_series[step_idx] : 0.0
-    return generate_centered_targets(desired_stream_count, center, spread)
-  end
-
-  function _legato_value_for_stream(step_idx::Int, stream_idx::Int, desired_stream_count::Int)::Float64
-    vals = _legato_values_for_step(step_idx, desired_stream_count)
-    isempty(vals) && return 0.0
-    return vals[clamp(stream_idx, 1, length(vals))]
-  end
   initial_step_durations = _step_durations_from_bpm_series(initial_context_bpm)
   future_step_durations = _step_durations_from_bpm_series(future_bpm)
   initial_step_onsets = _step_onsets_from_durations(initial_step_durations)
@@ -2832,7 +2793,6 @@ function generate_polyphonic()
   chord_range_idx = 9
   density_idx     = 10
   sustain_idx     = 11
-  legato_idx      = 12
 
   # --- MIDI range (keep consistent across AREA/tmp_anchor and NOTE) ---
   ABS_MIN = Int(Config.abs_pitch_min())
@@ -2862,7 +2822,6 @@ function generate_polyphonic()
     s in ("attack",) && return "attack"
     s in ("decay_sustain",) && return "decay_sustain"
     s in ("release",) && return "release"
-    s in ("legato", "tie", "same_note_legato") && return "legato"
     return nothing
   end
 
@@ -2871,14 +2830,14 @@ function generate_polyphonic()
       return float(clamp(_parse_int(raw), CHORD_RANGE_MIN, CHORD_RANGE_MAX))
     elseif key == "sustain"
       return _quantize_sustain(raw)
-    elseif key == "area" || key == "density" || key == "vol" || key == "brightness" || key == "noise" || key == "harmonicity" || key == "attack" || key == "decay_sustain" || key == "release" || key == "legato"
+    elseif key == "area" || key == "density" || key == "vol" || key == "brightness" || key == "noise" || key == "harmonicity" || key == "attack" || key == "decay_sustain" || key == "release"
       return clamp(_parse_float(raw), 0.0, 1.0)
     else
       return _parse_float(raw)
     end
   end
 
-  managed_dims = ["area", "chord_range", "density", "sustain", "vol", "brightness", "noise", "harmonicity", "attack", "decay_sustain", "release", "legato"]
+  managed_dims = ["area", "chord_range", "density", "sustain", "vol", "brightness", "noise", "harmonicity", "attack", "decay_sustain", "release"]
   dim_accept = Dict{String,Bool}()
   dim_fixed = Dict{String,Float64}()
   dim_fixed_source = Dict{String,String}()
@@ -2904,7 +2863,6 @@ function generate_polyphonic()
     "attack" => Dict("accept_params" => false, "fixed_value" => 0.5),
     "decay_sustain" => Dict("accept_params" => false, "fixed_value" => 0.5),
     "release" => Dict("accept_params" => false, "fixed_value" => 0.5),
-    "legato" => Dict("accept_params" => false, "fixed_value" => 0.0),
   )
   for key in managed_dims
     d = default_dim_policy[key]
@@ -3008,8 +2966,7 @@ function generate_polyphonic()
       key == "release" ? release_idx :
       key == "chord_range" ? chord_range_idx :
       key == "density" ? density_idx :
-      key == "sustain" ? sustain_idx :
-      key == "legato" ? legato_idx : 0
+      key == "sustain" ? sustain_idx : 0
 
     if idx == 0
       return dim_fixed[key]
@@ -3059,9 +3016,6 @@ function generate_polyphonic()
     if !get(dim_accept, "sustain", true)
       st[sustain_idx] = _quantize_sustain(_resolved_fixed_value_for_stream("sustain", stream_idx))
     end
-    if !get(dim_accept, "legato", true)
-      st[legato_idx] = clamp(_resolved_fixed_value_for_stream("legato", stream_idx), 0.0, 1.0)
-    end
     return st
   end
 
@@ -3083,8 +3037,8 @@ function generate_polyphonic()
     return out
   end
   function _normalize_stream!(st::Vector{Any})
-    # Accept strict stream records only: [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato]
-    length(st) >= legato_idx || error("generate_polyphonic.initial_context stream record must be strict [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato].")
+    # Accept strict stream records only: [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain]
+    length(st) >= 6 || error("generate_polyphonic.initial_context stream record must be strict [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, ...].")
 
     abs_notes = Int[]
     vol = 1.0
@@ -3097,28 +3051,39 @@ function generate_polyphonic()
     cr  = 0
     den = 0.0
     sus = 0.5
-    legato = 0.0
 
     if st[1] isa AbstractVector
       # strict
       abs_notes = _normalize_abs_notes(st[1])
-      vol = clamp(_parse_float(st[2]), 0.0, 1.0)
-      brightness = clamp(_parse_float(st[3]), 0.0, 1.0)
-      noise = clamp(_parse_float(st[4]), 0.0, 1.0)
-      harmonicity = clamp(_parse_float(st[5]), 0.0, 1.0)
-      attack = clamp(_parse_float(st[6]), 0.0, 1.0)
-      decay_sustain = clamp(_parse_float(st[7]), 0.0, 1.0)
-      release = clamp(_parse_float(st[8]), 0.0, 1.0)
-      cr  = max(_parse_int(st[9]), 0)
-      den = clamp(_parse_float(st[10]), 0.0, 1.0)
-      sus = _quantize_sustain(st[11])
-      legato = clamp(_parse_float(st[12]), 0.0, 1.0)
+      vol = clamp(_parse_float(length(st) >= 2 ? st[2] : 1.0), 0.0, 1.0)
+      brightness = clamp(_parse_float(length(st) >= 3 ? st[3] : 0.5), 0.0, 1.0)
+      noise = clamp(_parse_float(length(st) >= 4 ? st[4] : 0.5), 0.0, 1.0)
+      harmonicity = clamp(_parse_float(length(st) >= 5 ? st[5] : 0.5), 0.0, 1.0)
+      attack = clamp(_parse_float(length(st) >= 6 ? st[6] : 0.5), 0.0, 1.0)
+      decay_sustain = clamp(_parse_float(length(st) >= 7 ? st[7] : 0.5), 0.0, 1.0)
+      release = clamp(_parse_float(length(st) >= 8 ? st[8] : 1.0), 0.0, 1.0)
+      if length(st) >= 11
+        # full strict format
+        cr  = max(_parse_int(st[9]), 0)
+        den = clamp(_parse_float(st[10]), 0.0, 1.0)
+        sus = _quantize_sustain(st[11])
+      elseif length(st) == 10
+        # strict format without sustain
+        cr  = max(_parse_int(st[9]), 0)
+        den = clamp(_parse_float(st[10]), 0.0, 1.0)
+        sus = 0.5
+      elseif length(st) >= 9
+        # strict format with sustain only
+        sus = _quantize_sustain(st[9])
+      else
+        sus = 0.5
+      end
     else
-      error("generate_polyphonic.initial_context stream record must be strict [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato].")
+      error("generate_polyphonic.initial_context stream record must be strict [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, ...].")
     end
 
     empty!(st)
-    push!(st, abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, cr, den, sus, legato)
+    push!(st, abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, cr, den, sus)
     return st
   end
 
@@ -3157,10 +3122,37 @@ function generate_polyphonic()
   end
 
   merge_threshold_ratio = _parse_float(get(gp, "merge_threshold_ratio", Config.DEFAULT_POLYPHONIC_MERGE_THRESHOLD_RATIO))
-  recency_tau_min = max(_parse_float(get(gp, "recency_tau_min", Config.DEFAULT_RECENCY_TAU_MIN)), 1.0)
-  recency_tau_window_multiplier = max(_parse_float(get(gp, "recency_tau_window_multiplier", Config.DEFAULT_RECENCY_TAU_WINDOW_MULTIPLIER)), 0.0)
-  recency_weight_strength = clamp(_parse_float(get(gp, "recency_weight_strength", Config.DEFAULT_RECENCY_WEIGHT_STRENGTH)), 0.0, 1.0)
+  recency_center_series = _unit_series_from_param(get(gp, "recency_center", nothing), length(stream_counts); fallback=0.0)
+  recency_spread_series = _unit_series_from_param(get(gp, "recency_spread", nothing), length(stream_counts); fallback=0.0)
   min_window = Config.POLYPHONIC_MIN_WINDOW_SIZE
+
+  function _recency_values_for_step(step_idx::Int, desired_stream_count::Int)::Vector{Float64}
+    center = step_idx <= length(recency_center_series) ? recency_center_series[step_idx] : 0.0
+    spread = step_idx <= length(recency_spread_series) ? recency_spread_series[step_idx] : 0.0
+    return generate_centered_targets(desired_stream_count, center, spread)
+  end
+
+  function _apply_step_recency_to_dimension_managers!(mgrs, step_idx::Int, desired_stream_count::Int)
+    recencies = _recency_values_for_step(step_idx, desired_stream_count)
+    mean_recency = isempty(recencies) ? 0.0 : sum(recencies) / float(length(recencies))
+
+    if haskey(mgrs, :global)
+      _apply_recency_to_cluster_manager!(mgrs[:global], mean_recency)
+    end
+
+    if haskey(mgrs, :stream)
+      stream_mgr = mgrs[:stream]
+      stream_mgr.recency = clamp(mean_recency, 0.0, 1.0)
+
+      actives = MultiStreamManager.active_stream_containers(stream_mgr, desired_stream_count)
+      for (i, container) in enumerate(actives)
+        recency = i <= length(recencies) ? recencies[i] : mean_recency
+        _apply_recency_to_cluster_manager!(container.manager, recency)
+      end
+    end
+
+    return nothing
+  end
 
   function pad_history!(mat, fallback_row)
     if length(mat) < (min_window + 1)
@@ -3398,9 +3390,7 @@ function generate_polyphonic()
       use_complexity_mapping=true,
       value_range=value_range,
       track_presence=track_presence,
-      recency_tau_min=recency_tau_min,
-      recency_tau_window_multiplier=recency_tau_window_multiplier,
-      recency_weight_strength=recency_weight_strength
+      recency=0.0
     )
     g_mgr = PolyphonicClusterManager.Manager(
       global_series_from_matrix(global_history_src, offset),
@@ -3413,9 +3403,7 @@ function generate_polyphonic()
       range_min=float(value_min),
       range_max=float(value_max) + (float(global_row_width - 1) * offset),
       max_set_size=global_row_width,
-      recency_tau_min=recency_tau_min,
-      recency_tau_window_multiplier=recency_tau_window_multiplier,
-      recency_weight_strength=recency_weight_strength
+      recency=0.0
     )
     PolyphonicClusterManager.process_data!(g_mgr)
     PolyphonicClusterManager.update_caches_permanently(g_mgr)
@@ -3502,9 +3490,7 @@ function generate_polyphonic()
     use_complexity_mapping=true,
     value_range=collect(ABS_MIN:ABS_MAX),
     track_presence=true,
-    recency_tau_min=recency_tau_min,
-    recency_tau_window_multiplier=recency_tau_window_multiplier,
-    recency_weight_strength=recency_weight_strength
+    recency=0.0
   )
   g_note = PolyphonicClusterManager.Manager(
     note_global_series,
@@ -3515,9 +3501,7 @@ function generate_polyphonic()
     range_min=note_min,
     range_max=note_max,
     max_set_size=1,
-    recency_tau_min=recency_tau_min,
-    recency_tau_window_multiplier=recency_tau_window_multiplier,
-    recency_weight_strength=recency_weight_strength
+    recency=0.0
   )
   PolyphonicClusterManager.process_data!(g_note)
   PolyphonicClusterManager.update_caches_permanently(g_note)
@@ -3690,6 +3674,7 @@ function generate_polyphonic()
     plan = MultiStreamManager.build_stream_lifecycle_plan(lifecycle_mgr, desired_stream_count; target=st_target, spread=st_spread)
     for (_k, mgrs) in managers
       MultiStreamManager.apply_stream_lifecycle_plan!(mgrs[:stream], plan)
+      _apply_step_recency_to_dimension_managers!(mgrs, step_idx, desired_stream_count)
     end
 
     current_step_values = [
@@ -3704,8 +3689,7 @@ function generate_polyphonic()
         clamp(_resolved_fixed_value_for_stream("release", s_i), 0.0, 1.0),
         Int(round(clamp(_resolved_fixed_value_for_stream("chord_range", s_i), float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))),
         clamp(_resolved_fixed_value_for_stream("density", s_i), 0.0, 1.0),
-        _quantize_sustain(_resolved_fixed_value_for_stream("sustain", s_i)),
-        _legato_value_for_stream(step_idx, s_i, desired_stream_count)
+        _quantize_sustain(_resolved_fixed_value_for_stream("sustain", s_i))
       ] for s_i in 1:desired_stream_count
     ]
     step_decisions = Dict{String,Any}()
@@ -4303,7 +4287,6 @@ end
       vec[chord_range_idx] = (!get(dim_accept, "chord_range", true) && is_generated_step) ? Int(round(clamp(_resolved_fixed_value_for_stream("chord_range", stream_idx), float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))) : clamp(_parse_int(vec[chord_range_idx]), CHORD_RANGE_MIN, CHORD_RANGE_MAX)
       vec[density_idx] = (!get(dim_accept, "density", true) && is_generated_step) ? clamp(_resolved_fixed_value_for_stream("density", stream_idx), 0.0, 1.0) : clamp(_parse_float(vec[density_idx]), 0.0, 1.0)
       vec[sustain_idx] = (!get(dim_accept, "sustain", true) && is_generated_step) ? _quantize_sustain(_resolved_fixed_value_for_stream("sustain", stream_idx)) : _quantize_sustain(vec[sustain_idx])
-      vec[legato_idx] = is_generated_step ? clamp(_legato_value_for_stream(step_idx - base_step_index, stream_idx, length(step)), 0.0, 1.0) : clamp(_parse_float(length(vec) >= legato_idx ? vec[legato_idx] : 0.0), 0.0, 1.0)
     end
   end
 
@@ -4334,14 +4317,10 @@ end
       Float64[clamp(_parse_float(st[release_idx]), 0.0, 1.0) for st in step]
       for step in results
     ],
-    "legato" => Any[
-      Float64[clamp(_parse_float(length(st) >= legato_idx ? st[legato_idx] : 0.0), 0.0, 1.0) for st in step]
-      for step in results
-    ],
   )
 
   cluster_payload = Dict{String,Any}()
-  for key in ["note", "area", "vol", "brightness", "noise", "harmonicity", "attack", "decay_sustain", "release", "chord_range", "density", "sustain", "legato"]
+  for key in ["note", "area", "vol", "brightness", "noise", "harmonicity", "attack", "decay_sustain", "release", "chord_range", "density", "sustain"]
     mgrs = get(managers, key, nothing)
     mgrs === nothing && continue
 

@@ -1232,6 +1232,36 @@ const genRowMetas: GenRowMeta[] = [
       "1：stream間の legato 差が最大になります。"
     )
   },
+  {
+    shortName: "REC C",
+    name: "Recency Center",
+    key: "recency_center",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "候補評価で直近の履歴をどれくらい強く見るかの中心です。複雑度を低くした時、値が高いほど直前に近い音や動きが選ばれやすくなります。",
+      "0：通常の履歴評価に近く、昔のパターンも比較的見ます。",
+      "1：直近を強く見ます。複雑度が低い時は反復や近い動きが出やすくなります。"
+    )
+  },
+  {
+    shortName: "REC S",
+    name: "Recency Spread",
+    key: "recency_spread",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "Recency Center を中心に、streamごとの直近重視の強さをどれだけ広げるかです。center±spread/2 をstream数ぶん線形に割り当てます。",
+      "0：全streamが同じ直近重視になります。",
+      "1：直近を強く見るstreamと、履歴全体を見るstreamが分かれます。"
+    )
+  },
 
   // =========================================================
   // stream strength control (vol side)
@@ -1948,6 +1978,8 @@ const buildGenParamsFromRows = () => {
   result.future_bpm             = get('future_bpm')
   result.legato_center          = get('legato_center')
   result.legato_spread          = get('legato_spread')
+  result.recency_center         = get('recency_center')
+  result.recency_spread         = get('recency_spread')
 
   complexityDimensionKeys.forEach((key) => {
     result[`${key}_global`] = get(`${key}_global`)
@@ -2062,6 +2094,8 @@ const applyGenParamsFromPayload = async (payload: any) => {
     if (key === 'future_bpm') return candidate.future_bpm ?? candidate.bpm
     if (key === 'legato_center') return candidate.legato_center ?? candidate.legato ?? candidate.same_note_legato
     if (key === 'legato_spread') return candidate.legato_spread
+    if (key === 'recency_center') return candidate.recency_center
+    if (key === 'recency_spread') return candidate.recency_spread
     return candidate[key]
   }
 
@@ -2116,6 +2150,8 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       stream_counts: genParams.stream_counts,
       legato_center: genParams.legato_center,
       legato_spread: genParams.legato_spread,
+      recency_center: genParams.recency_center,
+      recency_spread: genParams.recency_spread,
       initial_context: initialContext,
       initial_context_bpm: normalizeBpmSeries(initialContextBpm.value, contextSteps.value),
       dimension_policy: buildDimensionPolicyPayload(),

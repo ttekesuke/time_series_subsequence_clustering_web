@@ -36,6 +36,15 @@
             />
           </div>
 
+          <div class="mb-4">
+            <GridContainer
+              v-model:rows="recencyRows"
+              v-model:steps="recencySteps"
+              :showRowsLength="false"
+              :showColsLength="true"
+            />
+          </div>
+
           <v-row class="mt-4">
             <v-col cols="2">
               <v-text-field label="range min" type="number" v-model.number="rangeMin"></v-text-field>
@@ -49,34 +58,6 @@
                 type="number"
                 v-model.number="mergeThreshold"
                 min="0" max="1" step="0.01"
-              ></v-text-field>
-            </v-col>
-            <v-col cols="2">
-              <v-text-field
-                label="recency strength"
-                type="number"
-                v-model.number="recencyWeightStrength"
-                min="0"
-                max="1"
-                step="0.01"
-              ></v-text-field>
-            </v-col>
-            <v-col cols="2">
-              <v-text-field
-                label="recency tau min"
-                type="number"
-                v-model.number="recencyTauMin"
-                min="1"
-                step="1"
-              ></v-text-field>
-            </v-col>
-            <v-col cols="2">
-              <v-text-field
-                label="recency tau multiplier"
-                type="number"
-                v-model.number="recencyTauWindowMultiplier"
-                min="0"
-                step="1"
               ></v-text-field>
             </v-col>
             <v-col cols="12">
@@ -143,11 +124,23 @@ const rows = ref<GridRowData[]>([
       isInt: false,
       step: 0.01
     }
+  },
+  {
+    name: 'recencyCenter',
+    shortName: 'Recency Center',
+    data: Array(31).fill(0),
+    config: {
+      min: 0,
+      max: 1,
+      isInt: false,
+      step: 0.01
+    }
   }
 ])
 // computed mappings for two separate GridContainer instances
 const firstSteps = ref(3)
 const complexitySteps = ref(31)
+const recencySteps = ref(31)
 
 const fallbackFirstRow = (): GridRowData => ({
   name: 'firstElements',
@@ -163,6 +156,13 @@ const fallbackComplexityRow = (): GridRowData => ({
   config: { min: 0, max: 1, isInt: false, step: 0.01 }
 })
 
+const fallbackRecencyRow = (): GridRowData => ({
+  name: 'recencyCenter',
+  shortName: 'Recency Center',
+  data: Array(recencySteps.value).fill(0),
+  config: { min: 0, max: 1, isInt: false, step: 0.01 }
+})
+
 const firstRows = computed({
   get: () => [rows.value[0] || fallbackFirstRow()],
   set: (v) => { rows.value[0] = (v && v[0]) ? v[0] : (rows.value[0] || fallbackFirstRow()) }
@@ -171,10 +171,11 @@ const complexityRows = computed({
   get: () => [rows.value[1] || fallbackComplexityRow()],
   set: (v) => { rows.value[1] = (v && v[0]) ? v[0] : (rows.value[1] || fallbackComplexityRow()) }
 })
+const recencyRows = computed({
+  get: () => [rows.value[2] || fallbackRecencyRow()],
+  set: (v) => { rows.value[2] = (v && v[0]) ? v[0] : (rows.value[2] || fallbackRecencyRow()) }
+})
 const mergeThreshold = ref(0.02)
-const recencyWeightStrength = ref(0.1)
-const recencyTauMin = ref(64)
-const recencyTauWindowMultiplier = ref(16)
 const loading = ref(false)
 
 const handleGenerateTimeseries = async () => {
@@ -183,6 +184,7 @@ const handleGenerateTimeseries = async () => {
     // read values from rows: firstElements row and complexityTransition row
     const firstElems = (rows.value[0] && Array.isArray(rows.value[0].data)) ? rows.value[0].data.join(',') : ''
     const complexity = (rows.value[1] && Array.isArray(rows.value[1].data)) ? rows.value[1].data.join(',') : ''
+    const recencyCenter = (rows.value[2] && Array.isArray(rows.value[2].data)) ? rows.value[2].data.join(',') : ''
     const payload = {
       generate: {
         complexity_transition: complexity,
@@ -190,9 +192,7 @@ const handleGenerateTimeseries = async () => {
         range_min: rangeMin.value,
         range_max: rangeMax.value,
         merge_threshold_ratio: mergeThreshold.value,
-        recency_weight_strength: recencyWeightStrength.value,
-        recency_tau_min: recencyTauMin.value,
-        recency_tau_window_multiplier: recencyTauWindowMultiplier.value,
+        recency_center: recencyCenter,
         job_id: props.jobId
       }
     }

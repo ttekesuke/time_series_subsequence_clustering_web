@@ -26,9 +26,7 @@
     "merge_threshold_ratio": 0.3,
     "range_min": 0,
     "range_max": 9,
-    "recency_weight_strength": 0.1,
-    "recency_tau_min": 64,
-    "recency_tau_window_multiplier": 16
+    "recency_center": "0.0,0.5,1.0,0.5,0.0"
   }
 }
 ```
@@ -46,13 +44,10 @@
 - `generate.range_min`, `generate.range_max`
   - 候補値の範囲です。
   - 例えば `0..9` なら各ステップで候補 `0,1,2,...,9` を全て試算します。
-- `generate.recency_weight_strength`
-  - 直近性ウェイトの強さです。
-  - `0.0` なら旧来の全履歴集計、`1.0` なら直近性を最大反映します。
-- `generate.recency_tau_min`
-  - 直近性の時定数の下限です。
-- `generate.recency_tau_window_multiplier`
-  - window size から時定数を作る倍率です。
+- `generate.recency_center`
+  - CSV 文字列または配列です。
+  - 各 step で直近の履歴をどれくらい強く見るかを 0.0 から 1.0 で指定します。
+  - 未指定なら全 step で `0.0` です。
 
 `contextual_min_width` も読み込まれますが、現在の `generate()` は `scale_mode = :range_fixed` なので、距離スケールには `range_min/range_max` が使われます。
 
@@ -190,32 +185,51 @@ abs(candidate_score - target_val)
 
 ## 8. 直近性ウェイト
 
-`recency_weight_strength > 0` の場合、候補追加後の集計で直近のクラスタほど重く扱います。
+`recency_center > 0` の場合、候補追加後の集計で直近のクラスタほど重く扱います。
 
-時定数は window size ごとに次で決まります。
+ユーザ入力 `x` はそのまま直線では使わず、次の smoothstep カーブで内部値 `r` に変換します。
 
 ```text
-tau = max(recency_tau_min, recency_tau_window_multiplier * window_size)
+r = x * x * (3 - 2 * x)
+```
+
+`r` からそのまま直近性ウェイトを作ります。
+
+```text
+span = exp((1 - r) * log(64))
+weight = (1 - r) + r * exp(-age / span)
 ```
 
 開始 index `start_index` の重みは次です。
 
 ```text
 age = now_index - start_index
-weight = (1 - strength) + strength * exp(-age / tau)
+weight = (1 - r) + r * exp(-age / span)
 ```
 
 例:
 
 ```text
-strength = 0.1
-tau = 64
-age = 0   -> weight = 1.0
-age = 64  -> weight = 0.9 + 0.1 * exp(-1) = 0.9368
-age = 128 -> weight = 0.9 + 0.1 * exp(-2) = 0.9135
+recency_center = 0.0
+r = 0.0
+age がいくつでも weight = 1.0
+
+recency_center = 0.5
+r = 0.5
+span = 8
+age = 0  -> weight = 1.0
+age = 8  -> weight = 0.5 + 0.5 * exp(-1) = 0.6839
+age = 16 -> weight = 0.5 + 0.5 * exp(-2) = 0.5677
+
+recency_center = 1.0
+r = 1.0
+span = 1
+age = 0 -> weight = 1.0
+age = 1 -> weight = exp(-1) = 0.3679
+age = 2 -> weight = exp(-2) = 0.1353
 ```
 
-`strength=0.0` なら常に重み `1.0` になり、旧来の全履歴集計に戻ります。
+`recency_center=0.0` なら常に重み `1.0` になり、旧来の全履歴集計に戻ります。
 
 直近性は prune ではありません。古いクラスタを消すのではなく、集計時の重みを下げます。
 
@@ -282,4 +296,4 @@ age = 128 -> weight = 0.9 + 0.1 * exp(-2) = 0.9135
 - `complexity_transition` は候補値そのものではなく、候補追加後の構造スコアの目標です。
 - `usage` は「似た値そのもの」ではなく「似た部分列クラスタの近傍がどれだけ使われたか」を見ます。
 - 初期値が完全反復の場合、低 target では既存反復に乗る候補が強く選ばれやすくなります。
-- `recency_weight_strength=0.0` で直近性ウェイトは無効になります。
+- `recency_center=0.0` で直近性ウェイトは無効、`1.0` で直近性を最大反映します。
