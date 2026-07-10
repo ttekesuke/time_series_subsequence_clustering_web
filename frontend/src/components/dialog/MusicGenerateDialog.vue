@@ -44,80 +44,89 @@
       </v-card-title>
 
       <v-card-text class="pa-4 dialog-body">
-        <!-- ===== 1. Initial Context (Past Context) ===== -->
-        <v-card variant="outlined" class="grid-card context-card">
-          <GridContainer
-            title="1. Initial Context (Past Context)"
-            v-model:rows="contextRowsForGrid"
-            v-model:steps="contextSteps"
-            v-model:streamCount="contextStreamCount"
-            @selected-columns-change="onContextSelectedColumnsChange"
-            :showStreamCount="true"
-            :showRowsLength="false"
-            :showColsLength="true"
-          />
-        </v-card>
+        <v-tabs v-model="activeGenerationTab" density="compact" color="primary" class="generation-tabs">
+          <v-tab value="initial-context">1. Initial Context (Past Context)</v-tab>
+          <v-tab value="generation-parameters">2. Generation Parameters (Future Targets)</v-tab>
+        </v-tabs>
 
-        <!-- ===== 2. Generation Parameters (Future Targets) ===== -->
-        <v-card variant="outlined" class="grid-card generation-card">
-          <GridContainer
-            title="2. Generation Parameters (Future Targets)"
-            v-model:rows="genRows"
-            v-model:steps="genSteps"
-            :showRowsLength="false"
-            :showColsLength="true"
-            :rowLabelWidth="276"
-            :rowPrefixWidth="110"
-          >
-            <template #row-prefix="{ rowIndex }">
-              <div class="dimension-policy-row-slot">
-                <template v-if="getDimensionPolicyDimForGenRow(rowIndex)">
-                  <input
-                    type="checkbox"
-                    :checked="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).useFixedValue"
-                    @change="onDimensionPolicyAcceptChange(resolveManagedDimKey(getDimensionPolicyDimForGenRow(rowIndex)), $event)"
-                    class="dimension-policy-checkbox"
-                    :title="`${getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).label} fixed value`"
-                  >
-                  <template v-if="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).useFixedValue">
-                    <select
-                      :value="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).fixedValueSource"
-                      @change="onDimensionPolicyFixedValueSourceChange(resolveManagedDimKey(getDimensionPolicyDimForGenRow(rowIndex)), $event)"
-                      class="step-input dim-policy-select"
-                    >
-                      <option value="initial_context_last_step">Last Step</option>
-                      <option value="manual_input">Manual</option>
-                    </select>
-                    <input
-                      v-if="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).fixedValueSource === 'manual_input'"
-                      type="number"
-                      :value="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).fixedValue"
-                      @input="onDimensionPolicyFixedValueInput(resolveManagedDimKey(getDimensionPolicyDimForGenRow(rowIndex)), $event)"
-                      :min="getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).min"
-                      :max="getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).max"
-                      :step="getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).step"
-                      class="step-input dim-policy-input"
-                    >
-                  </template>
+        <v-window v-model="activeGenerationTab">
+          <v-window-item value="initial-context">
+            <v-card variant="outlined" class="grid-card context-card">
+              <GridContainer
+                title="1. Initial Context (Past Context)"
+                v-model:rows="contextRowsForGrid"
+                v-model:steps="contextSteps"
+                v-model:streamCount="contextStreamCount"
+                @selected-columns-change="onContextSelectedColumnsChange"
+                :showStreamCount="true"
+                :showRowsLength="false"
+                :showColsLength="true"
+              />
+            </v-card>
+          </v-window-item>
+
+          <v-window-item value="generation-parameters">
+            <v-card variant="outlined" class="grid-card generation-card">
+              <GridContainer
+                title="2. Generation Parameters (Future Targets)"
+                v-model:rows="genRows"
+                v-model:steps="genSteps"
+                :showRowsLength="false"
+                :showColsLength="true"
+                :rowLabelWidth="276"
+                :rowPrefixWidth="110"
+              >
+                <template #row-prefix="{ rowIndex }">
+                  <div class="dimension-policy-row-slot">
+                    <template v-if="getDimensionPolicyDimForGenRow(rowIndex)">
+                      <input
+                        type="checkbox"
+                        :checked="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).useFixedValue"
+                        @change="onDimensionPolicyAcceptChange(resolveManagedDimKey(getDimensionPolicyDimForGenRow(rowIndex)), $event)"
+                        class="dimension-policy-checkbox"
+                        :title="`${getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).label} fixed value`"
+                      >
+                      <template v-if="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).useFixedValue">
+                        <select
+                          :value="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).fixedValueSource"
+                          @change="onDimensionPolicyFixedValueSourceChange(resolveManagedDimKey(getDimensionPolicyDimForGenRow(rowIndex)), $event)"
+                          class="step-input dim-policy-select"
+                        >
+                          <option value="initial_context_last_step">Last Step</option>
+                          <option value="manual_input">Manual</option>
+                        </select>
+                        <input
+                          v-if="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).fixedValueSource === 'manual_input'"
+                          type="number"
+                          :value="getDimensionPolicyValue(getDimensionPolicyDimForGenRow(rowIndex)).fixedValue"
+                          @input="onDimensionPolicyFixedValueInput(resolveManagedDimKey(getDimensionPolicyDimForGenRow(rowIndex)), $event)"
+                          :min="getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).min"
+                          :max="getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).max"
+                          :step="getDimensionPolicyConfig(getDimensionPolicyDimForGenRow(rowIndex)).step"
+                          class="step-input dim-policy-input"
+                        >
+                      </template>
+                    </template>
+                  </div>
                 </template>
-              </div>
-            </template>
-            <template #toolbar-extra>
-              <div class="d-flex align-center mr-4" style="font-size: 0.9rem;">
-                <span class="mr-2">MergeThresholdRatio:</span>
-                <input
-                  type="number"
-                  :value="mergeThresholdRatio"
-                  @input="onMergeThresholdInput"
-                  min="0"
-                  max="1"
-                  step="0.001"
-                  class="step-input mr-1"
-                >
-              </div>
-            </template>
-          </GridContainer>
-        </v-card>
+                <template #toolbar-extra>
+                  <div class="d-flex align-center mr-4" style="font-size: 0.9rem;">
+                    <span class="mr-2">MergeThresholdRatio:</span>
+                    <input
+                      type="number"
+                      :value="mergeThresholdRatio"
+                      @input="onMergeThresholdInput"
+                      min="0"
+                      max="1"
+                      step="0.001"
+                      class="step-input mr-1"
+                    >
+                  </div>
+                </template>
+              </GridContainer>
+            </v-card>
+          </v-window-item>
+        </v-window>
       </v-card-text>
       <v-card-footer></v-card-footer>
     </v-card>
@@ -203,6 +212,7 @@ const open = computed({
   set: (v: boolean) => emit('update:modelValue', v)
 })
 
+const activeGenerationTab = ref<'initial-context' | 'generation-parameters'>('initial-context')
 
 /** ========== 実行先切り替え (GitHub Actions / Hosting Server) ========== */
 const runOnGithubActions = computed(() => {
@@ -2250,16 +2260,19 @@ watch(open, (next, prev) => {
 .header-controls {
   gap: 8px;
 }
+.generation-tabs {
+  margin-bottom: 12px;
+}
 .grid-card {
   min-height: 0;
   overflow: hidden;
   margin-bottom: 16px;
 }
 .context-card {
-  height: clamp(260px, 36vh, 420px);
+  height: 79vh;
 }
 .generation-card {
-  height: 85vh;
+  height: 79vh;
   margin-bottom: 0;
 }
 .step-input {
