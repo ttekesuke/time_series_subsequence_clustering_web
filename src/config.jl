@@ -46,6 +46,7 @@ const MIDI_NOTE_VOL_AXIS_RANGES::Vector{Float64} = [127.0, 1.0]
 const OCTAVE_RANGE = 0:7
 const NOTE_RANGE = 0:11
 const FLOAT_STEPS::Vector{Float64} = [round(i / 10.0, digits=1) for i in 0:10]
+const VOL_STEPS::Vector{Float64} = [UNIT_MIN, UNIT_MID, UNIT_MAX]
 const CHORD_SIZE_RANGE = 1:4
 const CHORD_RANGE_VALUE_MIN::Int = 0
 const CHORD_RANGE_VALUE_MAX::Int = 24

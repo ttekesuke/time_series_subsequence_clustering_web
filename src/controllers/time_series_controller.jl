@@ -3494,7 +3494,7 @@ function generate_polyphonic()
       _setup_dimension_manager!(
         key,
         history,
-        Config.FLOAT_STEPS;
+        key == "vol" ? Config.VOL_STEPS : Config.FLOAT_STEPS;
         value_min=0.0,
         value_max=1.0,
         track_presence=track_presence
@@ -3767,7 +3767,7 @@ function generate_polyphonic()
 
     idx0 = step_idx - 1
 
-    vol_search_values = Float64[0.0, 1.0]
+    vol_search_values = Float64[float(v) for v in Config.VOL_STEPS]
     density_search_values = Float64[float(v) for v in Config.FLOAT_STEPS]
     chord_range_search_values = Float64[float(v) for v in cr_values]
     sustain_search_values = Float64[float(v) for v in Config.SUSTAIN_LEVELS]
