@@ -22,7 +22,7 @@
             <v-col cols="3">
               <v-checkbox
                 v-model="searchOctaveInvariant"
-                label="オクターブ違いも検索する"
+                label="search octave-invariant"
                 hide-details
               />
             </v-col>

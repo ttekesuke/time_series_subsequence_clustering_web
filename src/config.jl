@@ -13,6 +13,7 @@ module now also owns single-stream clustering and controller defaults.
 const UNIT_MIN::Float64 = 0.0
 const UNIT_MID::Float64 = 0.5
 const UNIT_MAX::Float64 = 1.0
+const SECONDS_PER_MINUTE::Float64 = 60.0
 const PROCESSING_TIME_DIGITS::Int = 2
 
 # --- single-stream clustering defaults ---
@@ -25,7 +26,8 @@ const DEFAULT_QUERY_MIN_MATCH_WINDOW::Int = 3
 
 # --- musical / midi constants ---
 const STEPS_PER_OCTAVE::Int = 12
-const OCTAVE_TO_MIDI_C_OFFSET::Int = 1  # oct=4 -> baseC=60 (C4)
+const OCTAVE_TO_MIDI_C_OFFSET::Int = 1
+const MIDI_C4::Int = (4 + OCTAVE_TO_MIDI_C_OFFSET) * STEPS_PER_OCTAVE
 
 const MIDI_A4::Int = 69
 const A4_FREQ::Float64 = 440.0
@@ -73,7 +75,7 @@ const NOTE_REGISTER_MIN_ALLOWANCE::Int = AREA_BAND_SIZE
 const NOTE_REGISTER_MAX_ALLOWANCE::Int = 28
 
 const POLYPHONIC_BPM::Float64 = 240.0
-const POLYPHONIC_STEP_DURATION::Float64 = 60.0 / POLYPHONIC_BPM
+const POLYPHONIC_STEP_DURATION::Float64 = SECONDS_PER_MINUTE / POLYPHONIC_BPM
 const POLYPHONIC_BPM_MIN::Float64 = 1.0
 const DEFAULT_TARGET_01::Float64 = 0.5
 const DEFAULT_SPREAD_01::Float64 = 0.0
@@ -148,7 +150,7 @@ function sanitize_bpm(bpm)::Float64
 end
 
 function step_duration_from_bpm(bpm)::Float64
-  return 60.0 / sanitize_bpm(bpm)
+  return SECONDS_PER_MINUTE / sanitize_bpm(bpm)
 end
 
 function abs_pitch_width()::Float64

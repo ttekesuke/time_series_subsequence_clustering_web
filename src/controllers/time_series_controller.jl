@@ -332,6 +332,100 @@ function _note_vol_points_to_rows(points::Vector{Vector{Float64}})::Vector{Vecto
   return Vector{Vector{Float64}}([notes, vols])
 end
 
+function _normalize_note_vol_points_for_octave_invariance(points::Vector{Vector{Float64}})::Vector{Vector{Float64}}
+  isempty(points) && return Vector{Vector{Float64}}()
+
+  first_note = length(points[1]) >= 1 ? _parse_float(points[1][1]) : 0.0
+  steps_per_octave = float(Config.STEPS_PER_OCTAVE)
+  octave_shift = -steps_per_octave * round((first_note - float(Config.MIDI_C4)) / steps_per_octave)
+  normalized = Vector{Vector{Float64}}()
+  sizehint!(normalized, length(points))
+  for pt in points
+    note = length(pt) >= 1 ? _parse_float(pt[1]) : 0.0
+    vol = length(pt) >= 2 ? _parse_float(pt[2]) : 0.0
+    push!(normalized, Float64[note + octave_shift, vol])
+  end
+
+  return normalized
+end
+
+function _note_vol_point_distance01(query_pt::Vector{Float64}, db_pt::Vector{Float64}, db_note_shift::Real)::Float64
+  q_note = length(query_pt) >= 1 ? _parse_float(query_pt[1]) : 0.0
+  q_vol = length(query_pt) >= 2 ? _parse_float(query_pt[2]) : 0.0
+  d_note = (length(db_pt) >= 1 ? _parse_float(db_pt[1]) : 0.0) + float(db_note_shift)
+  d_vol = length(db_pt) >= 2 ? _parse_float(db_pt[2]) : 0.0
+
+  note_width = length(Config.MIDI_NOTE_VOL_AXIS_RANGES) >= 1 ? abs(Config.MIDI_NOTE_VOL_AXIS_RANGES[1]) : 127.0
+  vol_width = length(Config.MIDI_NOTE_VOL_AXIS_RANGES) >= 2 ? abs(Config.MIDI_NOTE_VOL_AXIS_RANGES[2]) : 1.0
+  note_width = note_width <= 0.0 ? 1.0 : note_width
+  vol_width = vol_width <= 0.0 ? 1.0 : vol_width
+
+  note_d = (q_note - d_note) / note_width
+  vol_d = (q_vol - d_vol) / vol_width
+  return min(sqrt((note_d * note_d + vol_d * vol_d) / 2.0), 1.0)
+end
+
+function _octave_invariant_note_vol_window_distance01(
+  query_points::Vector{Vector{Float64}},
+  db_points::Vector{Vector{Float64}},
+  q_start::Int,
+  db_start::Int,
+  window_size::Int
+)::Float64
+  window_size <= 0 && return 1.0
+  q_first = query_points[q_start + 1]
+  d_first = db_points[db_start + 1]
+  q_note = length(q_first) >= 1 ? _parse_float(q_first[1]) : 0.0
+  d_note = length(d_first) >= 1 ? _parse_float(d_first[1]) : 0.0
+  steps_per_octave = float(Config.STEPS_PER_OCTAVE)
+  center_octave_shift = round((q_note - d_note) / steps_per_octave)
+
+  best = Inf
+  for octave_shift in (center_octave_shift - 1.0):(center_octave_shift + 1.0)
+    note_shift = steps_per_octave * octave_shift
+    squared = 0.0
+    for offset in 0:(window_size - 1)
+      d = _note_vol_point_distance01(query_points[q_start + offset + 1], db_points[db_start + offset + 1], note_shift)
+      squared += d * d
+      squared >= best * best * window_size && break
+    end
+    distance = sqrt(squared / float(window_size))
+    best = min(best, distance)
+  end
+
+  return isfinite(best) ? best : 1.0
+end
+
+function _find_octave_invariant_note_vol_matches(
+  query_points::Vector{Vector{Float64}},
+  db_points::Vector{Vector{Float64}},
+  merge_threshold::Real,
+  min_match_window::Int
+)::Vector{Any}
+  qlen = length(query_points)
+  slen = length(db_points)
+  max_window = min(qlen, slen)
+  max_window < min_match_window && return Any[]
+
+  matches = Any[]
+  threshold = max(float(merge_threshold), 0.0)
+  for qi in 0:(qlen - min_match_window)
+    max_q_window = qlen - qi
+    for dbi in 0:(slen - min_match_window)
+      max_db_window = slen - dbi
+      for ws in min(max_q_window, max_db_window):-1:min_match_window
+        distance = _octave_invariant_note_vol_window_distance01(query_points, db_points, qi, dbi, ws)
+        if distance <= threshold
+          push!(matches, Dict("q_start"=>qi, "start"=>dbi, "windowSize"=>ws))
+          break
+        end
+      end
+    end
+  end
+
+  return _filter_contained_matches(matches)
+end
+
 function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
   db_series_all = Any[]
   measurement = string(get(p, "measurement", get(ENV, "INFLUX_MEASUREMENT", "timeseries")))
@@ -342,6 +436,7 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
   min_window = Config.SUBSEQUENCE_MIN_WINDOW_SIZE
   min_match_window = _parse_int(get(p, "min_match_window", Config.DEFAULT_QUERY_MIN_MATCH_WINDOW))
   max_series = _parse_int(get(p, "max_series", 0))
+  search_octave_invariant = _parse_bool(get(p, "search_octave_invariant", false), false)
 
   clusters_per_series = Dict{Int,Any}()
   matched_series = Any[]
@@ -387,8 +482,11 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
   fetched_series_count = 0
   fetched_point_count = 0
 
-  query_seed_manager = _new_note_vol_manager(deepcopy(query_points), merge_threshold, min_window)
-  PolyphonicClusterManager.PolyphonicClusterManager.process_data!(query_seed_manager)
+  query_seed_manager = nothing
+  if !search_octave_invariant
+    query_seed_manager = _new_note_vol_manager(deepcopy(query_points), merge_threshold, min_window)
+    PolyphonicClusterManager.PolyphonicClusterManager.process_data!(query_seed_manager)
+  end
 
   series_scan_count = 0
   for (chunk_idx, chunk) in enumerate(chunks)
@@ -408,47 +506,60 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
       println("[query_db] $(series_scan_count)/$(length(series_stats)) $(series_label)")
       flush(stdout)
       db_series_values = series_info["values"]::Vector{Vector{Float64}}
-      manager = deepcopy(query_seed_manager)
-
-      for v in db_series_values
-        PolyphonicClusterManager.add_data_point_permanently!(manager, copy(v))
-      end
-
-      timeline = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window)
       qlen = length(query_points)
       slen = length(db_series_values)
-      cross_entries = Any[]
-      for entry in timeline
-        inds = entry["indices"]::Vector{Int}
-        has_q = any(i -> i < qlen, inds)
-        has_db = any(i -> i >= qlen, inds)
-        if has_q && has_db
-          ws = Int(entry["window_size"])
-          ws < min_match_window && continue
-          q_raw = [i for i in inds if i < qlen]
-          db_raw = [i for i in inds if i >= qlen]
-          q_indices = [i for i in q_raw if i + ws <= qlen]
-          db_indices = [i - qlen for i in db_raw if (i - qlen) + ws <= slen]
-          if !isempty(q_indices) && !isempty(db_indices)
-            push!(cross_entries, Dict("window_size"=>ws, "cluster_id"=>entry["cluster_id"], "q_indices"=>sort(q_indices), "db_indices"=>sort(db_indices)))
-          end
-        end
-      end
-
-      isempty(cross_entries) && continue
 
       simple_matches = Any[]
-      for e in cross_entries
-        ws = e["window_size"]::Int
-        q_idxs = e["q_indices"]::Vector{Int}
-        db_idxs = e["db_indices"]::Vector{Int}
-        for qi in q_idxs
-          for dbi in db_idxs
-            push!(simple_matches, Dict("q_start"=>qi, "start"=>dbi, "windowSize"=>ws))
+      cross_entries = Any[]
+      if search_octave_invariant
+        simple_matches = _find_octave_invariant_note_vol_matches(query_points, db_series_values, merge_threshold, min_match_window)
+        for (idx, m) in enumerate(simple_matches)
+          push!(cross_entries, Dict(
+            "window_size"=>_parse_int(get(m, "windowSize", 0)),
+            "cluster_id"=>idx - 1,
+            "q_indices"=>[_parse_int(get(m, "q_start", 0))],
+            "db_indices"=>[_parse_int(get(m, "start", 0))]
+          ))
+        end
+      else
+        manager = deepcopy(query_seed_manager)
+
+        for v in db_series_values
+          PolyphonicClusterManager.add_data_point_permanently!(manager, copy(v))
+        end
+
+        timeline = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window)
+        for entry in timeline
+          inds = entry["indices"]::Vector{Int}
+          has_q = any(i -> i < qlen, inds)
+          has_db = any(i -> i >= qlen, inds)
+          if has_q && has_db
+            ws = Int(entry["window_size"])
+            ws < min_match_window && continue
+            q_raw = [i for i in inds if i < qlen]
+            db_raw = [i for i in inds if i >= qlen]
+            q_indices = [i for i in q_raw if i + ws <= qlen]
+            db_indices = [i - qlen for i in db_raw if (i - qlen) + ws <= slen]
+            if !isempty(q_indices) && !isempty(db_indices)
+              push!(cross_entries, Dict("window_size"=>ws, "cluster_id"=>entry["cluster_id"], "q_indices"=>sort(q_indices), "db_indices"=>sort(db_indices)))
+            end
           end
         end
+
+        for e in cross_entries
+          ws = e["window_size"]::Int
+          q_idxs = e["q_indices"]::Vector{Int}
+          db_idxs = e["db_indices"]::Vector{Int}
+          for qi in q_idxs
+            for dbi in db_idxs
+              push!(simple_matches, Dict("q_start"=>qi, "start"=>dbi, "windowSize"=>ws))
+            end
+          end
+        end
+        simple_matches = _filter_contained_matches(simple_matches)
       end
-      simple_matches = _filter_contained_matches(simple_matches)
+
+      isempty(simple_matches) && continue
       match_score = _match_score(simple_matches)
       matched_result = Dict(
         "series_id" => sid,
@@ -1980,39 +2091,6 @@ function _parse_csv_floats(s::AbstractString)
   return [parse(Float64, strip(x)) for x in split(s, ",") if !isempty(strip(x))]
 end
 
-function _unit_series_from_param(raw, len::Int; fallback::Real=0.0)::Vector{Float64}
-  len = max(len, 0)
-  vals = Float64[]
-  if raw isa AbstractVector
-    sizehint!(vals, length(raw))
-    for x in raw
-      push!(vals, clamp(_parse_float(x), 0.0, 1.0))
-    end
-  elseif raw isa AbstractString
-    vals = [clamp(v, 0.0, 1.0) for v in _parse_csv_floats(raw)]
-  elseif raw !== nothing
-    push!(vals, clamp(_parse_float(raw), 0.0, 1.0))
-  end
-
-  if isempty(vals)
-    vals = [clamp(float(fallback), 0.0, 1.0)]
-  end
-  if len == 0
-    return Float64[]
-  end
-
-  out = Vector{Float64}(undef, len)
-  for i in 1:len
-    out[i] = vals[min(i, length(vals))]
-  end
-  return out
-end
-
-function _apply_recency_to_cluster_manager!(mgr::PolyphonicClusterManager.Manager, recency01::Real)
-  mgr.recency = clamp(float(recency01), 0.0, 1.0)
-  return nothing
-end
-
 # Rails-like normalize (0..1 with weighting)
 function normalize_scores(raw_values::Vector{Float64}, is_complex_when_larger::Bool)
   if isempty(raw_values)
@@ -2180,8 +2258,6 @@ function generate()
   complexity_targets = _parse_csv_floats(string(get(p, "complexity_transition", "")))
   merge_threshold_ratio = _parse_float(get(p, "merge_threshold_ratio", Config.DEFAULT_MERGE_THRESHOLD_RATIO))
   contextual_min_width = _parse_float(get(p, "contextual_min_width", Config.DEFAULT_CONTEXTUAL_MIN_WIDTH))
-  recency_raw = get(p, "recency_center", get(p, "recency", nothing))
-  recency_series = _unit_series_from_param(recency_raw, length(complexity_targets); fallback=0.0)
 
   candidate_min_master = _parse_int(get(p, "range_min", Config.DEFAULT_RANGE_MIN))
   candidate_max_master = _parse_int(get(p, "range_max", Config.DEFAULT_RANGE_MAX))
@@ -2212,9 +2288,7 @@ function generate()
 
   results = copy(first_elements)
 
-  for (step_idx, target_val) in enumerate(complexity_targets)
-    _apply_recency_to_cluster_manager!(manager, recency_series[step_idx])
-
+  for target_val in complexity_targets
     candidates = collect(candidate_min_master:candidate_max_master)
     raw_dist = Float64[]
     raw_quantity = Float64[]
@@ -2732,15 +2806,14 @@ function generate_polyphonic()
   ctx_raw = get(gp, "initial_context", Any[])
 
   # Stream record (REQUIRED):
-  #   strict full: [abs_notes::Vector{Int}, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range::Int, density::Float64, sustain::Float64]
-  #   strict simplified: [abs_notes::Vector{Int}, vol, brightness, noise, harmonicity, attack, decay_sustain, release]
+  #   strict full: [abs_notes::Vector{Int}, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range::Int, density::Float64, sustain::Float64, legato::Float64]
   #
   # initial_context MUST be a 3-level array:
   #   initial_context[step][stream] = stream_record
   results = Vector{Vector{Vector{Any}}}()
 
   if !(ctx_raw isa AbstractVector)
-    error("generate_polyphonic.initial_context must be an Array of steps; each step is an Array of streams; each stream must be strict [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, ...].")
+    error("generate_polyphonic.initial_context must be an Array of steps; each step is an Array of streams; each stream must be strict [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato].")
   end
 
   for step in ctx_raw
@@ -2766,12 +2839,33 @@ function generate_polyphonic()
       Config.UNIT_MID,
       Config.CHORD_RANGE_VALUE_MIN,
       Config.UNIT_MIN,
-      Config.UNIT_MID
+      Config.UNIT_MID,
+      Config.UNIT_MIN
     ]])
   end
 
   initial_context_bpm = _normalize_bpm_series(get(gp, "initial_context_bpm", nothing), length(results); fallback=bpm)
   future_bpm = _normalize_bpm_series(get(gp, "future_bpm", nothing), length(stream_counts); fallback=bpm)
+  function _normalize_unit_series(raw, n::Int; fallback::Float64=0.0)::Vector{Float64}
+    target_len = max(n, 0)
+    target_len == 0 && return Float64[]
+    vals = Float64[]
+    if raw isa AbstractVector
+      for x in raw
+        push!(vals, clamp(_parse_float(x), 0.0, 1.0))
+      end
+    elseif raw !== nothing
+      push!(vals, clamp(_parse_float(raw), 0.0, 1.0))
+    end
+    isempty(vals) && push!(vals, clamp(fallback, 0.0, 1.0))
+    out = Float64[]
+    fallback_val = vals[end]
+    for i in 1:target_len
+      push!(out, i <= length(vals) ? vals[i] : fallback_val)
+    end
+    return out
+  end
+  legato_series = _normalize_unit_series(get(gp, "legato", get(gp, "same_note_legato", nothing)), length(stream_counts); fallback=0.0)
   initial_step_durations = _step_durations_from_bpm_series(initial_context_bpm)
   future_step_durations = _step_durations_from_bpm_series(future_bpm)
   initial_step_onsets = _step_onsets_from_durations(initial_step_durations)
@@ -2793,6 +2887,7 @@ function generate_polyphonic()
   chord_range_idx = 9
   density_idx     = 10
   sustain_idx     = 11
+  legato_idx      = 12
 
   # --- MIDI range (keep consistent across AREA/tmp_anchor and NOTE) ---
   ABS_MIN = Int(Config.abs_pitch_min())
@@ -2822,6 +2917,7 @@ function generate_polyphonic()
     s in ("attack",) && return "attack"
     s in ("decay_sustain",) && return "decay_sustain"
     s in ("release",) && return "release"
+    s in ("legato", "tie", "same_note_legato") && return "legato"
     return nothing
   end
 
@@ -2830,14 +2926,14 @@ function generate_polyphonic()
       return float(clamp(_parse_int(raw), CHORD_RANGE_MIN, CHORD_RANGE_MAX))
     elseif key == "sustain"
       return _quantize_sustain(raw)
-    elseif key == "area" || key == "density" || key == "vol" || key == "brightness" || key == "noise" || key == "harmonicity" || key == "attack" || key == "decay_sustain" || key == "release"
+    elseif key == "area" || key == "density" || key == "vol" || key == "brightness" || key == "noise" || key == "harmonicity" || key == "attack" || key == "decay_sustain" || key == "release" || key == "legato"
       return clamp(_parse_float(raw), 0.0, 1.0)
     else
       return _parse_float(raw)
     end
   end
 
-  managed_dims = ["area", "chord_range", "density", "sustain", "vol", "brightness", "noise", "harmonicity", "attack", "decay_sustain", "release"]
+  managed_dims = ["area", "chord_range", "density", "sustain", "vol", "brightness", "noise", "harmonicity", "attack", "decay_sustain", "release", "legato"]
   dim_accept = Dict{String,Bool}()
   dim_fixed = Dict{String,Float64}()
   dim_fixed_source = Dict{String,String}()
@@ -2863,6 +2959,7 @@ function generate_polyphonic()
     "attack" => Dict("accept_params" => false, "fixed_value" => 0.5),
     "decay_sustain" => Dict("accept_params" => false, "fixed_value" => 0.5),
     "release" => Dict("accept_params" => false, "fixed_value" => 0.5),
+    "legato" => Dict("accept_params" => false, "fixed_value" => 0.0),
   )
   for key in managed_dims
     d = default_dim_policy[key]
@@ -2966,7 +3063,8 @@ function generate_polyphonic()
       key == "release" ? release_idx :
       key == "chord_range" ? chord_range_idx :
       key == "density" ? density_idx :
-      key == "sustain" ? sustain_idx : 0
+      key == "sustain" ? sustain_idx :
+      key == "legato" ? legato_idx : 0
 
     if idx == 0
       return dim_fixed[key]
@@ -3016,6 +3114,9 @@ function generate_polyphonic()
     if !get(dim_accept, "sustain", true)
       st[sustain_idx] = _quantize_sustain(_resolved_fixed_value_for_stream("sustain", stream_idx))
     end
+    if !get(dim_accept, "legato", true)
+      st[legato_idx] = clamp(_resolved_fixed_value_for_stream("legato", stream_idx), 0.0, 1.0)
+    end
     return st
   end
 
@@ -3037,8 +3138,8 @@ function generate_polyphonic()
     return out
   end
   function _normalize_stream!(st::Vector{Any})
-    # Accept strict stream records only: [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain]
-    length(st) >= 6 || error("generate_polyphonic.initial_context stream record must be strict [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, ...].")
+    # Accept strict stream records with optional trailing chord_range, density, sustain, legato.
+    length(st) >= 8 || error("generate_polyphonic.initial_context stream record must be strict [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, ...].")
 
     abs_notes = Int[]
     vol = 1.0
@@ -3051,6 +3152,7 @@ function generate_polyphonic()
     cr  = 0
     den = 0.0
     sus = 0.5
+    legato = 0.0
 
     if st[1] isa AbstractVector
       # strict
@@ -3062,28 +3164,27 @@ function generate_polyphonic()
       attack = clamp(_parse_float(length(st) >= 6 ? st[6] : 0.5), 0.0, 1.0)
       decay_sustain = clamp(_parse_float(length(st) >= 7 ? st[7] : 0.5), 0.0, 1.0)
       release = clamp(_parse_float(length(st) >= 8 ? st[8] : 1.0), 0.0, 1.0)
-      if length(st) >= 11
-        # full strict format
+      if length(st) >= legato_idx
+        cr  = max(_parse_int(st[9]), 0)
+        den = clamp(_parse_float(st[10]), 0.0, 1.0)
+        sus = _quantize_sustain(st[11])
+        legato = clamp(_parse_float(st[legato_idx]), 0.0, 1.0)
+      elseif length(st) >= 11
         cr  = max(_parse_int(st[9]), 0)
         den = clamp(_parse_float(st[10]), 0.0, 1.0)
         sus = _quantize_sustain(st[11])
       elseif length(st) == 10
-        # strict format without sustain
         cr  = max(_parse_int(st[9]), 0)
         den = clamp(_parse_float(st[10]), 0.0, 1.0)
-        sus = 0.5
-      elseif length(st) >= 9
-        # strict format with sustain only
+      elseif length(st) == 9
         sus = _quantize_sustain(st[9])
-      else
-        sus = 0.5
       end
     else
       error("generate_polyphonic.initial_context stream record must be strict [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, ...].")
     end
 
     empty!(st)
-    push!(st, abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, cr, den, sus)
+    push!(st, abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, cr, den, sus, legato)
     return st
   end
 
@@ -3122,37 +3223,7 @@ function generate_polyphonic()
   end
 
   merge_threshold_ratio = _parse_float(get(gp, "merge_threshold_ratio", Config.DEFAULT_POLYPHONIC_MERGE_THRESHOLD_RATIO))
-  recency_center_series = _unit_series_from_param(get(gp, "recency_center", nothing), length(stream_counts); fallback=0.0)
-  recency_spread_series = _unit_series_from_param(get(gp, "recency_spread", nothing), length(stream_counts); fallback=0.0)
   min_window = Config.POLYPHONIC_MIN_WINDOW_SIZE
-
-  function _recency_values_for_step(step_idx::Int, desired_stream_count::Int)::Vector{Float64}
-    center = step_idx <= length(recency_center_series) ? recency_center_series[step_idx] : 0.0
-    spread = step_idx <= length(recency_spread_series) ? recency_spread_series[step_idx] : 0.0
-    return generate_centered_targets(desired_stream_count, center, spread)
-  end
-
-  function _apply_step_recency_to_dimension_managers!(mgrs, step_idx::Int, desired_stream_count::Int)
-    recencies = _recency_values_for_step(step_idx, desired_stream_count)
-    mean_recency = isempty(recencies) ? 0.0 : sum(recencies) / float(length(recencies))
-
-    if haskey(mgrs, :global)
-      _apply_recency_to_cluster_manager!(mgrs[:global], mean_recency)
-    end
-
-    if haskey(mgrs, :stream)
-      stream_mgr = mgrs[:stream]
-      stream_mgr.recency = clamp(mean_recency, 0.0, 1.0)
-
-      actives = MultiStreamManager.active_stream_containers(stream_mgr, desired_stream_count)
-      for (i, container) in enumerate(actives)
-        recency = i <= length(recencies) ? recencies[i] : mean_recency
-        _apply_recency_to_cluster_manager!(container.manager, recency)
-      end
-    end
-
-    return nothing
-  end
 
   function pad_history!(mat, fallback_row)
     if length(mat) < (min_window + 1)
@@ -3674,7 +3745,6 @@ function generate_polyphonic()
     plan = MultiStreamManager.build_stream_lifecycle_plan(lifecycle_mgr, desired_stream_count; target=st_target, spread=st_spread)
     for (_k, mgrs) in managers
       MultiStreamManager.apply_stream_lifecycle_plan!(mgrs[:stream], plan)
-      _apply_step_recency_to_dimension_managers!(mgrs, step_idx, desired_stream_count)
     end
 
     current_step_values = [
@@ -3689,7 +3759,8 @@ function generate_polyphonic()
         clamp(_resolved_fixed_value_for_stream("release", s_i), 0.0, 1.0),
         Int(round(clamp(_resolved_fixed_value_for_stream("chord_range", s_i), float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))),
         clamp(_resolved_fixed_value_for_stream("density", s_i), 0.0, 1.0),
-        _quantize_sustain(_resolved_fixed_value_for_stream("sustain", s_i))
+        _quantize_sustain(_resolved_fixed_value_for_stream("sustain", s_i)),
+        step_idx <= length(legato_series) ? legato_series[step_idx] : 0.0
       ] for s_i in 1:desired_stream_count
     ]
     step_decisions = Dict{String,Any}()
@@ -4162,13 +4233,13 @@ end
     end
 
     # Dissonance selection is done on pitch-class-normalized MIDI notes so octave distance
-    # does not dominate roughness ranking (e.g. 12 vs 60 are treated as same pitch class).
+    # does not dominate roughness ranking.
     function _pc_normalized_notes(midi_notes::Vector{Int})
       out = Int[]
       sizehint!(out, length(midi_notes))
       for n in midi_notes
-        pc = mod(n, 12)
-        push!(out, 60 + pc)  # C4 + pitch class
+        pc = mod(n, Config.STEPS_PER_OCTAVE)
+        push!(out, Config.MIDI_C4 + pc)
       end
       return out
     end
@@ -4287,6 +4358,7 @@ end
       vec[chord_range_idx] = (!get(dim_accept, "chord_range", true) && is_generated_step) ? Int(round(clamp(_resolved_fixed_value_for_stream("chord_range", stream_idx), float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))) : clamp(_parse_int(vec[chord_range_idx]), CHORD_RANGE_MIN, CHORD_RANGE_MAX)
       vec[density_idx] = (!get(dim_accept, "density", true) && is_generated_step) ? clamp(_resolved_fixed_value_for_stream("density", stream_idx), 0.0, 1.0) : clamp(_parse_float(vec[density_idx]), 0.0, 1.0)
       vec[sustain_idx] = (!get(dim_accept, "sustain", true) && is_generated_step) ? _quantize_sustain(_resolved_fixed_value_for_stream("sustain", stream_idx)) : _quantize_sustain(vec[sustain_idx])
+      vec[legato_idx] = is_generated_step ? clamp(step_idx - base_step_index <= length(legato_series) ? legato_series[step_idx - base_step_index] : 0.0, 0.0, 1.0) : clamp(_parse_float(length(vec) >= legato_idx ? vec[legato_idx] : 0.0), 0.0, 1.0)
     end
   end
 
@@ -4317,10 +4389,14 @@ end
       Float64[clamp(_parse_float(st[release_idx]), 0.0, 1.0) for st in step]
       for step in results
     ],
+    "legato" => Any[
+      Float64[clamp(_parse_float(length(st) >= legato_idx ? st[legato_idx] : 0.0), 0.0, 1.0) for st in step]
+      for step in results
+    ],
   )
 
   cluster_payload = Dict{String,Any}()
-  for key in ["note", "area", "vol", "brightness", "noise", "harmonicity", "attack", "decay_sustain", "release", "chord_range", "density", "sustain"]
+  for key in ["note", "area", "vol", "brightness", "noise", "harmonicity", "attack", "decay_sustain", "release", "chord_range", "density", "sustain", "legato"]
     mgrs = get(managers, key, nothing)
     mgrs === nothing && continue
 
@@ -5013,7 +5089,7 @@ function _musicxml_midi_pitch_from_note_string(note_xml::AbstractString)::Union{
     octave = tryparse(Int, octave_txt)
     octave === nothing && return nothing
     alter = tryparse(Int, _xml_child_text_from_string(note_xml, "alter", "0"))
-    return (octave + 1) * 12 + base[step] + (alter === nothing ? 0 : alter)
+    return (octave + Config.OCTAVE_TO_MIDI_C_OFFSET) * Config.STEPS_PER_OCTAVE + base[step] + (alter === nothing ? 0 : alter)
 end
 
 function _color_note_xml(note_xml::AbstractString)::String
