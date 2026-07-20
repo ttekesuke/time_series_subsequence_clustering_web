@@ -3578,6 +3578,35 @@ function generate_polyphonic()
   PolyphonicClusterManager.update_caches_permanently(g_note)
   managers["note"] = Dict(:global => g_note, :stream => s_note)
 
+  function _apply_step_recency!(idx0::Int, desired_stream_count::Int)
+    recency_center = clamp(_parse_float(array_param(gp, "recency_center", idx0)), 0.0, 1.0)
+    recency_spread = clamp(_parse_float(array_param(gp, "recency_spread", idx0)), 0.0, 1.0)
+    stream_recencies = generate_centered_targets(desired_stream_count, recency_center, recency_spread)
+    global_recency = isempty(stream_recencies) ? recency_center : clamp(sum(stream_recencies) / float(length(stream_recencies)), 0.0, 1.0)
+
+    for (_key, mgrs) in managers
+      g_mgr = get(mgrs, :global, nothing)
+      if g_mgr !== nothing
+        g_mgr.recency = global_recency
+      end
+
+      s_mgr = get(mgrs, :stream, nothing)
+      if s_mgr !== nothing
+        s_mgr.recency = global_recency
+        actives = MultiStreamManager.active_stream_containers(s_mgr, desired_stream_count)
+        for c in s_mgr.stream_pool
+          c.manager.recency = global_recency
+        end
+        for (i, c) in enumerate(actives)
+          r = i <= length(stream_recencies) ? stream_recencies[i] : global_recency
+          c.manager.recency = clamp(r, 0.0, 1.0)
+        end
+      end
+    end
+
+    return nothing
+  end
+
   # ----------------------------------------------------------
   # Dissonance STM seed
   # ----------------------------------------------------------
@@ -3747,6 +3776,9 @@ function generate_polyphonic()
       MultiStreamManager.apply_stream_lifecycle_plan!(mgrs[:stream], plan)
     end
 
+    idx0 = step_idx - 1
+    _apply_step_recency!(idx0, desired_stream_count)
+
     current_step_values = [
       Any[
         Int[],
@@ -3764,8 +3796,6 @@ function generate_polyphonic()
       ] for s_i in 1:desired_stream_count
     ]
     step_decisions = Dict{String,Any}()
-
-    idx0 = step_idx - 1
 
     vol_search_values = Float64[float(v) for v in Config.VOL_STEPS]
     density_search_values = Float64[float(v) for v in Config.FLOAT_STEPS]
