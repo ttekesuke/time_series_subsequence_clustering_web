@@ -84,6 +84,11 @@ function build_score_events_scd(
   active_runs = Dict{Int,Any}()
   base_voice_gain = Config.SC_BASE_VOICE_GAIN
 
+  function _low_note_audibility_gain(midi_note::Int)::Float64
+    low01 = clamp((60.0 - float(midi_note)) / 36.0, 0.0, 1.0)
+    return 1.0 + (2.4 * (low01 ^ 1.1))
+  end
+
   function _same_notes(a::Vector{Int}, b::Vector{Int})::Bool
     length(a) == length(b) || return false
     for i in eachindex(a)
@@ -96,11 +101,12 @@ function build_score_events_scd(
     isempty(run.abs_notes) && return nothing
     for midi_note in run.abs_notes
       freq = midi_to_freq(midi_note)
+      note_amp = run.amp_each * _low_note_audibility_gain(midi_note)
       push!(events, (
         time = run.start_time,
         freq = freq,
         dur  = run.dur,
-        amp  = run.amp_each,
+        amp  = note_amp,
         brightness = run.brightness,
         noise = run.noise,
         harmonicity = run.harmonicity,

@@ -21,9 +21,10 @@ score = Score([
 
         var sig, env;
         var bri, noi, harCtl, atkCtl, decCtl, srCtl;
-        var tonalSig, noiseSig;
+        var tonalSig, noiseSig, bassSig, clickSig;
         var ratios, partialAmps, cutoff, sustainLevel, harmonicBlend, cleanMix;
         var totalCtl, timeScale, attackTime, decayTime, sustainTime, releaseTime;
+        var lowCtl, clickEnv;
 
         bri = brightness.clip(0,1);
         noi = noise.clip(0,1);
@@ -31,6 +32,7 @@ score = Score([
         atkCtl = attack.clip(0,1);
         decCtl = decay.clip(0,1);
         srCtl = sustainRelease.clip(0,1);
+        lowCtl = ((110 - freq.clip(30, 110)) / 80).clip(0, 1);
 
         totalCtl = atkCtl + decCtl + srCtl;
         timeScale = dur / totalCtl.max(1.0);
@@ -57,6 +59,17 @@ score = Score([
         cutoff = 500 + (bri * 16000);
         tonalSig = LPF.ar(tonalSig, cutoff.clip(80, 18000));
         tonalSig = BHiShelf.ar(tonalSig, 3500, 0.8, (bri - 0.5) * 18);
+
+        bassSig = (
+          SinOsc.ar(freq.max(20), 0, 0.80) +
+          SinOsc.ar((freq * 2).max(35), 0, 0.55) +
+          SinOsc.ar((freq * 4).max(55), 0, 0.30)
+        ) * lowCtl;
+        clickEnv = EnvGen.kr(Env.perc(0.001, 0.030, 1, -6));
+        clickSig = BPF.ar(WhiteNoise.ar(1), 1200 + (bri * 3600), 0.45) * clickEnv * lowCtl * 0.10;
+        tonalSig = tonalSig + (tanh(bassSig * 1.8) * (0.35 + (0.65 * harCtl))) + clickSig;
+        tonalSig = BLowShelf.ar(tonalSig, 120, 0.8, lowCtl * 8);
+
         noiseSig = WhiteNoise.ar(0.7 * noi);
         sig = tonalSig + noiseSig;
         cleanMix = (1.0 - noi).clip(0, 1);
