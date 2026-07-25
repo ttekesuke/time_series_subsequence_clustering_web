@@ -2455,24 +2455,6 @@ function repeated_combinations(values::Vector{T}, n::Int) where {T}
   return out
 end
 
-function ordered_cartesian_product(values::Vector{T}, n::Int) where {T}
-  n <= 0 && return Vector{Vector{T}}()
-  n == 1 && return [[v] for v in values]
-
-  out = Vector{Vector{T}}([T[]])
-  for _ in 1:n
-    next_out = Vector{Vector{T}}()
-    sizehint!(next_out, length(out) * length(values))
-    for prefix in out
-      for value in values
-        push!(next_out, vcat(prefix, T[value]))
-      end
-    end
-    out = next_out
-  end
-  return out
-end
-
 struct CandidateMetric
   ordered_cand::Vector{Float64}
   global_dist::Float64
@@ -2753,6 +2735,101 @@ function select_best_chord_for_dimension_with_cost(
 
   best = metrics[best_i]
   return best.ordered_cand, best_cost
+end
+
+function stream_priority_order(stream_mgr, n::Int)::Vector{Int}
+  actives = MultiStreamManager.active_stream_containers(stream_mgr, n)
+  ranked = Tuple{Float64,Int}[]
+  sizehint!(ranked, n)
+  for i in 1:n
+    strength = i <= length(actives) ? clamp(float(actives[i].presence_avg), 0.0, 1.0) : 0.0
+    push!(ranked, (-strength, i))
+  end
+  sort!(ranked; by=x -> (x[1], x[2]))
+  return Int[x[2] for x in ranked]
+end
+
+function select_best_values_for_dimension_greedy(
+  mgrs::Dict{Symbol,Any},
+  range_vec::Vector{Float64},
+  global_target::Float64,
+  stream_targets::Vector{Float64},
+  concordance_weight::Float64,
+  n::Int;
+  global_metric_weights::NTuple{4,Float64} = (1.0, 1.0, 1.0, 1.0),
+  stream_metric_weights::NTuple{4,Float64} = (1.0, 1.0, 1.0, 1.0),
+  use_global_score::Bool = true,
+  priority_order::Union{Nothing,Vector{Int}} = nothing
+)::Vector{Float64}
+  n = max(n, 1)
+  isempty(range_vec) && return fill(0.0, n)
+
+  chosen = fill(NaN, n)
+  order = priority_order === nothing ? stream_priority_order(mgrs[:stream], n) : Int[i for i in priority_order if 1 <= i <= n]
+  isempty(order) && (order = collect(1:n))
+  actives = MultiStreamManager.active_stream_containers(mgrs[:stream], n)
+
+  vmin = minimum(range_vec)
+  vmax = maximum(range_vec)
+  range_width = abs(vmax - vmin)
+  range_width = range_width <= 0.0 ? 1.0 : range_width
+  g_offset = float(get(mgrs, :global_offset, 0.0))
+
+  for stream_idx in order
+    metrics = CandidateMetric[]
+    sizehint!(metrics, length(range_vec))
+
+    for cand in range_vec
+      partial_vals = Tuple{Int,Float64}[]
+      for i in 1:n
+        if isfinite(chosen[i])
+          push!(partial_vals, (i, chosen[i]))
+        end
+      end
+      push!(partial_vals, (stream_idx, float(cand)))
+      sort!(partial_vals; by=x -> x[1])
+
+      global_vals = Float64[]
+      ordered_vals = Float64[]
+      sizehint!(global_vals, length(partial_vals))
+      sizehint!(ordered_vals, length(partial_vals))
+      for (i, v) in partial_vals
+        push!(ordered_vals, v)
+        push!(global_vals, v + (i - 1) * g_offset)
+      end
+
+      g_dist, g_qty, g_comp, g_usage = _safe_simulate_add_and_calculate_all(mgrs[:global], global_vals)
+      disc = length(ordered_vals) <= 1 ? 0.0 : clamp((maximum(ordered_vals) - minimum(ordered_vals)) / range_width, 0.0, 1.0)
+
+      s_dist, s_qty, s_comp, s_usage =
+        if stream_idx <= length(actives)
+          _safe_simulate_add_and_calculate_all(actives[stream_idx].manager, Float64[float(cand)])
+        else
+          (0.0, 0.0, 0.0, 0.0)
+        end
+
+      push!(metrics, CandidateMetric(
+        ordered_vals,
+        g_dist, g_qty, g_comp, g_usage,
+        Float64[s_dist], Float64[s_qty], Float64[s_comp], Float64[s_usage],
+        disc
+      ))
+    end
+
+    target = stream_idx <= length(stream_targets) ? stream_targets[stream_idx] : 0.5
+    best_i, _best_cost, _breakdowns = select_best_polyphonic_candidate_unified_with_cost(
+      metrics,
+      global_target,
+      Float64[target],
+      concordance_weight,
+      global_metric_weights,
+      stream_metric_weights;
+      use_global_score=use_global_score,
+    )
+    chosen[stream_idx] = range_vec[best_i]
+  end
+
+  return Float64[isfinite(v) ? v : range_vec[1] for v in chosen]
 end
 
 # ------------------------------------------------------------
@@ -3778,6 +3855,7 @@ function generate_polyphonic()
 
     idx0 = step_idx - 1
     _apply_step_recency!(idx0, desired_stream_count)
+    step_stream_order = stream_priority_order(lifecycle_mgr, desired_stream_count)
 
     current_step_values = [
       Any[
@@ -3856,40 +3934,19 @@ function generate_polyphonic()
       restricted_range = _restrict_candidates_with_target_window(key, range_vec, idx0)
       isempty(restricted_range) && (restricted_range = range_vec)
 
-      stream_costs = MultiStreamManager.precalculate_costs(mgrs[:stream], restricted_range, desired_stream_count)
+      use_global_score = !(key == "vol" && desired_stream_count > 1)
 
-      candidates = Vector{Vector{Float64}}()
-      preserve_stream_order = desired_stream_count > 1
-
-      if desired_stream_count == 1
-        candidates = [Float64[float(v)] for v in restricted_range]
-      elseif key == "chord_range" || key == "density"
-        # enforce global scalar: all streams share the same value (search space reduced)
-        candidates = [Float64[fill(float(v), desired_stream_count)...] for v in restricted_range]
-        preserve_stream_order = true
-      else
-        candidates = ordered_cartesian_product(Float64[float(v) for v in restricted_range], desired_stream_count)
-      end
-
-      use_global_score = !(key == "vol" && preserve_stream_order)
-
-      debug_prefix = (debug_poly && key == "vol") ? "generate_polyphonic:vol:step$(step_idx)" : nothing
-
-      best_vals, _ = select_best_chord_for_dimension_with_cost(
+      best_vals = select_best_values_for_dimension_greedy(
         mgrs,
-        candidates,
-        stream_costs,
+        Float64[float(v) for v in restricted_range],
         g_target,
         stream_targets,
         conc_w,
-        desired_stream_count,
-        Float64[float(v) for v in restricted_range];
+        desired_stream_count;
         global_metric_weights=_metric_weights4(global_metric_weights),
         stream_metric_weights=_metric_weights4(stream_metric_weights),
-        debug_prefix=debug_prefix,
-        debug_top_n=Config.DETAILED_DEBUG_TOP_N,
-        preserve_stream_order=preserve_stream_order,
         use_global_score=use_global_score,
+        priority_order=step_stream_order,
       )
 
       # commit (global manager expects stream-offset encoding)
@@ -4081,121 +4138,91 @@ for s in 1:desired_stream_count
 
 end
 
-# ---- Stage 2: build candidate vectors (cartesian over pruned bins) ----
-
-    # ---- Stage 2: build candidate vectors (cartesian over pruned bins) ----
-    area_candidates = Vector{Vector{Int}}()
-    area_candidates = [Int[]]
-    for s in 1:desired_stream_count
-      newc = Vector{Vector{Int}}()
-      for base in area_candidates
-        for a in top_anchors[s]
-          push!(newc, vcat(base, a))
-        end
-      end
-      area_candidates = newc
-    end
-
-    # ---- Stage 3: evaluate candidates by GLOBAL area complexity + stream targets + conc ----
+    # ---- Stage 2: decide AREA anchors greedily by stream priority ----
     area_gl = area_mgrs[:global]
     area_offset = float(get(area_mgrs, :global_offset, offset_for_range(area_min, area_max)))
+    chosen_area = fill(typemin(Int), desired_stream_count)
+    area_order = step_stream_order
 
-    global_raw_d = Float64[]
-    global_raw_q = Float64[]
-    global_raw_c = Float64[]
-    global_raw_u = Float64[]
-    sizehint!(global_raw_d, length(area_candidates))
-    sizehint!(global_raw_q, length(area_candidates))
-    sizehint!(global_raw_c, length(area_candidates))
-    sizehint!(global_raw_u, length(area_candidates))
+    for stream_idx in area_order
+      anchors = top_anchors[stream_idx]
+      global_raw_d = Float64[]
+      global_raw_q = Float64[]
+      global_raw_c = Float64[]
+      global_raw_u = Float64[]
+      sizehint!(global_raw_d, length(anchors))
+      sizehint!(global_raw_q, length(anchors))
+      sizehint!(global_raw_c, length(anchors))
+      sizehint!(global_raw_u, length(anchors))
 
-    for cand in area_candidates
-      enc = Float64[]
-      sizehint!(enc, desired_stream_count)
-      for i in 1:desired_stream_count
-        push!(enc, float(cand[i]) + (i - 1) * area_offset)
-      end
-
-      _d, _q, c, u = PolyphonicClusterManager.simulate_add_and_calculate_all(area_gl, enc)
-      push!(global_raw_d, isfinite(_d) ? float(_d) : 0.0)
-      push!(global_raw_q, isfinite(_q) ? float(_q) : 0.0)
-      push!(global_raw_c, isfinite(c) ? float(c) : 0.0)
-      push!(global_raw_u, isfinite(u) ? float(u) : 0.0)
-    end
-
-    global_scores = combine_complexity_metric_scores(global_raw_d, global_raw_q, global_raw_c, global_raw_u)
-
-    best_area_idx = 1
-    best_area_cost = Inf
-    # tie-break policy: when target is high, prefer larger jumps (to realize "random-ish" area moves)
-    target_mean = (area_global_target + (sum(area_stream_targets) / float(desired_stream_count))) / 2.0
-    prefer_big_jump = target_mean >= 0.5
-
-    best_area_tiebreak = prefer_big_jump ? -Inf : Inf
-
-    for (i, cand) in enumerate(area_candidates)
-      g_cost = abs(global_scores[i] - area_global_target)
-
-      # stream cost: mean |comp01(stream, anchor) - target(stream)|
-      s_cost_sum = 0.0
-      for s in 1:desired_stream_count
-        a = cand[s]
-        c01 = get(per_stream_comp01[s], a, 0.0)
-        s_cost_sum += abs(c01 - area_stream_targets[s])
-      end
-      s_cost = s_cost_sum / float(desired_stream_count)
-
-      # conc cost (simple & deterministic):
-      #   conc_w > 0 : prefer small spread
-      #   conc_w < 0 : prefer large spread
-      conc_cost = 0.0
-      if desired_stream_count >= 2 && abs(area_conc_w) > 1e-12
-        # mean pairwise distance normalized
-        dist_sum = 0.0
-        cnt = 0
-        for a in 1:(desired_stream_count-1)
-          for b in (a+1):desired_stream_count
-            dist_sum += abs(float(cand[a]) - float(cand[b]))
-            cnt += 1
+      for cand_anchor in anchors
+        enc = Float64[]
+        for i in 1:desired_stream_count
+          if chosen_area[i] != typemin(Int)
+            push!(enc, float(chosen_area[i]) + (i - 1) * area_offset)
           end
         end
-        spread01 = cnt == 0 ? 0.0 : clamp((dist_sum / float(cnt)) / BAND_WIDTH, 0.0, 1.0)
-        if area_conc_w > 0
-          conc_cost = abs(area_conc_w) * spread01
-        else
-          conc_cost = abs(area_conc_w) * (1.0 - spread01)
+        push!(enc, float(cand_anchor) + (stream_idx - 1) * area_offset)
+
+        _d, _q, c, u = _safe_simulate_add_and_calculate_all(area_gl, enc)
+        push!(global_raw_d, isfinite(_d) ? float(_d) : 0.0)
+        push!(global_raw_q, isfinite(_q) ? float(_q) : 0.0)
+        push!(global_raw_c, isfinite(c) ? float(c) : 0.0)
+        push!(global_raw_u, isfinite(u) ? float(u) : 0.0)
+      end
+
+      global_scores = combine_complexity_metric_scores(global_raw_d, global_raw_q, global_raw_c, global_raw_u)
+      prefer_big_jump = ((area_global_target + area_stream_targets[stream_idx]) / 2.0) >= 0.5
+      best_anchor = anchors[1]
+      best_area_cost = Inf
+      best_area_tiebreak = prefer_big_jump ? -Inf : Inf
+
+      for (i, cand_anchor) in enumerate(anchors)
+        g_cost = abs(global_scores[i] - area_global_target)
+        s_cost = abs(get(per_stream_comp01[stream_idx], cand_anchor, 0.0) - area_stream_targets[stream_idx])
+
+        decided_vals = Float64[]
+        for j in 1:desired_stream_count
+          if chosen_area[j] != typemin(Int)
+            push!(decided_vals, float(chosen_area[j]))
+          end
+        end
+        push!(decided_vals, float(cand_anchor))
+
+        conc_cost = 0.0
+        if length(decided_vals) >= 2 && abs(area_conc_w) > 1e-12
+          dist_sum = 0.0
+          cnt = 0
+          for a_i in 1:(length(decided_vals)-1)
+            for b_i in (a_i+1):length(decided_vals)
+              dist_sum += abs(decided_vals[a_i] - decided_vals[b_i])
+              cnt += 1
+            end
+          end
+          spread01 = cnt == 0 ? 0.0 : clamp((dist_sum / float(cnt)) / BAND_WIDTH, 0.0, 1.0)
+          conc_cost = area_conc_w > 0 ? abs(area_conc_w) * spread01 : abs(area_conc_w) * (1.0 - spread01)
+        end
+
+        register_cost = 0.0
+        if note_register_freedom < 1.0 - 1e-9
+          candidate_center = float(cand_anchor) + (float(BAND_SIZE - 1) / 2.0)
+          excess = max(0.0, abs(candidate_center - register_centers[stream_idx]) - register_allowance)
+          register_cost = (excess / max(float(ABS_MAX - ABS_MIN), 1.0)) * (1.0 - note_register_freedom)
+        end
+
+        total = g_cost + s_cost + conc_cost + register_cost
+        jump = abs(float(cand_anchor) - float(prev_tmp_anchors[stream_idx]))
+        tie_ok = prefer_big_jump ? (jump > best_area_tiebreak + 1e-12) : (jump < best_area_tiebreak - 1e-12)
+        if (total < best_area_cost - 1e-12) || (abs(total - best_area_cost) <= 1e-12 && tie_ok)
+          best_area_cost = total
+          best_anchor = cand_anchor
+          best_area_tiebreak = jump
         end
       end
 
-      register_cost = 0.0
-      if note_register_freedom < 1.0 - 1e-9
-        for s in 1:desired_stream_count
-          candidate_center = float(cand[s]) + (float(BAND_SIZE - 1) / 2.0)
-          excess = max(0.0, abs(candidate_center - register_centers[s]) - register_allowance)
-          register_cost += excess / max(float(ABS_MAX - ABS_MIN), 1.0)
-        end
-        register_cost = (register_cost / float(desired_stream_count)) * (1.0 - note_register_freedom)
-      end
-
-      total = g_cost + s_cost + conc_cost + register_cost
-
-      # tie-break: smaller average jump vs prev
-      jump = 0.0
-      for s in 1:desired_stream_count
-        jump += abs(float(cand[s]) - float(prev_tmp_anchors[s]))
-      end
-      jump = jump / float(desired_stream_count)
-
-      tie_ok = prefer_big_jump ? (jump > best_area_tiebreak + 1e-12) : (jump < best_area_tiebreak - 1e-12)
-
-      if (total < best_area_cost - 1e-12) || (abs(total - best_area_cost) <= 1e-12 && tie_ok)
-        best_area_cost = total
-        best_area_idx = i
-        best_area_tiebreak = jump
-      end
+      chosen_area[stream_idx] = best_anchor
     end
 
-    chosen_area = area_candidates[best_area_idx]  # Int per stream (tmp_anchor = band_low)
     if !area_enabled
       chosen_area = Int[_fixed_area_band_low_for_stream(s_i) for s_i in 1:desired_stream_count]
     end
@@ -4247,21 +4274,6 @@ end
       selected_chords[s] = copy(chords[1])
     end
 
-    function _build_global_notes(chords_per_stream::Vector{Vector{Int}})
-      midi_notes_all = Int[]
-      amps_all = Float64[]
-      for s in 1:desired_stream_count
-        chord = chords_per_stream[s]
-        v = vols[s]
-        a_each = isempty(chord) ? v : (v / float(length(chord)))
-        for n in chord
-          push!(midi_notes_all, n)
-          push!(amps_all, a_each)
-        end
-      end
-      return midi_notes_all, amps_all
-    end
-
     # Dissonance selection is done on pitch-class-normalized MIDI notes so octave distance
     # does not dominate roughness ranking.
     function _pc_normalized_notes(midi_notes::Vector{Int})
@@ -4274,60 +4286,69 @@ end
       return out
     end
 
-    # Evaluate global dissonance on full cartesian product of stream candidates.
-    current_combo = Vector{Vector{Int}}(undef, desired_stream_count)
-    best_combo = Vector{Vector{Int}}(undef, desired_stream_count)
-    for s in 1:desired_stream_count
-      best_combo[s] = copy(selected_chords[s])
-    end
+    # Decide global dissonance greedily by stream priority. Each stream is
+    # evaluated against STM plus chords already chosen earlier in this step.
+    chosen_note_flags = fill(false, desired_stream_count)
+    note_order = step_stream_order
 
-    function _enumerate_combinations!(s::Int, visitor)
-      if s > desired_stream_count
-        visitor(current_combo)
-        return
+    for stream_idx in note_order
+      cands = stream_chord_candidates[stream_idx]
+      if isempty(cands)
+        selected_chords[stream_idx] = Int[chosen_area[stream_idx]]
+        chosen_note_flags[stream_idx] = true
+        continue
       end
-      cands = stream_chord_candidates[s]
-      isempty(cands) && return
+
+      roughness = Float64[]
+      sizehint!(roughness, length(cands))
       for cand in cands
-        current_combo[s] = cand
-        _enumerate_combinations!(s + 1, visitor)
-      end
-    end
+        partial = Vector{Vector{Int}}()
+        partial_vols = Float64[]
+        for s in 1:desired_stream_count
+          if chosen_note_flags[s]
+            push!(partial, selected_chords[s])
+            push!(partial_vols, vols[s])
+          end
+        end
+        push!(partial, cand)
+        push!(partial_vols, vols[stream_idx])
 
-    min_r = Inf
-    max_r = -Inf
-    _enumerate_combinations!(1, combo -> begin
-      midi_notes_all, amps_all = _build_global_notes(combo)
-      eval_notes = _pc_normalized_notes(midi_notes_all)
-      d = float(DissonanceStmManager.evaluate(stm_mgr, eval_notes, amps_all, onset))
-      if d < min_r
-        min_r = d
-      end
-      if d > max_r
-        max_r = d
-      end
-    end)
+        midi_notes_all = Int[]
+        amps_all = Float64[]
+        for (i, chord) in enumerate(partial)
+          v = partial_vols[i]
+          a_each = isempty(chord) ? v : (v / float(length(chord)))
+          for n in chord
+            push!(midi_notes_all, n)
+            push!(amps_all, a_each)
+          end
+        end
 
-    span = max_r - min_r
-    span = span == 0.0 ? 1.0 : span
-    best_cost = Inf
+        eval_notes = _pc_normalized_notes(midi_notes_all)
+        push!(roughness, float(DissonanceStmManager.evaluate(stm_mgr, eval_notes, amps_all, onset)))
+      end
 
-    _enumerate_combinations!(1, combo -> begin
-      midi_notes_all, amps_all = _build_global_notes(combo)
-      eval_notes = _pc_normalized_notes(midi_notes_all)
-      d = float(DissonanceStmManager.evaluate(stm_mgr, eval_notes, amps_all, onset))
-      norm = clamp((d - min_r) / span, 0.0, 1.0)
-      c = abs(norm - target01)
-      if c < best_cost - 1e-12
-        best_cost = c
-        for i in 1:desired_stream_count
-          best_combo[i] = copy(combo[i])
+      min_r = minimum(roughness)
+      max_r = maximum(roughness)
+      span = max_r - min_r
+      span = span == 0.0 ? 1.0 : span
+
+      best_i = 1
+      best_cost = Inf
+      for (i, d) in enumerate(roughness)
+        norm = clamp((d - min_r) / span, 0.0, 1.0)
+        c = abs(norm - target01)
+        if c < best_cost - 1e-12
+          best_cost = c
+          best_i = i
         end
       end
-    end)
+
+      selected_chords[stream_idx] = copy(cands[best_i])
+      chosen_note_flags[stream_idx] = true
+    end
 
     for s in 1:desired_stream_count
-      selected_chords[s] = best_combo[s]
       best_chord = copy(selected_chords[s])
       sort!(best_chord)
       current_step_values[s][note_abs_idx] = best_chord
