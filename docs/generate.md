@@ -4,7 +4,7 @@
 
 `generate()` は、既存の初期系列をクラスタリングした上で、候補値を 1 つずつ仮追加し、候補ごとの単純/複雑スコアが `complexity_transition` の目標値に近いものを選びます。
 
-現在の単純/複雑スコアは `dist`, `quantity`, `complexity`, `usage` の 4 指標を合成します。
+現在の単純/複雑スコアは `dist`, `quantity`, `complexity`, `usage` の 4 基本指標と、クラスタの出現間隔を再解析する occurrence interval complexity を合成します。
 
 ## 1. エンドポイント
 
@@ -127,6 +127,21 @@ avg_dist, quantity, complexity, usage =
 
 `usage` も候補値の完全一致ヒストグラムではありません。例えば過去に `50` 近傍の部分列が多くあり、候補 `51` が同じクラスタへ入るなら、`51` の `usage` は高くなります。つまり「50 ではないから 51 は新しい」とは扱いません。
 
+### 5.1 出現間隔の二階クラスタリング
+
+候補追加後のクラスタに start index が 3 件以上ある場合、そのクラスタの `si` から階差数列を作ります。
+
+```text
+si = [0, 4, 8, 12]
+diff(si) = [4, 4, 4]
+```
+
+この階差数列を同じ `PolyphonicClusterManager` へ入れ、再び `dist`, `quantity`, `complexity`, `usage` を計算します。4つをまとめた occurrence interval complexity が、基本4指標に対する5番目の指標になります。
+
+`si` が2件以下なら階差数列がsubsequenceを作れないため、候補scoreには一切寄与しません。`si`が3件になった時点で`diff(si)`が2点になり、初めて有効になります。
+
+間隔は最初のinterval windowの平均値で割った比率として解析するため、`[4,4]`と`[8,8]`は同じ単純な間隔形として扱われます。計算量を制限するため、base clusterは対数間隔の最大4 scale、interval履歴は基本的に直近64 gapを使います。二階manager自身の出現間隔は解析せず、再帰は1段で止まります。
+
 ## 6. 正規化と信頼度ウェイト
 
 候補ごとの生スコアは `normalize_scores` で 0..1 系のスコアに変換されます。
@@ -172,7 +187,13 @@ normalized = [0.0, 0.0, 0.5, 1.0, 1.0]
 
 ```text
 candidate_score =
-  (dist_score + quantity_score + complexity_score + usage_score) / total_weight
+  (
+    dist_score
+    + quantity_score
+    + complexity_score
+    + usage_score
+    + occurrence_interval_score
+  ) / total_weight
 ```
 
 そして次を最小化する候補を選びます。

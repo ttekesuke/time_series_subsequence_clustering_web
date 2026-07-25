@@ -2155,6 +2155,78 @@ function combine_complexity_metric_scores(
   return combined
 end
 
+function combine_complexity_metric_scores_with_occurrence_intervals(
+  raw_dist::Vector{Float64},
+  raw_quantity::Vector{Float64},
+  raw_complexity::Vector{Float64},
+  raw_usage::Vector{Float64},
+  temporal_metrics::Vector{PolyphonicClusterManager.OccurrenceIntervalMetrics};
+  metric_weights::NTuple{4,Float64} = (1.0, 1.0, 1.0, 1.0),
+  temporal_weight::Float64 = Config.OCCURRENCE_INTERVAL_COMPLEXITY_WEIGHT,
+)::Vector{Float64}
+  base_scores = combine_complexity_metric_scores(
+    raw_dist,
+    raw_quantity,
+    raw_complexity,
+    raw_usage;
+    metric_weights=metric_weights,
+  )
+  isempty(base_scores) && return base_scores
+
+  eligible = Int[
+    i for i in eachindex(temporal_metrics)
+    if temporal_metrics[i].ready && i <= length(base_scores)
+  ]
+  isempty(eligible) && return base_scores
+
+  temporal_dist = Float64[temporal_metrics[i].distance for i in eligible]
+  temporal_qty = Float64[temporal_metrics[i].quantity for i in eligible]
+  temporal_comp = Float64[temporal_metrics[i].complexity for i in eligible]
+  temporal_usage = Float64[temporal_metrics[i].usage for i in eligible]
+
+  has_relative_signal =
+    length(unique(temporal_dist)) > 1 ||
+    length(unique(temporal_qty)) > 1 ||
+    length(unique(temporal_comp)) > 1 ||
+    length(unique(temporal_usage)) > 1
+
+  temporal_scores =
+    if has_relative_signal
+      combine_complexity_metric_scores(
+        temporal_dist,
+        temporal_qty,
+        temporal_comp,
+        temporal_usage;
+        metric_weights=metric_weights,
+      )
+    else
+      Float64[clamp(v, 0.0, 1.0) for v in temporal_comp]
+    end
+
+  weight = max(float(temporal_weight), 0.0)
+  weight <= 0.0 && return base_scores
+
+  _, dist_reliability = normalize_scores(raw_dist, true)
+  _, quantity_reliability = normalize_scores(raw_quantity, false)
+  _, complexity_reliability = normalize_scores(raw_complexity, true)
+  _, usage_reliability = normalize_scores(raw_usage, false)
+  base_weight =
+    max(metric_weights[1], 0.0) * dist_reliability +
+    max(metric_weights[2], 0.0) * quantity_reliability +
+    max(metric_weights[3], 0.0) * complexity_reliability +
+    max(metric_weights[4], 0.0) * usage_reliability
+
+  combined = copy(base_scores)
+  for (j, candidate_idx) in enumerate(eligible)
+    denom = base_weight + weight
+    combined[candidate_idx] =
+      denom > 0.0 ?
+        (base_scores[candidate_idx] * base_weight + weight * temporal_scores[j]) / denom :
+        temporal_scores[j]
+  end
+  return combined
+end
+
 function select_candidate_by_complexity_score(scores::Vector{Float64}, target_val::Float64)::Int
   best_index = 0
   min_diff = Inf
@@ -2294,20 +2366,30 @@ function generate()
     raw_quantity = Float64[]
     raw_complexity = Float64[]
     raw_usage = Float64[]
+    temporal_metrics = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
     sizehint!(raw_dist, length(candidates))
     sizehint!(raw_quantity, length(candidates))
     sizehint!(raw_complexity, length(candidates))
     sizehint!(raw_usage, length(candidates))
+    sizehint!(temporal_metrics, length(candidates))
 
     for candidate in candidates
-      avg_dist, quantity, complexity, usage = PolyphonicClusterManager.simulate_add_and_calculate_all(manager, Float64[candidate])
-      push!(raw_dist, avg_dist)
-      push!(raw_quantity, quantity)
-      push!(raw_complexity, complexity)
-      push!(raw_usage, usage)
+      metrics =
+        PolyphonicClusterManager.simulate_add_and_calculate_all_extended(manager, Float64[candidate])
+      push!(raw_dist, metrics.distance)
+      push!(raw_quantity, metrics.quantity)
+      push!(raw_complexity, metrics.complexity)
+      push!(raw_usage, metrics.usage)
+      push!(temporal_metrics, metrics.occurrence_intervals)
     end
 
-    scores = combine_complexity_metric_scores(raw_dist, raw_quantity, raw_complexity, raw_usage)
+    scores = combine_complexity_metric_scores_with_occurrence_intervals(
+      raw_dist,
+      raw_quantity,
+      raw_complexity,
+      raw_usage,
+      temporal_metrics,
+    )
     result_index = select_candidate_by_complexity_score(scores, float(target_val))
     result_value = candidates[result_index + 1]
 
@@ -2465,6 +2547,8 @@ struct CandidateMetric
   stream_qtys::Vector{Float64}
   stream_comps::Vector{Float64}
   stream_usages::Vector{Float64}
+  global_temporal::PolyphonicClusterManager.OccurrenceIntervalMetrics
+  stream_temporals::Vector{PolyphonicClusterManager.OccurrenceIntervalMetrics}
   discordance::Float64
 end
 
@@ -2491,15 +2575,20 @@ function _metric_weights4(weights::NTuple{3,Float64})::NTuple{4,Float64}
   return (weights[1], weights[2], weights[3], 1.0)
 end
 
-function _safe_simulate_add_and_calculate_all(
+function _safe_simulate_add_and_calculate_all_extended(
   mgr::PolyphonicClusterManager.Manager,
-  value::PolyphonicClusterManager.PolySet
-)::NTuple{4,Float64}
+  value::PolyphonicClusterManager.PolySet,
+)::PolyphonicClusterManager.ExtendedClusterMetrics
   try
-    d, q, c, u = PolyphonicClusterManager.simulate_add_and_calculate_all(mgr, value)
-    return (float(d), float(q), float(c), float(u))
+    return PolyphonicClusterManager.simulate_add_and_calculate_all_extended(mgr, value)
   catch
-    return (0.0, 0.0, 0.0, 0.0)
+    return PolyphonicClusterManager.ExtendedClusterMetrics(
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      PolyphonicClusterManager.EMPTY_OCCURRENCE_INTERVAL_METRICS,
+    )
   end
 end
 
@@ -2551,11 +2640,12 @@ function select_best_polyphonic_candidate_unified_with_cost(
   breakdowns = CandidateCostBreakdown[]
   sizehint!(breakdowns, length(metrics))
 
-  global_scores = combine_complexity_metric_scores(
+  global_scores = combine_complexity_metric_scores_with_occurrence_intervals(
     [m.global_dist for m in metrics],
     [m.global_qty for m in metrics],
     [m.global_comp for m in metrics],
-    [m.global_usage for m in metrics];
+    [m.global_usage for m in metrics],
+    [m.global_temporal for m in metrics];
     metric_weights=global_metric_weights
   )
 
@@ -2576,7 +2666,20 @@ function select_best_polyphonic_candidate_unified_with_cost(
     raw_q = Float64[(s_idx <= length(m.stream_qtys)) ? m.stream_qtys[s_idx] : 0.0 for m in metrics]
     raw_c = Float64[(s_idx <= length(m.stream_comps)) ? m.stream_comps[s_idx] : 0.0 for m in metrics]
     raw_u = Float64[(s_idx <= length(m.stream_usages)) ? m.stream_usages[s_idx] : 0.0 for m in metrics]
-    stream_norm[s_idx] = combine_complexity_metric_scores(raw_d, raw_q, raw_c, raw_u; metric_weights=stream_metric_weights)
+    temporal = PolyphonicClusterManager.OccurrenceIntervalMetrics[
+      (s_idx <= length(m.stream_temporals)) ?
+        m.stream_temporals[s_idx] :
+        PolyphonicClusterManager.EMPTY_OCCURRENCE_INTERVAL_METRICS
+      for m in metrics
+    ]
+    stream_norm[s_idx] = combine_complexity_metric_scores_with_occurrence_intervals(
+      raw_d,
+      raw_q,
+      raw_c,
+      raw_u,
+      temporal;
+      metric_weights=stream_metric_weights,
+    )
   end
 
   conc_enabled = !isempty(metrics) && length(metrics[1].ordered_cand) > 1
@@ -2688,7 +2791,8 @@ function select_best_chord_for_dimension_with_cost(
     for (i, v) in enumerate(ordered_vals)
       push!(global_vals, float(v) + (i - 1) * float(g_offset))
     end
-    g_dist, g_qty, g_comp, g_usage = PolyphonicClusterManager.simulate_add_and_calculate_all(mgrs[:global], global_vals)
+    global_metrics =
+      PolyphonicClusterManager.simulate_add_and_calculate_all_extended(mgrs[:global], global_vals)
     disc =
       if isempty(ordered_vals)
         0.0
@@ -2700,25 +2804,42 @@ function select_best_chord_for_dimension_with_cost(
     stream_qtys = Float64[]
     stream_comps = Float64[]
     stream_usages = Float64[]
+    stream_temporals = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
 
     stream_mgr = mgrs[:stream]
     actives = MultiStreamManager.active_stream_containers(stream_mgr, n)
     for i in 1:n
       if i <= length(actives) && i <= length(ordered_polysets)
-        d_s, q_s, c_s, u_s = _safe_simulate_add_and_calculate_all(actives[i].manager, ordered_polysets[i])
-        push!(stream_dists, isfinite(d_s) ? float(d_s) : 0.0)
-        push!(stream_qtys, isfinite(q_s) ? float(q_s) : 0.0)
-        push!(stream_comps, isfinite(c_s) ? float(c_s) : 0.0)
-        push!(stream_usages, isfinite(u_s) ? float(u_s) : 0.0)
+        stream_metrics =
+          _safe_simulate_add_and_calculate_all_extended(actives[i].manager, ordered_polysets[i])
+        push!(stream_dists, isfinite(stream_metrics.distance) ? stream_metrics.distance : 0.0)
+        push!(stream_qtys, isfinite(stream_metrics.quantity) ? stream_metrics.quantity : 0.0)
+        push!(stream_comps, isfinite(stream_metrics.complexity) ? stream_metrics.complexity : 0.0)
+        push!(stream_usages, isfinite(stream_metrics.usage) ? stream_metrics.usage : 0.0)
+        push!(stream_temporals, stream_metrics.occurrence_intervals)
       else
         push!(stream_dists, 0.0)
         push!(stream_qtys, 0.0)
         push!(stream_comps, 0.0)
         push!(stream_usages, 0.0)
+        push!(stream_temporals, PolyphonicClusterManager.EMPTY_OCCURRENCE_INTERVAL_METRICS)
       end
     end
 
-    push!(metrics, CandidateMetric(ordered_vals, g_dist, g_qty, g_comp, g_usage, stream_dists, stream_qtys, stream_comps, stream_usages, disc))
+    push!(metrics, CandidateMetric(
+      ordered_vals,
+      global_metrics.distance,
+      global_metrics.quantity,
+      global_metrics.complexity,
+      global_metrics.usage,
+      stream_dists,
+      stream_qtys,
+      stream_comps,
+      stream_usages,
+      global_metrics.occurrence_intervals,
+      stream_temporals,
+      disc,
+    ))
   end
 
   isempty(metrics) && return (Float64[], Inf)
@@ -2798,21 +2919,41 @@ function select_best_values_for_dimension_greedy(
         push!(global_vals, v + (i - 1) * g_offset)
       end
 
-      g_dist, g_qty, g_comp, g_usage = _safe_simulate_add_and_calculate_all(mgrs[:global], global_vals)
+      global_metrics =
+        _safe_simulate_add_and_calculate_all_extended(mgrs[:global], global_vals)
       disc = length(ordered_vals) <= 1 ? 0.0 : clamp((maximum(ordered_vals) - minimum(ordered_vals)) / range_width, 0.0, 1.0)
 
-      s_dist, s_qty, s_comp, s_usage =
+      stream_metrics =
         if stream_idx <= length(actives)
-          _safe_simulate_add_and_calculate_all(actives[stream_idx].manager, Float64[float(cand)])
+          _safe_simulate_add_and_calculate_all_extended(
+            actives[stream_idx].manager,
+            Float64[float(cand)],
+          )
         else
-          (0.0, 0.0, 0.0, 0.0)
+          PolyphonicClusterManager.ExtendedClusterMetrics(
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            PolyphonicClusterManager.EMPTY_OCCURRENCE_INTERVAL_METRICS,
+          )
         end
 
       push!(metrics, CandidateMetric(
         ordered_vals,
-        g_dist, g_qty, g_comp, g_usage,
-        Float64[s_dist], Float64[s_qty], Float64[s_comp], Float64[s_usage],
-        disc
+        global_metrics.distance,
+        global_metrics.quantity,
+        global_metrics.complexity,
+        global_metrics.usage,
+        Float64[stream_metrics.distance],
+        Float64[stream_metrics.quantity],
+        Float64[stream_metrics.complexity],
+        Float64[stream_metrics.usage],
+        global_metrics.occurrence_intervals,
+        PolyphonicClusterManager.OccurrenceIntervalMetrics[
+          stream_metrics.occurrence_intervals,
+        ],
+        disc,
       ))
     end
 
@@ -4084,28 +4225,38 @@ for s in 1:desired_stream_count
   raw_q = Float64[]  # quantity (complex when smaller)
   raw_c = Float64[]  # complexity (complex when larger)
   raw_u = Float64[]  # usage (complex when smaller)
+  temporal_metrics = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
   sizehint!(raw_d, length(anchors))
   sizehint!(raw_q, length(anchors))
   sizehint!(raw_c, length(anchors))
   sizehint!(raw_u, length(anchors))
+  sizehint!(temporal_metrics, length(anchors))
 
   pa = prev_tmp_anchors[s]
 
   for a in anchors
-    _d, _q, c, u = PolyphonicClusterManager.simulate_add_and_calculate_all(sm, Float64[float(a)])
+    metrics =
+      PolyphonicClusterManager.simulate_add_and_calculate_all_extended(sm, Float64[float(a)])
 
-    dval = (isfinite(_d) ? float(_d) : 0.0)
-    qval = (isfinite(_q) ? float(_q) : 0.0)
-    cval = (isfinite(c)  ? float(c)  : 0.0)
-    uval = (isfinite(u)  ? float(u)  : 0.0)
+    dval = isfinite(metrics.distance) ? metrics.distance : 0.0
+    qval = isfinite(metrics.quantity) ? metrics.quantity : 0.0
+    cval = isfinite(metrics.complexity) ? metrics.complexity : 0.0
+    uval = isfinite(metrics.usage) ? metrics.usage : 0.0
 
     push!(raw_d, dval)
     push!(raw_q, qval)
     push!(raw_c, cval)
     push!(raw_u, uval)
+    push!(temporal_metrics, metrics.occurrence_intervals)
   end
 
-  scores = combine_complexity_metric_scores(raw_d, raw_q, raw_c, raw_u)
+  scores = combine_complexity_metric_scores_with_occurrence_intervals(
+    raw_d,
+    raw_q,
+    raw_c,
+    raw_u,
+    temporal_metrics,
+  )
 
   m = Dict{Int,Float64}()
   for (i, a) in enumerate(anchors)
@@ -4150,10 +4301,12 @@ end
       global_raw_q = Float64[]
       global_raw_c = Float64[]
       global_raw_u = Float64[]
+      global_temporal = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
       sizehint!(global_raw_d, length(anchors))
       sizehint!(global_raw_q, length(anchors))
       sizehint!(global_raw_c, length(anchors))
       sizehint!(global_raw_u, length(anchors))
+      sizehint!(global_temporal, length(anchors))
 
       for cand_anchor in anchors
         enc = Float64[]
@@ -4164,14 +4317,21 @@ end
         end
         push!(enc, float(cand_anchor) + (stream_idx - 1) * area_offset)
 
-        _d, _q, c, u = _safe_simulate_add_and_calculate_all(area_gl, enc)
-        push!(global_raw_d, isfinite(_d) ? float(_d) : 0.0)
-        push!(global_raw_q, isfinite(_q) ? float(_q) : 0.0)
-        push!(global_raw_c, isfinite(c) ? float(c) : 0.0)
-        push!(global_raw_u, isfinite(u) ? float(u) : 0.0)
+        metrics = _safe_simulate_add_and_calculate_all_extended(area_gl, enc)
+        push!(global_raw_d, isfinite(metrics.distance) ? metrics.distance : 0.0)
+        push!(global_raw_q, isfinite(metrics.quantity) ? metrics.quantity : 0.0)
+        push!(global_raw_c, isfinite(metrics.complexity) ? metrics.complexity : 0.0)
+        push!(global_raw_u, isfinite(metrics.usage) ? metrics.usage : 0.0)
+        push!(global_temporal, metrics.occurrence_intervals)
       end
 
-      global_scores = combine_complexity_metric_scores(global_raw_d, global_raw_q, global_raw_c, global_raw_u)
+      global_scores = combine_complexity_metric_scores_with_occurrence_intervals(
+        global_raw_d,
+        global_raw_q,
+        global_raw_c,
+        global_raw_u,
+        global_temporal,
+      )
       prefer_big_jump = ((area_global_target + area_stream_targets[stream_idx]) / 2.0) >= 0.5
       best_anchor = anchors[1]
       best_area_cost = Inf

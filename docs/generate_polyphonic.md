@@ -322,6 +322,42 @@ weight = (1 - r) + r * exp(-age / span)
 
 この重みは `dist`, `quantity`, `complexity`, `usage` の集計に使われます。古いクラスタを削除するのではなく、候補評価時の重みだけを下げます。dissonance STM の roughness 計算には直接入りません。
 
+### 7.1 occurrence interval complexity
+
+通常 dimension と AREA の候補評価には、既存 4 指標に加えて、クラスタの出現間隔を同じクラスタリング機構で再解析した 5 番目の指標が入ります。
+
+```text
+base cluster starts:
+si = [0, 4, 8, 12]
+
+occurrence interval series:
+diff(si) = [4, 4, 4]
+```
+
+`si` が 3 件未満の場合は interval series が subsequence を作れないため、この指標は `ready=false` となり、候補 score の分子にも分母にも入りません。3 件に達すると `diff(si)` が 2 点になり、`POLYPHONIC_MIN_WINDOW_SIZE=2` のメタ時系列として初めてクラスタリングされます。
+
+メタ時系列からも同じ 4 指標を計算します。
+
+```text
+interval cluster distance
+interval cluster quantity
+interval calculate_cluster_complexity
+interval usage
+```
+
+これらをまとめた occurrence interval complexity を、base 4 指標と同じ 1 指標分の重みで合成します。base 4 指標がすべて有効なら、base 側が 80%、occurrence interval 側が 20% です。現在この重みを変更する画面パラメータはありません。
+
+絶対的な周期長ではなく間隔パターンの複雑さを見るため、gap は最初の interval window の平均値で割って比率化します。等間隔の `[4,4]` と `[8,8]` はどちらも `[1,1]` になります。
+
+計算量を抑えるため、次の決定論的な制限があります。
+
+- 候補が完成させる全 window のうち、対数間隔で最大 4 scale を評価する。
+- 各 interval manager は直近 64 gap を基本履歴とする。
+- manager が 128 gap まで伸びた場合、直近 64 gap から再構築する。
+- interval manager 自身では occurrence interval complexity を再計算しない。再帰は 1 段で止まる。
+
+global manager の `si` からは複数 stream を合わせた状態の反復間隔、stream manager の `si` からは各 stream の反復間隔が評価されます。最終実音を選ぶ dissonance 専用段階には入りません。
+
 ## 8. 通常 dimension の greedy 選択
 
 通常 dimension の処理対象順は次です。

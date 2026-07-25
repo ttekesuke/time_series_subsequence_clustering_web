@@ -35,6 +35,36 @@ mutable struct PolyClusterNode
   as::PolySeq                         # representative sequence
 end
 
+"""Complexity metrics of the interval series derived from a cluster's starts."""
+struct OccurrenceIntervalMetrics
+  distance::Float64
+  quantity::Float64
+  complexity::Float64
+  usage::Float64
+  ready::Bool
+end
+
+"""Base metrics plus the second-order occurrence-interval metrics."""
+struct ExtendedClusterMetrics
+  distance::Float64
+  quantity::Float64
+  complexity::Float64
+  usage::Float64
+  occurrence_intervals::OccurrenceIntervalMetrics
+end
+
+const EMPTY_OCCURRENCE_INTERVAL_METRICS =
+  OccurrenceIntervalMetrics(0.0, 0.0, 0.0, 0.0, false)
+
+abstract type AbstractClusterManager end
+
+"""Incremental second-order manager for one base cluster's occurrence gaps."""
+mutable struct OccurrenceIntervalState
+  source_occurrence_count::Int
+  scale::Float64
+  manager::Union{Nothing,AbstractClusterManager}
+end
+
 """Rollback snapshot (typed)."""
 struct PolySnapshot
   tasks::Vector{Tuple{Vector{Int},Int}}
@@ -99,7 +129,7 @@ struct PJCacheWriteComp <: PolyJournalEntry
 end
 
 """Main manager."""
-mutable struct Manager
+mutable struct Manager <: AbstractClusterManager
   data::Vector{PolySet}
   merge_threshold_ratio::Float64
   min_window_size::Int
@@ -129,6 +159,8 @@ mutable struct Manager
   cluster_complexity_cache::Dict{Int,Dict{Int,Float64}}
 
   recency::Float64
+  enable_occurrence_intervals::Bool
+  occurrence_interval_states::IdDict{PolyClusterNode,OccurrenceIntervalState}
 
   recording_mode::Bool
   journal::Vector{PolyJournalEntry}
@@ -161,6 +193,7 @@ function Manager(
   point_distance_mode::Symbol = :set,
   point_axis_ranges::Vector{Float64} = Float64[],
   recency::Real = 0.0,
+  enable_occurrence_intervals::Bool = true,
   scale_mode::Symbol = :range_fixed,
   contextual_min_width::Real = Config.DEFAULT_CONTEXTUAL_MIN_WIDTH,
   range_min::Real = Config.DEFAULT_RANGE_MIN,
@@ -221,6 +254,8 @@ function Manager(
     qty_cache,
     comp_cache,
     clamp(float(recency), 0.0, 1.0),
+    Bool(enable_occurrence_intervals),
+    IdDict{PolyClusterNode,OccurrenceIntervalState}(),
     false,
     PolyJournalEntry[],
     nothing
@@ -679,6 +714,13 @@ function update_caches_permanently!(mgr::Manager)
     end
   end
 
+  if mgr.enable_occurrence_intervals
+    now_index = length(mgr.data) - 1
+    for (_, node) in _selected_latest_occurrence_targets(clusters_each, now_index)
+      _sync_occurrence_interval_state!(mgr, node)
+    end
+  end
+
   # reset updated ids (Rails behavior)
   empty!(mgr.updated_cluster_ids_per_window_for_calculate_distance)
   empty!(mgr.updated_cluster_ids_per_window_for_calculate_quantities)
@@ -938,9 +980,325 @@ function latest_cluster_usage_score(
   return usage
 end
 
+function _aggregate_current_metrics(
+  mgr::Manager,
+  clusters_each::Dict{Int,Dict{Int,PolyClusterNode}};
+  include_singleton_complexity::Bool=false,
+)::NTuple{4,Float64}
+  sum_distances = 0.0
+  sum_quantities = 0.0
+  sum_complexities = 0.0
+  now_index = length(mgr.data) - 1
+  usage = latest_cluster_usage_score(mgr, clusters_each, now_index)
+
+  for (window_size, same_ws) in clusters_each
+    cache = get(mgr.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
+    q_cache = get(mgr.cluster_quantity_cache, window_size, Dict{Int,Float64}())
+    c_cache = get(mgr.cluster_complexity_cache, window_size, Dict{Int,Float64}())
+
+    if mgr.recency <= 0.0
+      if !isempty(cache)
+        sum_distances += sum(values(cache)) / float(window_size)
+      end
+      if !isempty(q_cache)
+        sum_quantities += sum(values(q_cache))
+      end
+      if !isempty(c_cache)
+        sum_complexities += sum(values(c_cache))
+      end
+      if include_singleton_complexity
+        for (_, node) in same_ws
+          length(node.si) == 1 || continue
+          sum_complexities += calculate_cluster_complexity(mgr, node)
+        end
+      end
+    else
+      if !isempty(cache)
+        sum_distances += weighted_distance_score(mgr, cache, same_ws, now_index)
+      end
+      sum_quantities += weighted_quantity_score(mgr, same_ws, window_size, now_index)
+      if !isempty(c_cache)
+        sum_complexities += weighted_complexity_score(mgr, c_cache, same_ws, now_index)
+      end
+      if include_singleton_complexity
+        singleton_sum = 0.0
+        singleton_weight = 0.0
+        for (_, node) in same_ws
+          length(node.si) == 1 || continue
+          w = cluster_recency_weight(mgr, node, now_index)
+          singleton_sum += calculate_cluster_complexity(mgr, node) * w
+          singleton_weight += w
+        end
+        singleton_weight > 0.0 && (sum_complexities += singleton_sum / singleton_weight)
+      end
+    end
+  end
+
+  return (sum_distances, sum_quantities, sum_complexities, usage)
+end
+
+function _occurrence_gaps(starts::Vector{Int})::Vector{Float64}
+  gaps = Float64[]
+  sizehint!(gaps, length(starts) - 1)
+  @inbounds for i in 2:length(starts)
+    gap = starts[i] - starts[i - 1]
+    gap > 0 && push!(gaps, float(gap))
+  end
+  return gaps
+end
+
+function _occurrence_interval_scale(gaps::Vector{Float64}, min_window_size::Int)::Float64
+  isempty(gaps) && return 1.0
+  scale_count = min(length(gaps), max(min_window_size, 1))
+  scale = sum(@view gaps[1:scale_count]) / float(scale_count)
+  return scale > 0.0 ? scale : 1.0
+end
+
+@inline function _normalize_occurrence_gap(gap::Real, scale::Real)::Float64
+  ratio_max = Config.OCCURRENCE_INTERVAL_RATIO_MAX
+  safe_scale = float(scale) > 0.0 ? float(scale) : 1.0
+  return clamp(float(gap) / safe_scale, 0.0, ratio_max)
+end
+
+function _build_occurrence_interval_manager(
+  gaps::Vector{Float64},
+  scale::Float64,
+  merge_threshold_ratio::Real,
+  min_window_size::Int,
+)::Manager
+  ratio_max = Config.OCCURRENCE_INTERVAL_RATIO_MAX
+  history_limit = max(Config.OCCURRENCE_INTERVAL_HISTORY_LIMIT, min_window_size)
+  first_gap = max(length(gaps) - history_limit + 1, 1)
+  retained_gaps = @view gaps[first_gap:end]
+  interval_series = PolySet[
+    Float64[_normalize_occurrence_gap(gap, scale)]
+    for gap in retained_gaps
+  ]
+  manager = Manager(
+    interval_series,
+    merge_threshold_ratio,
+    min_window_size,
+    false;
+    value_min=0.0,
+    value_max=ratio_max,
+    range_min=0.0,
+    range_max=ratio_max,
+    max_set_size=1,
+    recency=0.0,
+    enable_occurrence_intervals=false,
+  )
+  process_data!(manager)
+  update_caches_permanently!(manager)
+  return manager
+end
+
+function _sync_occurrence_interval_state!(mgr::Manager, node::PolyClusterNode)::Nothing
+  starts = sort!(unique(copy(node.si)))
+  occurrence_count = length(starts)
+  occurrence_count >= 2 || return nothing
+
+  existing = get(mgr.occurrence_interval_states, node, nothing)
+  gaps = _occurrence_gaps(starts)
+
+  if occurrence_count < Config.OCCURRENCE_INTERVAL_MIN_OCCURRENCES
+    if existing === nothing
+      mgr.occurrence_interval_states[node] =
+        OccurrenceIntervalState(occurrence_count, 1.0, nothing)
+    else
+      existing.source_occurrence_count = occurrence_count
+    end
+    return nothing
+  end
+
+  if existing === nothing || existing.manager === nothing ||
+      existing.source_occurrence_count > occurrence_count
+    scale = _occurrence_interval_scale(gaps, mgr.min_window_size)
+    interval_manager = _build_occurrence_interval_manager(
+      gaps,
+      scale,
+      mgr.merge_threshold_ratio,
+      mgr.min_window_size,
+    )
+    mgr.occurrence_interval_states[node] =
+      OccurrenceIntervalState(occurrence_count, scale, interval_manager)
+    return nothing
+  end
+
+  if existing.source_occurrence_count < occurrence_count
+    interval_manager = existing.manager::Manager
+    history_limit = max(Config.OCCURRENCE_INTERVAL_HISTORY_LIMIT, mgr.min_window_size)
+    if length(interval_manager.data) >= 2 * history_limit
+      retained_start = max(length(gaps) - history_limit + 1, 1)
+      retained_gaps = Float64[gaps[i] for i in retained_start:length(gaps)]
+      scale = _occurrence_interval_scale(retained_gaps, mgr.min_window_size)
+      existing.manager = _build_occurrence_interval_manager(
+        retained_gaps,
+        scale,
+        mgr.merge_threshold_ratio,
+        mgr.min_window_size,
+      )
+      existing.scale = scale
+      existing.source_occurrence_count = occurrence_count
+      return nothing
+    end
+
+    start_occurrence = existing.source_occurrence_count + 1
+    for occurrence_idx in start_occurrence:occurrence_count
+      gap = starts[occurrence_idx] - starts[occurrence_idx - 1]
+      normalized_gap = _normalize_occurrence_gap(gap, existing.scale)
+      add_data_point_permanently!(interval_manager, Float64[normalized_gap])
+      update_caches_permanently!(interval_manager)
+    end
+    existing.source_occurrence_count = occurrence_count
+  end
+  return nothing
+end
+
+function _occurrence_interval_metrics_for_starts(
+  starts_raw::Vector{Int},
+  merge_threshold_ratio::Real,
+  min_window_size::Int,
+)::OccurrenceIntervalMetrics
+  starts = sort!(unique(copy(starts_raw)))
+  length(starts) < Config.OCCURRENCE_INTERVAL_MIN_OCCURRENCES &&
+    return EMPTY_OCCURRENCE_INTERVAL_METRICS
+
+  gaps = _occurrence_gaps(starts)
+  length(gaps) < min_window_size && return EMPTY_OCCURRENCE_INTERVAL_METRICS
+
+  history_limit = max(Config.OCCURRENCE_INTERVAL_HISTORY_LIMIT, min_window_size)
+  retained_start = max(length(gaps) - history_limit + 1, 1)
+  retained_gaps = Float64[gaps[i] for i in retained_start:length(gaps)]
+  scale = _occurrence_interval_scale(retained_gaps, min_window_size)
+  interval_mgr = _build_occurrence_interval_manager(
+    retained_gaps,
+    scale,
+    merge_threshold_ratio,
+    min_window_size,
+  )
+  interval_clusters = collect_clusters_each(interval_mgr)
+  d, q, c, u = _aggregate_current_metrics(
+    interval_mgr,
+    interval_clusters;
+    include_singleton_complexity=true,
+  )
+  return OccurrenceIntervalMetrics(d, q, c, u, true)
+end
+
+function _preview_occurrence_interval_metrics(
+  mgr::Manager,
+  node::PolyClusterNode,
+)::OccurrenceIntervalMetrics
+  starts = sort!(unique(copy(node.si)))
+  occurrence_count = length(starts)
+  occurrence_count < Config.OCCURRENCE_INTERVAL_MIN_OCCURRENCES &&
+    return EMPTY_OCCURRENCE_INTERVAL_METRICS
+
+  committed_count = occurrence_count - 1
+  state = get(mgr.occurrence_interval_states, node, nothing)
+  if state !== nothing &&
+      state.manager !== nothing &&
+      state.source_occurrence_count == committed_count
+    interval_manager = state.manager::Manager
+    gap = starts[end] - starts[end - 1]
+    normalized_gap = _normalize_occurrence_gap(gap, state.scale)
+    d, q, c, u =
+      simulate_add_and_calculate_all(interval_manager, Float64[normalized_gap])
+    return OccurrenceIntervalMetrics(d, q, c, u, true)
+  end
+
+  return _occurrence_interval_metrics_for_starts(
+    starts,
+    mgr.merge_threshold_ratio,
+    mgr.min_window_size,
+  )
+end
+
+function _selected_latest_occurrence_targets(
+  clusters_each::Dict{Int,Dict{Int,PolyClusterNode}},
+  now_index::Int,
+)::Vector{Tuple{Int,PolyClusterNode}}
+  targets = Tuple{Int,PolyClusterNode}[]
+  for (window_size, same_ws) in clusters_each
+    latest_start = now_index - window_size + 1
+    latest_start < 0 && continue
+    for (_, node) in same_ws
+      latest_start in node.si || continue
+      length(node.si) >= Config.OCCURRENCE_INTERVAL_MIN_OCCURRENCES &&
+        push!(targets, (window_size, node))
+      break
+    end
+  end
+  isempty(targets) && return targets
+  sort!(targets; by=first)
+
+  max_scales = max(Config.OCCURRENCE_INTERVAL_MAX_BASE_SCALES, 1)
+  if length(targets) > max_scales
+    selected = Tuple{Int,PolyClusterNode}[]
+    selected_indices = Set{Int}()
+    log_min = log(float(targets[1][1]))
+    log_max = log(float(targets[end][1]))
+    for scale_idx in 0:(max_scales - 1)
+      fraction = max_scales == 1 ? 1.0 : float(scale_idx) / float(max_scales - 1)
+      target_log = log_min + fraction * (log_max - log_min)
+      best_idx = 1
+      best_distance = Inf
+      for i in eachindex(targets)
+        distance = abs(log(float(targets[i][1])) - target_log)
+        if distance < best_distance
+          best_distance = distance
+          best_idx = i
+        end
+      end
+      push!(selected_indices, best_idx)
+    end
+    for i in sort!(collect(selected_indices))
+      push!(selected, targets[i])
+    end
+    targets = selected
+  end
+  return targets
+end
+
+function latest_occurrence_interval_metrics(
+  mgr::Manager,
+  clusters_each::Dict{Int,Dict{Int,PolyClusterNode}},
+  now_index::Int,
+)::OccurrenceIntervalMetrics
+  targets = _selected_latest_occurrence_targets(clusters_each, now_index)
+  isempty(targets) && return EMPTY_OCCURRENCE_INTERVAL_METRICS
+
+  sum_distance = 0.0
+  sum_quantity = 0.0
+  sum_complexity = 0.0
+  sum_usage = 0.0
+  ready_count = 0
+
+  for (_, target) in targets
+    temporal = _preview_occurrence_interval_metrics(mgr, target)
+    temporal.ready || continue
+
+    sum_distance += temporal.distance
+    sum_quantity += temporal.quantity
+    sum_complexity += temporal.complexity
+    sum_usage += temporal.usage
+    ready_count += 1
+  end
+
+  ready_count <= 0 && return EMPTY_OCCURRENCE_INTERVAL_METRICS
+  denom = float(ready_count)
+  return OccurrenceIntervalMetrics(
+    sum_distance / denom,
+    sum_quantity / denom,
+    sum_complexity / denom,
+    sum_usage / denom,
+    true,
+  )
+end
+
 # Simulation with rollback
 
-function simulate_add_and_calculate_all(mgr::Manager, candidate::PolySet)
+function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySet)::ExtendedClusterMetrics
   start_transaction!(mgr)
   reset_updated_ids_for_simulation!(mgr)
 
@@ -1037,10 +1395,27 @@ function simulate_add_and_calculate_all(mgr::Manager, candidate::PolySet)
       end
     end
 
-    return (sum_distances, sum_quantities, sum_complexities, usage)
+    occurrence_intervals =
+      if mgr.enable_occurrence_intervals
+        latest_occurrence_interval_metrics(mgr, clusters_each, length(mgr.data) - 1)
+      else
+        EMPTY_OCCURRENCE_INTERVAL_METRICS
+      end
+    return ExtendedClusterMetrics(
+      sum_distances,
+      sum_quantities,
+      sum_complexities,
+      usage,
+      occurrence_intervals,
+    )
   finally
     rollback!(mgr)
   end
+end
+
+function simulate_add_and_calculate_all(mgr::Manager, candidate::PolySet)
+  metrics = simulate_add_and_calculate_all_extended(mgr, candidate)
+  return (metrics.distance, metrics.quantity, metrics.complexity, metrics.usage)
 end
 
 function simulate_add_and_calculate(mgr::Manager, candidate::PolySet)
