@@ -1,13 +1,15 @@
 # `generate_polyphonic` アクション詳細
 
-このドキュメントは、サーバサイドの `TimeSeriesController.generate_polyphonic()` が行うポリフォニック生成を、現在の実装に沿って整理したものです。
+このドキュメントは、現在の実装に沿って `TimeSeriesController.generate_polyphonic()` と画面 `MusicGenerateDialog.vue` から送られるパラメータを整理したものです。
 
-主な実装は次です。
+主な実装ファイル:
 
 - `src/controllers/time_series_controller.jl`
 - `src/polyphonic/multi_stream_manager.jl`
 - `src/polyphonic/polyphonic_cluster_manager.jl`
 - `src/polyphonic/dissonance_stm_manager.jl`
+- `src/controllers/supercolliders_controller.jl`
+- `src/supercollider/render_polyphonic.scd.tpl`
 - `frontend/src/components/dialog/MusicGenerateDialog.vue`
 - `frontend/src/components/features/MusicGenerate.vue`
 
@@ -15,105 +17,302 @@
 
 - 直接実行: `POST /api/web/time_series/generate_polyphonic`
 - GitHub Actions dispatch: `POST /api/web/time_series/dispatch_generate_polyphonic`
-- ルーティング先:
-  - `TimeSeriesController.generate_polyphonic()`
-  - `TimeSeriesController.dispatch_generate_polyphonic()`
 
-画面の `RUN` は環境変数 `VITE_RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS` により、直接実行か GitHub Actions dispatch に切り替わります。どちらも生成本体に渡す payload は `generate_polyphonic` キー配下です。
+画面の `RUN` は `VITE_RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS` により、直接実行か GitHub Actions dispatch に切り替わります。どちらも生成本体に渡す payload は `generate_polyphonic` キー配下です。
 
-## 2. 入力ペイロード全体
+## 2. 画面が送る payload
 
-画面の `MusicGenerateDialog.buildParamsPayload()` は概ね次の形を送ります。
+`MusicGenerateDialog.buildParamsPayload()` は概ね次の形を送ります。
 
 ```json
 {
   "generate_polyphonic": {
     "job_id": "...uuid...",
     "bpm": 480,
-    "future_bpm": [480, 480],
-    "stream_counts": [1, 2],
+    "future_bpm": [480, 480, 480],
+    "stream_counts": [1, 2, 2],
+    "legato_center": [0.0, 0.0, 0.0],
+    "legato_spread": [0.0, 0.0, 0.0],
+    "recency_center": [0.0, 0.0, 0.0],
+    "recency_spread": [0.0, 0.0, 0.0],
     "initial_context": [
       [
-        [[60], 1.0, 0.5, 0.2, 0.8, 0.05, 0.2, 0.75]
+        [[60], 1.0, 0.5, 0.2, 0.5, 0.05, 0.2, 0.75, 0, 0.0, 0.5, 0.0]
       ]
     ],
     "initial_context_bpm": [480],
     "dimension_policy": {
-      "area": { "accept_params": true, "fixed_value": 0.5, "fixed_value_source": "manual_input" }
+      "area": { "accept_params": true, "fixed_value": 0.5, "fixed_value_source": "manual_input" },
+      "chord_range": { "accept_params": true, "fixed_value": 0, "fixed_value_source": "manual_input" },
+      "density": { "accept_params": true, "fixed_value": 0, "fixed_value_source": "manual_input" },
+      "vol": { "accept_params": true, "fixed_value": 1.0, "fixed_value_source": "manual_input" }
     },
     "merge_threshold_ratio": 0.02,
-    "stream_strength_target": [0.0, 0.0],
-    "stream_strength_spread": [0.0, 0.0],
-    "recency_center": [0.0, 0.5],
-    "recency_spread": [0.0, 0.4],
-    "global_dist_weight": [0.2, 0.2],
-    "global_qty_weight": [2.0, 2.0],
-    "global_comp_weight": [2.0, 2.0],
-    "stream_dist_weight": [0.2, 0.2],
-    "stream_qty_weight": [2.0, 2.0],
-    "stream_comp_weight": [2.0, 2.0],
-    "note_register_freedom": [1.0, 1.0],
-    "dissonance_target": [0.3, 0.3],
-    "area_global": [0.0, 0.0],
-    "area_center": [0.0, 0.0],
-    "area_spread": [0.0, 0.0],
-    "area_conc": [0.0, 0.0],
-    "vol_global": [0.0, 0.0],
-    "vol_center": [0.0, 0.0],
-    "vol_spread": [0.0, 0.0],
-    "vol_conc": [0.0, 0.0],
-    "vol_target": [0.5, 0.5],
-    "vol_target_spread": [1.0, 1.0]
+    "use_recent_position_weight": false,
+    "stream_strength_target": [0.0, 0.0, 0.0],
+    "stream_strength_spread": [0.0, 0.0, 0.0],
+    "global_dist_weight": [0.2, 0.2, 0.2],
+    "global_qty_weight": [2.0, 2.0, 2.0],
+    "global_comp_weight": [2.0, 2.0, 2.0],
+    "stream_dist_weight": [0.2, 0.2, 0.2],
+    "stream_qty_weight": [2.0, 2.0, 2.0],
+    "stream_comp_weight": [2.0, 2.0, 2.0],
+    "note_register_freedom": [1.0, 1.0, 1.0],
+    "debug_score": true,
+    "debug_score_key": "vol",
+    "debug_score_top_n": 20,
+    "dissonance_target": [0.3, 0.3, 0.3],
+    "area_global": [0.0, 0.0, 0.0],
+    "area_center": [0.0, 0.0, 0.0],
+    "area_spread": [0.0, 0.0, 0.0],
+    "area_conc": [0.0, 0.0, 0.0],
+    "vol_target": [0.5, 0.5, 0.5],
+    "vol_target_spread": [1.0, 1.0, 1.0]
   }
 }
 ```
 
-配列パラメータは future step ごとの値です。サーバは 0-based の `idx0 = step_idx - 1` で `array_param(gp, key, idx0)` を読みます。配列が足りない場合は `array_param` の実装に依存しますが、画面側は `genSteps` 長に正規化してから送るため、通常は全 future step 分があります。
+配列パラメータは future step ごとの値です。サーバは `idx0 = step_idx - 1` で `array_param(gp, key, idx0)` を読みます。配列が短い場合は末尾値が使われます。画面側は通常 `genSteps` 長に正規化して送ります。
 
-## 3. 画面から送られる主なパラメータ
+## 3. 画面から送る全パラメータ
 
-### 3.1 初期文脈
+### 3.1 payload 固定キー
 
-- `initial_context`
-  - 形は `initial_context[step][stream] = stream_record` です。
-  - 現在の画面は簡略 strict 形式として `[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release]` を組み立てます。
-  - サーバの厳密内部形式も `[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain]` です。
-  - サーバは 8 要素の簡略形式、9 要素の sustain 付き形式、10 要素の `chord_range/density` 付き形式、11 要素の full strict 形式を受けます。
-  - 先頭 8 要素は SuperCollider render が読む `[abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release]` と同じ意味です。`decay_sustain` は SC に渡すときは `decay`、`release` は SC に渡すときは `sustainRelease` です。
-  - `chord_range` と `density` は初期文脈から送られても、サーバが `abs_notes` の実観測値から再計算します。
-- `initial_context_bpm`
-  - 初期文脈各 step の BPM です。
-  - dissonance STM の初期 memory に commit する onset 計算に使われます。
-- `bpm`, `future_bpm`
-  - `future_bpm` は生成対象 step の BPM 配列です。
-  - `bpm` は fallback およびレスポンスの代表値です。
-  - サーバは BPM から `stepDuration = 60 / bpm` を作り、dissonance STM の future onset に使います。
+| キー | 型 | 画面デフォルト | サーバでの扱い |
+| --- | --- | --- | --- |
+| `job_id` | string | UUID | dispatch / 進捗識別用。直接生成でも payload に含まれます。 |
+| `bpm` | number | `future_bpm[0]` | 代表 BPM / fallback。 |
+| `future_bpm` | number[] | `[480...]` | future step の BPM。step duration と dissonance STM onset に使います。 |
+| `initial_context` | array | 画面の Initial Context | `initial_context[step][stream] = stream_record`。 |
+| `initial_context_bpm` | number[] | `[480...]` | 初期文脈 step の BPM。STM seed の onset に使います。 |
+| `dimension_policy` | object | 全 managed dimension が `accept_params=true` | 次元ごとに探索するか固定値にするかを決めます。 |
+| `merge_threshold_ratio` | number | `0.02` | 全 manager のクラスタ merge threshold。 |
+| `use_recent_position_weight` | boolean | `false` | 現在の `generate_polyphonic()` 本体では実質使いません。 |
+| `debug_score` | boolean | `true` | `debug_poly` 判定に使われます。現在の greedy 経路では詳細 top 表示は限定的です。 |
+| `debug_score_key` | string | `"vol"` | debug 用。 |
+| `debug_score_top_n` | number | `20` | debug 用。 |
 
-### 3.2 ストリーム数とストリーム強度
+### 3.2 generation rows
 
-- `stream_counts`
-  - 各 future step のストリーム数です。
-  - `steps_to_generate = length(stream_counts)` なので、この配列長が生成 step 数です。
-  - 各値は最低 1 に丸められます。
-- `stream_strength_target`
-  - ストリーム増減時に、どの強さのストリームを残す、復活する、複製するかを決める中心値です。
-  - `vol` manager がある場合は `vol` の `presence_avg`、なければ `note` 側を使います。
-- `stream_strength_spread`
-  - `stream_strength_target` を中心にしたターゲット分布の広がりです。
-  - `generate_centered_targets(count, target, spread)` で複数の目標値を作ります。
+画面の Generation Parameters grid から送るキーです。すべて future step ごとの配列です。
 
-### 3.3 recency
+| キー | 範囲 | step | デフォルト | 意味 |
+| --- | ---: | ---: | ---: | --- |
+| `stream_counts` | 1..16 | 1 | 1 | 各 future step の stream 数。この長さが生成 step 数です。 |
+| `legato_center` | 0..1 | 0.01 | 0 | 画面からは送りますが、現在サーバ本体は `legato_center/spread` を読まず、`legato` / `same_note_legato` だけを読みます。 |
+| `legato_spread` | 0..1 | 0.01 | 0 | 同上。 |
+| `recency_center` | 0..1 | 0.01 | 0 | 直近履歴をどれくらい重く見るか。 |
+| `recency_spread` | 0..1 | 0.01 | 0 | stream 間の recency ばらつき。 |
+| `stream_strength_target` | 0..1 | 0.01 | 0 | stream lifecycle で残す / 復活 / fork する stream 強度の中心。 |
+| `stream_strength_spread` | 0..1 | 0.01 | 0 | stream lifecycle の強度 target 分布幅。 |
+| `note_register_freedom` | 0..1 | 0.01 | 1 | 音域移動の自由度。低いほど直近 register 付近に制限。 |
+| `global_dist_weight` | 0..5 | 0.01 | 0.2 | global score の distance 重み。 |
+| `global_qty_weight` | 0..5 | 0.01 | 2 | global score の quantity 重み。 |
+| `global_comp_weight` | 0..5 | 0.01 | 2 | global score の complexity 重み。 |
+| `stream_dist_weight` | 0..5 | 0.01 | 0.2 | stream score の distance 重み。 |
+| `stream_qty_weight` | 0..5 | 0.01 | 2 | stream score の quantity 重み。 |
+| `stream_comp_weight` | 0..5 | 0.01 | 2 | stream score の complexity 重み。 |
+| `dissonance_target` | 0..1 | 0.01 | 0.3 | 最終 chord の roughness target。0 は協和寄り、1 は不協和寄り。 |
+| `future_bpm` | 1..960 | 1 | 480 | future step の BPM。 |
 
-- `recency_center`
-  - 各 future step で、直近の履歴をどれくらい強く見るかの中心です。
-  - 0.0 なら直近性ウェイトは無効で、古いクラスタも新しいクラスタも同じ重みです。
-  - 1.0 に近いほど、候補評価で直近のクラスタが強く効きます。
-- `recency_spread`
-  - `recency_center` を stream 間でどれだけばらけさせるかです。
-  - 現在の stream 数 `n` に対して `center ± spread/2` の範囲を `n` 等分します。
-  - global manager には、その step の stream recency 平均値を使います。
+### 3.3 complexity dimension rows
 
-ユーザ入力 `x` はそのまま直線では使わず、`PolyphonicClusterManager.recency_curve()` で smoothstep に変換されます。
+`complexityDimensionKeys` は次の 10 個です。
+
+```text
+area, chord_range, density, vol,
+brightness, noise, harmonicity, attack, decay_sustain, release
+```
+
+画面は各 dimension について、次の 4 キーを送ります。
+
+| キー形式 | 範囲 | step | デフォルト | 意味 |
+| --- | ---: | ---: | ---: | --- |
+| `${key}_global` | 0..1 | 0.01 | 0 | global manager の複雑度 target。 |
+| `${key}_center` | 0..1 | 0.01 | 0 | stream target 分布の中心。 |
+| `${key}_spread` | 0..1 | 0.01 | 0 | stream target 分布の幅。 |
+| `${key}_conc` | -1..1 | 0.01 | 0 | stream 間の一致 / 分散の好み。正は揃える、負は離す。 |
+
+実際に送るキーは次です。
+
+```text
+area_global, area_center, area_spread, area_conc
+chord_range_global, chord_range_center, chord_range_spread, chord_range_conc
+density_global, density_center, density_spread, density_conc
+vol_global, vol_center, vol_spread, vol_conc
+brightness_global, brightness_center, brightness_spread, brightness_conc
+noise_global, noise_center, noise_spread, noise_conc
+harmonicity_global, harmonicity_center, harmonicity_spread, harmonicity_conc
+attack_global, attack_center, attack_spread, attack_conc
+decay_sustain_global, decay_sustain_center, decay_sustain_spread, decay_sustain_conc
+release_global, release_center, release_spread, release_conc
+```
+
+### 3.4 target window rows
+
+`targetWindowDimensionKeys` は次の 9 個です。
+
+```text
+vol, chord_range, density,
+brightness, noise, harmonicity, attack, decay_sustain, release
+```
+
+画面は各 target window dimension について、次の 2 キーを送ります。
+
+| キー形式 | 範囲 | step | デフォルト | 意味 |
+| --- | ---: | ---: | ---: | --- |
+| `${key}_target` | dimension 依存 | dimension 依存 | 下表 | 実値候補の探索中心。 |
+| `${key}_target_spread` | dimension 依存 | dimension 依存 | 下表 | `target ± spread` の探索窓半幅。 |
+
+| dimension | target 範囲 | target step | target default | spread 範囲 | spread default |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `vol` | 0..1 | 0.1 | 0.5 | 0..1 | 1 |
+| `chord_range` | 0..12 | 1 | 6 | 0..12 | 12 |
+| `density` | 0..1 | 0.1 | 0.5 | 0..1 | 1 |
+| `brightness` | 0..1 | 0.1 | 0.5 | 0..1 | 1 |
+| `noise` | 0..1 | 0.1 | 0.5 | 0..1 | 1 |
+| `harmonicity` | 0..1 | 0.1 | 0.5 | 0..1 | 1 |
+| `attack` | 0..1 | 0.1 | 0.5 | 0..1 | 1 |
+| `decay_sustain` | 0..1 | 0.1 | 0.5 | 0..1 | 1 |
+| `release` | 0..1 | 0.1 | 0.5 | 0..1 | 1 |
+
+実際に送るキーは次です。
+
+```text
+vol_target, vol_target_spread
+chord_range_target, chord_range_target_spread
+density_target, density_target_spread
+brightness_target, brightness_target_spread
+noise_target, noise_target_spread
+harmonicity_target, harmonicity_target_spread
+attack_target, attack_target_spread
+decay_sustain_target, decay_sustain_target_spread
+release_target, release_target_spread
+```
+
+`area` には target window row はありません。`sustain` と `legato` はサーバ内部の managed dimension にはありますが、現在の画面は complexity rows / target window rows / policy rows を送りません。
+
+### 3.5 dimension policy
+
+画面が送る managed policy dimension は次の 10 個です。
+
+```text
+area, chord_range, density, vol,
+brightness, noise, harmonicity, attack, decay_sustain, release
+```
+
+各 dimension の payload は次です。
+
+```json
+{
+  "accept_params": true,
+  "fixed_value": 0.5,
+  "fixed_value_source": "manual_input"
+}
+```
+
+| フィールド | 意味 |
+| --- | --- |
+| `accept_params` | `true` なら `*_global/center/spread/conc` と target window を使って探索します。`false` なら固定値を出力します。 |
+| `fixed_value` | 固定時に使う値。 |
+| `fixed_value_source` | `"manual_input"` なら `fixed_value`、`"initial_context_last_step"` なら初期文脈の最後の step から引き継ぎます。 |
+
+画面上の policy 初期値は全て `accept_params=true` 相当です。
+
+| dimension | fixed value 範囲 | default fixed value |
+| --- | ---: | ---: |
+| `area` | 0..1 | 0.5 |
+| `chord_range` | 0..24 | 0 |
+| `density` | 0..1 | 0 |
+| `vol` | 0..1 | 1 |
+| `brightness` | 0..1 | 0.5 |
+| `noise` | 0..1 | 0.2 |
+| `harmonicity` | 0..1 | 0.5 |
+| `attack` | 0..1 | 0.05 |
+| `decay_sustain` | 0..1 | 0.2 |
+| `release` | 0..1 | 0.75 |
+
+サーバ内部の default policy は画面初期値と違い、`vol` 以外は多くが固定です。ただし画面からは明示的に `dimension_policy` が送られるため、画面経由では上記の画面 policy が優先されます。
+
+## 4. Initial Context
+
+画面の Initial Context row は次です。
+
+```text
+abs_note, vol, brightness, noise, harmonicity, attack, decay_sustain, release, legato
+```
+
+payload の stream record は strict 形式です。
+
+```text
+[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato]
+```
+
+- `abs_notes` は `Vector{Int}` です。例: `[60]`, `[60, 64, 67]`
+- `chord_range` と `density` は画面入力 row にはありません。payload assembly 時またはサーバ側で `abs_notes` から実測再計算されます。
+- `sustain` は画面入力 row にはありません。strict index を維持するため payload には値が入ります。
+- サーバは 8 要素、9 要素、10 要素、11 要素、12 要素相当の record を受けますが、内部では最終的に 12 要素へ正規化します。
+
+`chord_range` と `density` は初期文脈から送られても、サーバが `abs_notes` の実観測値から再計算します。
+
+## 5. 処理の全体順
+
+`generate_polyphonic()` の処理順は次です。
+
+1. payload の `generate_polyphonic` を読む。
+2. `stream_counts`, `stream_strength_target`, `stream_strength_spread`, BPM 系を正規化する。
+3. `initial_context` を読み、空なら default 1 step / 1 stream を作る。
+4. stream record を 12 要素 strict 形式へ正規化する。
+5. 初期文脈の `chord_range` と `density` を `abs_notes` から実測再計算する。
+6. `dimension_policy` を解決し、固定次元の固定値を決める。
+7. 初期文脈から dimension ごとの履歴 matrix を作る。
+8. 履歴が `POLYPHONIC_MIN_WINDOW_SIZE + 1` 未満なら padding する。
+9. dimension ごとに global manager と stream manager を作る。
+10. 初期文脈の実音を `DissonanceStmManager` に commit して短期記憶を seed する。
+11. future step ごとに stream lifecycle を計画して全 manager に適用する。
+12. step の `recency_center/spread` を stream ごとの recency に展開し、各 manager に適用する。
+13. stream 優先順を決める。
+14. `vol`, `chord_range`, `density`, `sustain`, timbre 系の順に通常 dimension を greedy に決める。
+15. `area` を `tmp_anchor` として greedy に決める。
+16. `area`, `chord_range`, `density`, `vol` などから各 stream の実音候補を作る。
+17. `dissonance_target` に近い実音を stream 優先順で greedy に決める。
+18. 実音を dissonance STM と note manager に commit する。
+19. 出力値を clamp / quantize する。
+20. `timeSeries`, `clusters`, `timbreSeries`, BPM 系を返す。
+
+## 6. stream lifecycle と優先順
+
+各 future step の最初に、`stream_counts[step]` に合わせて active stream を増減します。
+
+- 減る場合: `presence_avg` と `stream_strength_target/spread` から、inactive にする stream を選びます。
+- 増える場合: inactive stream を revive するか、active stream を fork します。
+- 変わらない場合: active ids を維持します。
+
+同じ lifecycle plan が全 dimension manager に適用されるため、dimension 間で stream id がずれません。
+
+その後、step 内の stream 優先順を作ります。優先順は lifecycle に使った manager の active stream `presence_avg` 降順です。通常は `vol` manager が使われ、`vol` manager がなければ `note` 側が使われます。
+
+```text
+priority = presence_avg が高い stream から
+```
+
+この優先順は通常 dimension、AREA、dissonance のすべてで共通です。つまり強い stream を先に決め、後続 stream が既に決まった stream に重なる形で決まります。
+
+## 7. recency
+
+`recency_center` と `recency_spread` は future step ごとに読まれます。
+
+```text
+stream_recencies = generate_centered_targets(stream_count, recency_center, recency_spread)
+global_recency = mean(stream_recencies)
+```
+
+- global manager には `global_recency`
+- stream manager には stream ごとの recency
+
+が設定されます。
+
+`PolyphonicClusterManager.recency_curve()` は smoothstep です。
 
 ```text
 r = x * x * (3 - 2 * x)
@@ -121,396 +320,121 @@ span = exp((1 - r) * log(64))
 weight = (1 - r) + r * exp(-age / span)
 ```
 
-この重みは `dist`, `quantity`, `complexity`, `usage` の集計に使われます。古いクラスタを削除するのではなく、候補評価時の重みだけを下げます。`recency` は各 dimension manager の候補評価に入りますが、dissonance STM の roughness 計算には直接入りません。
+この重みは `dist`, `quantity`, `complexity`, `usage` の集計に使われます。古いクラスタを削除するのではなく、候補評価時の重みだけを下げます。dissonance STM の roughness 計算には直接入りません。
 
-### 3.4 legato
+## 8. 通常 dimension の greedy 選択
 
-- `legato_center`, `legato_spread`
-  - フロントエンドは payload に含めます。
-  - ただし現在の `generate_polyphonic()` 本体はこの値を読んでおらず、生成結果の strict stream record にも legato 要素はありません。
-  - 現在の strict stream record は 11 要素 `[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain]` です。
+通常 dimension の処理対象順は次です。
 
-### 3.5 dimension policy
-
-`dimension_policy` は、次元ごとに「画面パラメータで生成するか、固定値を使うか」を決めます。
-
-```json
-{
-  "vol": {
-    "accept_params": true,
-    "fixed_value": 1.0,
-    "fixed_value_source": "manual_input"
-  }
-}
+```text
+vol
+chord_range
+density
+sustain
+brightness
+noise
+harmonicity
+attack
+decay_sustain
+release
 ```
 
-- `accept_params = true`
-  - その次元は `*_global`, `*_center`, `*_spread`, `*_conc`, `*_target`, `*_target_spread` を読んで探索します。
-- `accept_params = false`
-  - その次元は生成探索せず、固定値を出力します。
-- `fixed_value_source = "manual_input"`
-  - `fixed_value` を使います。
-- `fixed_value_source = "initial_context_last_step"`
-  - 初期文脈の最後の step の同じ stream から値を引き継ぎます。
-  - `area` は最後の note anchor を 4 semitone band の `band_low` に変換して使います。
+現在の通常 dimension は stream 全組み合わせの cartesian product を作りません。純 greedy です。
 
-サーバ内部のデフォルトは `vol` だけ `accept_params = true`、それ以外は概ね固定です。ただし画面は全 managed dimension を `accept_params = true` で送るデフォルトなので、画面経由では多くの次元が有効になります。
+1. `dimension_policy` が固定なら、stream 数分の固定値を入れて次へ進む。
+2. `${key}_global`, `${key}_center`, `${key}_spread`, `${key}_conc` を読む。
+3. `${key}_target`, `${key}_target_spread` があれば候補値を絞る。
+4. stream 優先順で 1 stream ずつ決める。
+5. ある stream の候補を評価するときは、既に決まった stream 値 + 現候補だけを global manager に仮追加して評価する。
+6. 対象 stream manager に現候補を仮追加して stream score を評価する。
+7. best 候補をその stream に固定し、次 stream へ進む。
+8. 全 stream 分が決まったら global manager と stream manager に commit する。
 
-サーバが認識する managed dimension は次です。
-
-- `area`
-- `chord_range`
-- `density`
-- `sustain`
-- `vol`
-- `brightness`
-- `noise`
-- `harmonicity`
-- `attack`
-- `decay_sustain`
-- `release`
-
-音色キーは SC の synth パラメータの意味に合わせています。
-
-| キー | SC パラメータ | 意味 |
-| --- | --- | --- |
-| `brightness` | `brightness` | 部分音量、LPF cutoff、HiShelf に効く明るさ |
-| `noise` | `noise` | WhiteNoise 量と歪み混合量 |
-| `harmonicity` | `harmonicity` | 部分音比率を整数倍音寄りにする度合い |
-| `attack` | `attack` | step duration 内の attack 時間比率 |
-| `decay_sustain` | `decay` | step duration 内の decay 時間比率 |
-| `release` | `sustainRelease` | sustain/release 区間の時間比率 |
-
-### 3.6 各 dimension の complexity target
-
-対象 dimension ごとに次を送ります。
-
-- `${key}_global`
-  - 全ストリームをまとめた global manager の複雑度ターゲットです。
-  - 0 は単純寄り、1 は複雑寄りです。
-- `${key}_center`
-  - stream ごとの複雑度ターゲット分布の中心です。
-- `${key}_spread`
-  - stream ごとの複雑度ターゲット分布の広がりです。
-  - `n` ストリームなら `center ± spread/2` の範囲を `n` 等分した `stream_targets` を作ります。
-- `${key}_conc`
-  - stream 間の一致・分散の好みです。
-  - `conc > 0` は stream 間の値をそろえる方向です。
-  - `conc < 0` は stream 間の値を離す方向です。
-  - `0` はこのコストを無効にします。
-
-通常 dimension の候補選択では、候補ごとに次を合計して最小化します。
+コストは概ね次です。
 
 ```text
 total_cost =
   abs(global_score - global_target)
-  + mean(abs(stream_score[i] - stream_target[i]))
-  + concordance_cost
+  + abs(stream_score - stream_target_for_this_stream)
+  + concordance_cost(already_decided_values + current_candidate)
 ```
 
-### 3.7 指標ウェイト
+`vol` は複数 stream のとき `use_global_score=false` です。volume は stream 側 target window と stream score を主に使い、global score が支配しすぎないようにしています。
 
-- `global_dist_weight`, `global_qty_weight`, `global_comp_weight`
-- `stream_dist_weight`, `stream_qty_weight`, `stream_comp_weight`
+候補集合:
 
-`dist`, `quantity`, `complexity` の合成比率です。サーバ内部では `usage` も 4 番目の指標として常に weight 1.0 で足されます。
+| dimension | 候補 |
+| --- | --- |
+| `vol` | `0.0, 0.5, 1.0` |
+| `chord_range` | `0..12` |
+| `density` | `0.0, 0.1, ..., 1.0` |
+| `sustain` | `0.0, 0.25, 0.5, 0.75, 1.0` |
+| timbre 系 | `0.0, 0.1, ..., 1.0` |
 
-dimension 固有の `${key}_global_dist_weight` のようなキーもサーバは読めますが、画面は共通キーを送っています。
-
-各指標の意味は単音 `generate()` と同じ方向です。
-
-- `dist`: 候補追加後のクラスタ代表間距離。大きいほど複雑。
-- `quantity`: クラスタ内の量。小さいほど複雑。
-- `complexity`: 代表系列自体の変化量。大きいほど複雑。
-- `usage`: 最新部分列が入ったクラスタの使用密度。小さいほど複雑。
-
-### 3.8 探索窓
-
-`targetWindowDimensionKeys` の次元には、値そのものの探索範囲を狭めるパラメータがあります。
-
-- `${key}_target`
-  - 候補値の中心です。
-- `${key}_target_spread`
-  - 候補値の許容幅です。
-
-例えば `density_target=0.5`, `density_target_spread=0.2` なら、`Config.FLOAT_STEPS = 0.0, 0.1, ..., 1.0` のうち `0.3..0.7` 付近だけを候補にします。候補が空なら target に最も近い値を 1 つ残します。
-
-### 3.9 note / dissonance 系
-
-- `note_register_freedom`
-  - 各 stream が直近の register center からどれだけ離れてよいかです。
-  - 1.0 ならほぼ制限なしです。
-  - 0.0 なら allowance は 0 になり、直近 register に最も近い候補へ強く制限されます。
-  - 0..1 の中間では `NOTE_REGISTER_MIN_ALLOWANCE` から `NOTE_REGISTER_MAX_ALLOWANCE` へ線形補間されます。
-- `dissonance_target`
-  - 最終的な和音候補の roughness を 0..1 正規化した目標値です。
-  - 0 は協和寄り、1 は不協和寄りです。
-
-## 4. 処理の全体順
-
-`generate_polyphonic()` の処理順は次です。
-
-1. payload の `generate_polyphonic` を読む。
-2. `stream_counts`, `stream_strength_target`, `stream_strength_spread`, BPM 系を正規化する。
-3. `initial_context` を 3 階層配列として読み、空ならデフォルト 1 step / 1 stream を作る。
-4. stream record をサーバ内部 strict 形式へ正規化する。
-5. 初期文脈の `chord_range` と `density` を `abs_notes` から実測再計算する。
-6. `dimension_policy` を解決し、固定次元の固定値を決める。
-7. 初期文脈から dimension ごとの履歴 matrix を作る。
-8. 履歴が `POLYPHONIC_MIN_WINDOW_SIZE + 1` 未満なら padding する。
-9. dimension ごとに global manager と stream manager を作る。
-10. 初期文脈の実音を `DissonanceStmManager` に commit して短期記憶を seed する。
-11. future step ごとに、stream lifecycle を計画して全 manager に適用する。
-12. その step の `recency_center/spread` を stream ごとの recency に展開し、各 manager に適用する。
-13. `vol`, `chord_range`, `density`, `sustain`, timbre 系の順に通常 dimension を決める。
-14. `area` を `tmp_anchor` として決める。
-15. `area`, `chord_range`, `density`, `vol` などから各 stream の実音候補を作る。
-16. `dissonance_target` に近い実音の組み合わせを選ぶ。
-17. 実音を dissonance STM と note manager に commit する。
-18. 出力値を clamp / quantize する。
-19. `timeSeries`, `clusters`, `timbreSeries`, BPM 系を返す。
-
-## 5. global / stream / conc の意味
-
-画面で見える `Global`, `Center`, `Spread`, `Conc` は同じ候補を違う観点から評価するためのパラメータです。
+## 9. global / stream / conc
 
 ### global
 
-`global` は、同時に鳴っている全 stream を 1 つの polyphonic set として扱う複雑度です。
+global は同時に鳴っている stream を 1 つの polyphonic set として扱う複雑度です。
 
-ただし stream 数が増えても同じ manager で扱えるよう、通常 dimension の global 値は stream index ごとに offset encode されます。
+通常 dimension の global 値は stream index ごとに offset encode されます。
 
 ```text
 encoded_value(stream i) = raw_value + (i - 1) * offset
 offset = value_width + 1
 ```
 
-例えば `vol` の範囲が 0..1 なら `offset = 2` です。2 stream の値 `[0.3, 0.8]` は global manager に `[0.3, 2.8]` として入ります。
-
-この encode により、stream 1 の 0.8 と stream 2 の 0.8 が同じ軸上で衝突せず、global manager は「stream 別の面」を持つ polyphonic series としてクラスタリングできます。`PolyphonicClusterManager` 側では `use_streamwise_surface_average=true` と `stream_axis_offset=offset` が使われ、平均系列を作るときに stream 軸を復元して扱います。
-
-`note` だけは例外で、global manager は全 stream の実音から median anchor を 1 つ取る scalar 系です。`area` は 4 semitone band の `tmp_anchor` を stream offset encode します。
+例えば `vol` の範囲が 0..1 なら `offset = 2` です。stream 1 の `0.8` と stream 2 の `0.8` が同じ点として衝突しないようにしています。
 
 ### stream
 
-`stream` は、各声部を独立した時系列として見る複雑度です。
+stream は各声部を独立した時系列として見る複雑度です。`MultiStreamManager` は stream ごとに `PolyphonicClusterManager.Manager` を持ちます。
 
-`MultiStreamManager` は stream ごとに `PolyphonicClusterManager.Manager` を持ちます。候補をその stream に仮追加した時の `dist/quantity/complexity/usage` を正規化し、`stream_targets` に近いものを選びます。
-
-`stream_center` と `stream_spread` という名前の payload はありません。各 dimension では `${key}_center` と `${key}_spread` が stream 側ターゲットを作るための値です。
+`stream_center` / `stream_spread` という payload 名はありません。各 dimension では `${key}_center` と `${key}_spread` から stream target を作ります。
 
 ### conc
 
-`conc` は concordance / conformity の重みです。stream 間で同じような値にするか、バラけさせるかを加点します。
+`conc` は stream 間の一致 / 分散の重みです。
 
-通常 dimension では候補内の値の spread を `discordance` として近似します。
+- `conc > 0`: 値をそろえる候補が有利。
+- `conc < 0`: 値を離す候補が有利。
+- `conc = 0`: 無効。
 
-- `conc > 0`: `discordance` が小さい候補が有利です。
-- `conc < 0`: `discordance` が大きい候補が有利です。
+greedy では、既に決まった stream 値と今試している候補の spread から cost を計算します。
 
-`area` では mean pairwise distance を `BAND_WIDTH` で割った `spread01` を使います。
+## 10. AREA 生成
 
-- `area_conc > 0`: area anchor が近い候補が有利です。
-- `area_conc < 0`: area anchor が離れた候補が有利です。
+`area` は実音ではなく、4 semitone band の下端 `tmp_anchor = band_low` です。
 
-## 6. 通常 dimension の候補選択
+例: `AREA_BAND_SIZE = 4` の場合、MIDI 60, 61, 62, 63 は band low 60、MIDI 64 は band low 64 です。
 
-通常 dimension の処理対象順は次です。
+AREA は通常 dimension とは別ロジックです。
 
-1. `vol`
-2. `chord_range`
-3. `density`
-4. `sustain`
-5. `brightness`
-6. `noise`
-7. `harmonicity`
-8. `attack`
-9. `decay_sustain`
-10. `release`
+1. 各 stream の note manager から直近 register center を取る。
+2. 前回 `tmp_anchor` から `Config.AREA_MOVE_BINS` の delta を足して候補を作る。
+3. 範囲外候補は clamp せず除外する。
+4. `note_register_freedom < 1` なら register window で候補を絞る。
+5. 各 stream で候補を仮追加して score を作り、top bins だけ残す。
+6. stream 優先順で greedy に `chosen_area` を決める。
 
-各 dimension で行うことは次です。
+AREA greedy でも stream 全組み合わせは作りません。stream ごとに、既に決まった area + 今の area candidate を global manager に仮追加して評価します。
 
-1. `dimension_policy` が固定なら、stream 数分の固定値を入れて次へ進む。
-2. `${key}_global`, `${key}_center`, `${key}_spread`, `${key}_conc` を読む。
-3. `${key}_target`, `${key}_target_spread` があれば候補値の探索窓を絞る。
-4. stream manager に対して候補ごとの complexity cost を事前計算する。
-5. 候補ベクトルを作る。
-6. 候補を評価して best を選ぶ。
-7. global manager と stream manager に best を commit する。
-8. `current_step_values` に値を書き込む。
-
-候補集合は dimension により違います。
-
-- `vol`: `[0.0, 1.0]`
-- `density`: `0.0, 0.1, ..., 1.0`
-- `chord_range`: `0..12`
-- `sustain`: `0.0, 0.25, 0.5, 0.75, 1.0`
-- timbre 系: `0.0, 0.1, ..., 1.0`
-
-複数 stream の候補は基本的に cartesian product です。ただし `chord_range` と `density` は「全 stream 同じ値」という global scalar として探索空間を縮小しています。つまり 4 stream でも `[6, 6, 6, 6]` のような候補だけを試します。
-
-`vol` は stream 数が 2 以上のとき `use_global_score=false` になります。これは `preserve_stream_order=true` の volume で global score が探索を支配しすぎるのを避け、stream 側と target window を主に使うためです。
-
-## 7. Hungarian 法による stream 割当
-
-候補ベクトルは「値の集合」として作られるため、その値をどの active stream に割り当てるかを決める必要があります。この割当で Hungarian 法が使われます。
-
-実装は `MultiStreamManager.resolve_mapping_and_score()` です。
-
-### 7.1 コスト行列
-
-active stream 数を `n`、候補値数を `n` として、`n x n` のコスト行列を作ります。
+評価 cost:
 
 ```text
-cost(stream i, candidate j) =
-  distance_weight * dist01(i, j)
-  + complexity_weight * comp01(i, j)
-  + tiny_tie_breaker
+total = global_cost + stream_cost + conc_cost + register_cost
 ```
 
-- `dist01`
-  - scalar 値なら前回値との差を value range で割ったものです。
-  - polyset なら集合距離です。
-  - note 系で absolute base がある場合は absolute pitch に戻して距離を取ります。
-  - `vol` のような `track_presence` 次元では、stream_costs がある場合 scalar 距離を 0 にして、過去値への張り付きより subsequence fit を優先します。
-- `comp01`
-  - `precalculate_costs()` で stream ごと、候補値ごとに仮追加して得た raw complexity を、その stream の候補集合内 min/max で 0..1 正規化した値です。
-- `tiny_tie_breaker`
-  - 完全同点時に小さい candidate index と小さい stream index を優先するための極小値です。
+`area` が fixed policy の場合は、greedy 評価結果ではなく `_fixed_area_band_low_for_stream()` の値を使います。
 
-通常は `use_complexity_mapping=true` なので、明示指定がなければ `distance_weight=0`, `complexity_weight=1` です。
-
-ただし `select_best_chord_for_dimension_with_cost()` に `active_total_notes` が渡された場合は、密度に応じて割当の距離/複雑度比率を変える設計があります。現在の通常 dimension 呼び出しではこの引数は使われていません。
-
-### 7.2 Hungarian min assignment
-
-`hungarian_min_assignment(cost_matrix)` は各 stream に候補を 1 つずつ割り当て、総コストを最小化します。
-
-返り値は `assignment[stream_i] = candidate_j` です。これを使って候補値を active stream 順に並べ替えた `ordered` を作ります。
-
-```text
-candidate set: [0.0, 1.0]
-active streams: [stream 3, stream 5]
-assignment: [2, 1]
-ordered: stream 3 -> 1.0, stream 5 -> 0.0
-```
-
-このため、候補生成時の順序と実際の stream 出力順は一致しない場合があります。
-
-### 7.3 preserve_stream_order
-
-`preserve_stream_order=true` の場合は Hungarian 法を通さず、候補ベクトルの順序をそのまま stream 順に使います。
-
-現在の通常 dimension では、複数 stream のとき `preserve_stream_order = true` になっています。つまり `select_best_chord_for_dimension_with_cost()` 内では Hungarian を通さず、そのまま stream 順に評価します。
-
-ただし `MultiStreamManager.resolve_mapping_and_score()` 自体は生成器の重要な割当 API として残っており、`preserve_stream_order=false` の経路、note/chord 系の拡張、または別呼び出しでは Hungarian 割当が使われます。
-
-## 8. stream lifecycle と「stream 数が増えても固定パラメータで生成できる仕組み」
-
-`stream_counts` が step ごとに変わっても、パラメータ行は「future step ごとに 1 値」です。stream ごとの個別パラメータを画面から送る必要はありません。
-
-これを可能にしている仕組みは 4 つあります。
-
-### 8.1 stream target の自動展開
-
-各 step の `${key}_center` と `${key}_spread` から、現在の stream 数 `n` に合わせて `n` 個の target を生成します。
-
-```text
-n = 1: [center]
-n = 4: [center-spread/2, ..., center+spread/2] を 4 等分
-```
-
-つまり stream 数が 2 でも 16 でも、画面側は `center/spread` だけを指定すれば stream ごとの目標が作られます。
-
-### 8.2 stream manager pool
-
-`MultiStreamManager` は `stream_pool` と `active_ids` / `inactive_ids` を持ちます。
-
-- stream 数が減ると、余った stream id は inactive になります。
-- stream 数が増えると、inactive stream を復活するか、active stream を fork します。
-- fork は source stream の manager と last value を deep copy するため、新 stream は履歴のない空 stream ではなく、既存 stream の文脈を持って始まります。
-
-### 8.3 lifecycle plan
-
-各 step の最初に `build_stream_lifecycle_plan()` が実行されます。
-
-- 減らす場合:
-  - active stream の `presence_avg` を見て、`stream_strength_target/spread` から作った削除 target に近い stream を inactive にします。
-- 増やす場合:
-  - inactive stream と active stream の両方を候補にします。
-  - inactive が target に近ければ revive します。
-  - active が target に近ければ、その stream を fork して新 id を作ります。
-- 変わらない場合:
-  - active ids を維持します。
-
-この同じ plan が全 dimension manager に適用されるため、`vol` だけ stream 3 が増えて `area` は別 stream が増える、というズレを避けています。
-
-### 8.4 global offset encoding
-
-global manager は stream 数が増えても、stream index ごとに offset した値を polyphonic set として追加できます。これにより、1 本の global 時系列 manager で複数 stream 面を同時に扱えます。
-
-## 9. AREA 生成
-
-`area` は実音そのものではなく、4 semitone band の下端 `tmp_anchor = band_low` です。
-
-例えば `AREA_BAND_SIZE = 4` なので、MIDI 60 は `60`, MIDI 62 も `60`, MIDI 64 は `64` の band です。
-
-AREA は通常 dimension とは別ロジックで決まります。
-
-### 9.1 直近 register center
-
-各 stream の note manager から直近 `NOTE_REGISTER_MEMORY_STEPS = 16` step の anchor median を取り、`register_center` にします。
-
-`note_register_freedom` が 1 未満なら、AREA 候補や最終 chord 候補をこの register center 付近に制限します。
-
-### 9.2 AREA 候補
-
-前回の `tmp_anchor` から `Config.AREA_MOVE_BINS` の delta を足し、範囲内の値だけを候補にします。範囲外へ clamp はせず、候補から除外します。
-
-候補はさらに `area_band_low()` で 4 semitone band に量子化されます。
-
-### 9.3 Stage 1: stream 別枝刈り
-
-各 stream で AREA anchor 候補を仮追加し、`dist/quantity/complexity/usage` を合成して 0..1 score を作ります。
-
-その score が `area_stream_targets[s]` に近い候補を残します。
-
-- 1 stream: top 1
-- 複数 stream: top 3
-
-target が 0.5 以上なら同点時に大きい jump を好み、0.5 未満なら小さい jump を好みます。
-
-### 9.4 Stage 2: stream 候補の cartesian product
-
-枝刈り後の各 stream 候補を直積し、`area_candidates` を作ります。
-
-### 9.5 Stage 3: global / stream / conc / register cost
-
-各 AREA 候補について次を計算します。
-
-- `g_cost`: global area score と `area_global_target` の差。
-- `s_cost`: stream score と `area_stream_targets` の平均差。
-- `conc_cost`: area anchor 間の近さまたは遠さ。
-- `register_cost`: register 制限を越えた分の罰則。
-
-合計が最小のものを `chosen_area` とし、global area manager と stream area manager に commit します。
-
-`area` が固定 policy の場合は、評価結果ではなく `_fixed_area_band_low_for_stream()` の値を使います。
-
-## 10. chord_range / density と実音候補
+## 11. chord_range / density と実音候補
 
 AREA が決まったあと、各 stream の実音候補を作ります。
 
-1. `band_low = chosen_area[s]`
-2. `band_high = band_low + AREA_BAND_SIZE - 1`
-3. `chord_range` で上下に拡張する。
-4. `density` から音数を決める。
-5. その範囲の全組み合わせを作る。
-
-式は次です。
-
 ```text
-low  = band_low  - chord_range
+band_low = chosen_area[s]
+band_high = band_low + AREA_BAND_SIZE - 1
+low = band_low - chord_range
 high = band_high + chord_range
 slot_count = high - low + 1
 n_notes = round(density * slot_count)
@@ -518,63 +442,84 @@ n_notes = clamp(n_notes, 1, slot_count)
 chords = combinations(low..high, n_notes)
 ```
 
-`density = 0` でも最低 1 音は出ます。`chord_range = 0`, `density = 0` なら、基本的には AREA band 内から 1 音を選ぶ候補になります。
+`density = 0` でも最低 1 音は出ます。
 
-`note_register_freedom` が 1 未満なら、chord の anchor が register window 内にあるものへ絞ります。空になった場合は register center に最も近い chord を 1 つ残します。
+`note_register_freedom < 1` の場合、chord の anchor が register window 内にあるものへ絞ります。空になった場合は register center に最も近い chord を 1 つ残します。
 
-## 11. dissonance はどこで使われるか
+## 12. dissonance
 
-dissonance は最後の「実音の組み合わせ選択」だけで使われます。`area`, `vol`, `chord_range`, `density` などの complexity manager の候補選択には直接入りません。
+dissonance は最後の実音選択だけで使われます。`area`, `vol`, `chord_range`, `density`, timbre の complexity manager には直接入りません。
 
-実装上の流れは次です。
+現在の dissonance 選択も純 greedy です。
 
-1. 初期文脈の実音を `DissonanceStmManager.commit!()` し、短期記憶を作る。
-2. 各 future step で、AREA と `chord_range/density` から stream ごとの chord 候補を作る。
-3. 全 stream chord 候補の直積を列挙する。
-4. 各組み合わせを `DissonanceStmManager.evaluate()` で評価する。
-5. その step の候補内 min/max で roughness を 0..1 正規化する。
-6. `abs(norm - dissonance_target)` が最小の組み合わせを選ぶ。
-7. 選んだ実音を `DissonanceStmManager.commit!()` して次 step の短期記憶に入れる。
+1. stream 優先順で 1 stream ずつ処理する。
+2. その stream の chord candidates を列挙する。
+3. 既に決まった stream chords + 今の候補を `DissonanceStmManager.evaluate()` で評価する。
+4. その stream の候補内 min/max で roughness を 0..1 正規化する。
+5. `abs(norm - dissonance_target)` が最小の chord をその stream に固定する。
+6. 全 stream が決まったら、実際の MIDI note を STM に commit する。
 
-`evaluate()` は現在の和音 roughness と memory interference を足します。
-
-```text
-d_total = dissonance_current(current_notes)
-        + memory_interference(current_notes, past_memory)
-```
-
-`dissonance_current` は Sethares 1993 系 roughness model です。各 MIDI note から partial を `DISSONANCE_STM_N_PARTIALS = 8` 個作り、振幅を `DISSONANCE_STM_AMP_PROFILE = 0.88` で減衰させます。
-
-memory interference は過去 event との merged roughness から、現在単体と過去単体の roughness を引いた差分です。時間差 `dt` に対して `exp(-dt / memory_span)` で減衰し、`memory_span = 1.5`, `memory_weight = 1.0` が使われます。
-
-重要な注意点として、候補比較時の dissonance は pitch-class normalized note で評価されます。
+候補比較時の dissonance は pitch-class normalized note で評価します。
 
 ```text
-eval_note = 60 + (midi_note mod 12)
+eval_note = MIDI_C4 + (midi_note mod 12)
 ```
 
-これにより、octave 距離そのものが roughness ranking を支配しないようになっています。一方、STM への commit は最後に実際の MIDI note で行われます。
+これにより octave 距離そのものが roughness ranking を支配しにくくなります。一方、STM への commit は最後に実際の MIDI note で行います。
 
-## 12. note manager
+## 13. note manager
 
 実音 chord が決まったあと、note manager には chord 全体ではなく anchor が commit されます。
 
-- global note manager:
-  - その step の全 stream 全 note の median anchor を 1 つ commit します。
-- stream note manager:
-  - 各 stream の chord 内 median anchor を commit します。
+- global note manager: その step の全 stream 全 note の median anchor を 1 つ commit。
+- stream note manager: 各 stream の chord 内 median anchor を commit。
 
 note manager は次 step の `note_register_freedom` 制限、cluster timeline 出力、stream lifecycle fallback に使われます。
 
-## 13. 出力
+## 14. legato の現状
 
-レスポンスは次の形です。
+画面は `legato_center` と `legato_spread` を送ります。ただし現在の `generate_polyphonic()` 本体は次を読んでいます。
+
+```text
+legato
+same_note_legato
+```
+
+つまり、画面から送られる `legato_center/spread` は現状の生成結果には反映されません。payload に `legato` または `same_note_legato` がある場合は、future step ごとの `legato` 値として strict stream record の 12 番目に入ります。
+
+SuperCollider render では legato が `SC_LEGATO_THRESHOLD = 0.5` 以上で、同じ stream の同じ note/chord が連続した場合に発音を結合します。
+
+## 15. SuperCollider render との関係
+
+`generate_polyphonic()` は音声ファイルを作りません。音声化は `SupercollidersController.render_polyphonic()` 側です。
+
+render が読む stream record も 12 要素 strict 形式です。
+
+```text
+[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato]
+```
+
+SC synth では:
+
+- `brightness`: 倍音量、LPF cutoff、HiShelf。
+- `noise`: WhiteNoise 量と歪み混合。
+- `harmonicity`: 部分音比率の整数倍音寄り度。
+- `attack`: attack 時間比率。
+- `decay_sustain`: decay 時間比率。
+- `release`: sustain/release 時間比率。
+- `legato`: 同音連続時の結合判定。
+
+低域の kick / bass が聞こえにくい問題に対して、render 側では低い MIDI note に amp 補正をかけ、SC synth 側でも 2倍 / 4倍成分、短い click、low shelf を足しています。
+
+## 16. 出力
+
+レスポンス例:
 
 ```json
 {
   "timeSeries": [
     [
-      [[60], 1.0, 0.5, 0.2, 0.8, 0.05, 0.2, 0.75, 0, 1.0, 0.5]
+      [[60], 1.0, 0.5, 0.2, 0.5, 0.05, 0.2, 0.75, 0, 1.0, 0.5, 0.0]
     ]
   ],
   "clusters": {
@@ -586,25 +531,26 @@ note manager は次 step の `note_register_freedom` 制限、cluster timeline �
   "streamStrengths": null,
   "timbreSeries": {
     "brightness": [],
-    "harmonicity": [],
     "noise": [],
+    "harmonicity": [],
     "attack": [],
     "decay_sustain": [],
-    "release": []
+    "release": [],
+    "legato": []
   },
   "bpm": 480,
   "stepDuration": 0.125,
-  "initialContextBpm": [],
-  "futureBpm": [],
-  "bpmSeries": [],
-  "stepDurations": []
+  "initialContextBpm": [480],
+  "futureBpm": [480],
+  "bpmSeries": [480, 480],
+  "stepDurations": [0.125, 0.125]
 }
 ```
 
-`timeSeries` は初期文脈と生成結果を連結した全 step です。各 stream record はサーバ内部 strict 形式の 11 要素です。
+`timeSeries` は初期文脈と生成結果を連結した全 step です。各 stream record は 12 要素 strict 形式です。
 
 ```text
-[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain]
+[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato]
 ```
 
 `clusters` は各 dimension の cluster timeline です。
@@ -612,11 +558,23 @@ note manager は次 step の `note_register_freedom` 制限、cluster timeline �
 - `global`: global manager の timeline
 - `streams`: stream id ごとの stream manager timeline
 
-`timbreSeries` は画面、サーバ、SC と同じ音色キー名で返ります。
+cluster payload には、存在する manager について次のキーが入り得ます。
 
-現在返るキーは `brightness`, `noise`, `harmonicity`, `attack`, `decay_sustain`, `release` です。`legato` は現在の `generate_polyphonic()` レスポンスには含まれません。
+```text
+note, area, vol, brightness, noise, harmonicity, attack,
+decay_sustain, release, chord_range, density, sustain, legato
+```
 
-## 14. 実装上の注意点
-- `dissonance_target` は候補集合内 min/max で step ごとに正規化されます。絶対 roughness 値の 0..1 ではありません。
-- stream 数変更時は 1 つの lifecycle plan を全 dimension manager に適用するため、dimension 間で active stream id が揃います。
-- `MAX_NOTE_CANDIDATES` は config にありますが、現在の note chord 直積列挙部分では明示的な cap として使われていません。`chord_range`, `density`, stream 数を大きくすると候補爆発に注意が必要です。
+`timbreSeries` は次を返します。
+
+```text
+brightness, noise, harmonicity, attack, decay_sustain, release, legato
+```
+
+## 17. 注意点
+
+- 現在の通常 dimension / AREA / dissonance は stream 全組み合わせを作らず、stream 優先順の純 greedy です。
+- greedy なので、先に決まった stream は後続 stream の評価時に固定されます。
+- `dissonance_target` は候補集合内 min/max で step ごと、stream ごとに正規化されます。絶対 roughness 値の 0..1 ではありません。
+- `legato_center/spread` は画面から送られますが、現状サーバ本体では使われません。
+- `sustain` と `legato` はサーバ内部 manager にはありますが、現在の画面 policy / complexity rows / target window rows にはありません。
