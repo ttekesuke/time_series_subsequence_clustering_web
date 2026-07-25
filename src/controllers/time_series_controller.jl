@@ -2091,29 +2091,182 @@ function _parse_csv_floats(s::AbstractString)
   return [parse(Float64, strip(x)) for x in split(s, ",") if !isempty(strip(x))]
 end
 
-# Rails-like normalize (0..1 with weighting)
-function normalize_scores(raw_values::Vector{Float64}, is_complex_when_larger::Bool)
-  if isempty(raw_values)
-    return (Float64[], 0.0)
-  end
-  min_val = minimum(raw_values)
-  max_val = maximum(raw_values)
-  unique_count = length(unique(raw_values))
-  weight = unique_count <= 1 ? 0.0 : (unique_count == 2 ? 0.2 : 1.0)
+struct ScalarMetricCalibrator
+  center::Float64
+  scale::Float64
+  direction::Float64
+end
 
-  normalized =
-    if max_val == min_val
-      fill(0.5, length(raw_values))
-    else
-      [(v - min_val) / (max_val - min_val) for v in raw_values]
+struct ComplexityMetricCalibrator
+  distance::ScalarMetricCalibrator
+  quantity::ScalarMetricCalibrator
+  complexity::ScalarMetricCalibrator
+  usage::ScalarMetricCalibrator
+end
+
+struct ExtendedMetricCalibrator
+  base::ComplexityMetricCalibrator
+  occurrence_intervals::ComplexityMetricCalibrator
+end
+
+const DEFAULT_COMPLEXITY_METRIC_CALIBRATOR = ComplexityMetricCalibrator(
+  ScalarMetricCalibrator(0.0, 1.0, 1.0),
+  ScalarMetricCalibrator(0.0, 1.0, -1.0),
+  ScalarMetricCalibrator(0.0, 1.0, 1.0),
+  ScalarMetricCalibrator(0.0, 1.0, -1.0),
+)
+const DEFAULT_EXTENDED_METRIC_CALIBRATOR = ExtendedMetricCalibrator(
+  DEFAULT_COMPLEXITY_METRIC_CALIBRATOR,
+  DEFAULT_COMPLEXITY_METRIC_CALIBRATOR,
+)
+
+@inline function calibrate_metric(raw::Real, calibrator::ScalarMetricCalibrator)::Float64
+  value = float(raw)
+  isfinite(value) || return 0.5
+  scale = max(abs(calibrator.scale), eps(Float64))
+  z = calibrator.direction * (value - calibrator.center) / scale
+  return clamp(0.5 + atan(z) / pi, 0.0, 1.0)
+end
+
+@inline function _metric_calibration_scale(
+  center::Float64,
+  effective_steps::Int,
+  minimum_step::Float64,
+)::Float64
+  return max(abs(center) / float(max(effective_steps, 1)), minimum_step)
+end
+
+function _build_complexity_metric_calibrator(
+  metrics,
+  effective_steps::Int,
+)::ComplexityMetricCalibrator
+  steps = max(effective_steps, 1)
+  normalized_floor = 1.0 / float(steps)
+  return ComplexityMetricCalibrator(
+    ScalarMetricCalibrator(
+      metrics.distance,
+      _metric_calibration_scale(metrics.distance, steps, normalized_floor),
+      1.0,
+    ),
+    ScalarMetricCalibrator(
+      metrics.quantity,
+      _metric_calibration_scale(metrics.quantity, steps, 1.0),
+      -1.0,
+    ),
+    ScalarMetricCalibrator(
+      metrics.complexity,
+      _metric_calibration_scale(metrics.complexity, steps, normalized_floor),
+      1.0,
+    ),
+    ScalarMetricCalibrator(
+      metrics.usage,
+      _metric_calibration_scale(metrics.usage, steps, normalized_floor),
+      -1.0,
+    ),
+  )
+end
+
+"""Freeze all metric mappings from the committed manager state."""
+function build_extended_metric_calibrator(
+  mgr::PolyphonicClusterManager.Manager,
+)::ExtendedMetricCalibrator
+  committed = PolyphonicClusterManager.current_extended_metrics(mgr)
+  effective_steps = max(length(mgr.data) - mgr.min_window_size + 1, 1)
+  return ExtendedMetricCalibrator(
+    _build_complexity_metric_calibrator(committed, effective_steps),
+    _build_complexity_metric_calibrator(
+      committed.occurrence_intervals,
+      effective_steps,
+    ),
+  )
+end
+
+struct DissonanceCalibrator
+  scale::Float64
+end
+
+function build_dissonance_calibrator(
+  mgr::DissonanceStmManager.Manager,
+)::DissonanceCalibrator
+  committed = sort!(Float64[
+    event.dissonance_current
+    for event in mgr.memory
+    if isfinite(event.dissonance_current) && event.dissonance_current > 0.0
+  ])
+  if isempty(committed)
+    return DissonanceCalibrator(Config.DISSONANCE_CALIBRATION_SCALE)
+  end
+  center = committed[cld(length(committed), 2)]
+  return DissonanceCalibrator(max(center, Config.DISSONANCE_CALIBRATION_MIN_SCALE))
+end
+
+@inline function calibrate_dissonance(
+  raw::Real,
+  calibrator::DissonanceCalibrator,
+)::Float64
+  roughness = max(isfinite(float(raw)) ? float(raw) : 0.0, 0.0)
+  scale = max(calibrator.scale, Config.DISSONANCE_CALIBRATION_MIN_SCALE)
+  return clamp(roughness / (roughness + scale), 0.0, 1.0)
+end
+
+function select_notes_by_single_addition_greedy(
+  note_pool::Vector{Int},
+  note_count::Int,
+  target::Float64,
+  calibrator::DissonanceCalibrator,
+  evaluate_chord;
+  register_center::Float64,
+  register_allowance::Float64,
+  tie_center::Float64,
+)::Vector{Int}
+  pool = sort!(unique(copy(note_pool)))
+  isempty(pool) && return Int[]
+  desired_count = clamp(note_count, 1, length(pool))
+  selected = Int[]
+
+  for _ in 1:desired_count
+    candidate_rows = Tuple{Int,Vector{Int},Float64}[]
+    nearest_register_distance = Inf
+    for note in pool
+      note in selected && continue
+      chord = sort!(vcat(selected, Int[note]))
+      anchor = float(chord[cld(length(chord), 2)])
+      register_distance = abs(anchor - register_center)
+      nearest_register_distance = min(nearest_register_distance, register_distance)
+      push!(candidate_rows, (note, chord, register_distance))
     end
 
-  scores = Float64[]
-  for v in normalized
-    val = is_complex_when_larger ? v : (1.0 - v)
-    push!(scores, val * weight)
+    eligible = Tuple{Int,Vector{Int},Float64}[
+      row for row in candidate_rows
+      if row[3] <= register_allowance + 1e-9
+    ]
+    if isempty(eligible)
+      eligible = Tuple{Int,Vector{Int},Float64}[
+        row for row in candidate_rows
+        if abs(row[3] - nearest_register_distance) <= 1e-12
+      ]
+    end
+
+    best_note = eligible[1][1]
+    best_key = (Inf, Inf, Inf, typemax(Int))
+    for (note, chord, register_distance) in eligible
+      roughness01 = calibrate_dissonance(evaluate_chord(chord), calibrator)
+      key = (
+        abs(roughness01 - target),
+        register_distance,
+        abs(float(note) - tie_center),
+        note,
+      )
+      if isless(key, best_key)
+        best_key = key
+        best_note = note
+      end
+    end
+    push!(selected, best_note)
+    sort!(selected)
   end
-  return (scores, weight)
+
+  return selected
 end
 
 function combine_complexity_metric_scores(
@@ -2121,35 +2274,25 @@ function combine_complexity_metric_scores(
   raw_quantity::Vector{Float64},
   raw_complexity::Vector{Float64},
   raw_usage::Vector{Float64};
-  metric_weights::NTuple{4,Float64} = (1.0, 1.0, 1.0, 1.0)
+  metric_weights::NTuple{4,Float64} = (1.0, 1.0, 1.0, 1.0),
+  calibrator::ComplexityMetricCalibrator = DEFAULT_COMPLEXITY_METRIC_CALIBRATOR,
 )::Vector{Float64}
   n = maximum([length(raw_dist), length(raw_quantity), length(raw_complexity), length(raw_usage), 0])
   n <= 0 && return Float64[]
-
-  dist_scores, dist_reliability = normalize_scores(raw_dist, true)
-  quantity_scores, quantity_reliability = normalize_scores(raw_quantity, false)
-  complexity_scores, complexity_reliability = normalize_scores(raw_complexity, true)
-  usage_scores, usage_reliability = normalize_scores(raw_usage, false)
 
   dw = max(metric_weights[1], 0.0)
   qw = max(metric_weights[2], 0.0)
   cw = max(metric_weights[3], 0.0)
   uw = max(metric_weights[4], 0.0)
-
-  denom =
-    (dw * dist_reliability) +
-    (qw * quantity_reliability) +
-    (cw * complexity_reliability) +
-    (uw * usage_reliability)
-
-  denom <= 0.0 && return fill(0.0, n)
+  denom = dw + qw + cw + uw
+  denom <= 0.0 && return fill(0.5, n)
 
   combined = Vector{Float64}(undef, n)
   @inbounds for i in 1:n
-    d = i <= length(dist_scores) ? dist_scores[i] : 0.0
-    q = i <= length(quantity_scores) ? quantity_scores[i] : 0.0
-    c = i <= length(complexity_scores) ? complexity_scores[i] : 0.0
-    u = i <= length(usage_scores) ? usage_scores[i] : 0.0
+    d = i <= length(raw_dist) ? calibrate_metric(raw_dist[i], calibrator.distance) : 0.5
+    q = i <= length(raw_quantity) ? calibrate_metric(raw_quantity[i], calibrator.quantity) : 0.5
+    c = i <= length(raw_complexity) ? calibrate_metric(raw_complexity[i], calibrator.complexity) : 0.5
+    u = i <= length(raw_usage) ? calibrate_metric(raw_usage[i], calibrator.usage) : 0.5
     combined[i] = ((dw * d) + (qw * q) + (cw * c) + (uw * u)) / denom
   end
   return combined
@@ -2163,6 +2306,7 @@ function combine_complexity_metric_scores_with_occurrence_intervals(
   temporal_metrics::Vector{PolyphonicClusterManager.OccurrenceIntervalMetrics};
   metric_weights::NTuple{4,Float64} = (1.0, 1.0, 1.0, 1.0),
   temporal_weight::Float64 = Config.OCCURRENCE_INTERVAL_COMPLEXITY_WEIGHT,
+  calibrator::ExtendedMetricCalibrator = DEFAULT_EXTENDED_METRIC_CALIBRATOR,
 )::Vector{Float64}
   base_scores = combine_complexity_metric_scores(
     raw_dist,
@@ -2170,6 +2314,7 @@ function combine_complexity_metric_scores_with_occurrence_intervals(
     raw_complexity,
     raw_usage;
     metric_weights=metric_weights,
+    calibrator=calibrator.base,
   )
   isempty(base_scores) && return base_scores
 
@@ -2184,37 +2329,23 @@ function combine_complexity_metric_scores_with_occurrence_intervals(
   temporal_comp = Float64[temporal_metrics[i].complexity for i in eligible]
   temporal_usage = Float64[temporal_metrics[i].usage for i in eligible]
 
-  has_relative_signal =
-    length(unique(temporal_dist)) > 1 ||
-    length(unique(temporal_qty)) > 1 ||
-    length(unique(temporal_comp)) > 1 ||
-    length(unique(temporal_usage)) > 1
-
-  temporal_scores =
-    if has_relative_signal
-      combine_complexity_metric_scores(
-        temporal_dist,
-        temporal_qty,
-        temporal_comp,
-        temporal_usage;
-        metric_weights=metric_weights,
-      )
-    else
-      Float64[clamp(v, 0.0, 1.0) for v in temporal_comp]
-    end
+  temporal_scores = combine_complexity_metric_scores(
+    temporal_dist,
+    temporal_qty,
+    temporal_comp,
+    temporal_usage;
+    metric_weights=metric_weights,
+    calibrator=calibrator.occurrence_intervals,
+  )
 
   weight = max(float(temporal_weight), 0.0)
   weight <= 0.0 && return base_scores
 
-  _, dist_reliability = normalize_scores(raw_dist, true)
-  _, quantity_reliability = normalize_scores(raw_quantity, false)
-  _, complexity_reliability = normalize_scores(raw_complexity, true)
-  _, usage_reliability = normalize_scores(raw_usage, false)
   base_weight =
-    max(metric_weights[1], 0.0) * dist_reliability +
-    max(metric_weights[2], 0.0) * quantity_reliability +
-    max(metric_weights[3], 0.0) * complexity_reliability +
-    max(metric_weights[4], 0.0) * usage_reliability
+    max(metric_weights[1], 0.0) +
+    max(metric_weights[2], 0.0) +
+    max(metric_weights[3], 0.0) +
+    max(metric_weights[4], 0.0)
 
   combined = copy(base_scores)
   for (j, candidate_idx) in enumerate(eligible)
@@ -2362,6 +2493,7 @@ function generate()
 
   for target_val in complexity_targets
     candidates = collect(candidate_min_master:candidate_max_master)
+    calibrator = build_extended_metric_calibrator(manager)
     raw_dist = Float64[]
     raw_quantity = Float64[]
     raw_complexity = Float64[]
@@ -2389,6 +2521,7 @@ function generate()
       raw_complexity,
       raw_usage,
       temporal_metrics,
+      calibrator=calibrator,
     )
     result_index = select_candidate_by_complexity_score(scores, float(target_val))
     result_value = candidates[result_index + 1]
@@ -2508,35 +2641,6 @@ function generate_centered_targets(n::Int, center::Real, spread::Real)::Vector{F
   return out
 end
 
-function repeated_combinations(values::Vector{T}, n::Int) where {T}
-  n <= 0 && return Vector{Vector{T}}()
-  n == 1 && return [[v] for v in values]
-
-  vals = sort(values)
-  m = length(vals)
-  m == 0 && return Vector{Vector{T}}()
-
-  idxs = fill(1, n)
-  out = Vector{Vector{T}}()
-
-  while true
-    push!(out, [vals[i] for i in idxs])
-
-    pos = n
-    while pos >= 1 && idxs[pos] == m
-      pos -= 1
-    end
-    pos < 1 && break
-
-    next_i = idxs[pos] + 1
-    for k in pos:n
-      idxs[k] = next_i
-    end
-  end
-
-  return out
-end
-
 struct CandidateMetric
   ordered_cand::Vector{Float64}
   global_dist::Float64
@@ -2634,6 +2738,8 @@ function select_best_polyphonic_candidate_unified_with_cost(
   global_metric_weights::NTuple{4,Float64},
   stream_metric_weights::NTuple{4,Float64};
   use_global_score::Bool = true,
+  global_calibrator::ExtendedMetricCalibrator = DEFAULT_EXTENDED_METRIC_CALIBRATOR,
+  stream_calibrators::Vector{ExtendedMetricCalibrator} = ExtendedMetricCalibrator[],
 )
   best_i = 1
   min_cost = Inf
@@ -2646,7 +2752,8 @@ function select_best_polyphonic_candidate_unified_with_cost(
     [m.global_comp for m in metrics],
     [m.global_usage for m in metrics],
     [m.global_temporal for m in metrics];
-    metric_weights=global_metric_weights
+    metric_weights=global_metric_weights,
+    calibrator=global_calibrator,
   )
 
   n_stream_metrics = 0
@@ -2679,6 +2786,11 @@ function select_best_polyphonic_candidate_unified_with_cost(
       raw_u,
       temporal;
       metric_weights=stream_metric_weights,
+      calibrator=(
+        s_idx <= length(stream_calibrators) ?
+          stream_calibrators[s_idx] :
+          DEFAULT_EXTENDED_METRIC_CALIBRATOR
+      ),
     )
   end
 
@@ -2757,6 +2869,13 @@ function select_best_chord_for_dimension_with_cost(
   range_width = abs(vmax - vmin)
   range_width = range_width <= 0.0 ? 1.0 : range_width
 
+  global_calibrator = build_extended_metric_calibrator(mgrs[:global])
+  stream_mgr = mgrs[:stream]
+  actives = MultiStreamManager.active_stream_containers(stream_mgr, n)
+  stream_calibrators = ExtendedMetricCalibrator[
+    build_extended_metric_calibrator(actives[i].manager)
+    for i in 1:min(n, length(actives))
+  ]
   metrics = CandidateMetric[]
 
   for cand_set in candidates
@@ -2806,8 +2925,6 @@ function select_best_chord_for_dimension_with_cost(
     stream_usages = Float64[]
     stream_temporals = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
 
-    stream_mgr = mgrs[:stream]
-    actives = MultiStreamManager.active_stream_containers(stream_mgr, n)
     for i in 1:n
       if i <= length(actives) && i <= length(ordered_polysets)
         stream_metrics =
@@ -2852,6 +2969,8 @@ function select_best_chord_for_dimension_with_cost(
     global_metric_weights,
     stream_metric_weights;
     use_global_score=use_global_score,
+    global_calibrator=global_calibrator,
+    stream_calibrators=stream_calibrators,
   )
 
   best = metrics[best_i]
@@ -2897,6 +3016,11 @@ function select_best_values_for_dimension_greedy(
   g_offset = float(get(mgrs, :global_offset, 0.0))
 
   for stream_idx in order
+    global_calibrator = build_extended_metric_calibrator(mgrs[:global])
+    stream_calibrator =
+      stream_idx <= length(actives) ?
+        build_extended_metric_calibrator(actives[stream_idx].manager) :
+        DEFAULT_EXTENDED_METRIC_CALIBRATOR
     metrics = CandidateMetric[]
     sizehint!(metrics, length(range_vec))
 
@@ -2966,6 +3090,8 @@ function select_best_values_for_dimension_greedy(
       global_metric_weights,
       stream_metric_weights;
       use_global_score=use_global_score,
+      global_calibrator=global_calibrator,
+      stream_calibrators=ExtendedMetricCalibrator[stream_calibrator],
     )
     chosen[stream_idx] = range_vec[best_i]
   end
@@ -3502,35 +3628,6 @@ function generate_polyphonic()
     return filtered
   end
 
-  function _restrict_chords_by_register_window(
-    chords::Vector{Vector{Int}},
-    register_center::Float64,
-    allowance::Float64
-  )::Vector{Vector{Int}}
-    isempty(chords) && return Vector{Vector{Int}}()
-
-    filtered = Vector{Vector{Int}}()
-    best_chord = copy(chords[1])
-    best_distance = Inf
-
-    for chord in chords
-      dist = abs(float(_anchor_from_abs(chord)) - register_center)
-      if dist < best_distance - 1e-12
-        best_distance = dist
-        best_chord = copy(chord)
-      end
-      if dist <= allowance + 1e-9
-        push!(filtered, chord)
-      end
-    end
-
-    if isempty(filtered)
-      return Vector{Vector{Int}}([best_chord])
-    end
-
-    return filtered
-  end
-
   function _global_anchor_from_step(step)::Int
     alln = Int[]
     for st in step
@@ -3854,29 +3951,6 @@ function generate_polyphonic()
   steps_to_generate = length(stream_counts)
   base_step_index = length(results)
   flush(stdout)
-
-  function _iter_combinations_range(low::Int, high::Int, k::Int)
-    # returns Vector{Vector{Int}} of combinations from [low..high], size k
-    n = (high - low + 1)
-    if k <= 0 || k > n
-      return Vector{Vector{Int}}()
-    end
-    idxs = collect(1:k)
-    out = Vector{Vector{Int}}()
-    while true
-      push!(out, [low + (i - 1) for i in idxs])
-      pos = k
-      while pos >= 1 && idxs[pos] == (n - k + pos)
-        pos -= 1
-      end
-      pos < 1 && break
-      idxs[pos] += 1
-      for j in (pos+1):k
-        idxs[j] = idxs[j-1] + 1
-      end
-    end
-    return out
-  end
 
   function _recent_register_center_for_stream(note_stream_mgr, stream_idx::Int)::Float64
     if stream_idx < 1 || stream_idx > length(note_stream_mgr.stream_pool)
@@ -4220,6 +4294,7 @@ sizehint!(top_anchors, desired_stream_count)
 for s in 1:desired_stream_count
   sm = stream_pool[s].manager
   anchors = per_stream_anchor_candidates[s]
+  stream_calibrator = build_extended_metric_calibrator(sm)
 
   raw_d = Float64[]  # avg_dist (complex when larger)
   raw_q = Float64[]  # quantity (complex when smaller)
@@ -4256,6 +4331,7 @@ for s in 1:desired_stream_count
     raw_c,
     raw_u,
     temporal_metrics,
+    calibrator=stream_calibrator,
   )
 
   m = Dict{Int,Float64}()
@@ -4294,6 +4370,7 @@ end
     area_offset = float(get(area_mgrs, :global_offset, offset_for_range(area_min, area_max)))
     chosen_area = fill(typemin(Int), desired_stream_count)
     area_order = step_stream_order
+    area_global_calibrator = build_extended_metric_calibrator(area_gl)
 
     for stream_idx in area_order
       anchors = top_anchors[stream_idx]
@@ -4331,6 +4408,7 @@ end
         global_raw_c,
         global_raw_u,
         global_temporal,
+        calibrator=area_global_calibrator,
       )
       prefer_big_jump = ((area_global_target + area_stream_targets[stream_idx]) / 2.0) >= 0.5
       best_anchor = anchors[1]
@@ -4406,8 +4484,9 @@ end
 
     # vols for amplitude (already decided in dim_order)
     vols = Float64[clamp(_parse_float(current_step_values[s][vol_idx]), 0.0, 1.0) for s in 1:desired_stream_count]
-    stream_chord_candidates = Vector{Vector{Vector{Int}}}(undef, desired_stream_count)
-    selected_chords = Vector{Vector{Int}}(undef, desired_stream_count)
+    stream_note_pools = Vector{Vector{Int}}(undef, desired_stream_count)
+    stream_note_counts = Vector{Int}(undef, desired_stream_count)
+    selected_chords = [Int[] for _ in 1:desired_stream_count]
 
     for s in 1:desired_stream_count
       band_low  = chosen_area[s]
@@ -4421,17 +4500,8 @@ end
       slot_count = max(high - low + 1, 1)
 
       n_notes = clamp(Int(round(density_val * float(slot_count))), 1, slot_count)
-
-      chords = _iter_combinations_range(low, high, n_notes)
-      if isempty(chords)
-        chords = Vector{Vector{Int}}([Int[band_low]])
-      end
-      if note_register_freedom < 1.0 - 1e-9
-        chords = _restrict_chords_by_register_window(chords, register_centers[s], register_allowance)
-      end
-
-      stream_chord_candidates[s] = chords
-      selected_chords[s] = copy(chords[1])
+      stream_note_pools[s] = collect(low:high)
+      stream_note_counts[s] = n_notes
     end
 
     # Dissonance selection is done on pitch-class-normalized MIDI notes so octave distance
@@ -4447,21 +4517,20 @@ end
     end
 
     # Decide global dissonance greedily by stream priority. Each stream is
-    # evaluated against STM plus chords already chosen earlier in this step.
+    # evaluated one added note at a time against STM plus earlier streams.
     chosen_note_flags = fill(false, desired_stream_count)
     note_order = step_stream_order
+    dissonance_calibrator = build_dissonance_calibrator(stm_mgr)
 
     for stream_idx in note_order
-      cands = stream_chord_candidates[stream_idx]
-      if isempty(cands)
+      note_pool = stream_note_pools[stream_idx]
+      if isempty(note_pool)
         selected_chords[stream_idx] = Int[chosen_area[stream_idx]]
         chosen_note_flags[stream_idx] = true
         continue
       end
 
-      roughness = Float64[]
-      sizehint!(roughness, length(cands))
-      for cand in cands
+      function evaluate_partial_chord(cand::Vector{Int})::Float64
         partial = Vector{Vector{Int}}()
         partial_vols = Float64[]
         for s in 1:desired_stream_count
@@ -4485,26 +4554,19 @@ end
         end
 
         eval_notes = _pc_normalized_notes(midi_notes_all)
-        push!(roughness, float(DissonanceStmManager.evaluate(stm_mgr, eval_notes, amps_all, onset)))
+        return float(DissonanceStmManager.evaluate(stm_mgr, eval_notes, amps_all, onset))
       end
 
-      min_r = minimum(roughness)
-      max_r = maximum(roughness)
-      span = max_r - min_r
-      span = span == 0.0 ? 1.0 : span
-
-      best_i = 1
-      best_cost = Inf
-      for (i, d) in enumerate(roughness)
-        norm = clamp((d - min_r) / span, 0.0, 1.0)
-        c = abs(norm - target01)
-        if c < best_cost - 1e-12
-          best_cost = c
-          best_i = i
-        end
-      end
-
-      selected_chords[stream_idx] = copy(cands[best_i])
+      selected_chords[stream_idx] = select_notes_by_single_addition_greedy(
+        note_pool,
+        stream_note_counts[stream_idx],
+        target01,
+        dissonance_calibrator,
+        evaluate_partial_chord;
+        register_center=register_centers[stream_idx],
+        register_allowance=register_allowance,
+        tie_center=float(chosen_area[stream_idx]) + float(BAND_SIZE - 1) / 2.0,
+      )
       chosen_note_flags[stream_idx] = true
     end
 

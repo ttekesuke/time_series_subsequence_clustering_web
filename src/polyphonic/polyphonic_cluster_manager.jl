@@ -1296,6 +1296,74 @@ function latest_occurrence_interval_metrics(
   )
 end
 
+function current_occurrence_interval_metrics(
+  mgr::Manager,
+  clusters_each::Dict{Int,Dict{Int,PolyClusterNode}},
+  now_index::Int,
+)::OccurrenceIntervalMetrics
+  targets = _selected_latest_occurrence_targets(clusters_each, now_index)
+  isempty(targets) && return EMPTY_OCCURRENCE_INTERVAL_METRICS
+
+  sum_distance = 0.0
+  sum_quantity = 0.0
+  sum_complexity = 0.0
+  sum_usage = 0.0
+  ready_count = 0
+
+  for (_, target) in targets
+    state = get(mgr.occurrence_interval_states, target, nothing)
+    temporal =
+      if state !== nothing &&
+          state.manager !== nothing &&
+          state.source_occurrence_count == length(unique(target.si))
+        interval_manager = state.manager::Manager
+        interval_clusters = collect_clusters_each(interval_manager)
+        d, q, c, u = _aggregate_current_metrics(
+          interval_manager,
+          interval_clusters;
+          include_singleton_complexity=true,
+        )
+        OccurrenceIntervalMetrics(d, q, c, u, true)
+      else
+        _occurrence_interval_metrics_for_starts(
+          target.si,
+          mgr.merge_threshold_ratio,
+          mgr.min_window_size,
+        )
+      end
+
+    temporal.ready || continue
+    sum_distance += temporal.distance
+    sum_quantity += temporal.quantity
+    sum_complexity += temporal.complexity
+    sum_usage += temporal.usage
+    ready_count += 1
+  end
+
+  ready_count <= 0 && return EMPTY_OCCURRENCE_INTERVAL_METRICS
+  denom = float(ready_count)
+  return OccurrenceIntervalMetrics(
+    sum_distance / denom,
+    sum_quantity / denom,
+    sum_complexity / denom,
+    sum_usage / denom,
+    true,
+  )
+end
+
+"""Read the committed metric state without adding or simulating a candidate."""
+function current_extended_metrics(mgr::Manager)::ExtendedClusterMetrics
+  clusters_each = collect_clusters_each(mgr)
+  d, q, c, u = _aggregate_current_metrics(mgr, clusters_each)
+  temporal =
+    if mgr.enable_occurrence_intervals
+      current_occurrence_interval_metrics(mgr, clusters_each, length(mgr.data) - 1)
+    else
+      EMPTY_OCCURRENCE_INTERVAL_METRICS
+    end
+  return ExtendedClusterMetrics(d, q, c, u, temporal)
+end
+
 # Simulation with rollback
 
 function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySet)::ExtendedClusterMetrics

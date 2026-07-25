@@ -274,8 +274,8 @@ payload の stream record は strict 形式です。
 13. stream 優先順を決める。
 14. `vol`, `chord_range`, `density`, `sustain`, timbre 系の順に通常 dimension を greedy に決める。
 15. `area` を `tmp_anchor` として greedy に決める。
-16. `area`, `chord_range`, `density`, `vol` などから各 stream の実音候補を作る。
-17. `dissonance_target` に近い実音を stream 優先順で greedy に決める。
+16. `area`, `chord_range`, `density` から各 stream の音域と音数を決める。
+17. `dissonance_target` に近づく音を stream 優先順、各 stream 内は単音追加順の greedy で決める。
 18. 実音を dissonance STM と note manager に commit する。
 19. 出力値を clamp / quantize する。
 20. `timeSeries`, `clusters`, `timbreSeries`, BPM 系を返す。
@@ -357,6 +357,22 @@ interval usage
 - interval manager 自身では occurrence interval complexity を再計算しない。再帰は 1 段で止まる。
 
 global manager の `si` からは複数 stream を合わせた状態の反復間隔、stream manager の `si` からは各 stream の反復間隔が評価されます。最終実音を選ぶ dissonance 専用段階には入りません。
+
+### 7.2 metric calibrator
+
+`dist`, `quantity`, `complexity`, `usage` と occurrence interval 側の同じ4指標は、候補集合内の min/max では正規化しません。候補評価を始める前に、commit 済み manager の metric snapshot から calibrator を固定します。
+
+```text
+z = direction * (raw - committed_center) / scale
+score = 0.5 + atan(z) / pi
+```
+
+- `dist`, `complexity`: raw が大きいほど score が高い。
+- `quantity`, `usage`: raw が小さいほど score が高い。
+- commit 済み現在値は `0.5`。
+- `scale` は現在値と有効 step 数から事前に決まり、候補評価中は変わらない。
+
+通常 dimension の各 stream 決定、AREA stage 1 / stage 2 のそれぞれで、候補loopより前にglobal / stream calibratorを作ります。同じcalibratorに対する同じraw値は、候補数や候補範囲を変えても同じ0..1 scoreになります。
 
 ## 8. 通常 dimension の greedy 選択
 
@@ -463,9 +479,9 @@ total = global_cost + stream_cost + conc_cost + register_cost
 
 `area` が fixed policy の場合は、greedy 評価結果ではなく `_fixed_area_band_low_for_stream()` の値を使います。
 
-## 11. chord_range / density と実音候補
+## 11. chord_range / density と実音探索
 
-AREA が決まったあと、各 stream の実音候補を作ります。
+AREA が決まったあと、各 stream の探索音域と必要音数を作ります。
 
 ```text
 band_low = chosen_area[s]
@@ -475,25 +491,42 @@ high = band_high + chord_range
 slot_count = high - low + 1
 n_notes = round(density * slot_count)
 n_notes = clamp(n_notes, 1, slot_count)
-chords = combinations(low..high, n_notes)
+note_pool = low..high
 ```
 
 `density = 0` でも最低 1 音は出ます。
 
-`note_register_freedom < 1` の場合、chord の anchor が register window 内にあるものへ絞ります。空になった場合は register center に最も近い chord を 1 つ残します。
+`combinations(note_pool, n_notes)` は作りません。現在のpartial chordへ未使用音を1音足す候補だけを評価し、1音確定してから次の音へ進みます。
+
+`note_register_freedom < 1` の場合、追加後のpartial chordのanchorがregister window内にある候補へ絞ります。該当候補がない追加段階では、register centerに最も近い候補だけを残します。
 
 ## 12. dissonance
 
 dissonance は最後の実音選択だけで使われます。`area`, `vol`, `chord_range`, `density`, timbre の complexity manager には直接入りません。
 
-現在の dissonance 選択も純 greedy です。
+現在の dissonance 選択は、stream間とstream内の両方が純greedyです。
 
 1. stream 優先順で 1 stream ずつ処理する。
-2. その stream の chord candidates を列挙する。
-3. 既に決まった stream chords + 今の候補を `DissonanceStmManager.evaluate()` で評価する。
-4. その stream の候補内 min/max で roughness を 0..1 正規化する。
-5. `abs(norm - dissonance_target)` が最小の chord をその stream に固定する。
-6. 全 stream が決まったら、実際の MIDI note を STM に commit する。
+2. そのstreamのpartial chordに追加可能な未使用音を1音ずつ試す。
+3. 既に決まったstream chords + 追加後のpartial chordを`DissonanceStmManager.evaluate()`で評価する。
+4. commit済みSTMから事前に固定したdissonance calibratorでroughnessを0..1化する。
+5. `abs(score - dissonance_target)` が最小の音をpartial chordへ固定する。
+6. 必要音数に達するまで2〜5を繰り返す。
+7. 全streamが決まったら、実際のMIDI noteをSTMにcommitする。
+
+dissonance calibrator は、STM memory にある commit 済み `dissonance_current` の中央値を scale として、step の音候補評価前に固定します。memory に正値がまだなければ `DISSONANCE_CALIBRATION_SCALE=1.0` を使います。
+
+```text
+score = roughness / (roughness + fixed_scale)
+```
+
+探索音数を `N`、選ぶ音数を `K` とすると、1 stream の評価回数は最大で次です。
+
+```text
+N + (N - 1) + ... + (N - K + 1) = O(NK)
+```
+
+旧方式の `combinations(N, K)` 個の和音列挙は行いません。
 
 候補比較時の dissonance は pitch-class normalized note で評価します。
 
@@ -609,8 +642,8 @@ brightness, noise, harmonicity, attack, decay_sustain, release, legato
 
 ## 17. 注意点
 
-- 現在の通常 dimension / AREA / dissonance は stream 全組み合わせを作らず、stream 優先順の純 greedy です。
+- 現在の通常 dimension / AREA / dissonance は stream 全組み合わせを作らず、stream 優先順の純 greedy です。dissonance は各 stream 内でも単音追加 greedy です。
 - greedy なので、先に決まった stream は後続 stream の評価時に固定されます。
-- `dissonance_target` は候補集合内 min/max で step ごと、stream ごとに正規化されます。絶対 roughness 値の 0..1 ではありません。
+- complexity metric と dissonance roughness は、どちらも候補評価前に固定した calibrator で0..1化します。
 - `legato_center/spread` は画面から送られますが、現状サーバ本体では使われません。
 - `sustain` と `legato` はサーバ内部 manager にはありますが、現在の画面 policy / complexity rows / target window rows にはありません。

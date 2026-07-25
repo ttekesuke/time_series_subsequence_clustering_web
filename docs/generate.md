@@ -142,46 +142,31 @@ diff(si) = [4, 4, 4]
 
 間隔は最初のinterval windowの平均値で割った比率として解析するため、`[4,4]`と`[8,8]`は同じ単純な間隔形として扱われます。計算量を制限するため、base clusterは対数間隔の最大4 scale、interval履歴は基本的に直近64 gapを使います。二階manager自身の出現間隔は解析せず、再帰は1段で止まります。
 
-## 6. 正規化と信頼度ウェイト
+## 6. 候補評価前に固定する calibrator
 
-候補ごとの生スコアは `normalize_scores` で 0..1 系のスコアに変換されます。
+各候補の raw metric は、候補集合の min/max では正規化しません。各 generation step の候補評価を始める前に、commit 済み manager の現在値だけから `ExtendedMetricCalibrator` を作り、その snapshot を全候補で共有します。
 
-```text
-unique raw value count <= 1  -> weight = 0.0
-unique raw value count == 2  -> weight = 0.2
-unique raw value count >= 3  -> weight = 1.0
-```
-
-正規化は候補集合内の min/max で行います。
+metric ごとの写像は次です。
 
 ```text
-normalized = (value - min_value) / (max_value - min_value)
+z = direction * (raw - committed_center) / scale
+score = 0.5 + atan(z) / pi
 ```
 
-複雑側の向きは指標ごとに違います。
+`score` は 0..1 に収まり、commit 済みの現在値は 0.5 です。`scale` は現在の metric の絶対値と有効 step 数から、1 step で動く幅として候補評価前に固定します。値が0付近でも写像が潰れないように metric ごとの下限があります。
+
+複雑側の向き `direction` は指標ごとに違います。
 
 - `dist`: 大きいほど複雑
 - `quantity`: 小さいほど複雑
 - `complexity`: 大きいほど複雑
 - `usage`: 小さいほど複雑
 
-例えば候補 `0..4` に対して、ある指標の raw が次だったとします。
-
-```text
-raw = [10, 10, 20, 30, 30]
-unique = 3 個なので weight = 1.0
-normalized = [0.0, 0.0, 0.5, 1.0, 1.0]
-```
-
-この指標が「大きいほど複雑」ならそのままです。`quantity` のように「小さいほど複雑」なら次になります。
-
-```text
-[1.0, 1.0, 0.5, 0.0, 0.0]
-```
+したがって候補を追加・削除したり候補範囲を広げたりしても、同じ calibrator に対する同じ raw 値の score は変わりません。occurrence interval の4指標も、base metric とは別の calibrator を候補評価前に固定します。
 
 ## 7. target へのマッチング
 
-`combine_complexity_metric_scores(...)` は、各候補の正規化済みスコアを合算し、信頼度ウェイト合計で割ります。その後 `select_candidate_by_complexity_score(...)` が target に最も近い候補を選びます。
+`combine_complexity_metric_scores(...)` は、固定 calibrator で0..1化した4指標を metric weight で加重平均します。その後 `select_candidate_by_complexity_score(...)` が target に最も近い候補を選びます。
 
 概念的には次です。
 
