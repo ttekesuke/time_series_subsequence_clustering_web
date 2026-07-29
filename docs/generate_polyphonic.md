@@ -319,6 +319,8 @@ span = exp((1 - r) * log(64))
 weight = (1 - r) + r * exp(-age / span)
 ```
 
+`recency=0` は直近重視ではなく recency weighting 無効です。このとき全履歴が等重みになります。直近の音型を強く参照したい場合は `recency_center` を 1 側に寄せます。
+
 この重みは `dist`, `quantity`, `complexity`, `usage` の集計に使われます。古いクラスタを削除するのではなく、候補評価時の重みだけを下げます。dissonance STM の roughness 計算には直接入りません。
 
 ### 7.1 occurrence interval complexity
@@ -540,7 +542,7 @@ eval_note = MIDI_C4 + (midi_note mod 12)
 - global note manager: その step の全 stream 全 note の median anchor を 1 つ commit。
 - stream note manager: 各 stream の chord 内 median anchor を commit。
 
-note manager は次 step の `note_register_freedom` 制限、cluster timeline 出力、stream lifecycle fallback に使われます。
+note manager は実音選択時の global / stream complexity 評価、次 step の `note_register_freedom` 制限、cluster timeline 出力、stream lifecycle fallback に使われます。`area` は 4 semitone band の下端を決め、実音 `note_abs` はその band と `chord_range` / `density` から作った候補を、dissonance と note manager complexity の合算で選びます。
 
 ## 14. note反復とtie
 

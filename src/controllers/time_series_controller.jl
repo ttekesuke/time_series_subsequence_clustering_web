@@ -2218,6 +2218,8 @@ function select_notes_by_single_addition_greedy(
   register_center::Float64,
   register_allowance::Float64,
   tie_center::Float64,
+  complexity_cost = nothing,
+  complexity_weight::Real = 1.0,
 )::Vector{Int}
   pool = sort!(unique(copy(note_pool)))
   isempty(pool) && return Int[]
@@ -2251,8 +2253,11 @@ function select_notes_by_single_addition_greedy(
     best_key = (Inf, Inf, Inf, typemax(Int))
     for (note, chord, register_distance) in eligible
       roughness01 = calibrate_dissonance(evaluate_chord(chord), calibrator)
+      complexity_penalty =
+        complexity_cost === nothing ? 0.0 : max(float(complexity_cost(chord)), 0.0)
+      primary_cost = abs(roughness01 - target) + max(float(complexity_weight), 0.0) * complexity_penalty
       key = (
-        abs(roughness01 - target),
+        primary_cost,
         register_distance,
         abs(float(note) - tie_center),
         note,
@@ -4459,6 +4464,12 @@ end
     chosen_note_flags = fill(false, desired_stream_count)
     note_order = step_stream_order
     dissonance_calibrator = build_dissonance_calibrator(stm_mgr)
+    note_global_calibrator = build_extended_metric_calibrator(note_mgrs[:global])
+    note_stream_containers = MultiStreamManager.active_stream_containers(note_mgrs[:stream], desired_stream_count)
+    note_stream_calibrators = ExtendedMetricCalibrator[
+      build_extended_metric_calibrator(note_stream_containers[i].manager)
+      for i in 1:min(desired_stream_count, length(note_stream_containers))
+    ]
 
     for stream_idx in note_order
       note_pool = stream_note_pools[stream_idx]
@@ -4495,6 +4506,57 @@ end
         return float(DissonanceStmManager.evaluate(stm_mgr, eval_notes, amps_all, onset))
       end
 
+      function evaluate_note_complexity_cost(cand::Vector{Int})::Float64
+        cand_anchor = float(_anchor_from_abs(cand))
+
+        partial_anchors = Float64[]
+        for s in 1:desired_stream_count
+          if chosen_note_flags[s]
+            push!(partial_anchors, float(_anchor_from_abs(selected_chords[s])))
+          end
+        end
+        push!(partial_anchors, cand_anchor)
+        sort!(partial_anchors)
+        global_anchor = partial_anchors[cld(length(partial_anchors), 2)]
+
+        global_metrics =
+          _safe_simulate_add_and_calculate_all_extended(note_mgrs[:global], Float64[global_anchor])
+        global_scores = combine_complexity_metric_scores_with_occurrence_intervals(
+          Float64[global_metrics.distance],
+          Float64[global_metrics.quantity],
+          Float64[global_metrics.complexity],
+          Float64[global_metrics.usage],
+          PolyphonicClusterManager.OccurrenceIntervalMetrics[global_metrics.occurrence_intervals],
+          calibrator=note_global_calibrator,
+        )
+        global_score = isempty(global_scores) ? Config.DEFAULT_TARGET_01 : global_scores[1]
+
+        stream_score = Config.DEFAULT_TARGET_01
+        if stream_idx <= length(note_stream_containers)
+          stream_metrics =
+            _safe_simulate_add_and_calculate_all_extended(
+              note_stream_containers[stream_idx].manager,
+              Float64[cand_anchor],
+            )
+          stream_scores = combine_complexity_metric_scores_with_occurrence_intervals(
+            Float64[stream_metrics.distance],
+            Float64[stream_metrics.quantity],
+            Float64[stream_metrics.complexity],
+            Float64[stream_metrics.usage],
+            PolyphonicClusterManager.OccurrenceIntervalMetrics[stream_metrics.occurrence_intervals],
+            calibrator=(
+              stream_idx <= length(note_stream_calibrators) ?
+                note_stream_calibrators[stream_idx] :
+                DEFAULT_EXTENDED_METRIC_CALIBRATOR
+            ),
+          )
+          stream_score = isempty(stream_scores) ? Config.DEFAULT_TARGET_01 : stream_scores[1]
+        end
+
+        stream_target = stream_idx <= length(area_stream_targets) ? area_stream_targets[stream_idx] : area_center
+        return abs(global_score - area_global_target) + abs(stream_score - stream_target)
+      end
+
       selected_chords[stream_idx] = select_notes_by_single_addition_greedy(
         note_pool,
         stream_note_counts[stream_idx],
@@ -4504,6 +4566,8 @@ end
         register_center=register_centers[stream_idx],
         register_allowance=register_allowance,
         tie_center=float(chosen_area[stream_idx]) + float(BAND_SIZE - 1) / 2.0,
+        complexity_cost=evaluate_note_complexity_cost,
+        complexity_weight=1.0,
       )
       chosen_note_flags[stream_idx] = true
     end
