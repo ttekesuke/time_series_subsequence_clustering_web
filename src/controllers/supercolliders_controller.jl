@@ -31,9 +31,9 @@ function build_score_events_scd(
   midi_to_freq(m) = Config.A4_FREQ * 2.0^((m - float(Config.MIDI_A4)) / float(Config.STEPS_PER_OCTAVE))
 
   # Parse one stream entry in the strict timbre format.
-  # Returns: (abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, legato)
+  # Returns: (abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, tie)
   # Strict shape:
-  #   [abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, chord_range, density, sustain, legato]
+  #   [abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, chord_range, density, tie]
   function _parse_stream(s)::Tuple{Vector{Int},Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64}
     default_stream = (
       Int[],
@@ -44,12 +44,12 @@ function build_score_events_scd(
       Config.SC_DEFAULT_ATTACK,
       Config.SC_DEFAULT_DECAY,
       Config.SC_DEFAULT_SUSTAIN_RELEASE,
-      Config.SC_DEFAULT_LEGATO
+      Config.SC_DEFAULT_TIE
     )
     s isa AbstractVector || return default_stream
     isempty(s) && return default_stream
 
-    if length(s) >= 12 && s[1] isa AbstractVector
+    if length(s) == 11 && s[1] isa AbstractVector
       abs_notes = Int[]
       for v in s[1]
         v === nothing && continue
@@ -65,8 +65,8 @@ function build_score_events_scd(
       attack = clamp(_parse_float(s[6]), Config.UNIT_MIN, Config.UNIT_MAX)
       decay = clamp(_parse_float(s[7]), Config.UNIT_MIN, Config.UNIT_MAX)
       sustain_release = clamp(_parse_float(s[8]), Config.UNIT_MIN, Config.UNIT_MAX)
-      legato = clamp(_parse_float(s[12]), Config.UNIT_MIN, Config.UNIT_MAX)
-      return (abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, legato)
+      tie = clamp(_parse_float(s[11]), Config.UNIT_MIN, Config.UNIT_MAX)
+      return (abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, tie)
     end
 
     return default_stream
@@ -77,7 +77,7 @@ function build_score_events_scd(
     Tuple{Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64}
   }
   StepVoice = NamedTuple{
-    (:stream_idx, :abs_notes, :vol, :brightness, :noise, :harmonicity, :attack, :decay, :sustain_release, :legato),
+    (:stream_idx, :abs_notes, :vol, :brightness, :noise, :harmonicity, :attack, :decay, :sustain_release, :tie),
     Tuple{Int,Vector{Int},Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64}
   }
   events = Event[]
@@ -127,7 +127,7 @@ function build_score_events_scd(
       @printf("Processing step %d with %d streams, step_duration=%.3f\n", step_idx, length(step_streams), step_duration)
       for (stream_idx, s) in enumerate(step_streams)
         s === nothing && continue
-        abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, legato = _parse_stream(s)
+        abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, tie = _parse_stream(s)
         (vol > Config.SC_MIN_AUDIBLE_VOLUME && !isempty(abs_notes)) || continue
         push!(step_voices, (
           stream_idx = stream_idx,
@@ -139,7 +139,7 @@ function build_score_events_scd(
           attack = attack,
           decay = decay,
           sustain_release = sustain_release,
-          legato = legato
+          tie = tie
         ))
       end
 
@@ -154,11 +154,11 @@ function build_score_events_scd(
       present_streams = Set{Int}()
       for voice in step_voices
         push!(present_streams, voice.stream_idx)
-        @printf("Step %d, Stream %d: vol=%.3f, notes=%s, bri=%.2f, noi=%.2f, har=%.2f, atk=%.2f, dec=%.2f, sr=%.2f, leg=%.2f\n",
-          step_idx, voice.stream_idx, voice.vol, string(voice.abs_notes), voice.brightness, voice.noise, voice.harmonicity, voice.attack, voice.decay, voice.sustain_release, voice.legato)
+        @printf("Step %d, Stream %d: vol=%.3f, notes=%s, bri=%.2f, noi=%.2f, har=%.2f, atk=%.2f, dec=%.2f, sr=%.2f, tie=%.2f\n",
+          step_idx, voice.stream_idx, voice.vol, string(voice.abs_notes), voice.brightness, voice.noise, voice.harmonicity, voice.attack, voice.decay, voice.sustain_release, voice.tie)
         amp_each = (voice.vol / length(voice.abs_notes)) * base_voice_gain * step_gain
         prev_run = get(active_runs, voice.stream_idx, nothing)
-        if prev_run !== nothing && voice.legato >= Config.SC_LEGATO_THRESHOLD && _same_notes(prev_run.abs_notes, voice.abs_notes)
+        if prev_run !== nothing && voice.tie >= Config.SC_TIE_THRESHOLD && _same_notes(prev_run.abs_notes, voice.abs_notes)
           active_runs[voice.stream_idx] = (
             stream_idx = prev_run.stream_idx,
             abs_notes = prev_run.abs_notes,
@@ -374,8 +374,8 @@ function render_polyphonic()
         try
           s === nothing && continue
 
-          # Strict: [abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, chord_range, density, sustain, legato]
-          if length(s) >= 12 && s[1] isa AbstractVector
+          # Strict: [abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, chord_range, density, tie]
+          if length(s) == 11 && s[1] isa AbstractVector
             abs_notes = Int[]
             for v in s[1]
               v === nothing && continue
@@ -395,8 +395,7 @@ function render_polyphonic()
                 _parse_float(s[8]),
                 _parse_float(s[9]),
                 _parse_float(s[10]),
-                _parse_float(s[11]),
-                clamp(_parse_float(s[12]), Config.UNIT_MIN, Config.UNIT_MAX)
+                clamp(_parse_float(s[11]), Config.UNIT_MIN, Config.UNIT_MAX)
               ])
             end
           end

@@ -52,9 +52,6 @@ const CHORD_RANGE_VALUE_MIN::Int = 0
 const CHORD_RANGE_VALUE_MAX::Int = 24
 const CHORD_RANGE_SEARCH_RANGE = 0:12
 
-const SUSTAIN_QUANTIZE_STEPS::Int = 4
-const SUSTAIN_LEVELS::Vector{Float64} = [0.0, 0.25, 0.5, 0.75, 1.0]
-
 const AREA_BAND_SIZE::Int = 4
 const AREA_MOVE_BINS::Vector{Tuple{Int,Int}} = [
   (-12, -9),
@@ -131,8 +128,8 @@ const SC_DEFAULT_HARMONICITY::Float64 = 1.0
 const SC_DEFAULT_ATTACK::Float64 = 0.05
 const SC_DEFAULT_DECAY::Float64 = 0.20
 const SC_DEFAULT_SUSTAIN_RELEASE::Float64 = 0.75
-const SC_DEFAULT_LEGATO::Float64 = 0.0
-const SC_LEGATO_THRESHOLD::Float64 = 0.5
+const SC_DEFAULT_TIE::Float64 = 0.0
+const SC_TIE_THRESHOLD::Float64 = 0.5
 const SC_DEFAULT_TAIL_PAD_SECONDS::Float64 = 2.0
 const SC_MAX_TAIL_PAD_SECONDS::Float64 = 10.0
 const SC_RENDER_TIMEOUT_MIN_SECONDS::Float64 = 30.0
@@ -169,11 +166,6 @@ end
 function note_range_width()::Float64
   w = abs(last(NOTE_RANGE) - first(NOTE_RANGE))
   return w <= 0 ? 1.0 : float(w)
-end
-
-function quantize_sustain(x)::Float64
-  v = clamp(float(x), 0.0, 1.0)
-  return clamp(round(v * SUSTAIN_QUANTIZE_STEPS) / float(SUSTAIN_QUANTIZE_STEPS), 0.0, 1.0)
 end
 
 function area_band_low_min()::Int

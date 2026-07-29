@@ -26,7 +26,7 @@
           :maxValue="1"
           :valueResolution="0.01"
           :playheadStep="playheadStepForRoll"
-          title="Timbre Roll (BRI/NOI/HAR/ATK/DEC/SR/LEG)"
+          title="Timbre Roll (BRI/NOI/HAR/ATK/DEC/SR/TIE)"
           @scroll="onScroll"
         />
         <StreamsRoll
@@ -715,8 +715,8 @@ type ClusterData = {
   cluster_id: string
   indices: number[]
 }
-// strict server: [abs_notes(Int[]), vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range(Int), density, sustain, legato]
-type StepVecStrict = [number[], number, number, number, number, number, number, number, number, number, number, number]
+// strict server: [abs_notes(Int[]), vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range(Int), density, tie]
+type StepVecStrict = [number[], number, number, number, number, number, number, number, number, number, number]
 type StepVec = StepVecStrict
 type PolyphonicResponse = {
   timeSeries: StepVec[][];
@@ -728,7 +728,7 @@ type PolyphonicResponse = {
     attack?: number[][]
     decay_sustain?: number[][]
     release?: number[][]
-    legato?: number[][]
+    tie?: number[][]
   }
   processingTime: number;
 }
@@ -744,7 +744,7 @@ const generate = ref({
   attack: [] as (number | null)[][],
   decay_sustain: [] as (number | null)[][],
   release: [] as (number | null)[][],
-  legato: [] as (number | null)[][],
+  tie: [] as (number | null)[][],
 
   clusters: {
     area: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
@@ -786,7 +786,7 @@ const convertStepMajorTimbreToStreamMajor = (stepMajor: any): (number | null)[][
 const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   lastResultJson.value = data
   const ts = (data as any).timeSeries as any[]
-  const { notes, vels, brightnesses, noises, harmonicities, attacks, decaySustains, releases, legatos } = expandTimeSeries(ts)
+  const { notes, vels, brightnesses, noises, harmonicities, attacks, decaySustains, releases, ties } = expandTimeSeries(ts)
   const timbreSeries = (data as any).timbreSeries ?? {}
   const resBrightness = convertStepMajorTimbreToStreamMajor(timbreSeries.brightness)
   const resNoise = convertStepMajorTimbreToStreamMajor(timbreSeries.noise)
@@ -794,7 +794,7 @@ const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   const resAttack = convertStepMajorTimbreToStreamMajor(timbreSeries.attack)
   const resDecaySustain = convertStepMajorTimbreToStreamMajor(timbreSeries.decay_sustain)
   const resRelease = convertStepMajorTimbreToStreamMajor(timbreSeries.release)
-  const resLegato = convertStepMajorTimbreToStreamMajor(timbreSeries.legato)
+  const resTie = convertStepMajorTimbreToStreamMajor(timbreSeries.tie)
 
   generate.value.rawTimeSeries = ts as any
   generate.value.notes        = notes      // root（abs_notes[0] or pcs[0]）互換用途
@@ -805,7 +805,7 @@ const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   generate.value.attack       = resAttack.length > 0 ? resAttack : attacks
   generate.value.decay_sustain = resDecaySustain.length > 0 ? resDecaySustain : decaySustains
   generate.value.release      = resRelease.length > 0 ? resRelease : releases
-  generate.value.legato       = resLegato.length > 0 ? resLegato : legatos
+  generate.value.tie          = resTie.length > 0 ? resTie : ties
 
   const clusters = ((data as any).clusters ?? {}) as any
   generate.value.clusters.vol         = clusters.vol         ?? { global: [], streams: {} }
@@ -893,14 +893,14 @@ const expandTimeSeries = (ts: any[]) => {
   const attacks = make2D()
   const decaySustains = make2D()
   const releases = make2D()
-  const legatos = make2D()
+  const ties = make2D()
 
   ts.forEach((stepStreams, stepIdx) => {
     stepStreams.forEach((vec, streamIdx) => {
       if (!vec) return
 
-      // Strict: [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato]
-      if (Array.isArray(vec[0])) {
+      // Strict: [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, tie]
+      if (Array.isArray(vec[0]) && vec.length === 11) {
         const absNotes = (vec[0] as any[]).map(n => Number(n)).filter(n => Number.isFinite(n))
         notes[streamIdx][stepIdx] = absNotes.length ? absNotes[0] : null
         vels[streamIdx][stepIdx]  = vec[1]
@@ -910,12 +910,12 @@ const expandTimeSeries = (ts: any[]) => {
         attacks[streamIdx][stepIdx] = vec[5]
         decaySustains[streamIdx][stepIdx] = vec[6]
         releases[streamIdx][stepIdx] = vec[7]
-        legatos[streamIdx][stepIdx] = vec[11]
+        ties[streamIdx][stepIdx] = vec[10]
       }
     })
   })
 
-  return { notes, vels, brightnesses, noises, harmonicities, attacks, decaySustains, releases, legatos, maxStreams }
+  return { notes, vels, brightnesses, noises, harmonicities, attacks, decaySustains, releases, ties, maxStreams }
 }
 
 const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
@@ -935,7 +935,7 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
       for (const vec of step) {
         if (!vec) continue
 
-        if (Array.isArray(vec[0]) && vec.length >= 12) {
+        if (Array.isArray(vec[0]) && vec.length === 11) {
           const absNotes = normAbs(vec[0])
           const vol = vec[1]
           stepOut.push([
@@ -949,8 +949,7 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
             Number(vec[7]),
             Number(vec[8]),
             Number(vec[9]),
-            Number(vec[10]),
-            Number(vec[11])
+            Number(vec[10])
           ])
         }
       }
@@ -1167,7 +1166,7 @@ const chordPitchStreams = computed(() => {
   )
 })
 
-const timbreResultStreamLabels = ['BRI', 'NOI', 'HAR', 'ATK', 'DEC', 'SR', 'LEG']
+const timbreResultStreamLabels = ['BRI', 'NOI', 'HAR', 'ATK', 'DEC', 'SR', 'TIE']
 
 const volResultStreamLabels = computed(() => {
   const labels: string[] = []
@@ -1198,7 +1197,7 @@ const timbreResultStreams = computed(() => ([
   buildTimbreLane(generate.value.attack),
   buildTimbreLane(generate.value.decay_sustain),
   buildTimbreLane(generate.value.release),
-  buildTimbreLane(generate.value.legato),
+  buildTimbreLane(generate.value.tie),
 ]))
 
 const volResultStreams = computed(() =>

@@ -31,13 +31,13 @@
     "bpm": 480,
     "future_bpm": [480, 480, 480],
     "stream_counts": [1, 2, 2],
-    "legato_center": [0.0, 0.0, 0.0],
-    "legato_spread": [0.0, 0.0, 0.0],
+    "tie_center": [0.0, 0.0, 0.0],
+    "tie_spread": [0.0, 0.0, 0.0],
     "recency_center": [0.0, 0.0, 0.0],
     "recency_spread": [0.0, 0.0, 0.0],
     "initial_context": [
       [
-        [[60], 1.0, 0.5, 0.2, 0.5, 0.05, 0.2, 0.75, 0, 0.0, 0.5, 0.0]
+        [[60], 1.0, 0.5, 0.2, 0.5, 0.05, 0.2, 0.75, 0, 0.0, 0.0]
       ]
     ],
     "initial_context_bpm": [480],
@@ -99,8 +99,8 @@
 | キー | 範囲 | step | デフォルト | 意味 |
 | --- | ---: | ---: | ---: | --- |
 | `stream_counts` | 1..16 | 1 | 1 | 各 future step の stream 数。この長さが生成 step 数です。 |
-| `legato_center` | 0..1 | 0.01 | 0 | 画面からは送りますが、現在サーバ本体は `legato_center/spread` を読まず、`legato` / `same_note_legato` だけを読みます。 |
-| `legato_spread` | 0..1 | 0.01 | 0 | 同上。 |
+| `tie_center` | 0..1 | 0.01 | 0 | 同じstreamで同じnote/chordが連続した場合、再発音せず接続するtie値の中心。 |
+| `tie_spread` | 0..1 | 0.01 | 0 | `tie_center`を中心としたstream間のtie値の分布幅。 |
 | `recency_center` | 0..1 | 0.01 | 0 | 直近履歴をどれくらい重く見るか。 |
 | `recency_spread` | 0..1 | 0.01 | 0 | stream 間の recency ばらつき。 |
 | `stream_strength_target` | 0..1 | 0.01 | 0 | stream lifecycle で残す / 復活 / fork する stream 強度の中心。 |
@@ -190,7 +190,7 @@ decay_sustain_target, decay_sustain_target_spread
 release_target, release_target_spread
 ```
 
-`area` には target window row はありません。`sustain` と `legato` はサーバ内部の managed dimension にはありますが、現在の画面は complexity rows / target window rows / policy rows を送りません。
+`area` には target window row はありません。tieは複雑度探索dimensionではなく、note生成後の同音接続を直接指定するため、complexity rows / target window rows / dimension policyには含めません。
 
 ### 3.5 dimension policy
 
@@ -239,19 +239,18 @@ brightness, noise, harmonicity, attack, decay_sustain, release
 画面の Initial Context row は次です。
 
 ```text
-abs_note, vol, brightness, noise, harmonicity, attack, decay_sustain, release, legato
+abs_note, vol, brightness, noise, harmonicity, attack, decay_sustain, release, tie
 ```
 
 payload の stream record は strict 形式です。
 
 ```text
-[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato]
+[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, tie]
 ```
 
 - `abs_notes` は `Vector{Int}` です。例: `[60]`, `[60, 64, 67]`
 - `chord_range` と `density` は画面入力 row にはありません。payload assembly 時またはサーバ側で `abs_notes` から実測再計算されます。
-- `sustain` は画面入力 row にはありません。strict index を維持するため payload には値が入ります。
-- サーバは 8 要素、9 要素、10 要素、11 要素、12 要素相当の record を受けますが、内部では最終的に 12 要素へ正規化します。
+- サーバは11要素のrecordだけを受け付けます。
 
 `chord_range` と `density` は初期文脈から送られても、サーバが `abs_notes` の実観測値から再計算します。
 
@@ -262,7 +261,7 @@ payload の stream record は strict 形式です。
 1. payload の `generate_polyphonic` を読む。
 2. `stream_counts`, `stream_strength_target`, `stream_strength_spread`, BPM 系を正規化する。
 3. `initial_context` を読み、空なら default 1 step / 1 stream を作る。
-4. stream record を 12 要素 strict 形式へ正規化する。
+4. stream record を 11 要素 strict 形式へ正規化する。
 5. 初期文脈の `chord_range` と `density` を `abs_notes` から実測再計算する。
 6. `dimension_policy` を解決し、固定次元の固定値を決める。
 7. 初期文脈から dimension ごとの履歴 matrix を作る。
@@ -272,13 +271,13 @@ payload の stream record は strict 形式です。
 11. future step ごとに stream lifecycle を計画して全 manager に適用する。
 12. step の `recency_center/spread` を stream ごとの recency に展開し、各 manager に適用する。
 13. stream 優先順を決める。
-14. `vol`, `chord_range`, `density`, `sustain`, timbre 系の順に通常 dimension を greedy に決める。
+14. `vol`, `chord_range`, `density`, timbre 系の順に通常 dimension を greedy に決める。
 15. `area` を `tmp_anchor` として greedy に決める。
 16. `area`, `chord_range`, `density` から各 stream の音域と音数を決める。
 17. `dissonance_target` に近づく音を stream 優先順、各 stream 内は単音追加順の greedy で決める。
 18. 実音を dissonance STM と note manager に commit する。
-19. 出力値を clamp / quantize する。
-20. `timeSeries`, `clusters`, `timbreSeries`, BPM 系を返す。
+19. `tie_center/spread`をstream別tie確定値へ展開する。同じnote/chordが連続した場合だけrenderで接続される。
+20. 出力値をclampし、`timeSeries`, `clusters`, `timbreSeries`, BPM系を返す。
 
 ## 6. stream lifecycle と優先順
 
@@ -382,7 +381,6 @@ score = 0.5 + atan(z) / pi
 vol
 chord_range
 density
-sustain
 brightness
 noise
 harmonicity
@@ -420,7 +418,6 @@ total_cost =
 | `vol` | `0.0, 0.5, 1.0` |
 | `chord_range` | `0..12` |
 | `density` | `0.0, 0.1, ..., 1.0` |
-| `sustain` | `0.0, 0.25, 0.5, 0.75, 1.0` |
 | timbre 系 | `0.0, 0.1, ..., 1.0` |
 
 ## 9. global / stream / conc
@@ -545,27 +542,27 @@ eval_note = MIDI_C4 + (midi_note mod 12)
 
 note manager は次 step の `note_register_freedom` 制限、cluster timeline 出力、stream lifecycle fallback に使われます。
 
-## 14. legato の現状
+## 14. note反復とtie
 
-画面は `legato_center` と `legato_spread` を送ります。ただし現在の `generate_polyphonic()` 本体は次を読んでいます。
+noteの反復とtieは別の段階です。
 
-```text
-legato
-same_note_legato
-```
+1. note/AREAの候補評価で、recencyを高くし複雑度targetを低くすると、最近の反復パターンが選ばれやすくなります。
+2. dissonance評価まで含めて各streamのnote/chordを確定します。
+3. `tie_center/spread`から、そのstepのstream別tie値を決定論的に作ります。
+4. SuperCollider render時、同じstreamの前stepとnote/chordが完全一致し、tieが`SC_TIE_THRESHOLD = 0.5`以上なら、再発音せず前の音響runを延長します。
 
-つまり、画面から送られる `legato_center/spread` は現状の生成結果には反映されません。payload に `legato` または `same_note_legato` がある場合は、future step ごとの `legato` 値として strict stream record の 12 番目に入ります。
+tieはnote候補を固定したり、note探索を省略したりしません。反復そのものはrecencyと低い複雑度で生成し、tieは生成後に同音を接続するかだけを決めます。音が異なる場合、tie値は音響に影響しません。
 
-SuperCollider render では legato が `SC_LEGATO_THRESHOLD = 0.5` 以上で、同じ stream の同じ note/chord が連続した場合に発音を結合します。
+standaloneの`sustain`生成dimensionはありません。tieは`tie_center/spread`とstream record末尾の`tie`だけで指定します。
 
 ## 15. SuperCollider render との関係
 
 `generate_polyphonic()` は音声ファイルを作りません。音声化は `SupercollidersController.render_polyphonic()` 側です。
 
-render が読む stream record も 12 要素 strict 形式です。
+render が読む stream record も 11 要素 strict 形式です。
 
 ```text
-[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato]
+[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, tie]
 ```
 
 SC synth では:
@@ -576,7 +573,7 @@ SC synth では:
 - `attack`: attack 時間比率。
 - `decay_sustain`: decay 時間比率。
 - `release`: sustain/release 時間比率。
-- `legato`: 同音連続時の結合判定。
+- `tie`: 同音連続時の結合判定。0.5以上で前の音響runを延長。
 
 低域の kick / bass が聞こえにくい問題に対して、render 側では低い MIDI note に amp 補正をかけ、SC synth 側でも 2倍 / 4倍成分、短い click、low shelf を足しています。
 
@@ -588,7 +585,7 @@ SC synth では:
 {
   "timeSeries": [
     [
-      [[60], 1.0, 0.5, 0.2, 0.5, 0.05, 0.2, 0.75, 0, 1.0, 0.5, 0.0]
+      [[60], 1.0, 0.5, 0.2, 0.5, 0.05, 0.2, 0.75, 0, 1.0, 0.0]
     ]
   ],
   "clusters": {
@@ -605,7 +602,7 @@ SC synth では:
     "attack": [],
     "decay_sustain": [],
     "release": [],
-    "legato": []
+    "tie": []
   },
   "bpm": 480,
   "stepDuration": 0.125,
@@ -616,10 +613,10 @@ SC synth では:
 }
 ```
 
-`timeSeries` は初期文脈と生成結果を連結した全 step です。各 stream record は 12 要素 strict 形式です。
+`timeSeries` は初期文脈と生成結果を連結した全 step です。各 stream record は 11 要素 strict 形式です。
 
 ```text
-[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato]
+[abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, tie]
 ```
 
 `clusters` は各 dimension の cluster timeline です。
@@ -631,13 +628,13 @@ cluster payload には、存在する manager について次のキーが入り�
 
 ```text
 note, area, vol, brightness, noise, harmonicity, attack,
-decay_sustain, release, chord_range, density, sustain, legato
+decay_sustain, release, chord_range, density
 ```
 
 `timbreSeries` は次を返します。
 
 ```text
-brightness, noise, harmonicity, attack, decay_sustain, release, legato
+brightness, noise, harmonicity, attack, decay_sustain, release, tie
 ```
 
 ## 17. 注意点
@@ -645,5 +642,5 @@ brightness, noise, harmonicity, attack, decay_sustain, release, legato
 - 現在の通常 dimension / AREA / dissonance は stream 全組み合わせを作らず、stream 優先順の純 greedy です。dissonance は各 stream 内でも単音追加 greedy です。
 - greedy なので、先に決まった stream は後続 stream の評価時に固定されます。
 - complexity metric と dissonance roughness は、どちらも候補評価前に固定した calibrator で0..1化します。
-- `legato_center/spread` は画面から送られますが、現状サーバ本体では使われません。
-- `sustain` と `legato` はサーバ内部 manager にはありますが、現在の画面 policy / complexity rows / target window rows にはありません。
+- note反復はrecencyと低い複雑度で誘導します。tieはnote生成後の同音接続だけを制御します。
+- standaloneのsustain生成dimensionはありません。strict recordの11番目はtieです。

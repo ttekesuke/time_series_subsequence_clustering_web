@@ -526,15 +526,15 @@ const contextInputDimensions = [
   { key: 'attack', shortName: 'ATTACK', name: 'ATTACK' },
   { key: 'decay_sustain', shortName: 'DECAY', name: 'DECAY' },
   { key: 'release', shortName: 'SUSTAIN_RELEASE', name: 'SUSTAIN/RELEASE' },
-  { key: 'legato', shortName: 'LEGATO', name: 'LEGATO' }
+  { key: 'tie', shortName: 'TIE', name: 'TIE' }
 ]
 
 
-// Strict server shape remains derived: [abs_note, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, sustain, legato]
+// Strict server shape remains derived: [abs_note, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, tie]
 // Input rows omit chord_range/density because they are derived per-step from abs notes.
 // Default values still keep strict indices for payload assembly.
 const defaultContextInputBase = [60, 1, 0.5, 0.2, 0.8, 0.05, 0.20, 0.75, 0]
-const defaultContextBase = [60, 1, 0.5, 0.2, 0.8, 0.05, 0.20, 0.75, 0, 0, 0.5, 0]
+const defaultContextBase = [60, 1, 0.5, 0.2, 0.8, 0.05, 0.20, 0.75, 0, 0, 0]
 const areaBandSize = 4
 const areaBandLowMin = 24
 const areaBandLowMax = 120
@@ -562,8 +562,7 @@ const strictContextIndexByKey = {
   release: 7,
   chord_range: 8,
   density: 9,
-  sustain: 10,
-  legato: 11
+  tie: 10
 } as const
 
 const contextInputIndexByKey = {
@@ -575,7 +574,7 @@ const contextInputIndexByKey = {
   attack: 5,
   decay_sustain: 6,
   release: 7,
-  legato: 8
+  tie: 8
 } as const
 
 const contextSteps = ref(3)
@@ -695,7 +694,7 @@ const buildStrictContextVoiceFromRows = (rows: GridRowData[], streamIdx: number,
   const attack = Number(getRowValue('attack', 0.05))
   const decaySustain = Number(getRowValue('decay_sustain', 0.20))
   const release = Number(getRowValue('release', 0.75))
-  const legato = Number(getRowValue('legato', 0))
+  const tie = Number(getRowValue('tie', 0))
 
   return [
     absNotes,
@@ -708,8 +707,7 @@ const buildStrictContextVoiceFromRows = (rows: GridRowData[], streamIdx: number,
     Math.max(0, Math.min(1, release)),
     0,
     0,
-    0.5,
-    Math.max(0, Math.min(1, legato))
+    Math.max(0, Math.min(1, tie))
   ]
 }
 
@@ -1212,34 +1210,34 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "LEG C",
-    name: "Legato Center",
-    key: "legato_center",
+    shortName: "TIE C",
+    name: "Tie Center",
+    key: "tie_center",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "同じ stream で前 step と同じ note/chord が続くときだけ有効な legato 実値の中心です。生成探索の複雑度には使わず、SuperCollider render 時に同音連打を結合するかを決めます。",
+      "同じ stream で前 step と同じ note/chord が続くときだけ有効な tie 実値の中心です。note の反復自体は recency と低い複雑度で生成し、tie は生成後の同音を再発音せず接続するかだけを決めます。",
       "0：全体に step ごとに発音し直す方向です。",
       "1：全体に同音連打を音響的に切らず、1つの長い音として持続する方向です。",
-      "render では各streamの legato が 0.5 以上で結合します。Attack/Decay は結合 run の先頭、Sustain/Release は末尾 step の値を使います。"
+      "render では各streamの tie が 0.5 以上で結合します。Attack/Decay は結合 run の先頭、Sustain/Release は末尾 step の値を使います。"
     )
   },
   {
-    shortName: "LEG S",
-    name: "Legato Spread",
-    key: "legato_spread",
+    shortName: "TIE S",
+    name: "Tie Spread",
+    key: "tie_spread",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "Legato Center を中心に、同一step内のstreamごとの legato 実値をどれだけ広げるかです。center±spread/2 をstream数ぶん線形に割り当てます。",
-      "0：全streamが Legato Center と同じ値になります。",
-      "1：stream間の legato 差が最大になります。"
+      "Tie Center を中心に、同一step内のstreamごとの tie 実値をどれだけ広げるかです。center±spread/2 をstream数ぶん線形に割り当てます。",
+      "0：全streamが Tie Center と同じ値になります。",
+      "1：stream間の tie 差が最大になります。"
     )
   },
   {
@@ -1986,8 +1984,8 @@ const buildGenParamsFromRows = () => {
   result.note_register_freedom  = get('note_register_freedom')
   result.dissonance_target      = get('dissonance_target')
   result.future_bpm             = get('future_bpm')
-  result.legato_center          = get('legato_center')
-  result.legato_spread          = get('legato_spread')
+  result.tie_center             = get('tie_center')
+  result.tie_spread             = get('tie_spread')
   result.recency_center         = get('recency_center')
   result.recency_spread         = get('recency_spread')
 
@@ -2064,7 +2062,7 @@ const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
         const streamArr = Array.isArray(stepArr) ? stepArr[s] : null
         let rawVal: any = null
         if (Array.isArray(streamArr)) {
-          if (streamArr.length >= 12) {
+          if (streamArr.length === 11) {
             rawVal = streamArr[strictIndex]
           }
         }
@@ -2102,8 +2100,8 @@ const applyGenParamsFromPayload = async (payload: any) => {
 
   const getCandidateParam = (key: string) => {
     if (key === 'future_bpm') return candidate.future_bpm ?? candidate.bpm
-    if (key === 'legato_center') return candidate.legato_center ?? candidate.legato ?? candidate.same_note_legato
-    if (key === 'legato_spread') return candidate.legato_spread
+    if (key === 'tie_center') return candidate.tie_center
+    if (key === 'tie_spread') return candidate.tie_spread
     if (key === 'recency_center') return candidate.recency_center
     if (key === 'recency_spread') return candidate.recency_spread
     return candidate[key]
@@ -2158,8 +2156,8 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       bpm: futureBpm[0] ?? DEFAULT_BPM,
       future_bpm: futureBpm,
       stream_counts: genParams.stream_counts,
-      legato_center: genParams.legato_center,
-      legato_spread: genParams.legato_spread,
+      tie_center: genParams.tie_center,
+      tie_spread: genParams.tie_spread,
       recency_center: genParams.recency_center,
       recency_spread: genParams.recency_spread,
       initial_context: initialContext,
