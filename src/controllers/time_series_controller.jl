@@ -3897,12 +3897,9 @@ function generate_polyphonic()
   base_step_index = length(results)
   flush(stdout)
 
-  function _recent_register_center_for_stream(note_stream_mgr, stream_idx::Int)::Float64
-    if stream_idx < 1 || stream_idx > length(note_stream_mgr.stream_pool)
-      return float(ABS_MIN)
-    end
-
-    stream = note_stream_mgr.stream_pool[stream_idx]
+  function _recent_register_center_for_stream(note_stream_mgr, stream_id::Int)::Float64
+    stream = get(note_stream_mgr.containers_by_id, stream_id, nothing)
+    stream === nothing && error("Active note stream ID $(stream_id) has no container.")
     anchors = Int[]
     recent_steps = max(Int(Config.NOTE_REGISTER_MEMORY_STEPS), 1)
     data_len = length(stream.manager.data)
@@ -4009,8 +4006,26 @@ function generate_polyphonic()
 
     lifecycle_mgr = haskey(managers, "vol") ? managers["vol"][:stream] : managers["note"][:stream]
     plan = MultiStreamManager.build_stream_lifecycle_plan(lifecycle_mgr, desired_stream_count; target=st_target, spread=st_spread)
-    for (_k, mgrs) in managers
-      MultiStreamManager.apply_stream_lifecycle_plan!(mgrs[:stream], plan)
+    length(plan.active_ids) == desired_stream_count || error(
+      "Lifecycle planned $(length(plan.active_ids)) active streams; expected $(desired_stream_count).",
+    )
+    length(unique(plan.active_ids)) == length(plan.active_ids) || error(
+      "Lifecycle returned duplicate active stream IDs: $(plan.active_ids).",
+    )
+
+    # Apply one canonical ID order to every dimension before any recency,
+    # candidate evaluation, or commit. Inspect active_ids directly here because
+    # active_stream_containers() may resize that list as part of its API.
+    for (manager_key, mgrs) in managers
+      stream_mgr = mgrs[:stream]
+      MultiStreamManager.apply_stream_lifecycle_plan!(stream_mgr, plan)
+      stream_mgr.active_ids == plan.active_ids || error(
+        "$(manager_key) active stream IDs $(stream_mgr.active_ids) do not match lifecycle IDs $(plan.active_ids).",
+      )
+      missing_ids = Int[id for id in plan.active_ids if !haskey(stream_mgr.containers_by_id, id)]
+      isempty(missing_ids) || error(
+        "$(manager_key) has no containers for active stream IDs $(missing_ids).",
+      )
     end
 
     idx0 = step_idx - 1
@@ -4150,13 +4165,18 @@ function generate_polyphonic()
     area_conc_w        = area_enabled ? _parse_float(array_param(gp, "area_conc", idx0)) : 1.0
 
     area_stream_targets = generate_centered_targets(desired_stream_count, area_center, area_spread)
-    stream_pool = area_mgrs[:stream].stream_pool
+    # Output slots follow plan.active_ids. Resolve each AREA container directly by
+    # stable ID; do not use stream_pool position or a mutating active-list helper.
+    stream_pool = [
+      area_mgrs[:stream].containers_by_id[id]
+      for id in plan.active_ids
+    ]
     note_register_freedom_raw = array_param(gp, "note_register_freedom", idx0)
     note_register_freedom = clamp(_parse_float(note_register_freedom_raw === nothing ? 1.0 : note_register_freedom_raw), 0.0, 1.0)
     register_centers = Float64[]
     sizehint!(register_centers, desired_stream_count)
     for s in 1:desired_stream_count
-      push!(register_centers, _recent_register_center_for_stream(note_mgrs[:stream], s))
+      push!(register_centers, _recent_register_center_for_stream(note_mgrs[:stream], plan.active_ids[s]))
     end
     register_allowance = if note_register_freedom >= 1.0 - 1e-9
       float(ABS_MAX - ABS_MIN)

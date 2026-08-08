@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TimeSeriesController.analyse の部分列クラスタリングを、一点ずつ追跡できる対話型ビジュアライザー">
+  <title>analyse() クラスタリング・ビジュアライザー</title>
+  <link rel="stylesheet" href="./analyse.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="ページ先頭へ">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>SUBSEQUENCE LAB</span>
+    </a>
+    <nav aria-label="ページ内ナビゲーション">
+      <a href="#simulator">シミュレーター</a>
+      <a href="#algorithm">処理の全体像</a>
+      <a href="#reference">用語</a>
+      <a class="source-link" href="./analyse.md">原文 MD ↗</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero section-shell">
+      <div class="hero-copy">
+        <p class="eyebrow"><span>INTERACTIVE GUIDE</span> / JULIA IMPLEMENTATION</p>
+        <h1>値をひとつ読むたび、<br><em>クラスタの木</em>はどう育つ？</h1>
+        <p class="hero-lead">単音の時系列を長さ2の部分列から比較し、似たパターンを統合しながら、長さ3、4…へ伸ばす過程をステップごとに可視化します。</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#simulator">動かして理解する <span>↓</span></a>
+          <a class="button ghost" href="#algorithm">先に全体像を見る</a>
+        </div>
+        <dl class="hero-facts">
+          <div><dt>開始 window</dt><dd>2</dd></div>
+          <div><dt>統合閾値</dt><dd>ratio ≤ 0.30</dd></div>
+          <div><dt>index</dt><dd>0-origin</dd></div>
+        </dl>
+      </div>
+      <div class="hero-visual" aria-hidden="true">
+        <div class="orbit orbit-a"></div><div class="orbit orbit-b"></div>
+        <svg viewBox="0 0 620 430" role="img">
+          <defs>
+            <linearGradient id="heroLine" x1="0" x2="1"><stop stop-color="#9cf5d5"/><stop offset="1" stop-color="#ff9f74"/></linearGradient>
+            <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          </defs>
+          <path class="hero-grid" d="M25 70H595M25 140H595M25 210H595M25 280H595M25 350H595M90 30V390M180 30V390M270 30V390M360 30V390M450 30V390M540 30V390"/>
+          <path class="hero-line-shadow" d="M45 295 L120 220 L195 292 L270 214 L345 282 L420 205 L495 150 L570 84"/>
+          <path class="hero-line" d="M45 295 L120 220 L195 292 L270 214 L345 282 L420 205 L495 150 L570 84"/>
+          <g class="hero-points">
+            <circle cx="45" cy="295" r="8"/><circle cx="120" cy="220" r="8"/><circle cx="195" cy="292" r="8"/><circle cx="270" cy="214" r="8"/><circle cx="345" cy="282" r="8"/><circle cx="420" cy="205" r="8"/><circle cx="495" cy="150" r="8"/><circle cx="570" cy="84" r="8"/>
+          </g>
+          <rect class="window-box a" x="29" y="196" width="182" height="125" rx="22"/><rect class="window-box b" x="254" y="188" width="182" height="120" rx="22"/>
+          <path class="merge-arrow" d="M216 256 C228 256 236 248 249 248"/>
+        </svg>
+        <div class="floating-card fc-a"><span class="dot mint"></span><b>cluster 0</b><small>[0, 2, 4]</small></div>
+        <div class="floating-card fc-b"><span class="dot coral"></span><b>window + 1</b><small>task: [0] → 3</small></div>
+      </div>
+    </section>
+
+    <section class="intro-strip" aria-label="処理の要約">
+      <div><span>01</span><b>READ</b><small>新しい値を読む</small></div>
+      <i>→</i><div><span>02</span><b>SLICE</b><small>部分列を切り出す</small></div>
+      <i>→</i><div><span>03</span><b>COMPARE</b><small>代表系列と距離比較</small></div>
+      <i>→</i><div><span>04</span><b>GROW</b><small>統合して木を伸ばす</small></div>
+    </section>
+
+    <section id="simulator" class="simulator section-shell">
+      <div class="section-heading">
+        <p class="eyebrow"><span>LIVE SIMULATOR</span> / ONE POINT AT A TIME</p>
+        <h2>逐次処理を、<em>一時停止して観察</em></h2>
+        <p>系列やパラメータを書き換えて「再計算」。矢印キーでも前後のステップへ移動できます。</p>
+      </div>
+
+      <div class="control-panel">
+        <div class="control-main">
+          <label for="seriesInput">時系列 <span>3個以上の整数をカンマまたは空白で区切る</span></label>
+          <textarea id="seriesInput" rows="2" spellcheck="false">60, 62, 60, 62, 60, 62, 65, 67, 65, 67, 60, 62</textarea>
+          <div class="presets" aria-label="サンプル系列">
+            <span>サンプル:</span>
+            <button type="button" data-series="60, 62, 60, 62, 60, 62, 65, 67, 65, 67, 60, 62">反復と変化</button>
+            <button type="button" data-series="60, 62, 64, 65, 67">analyse.md</button>
+            <button type="button" data-series="60, 64, 67, 60, 64, 67, 60, 64, 67, 72">三音パターン</button>
+          </div>
+        </div>
+        <div class="parameter-field">
+          <label for="thresholdInput">統合閾値 <code>ratio</code></label>
+          <div class="number-control"><input id="thresholdInput" type="number" min="0" max="1" step="0.01" value="0.30"><span>以下なら統合</span></div>
+        </div>
+        <div class="parameter-field">
+          <label for="minWidthInput">文脈の最小幅</label>
+          <div class="number-control"><input id="minWidthInput" type="number" min="0.01" step="0.1" value="1.0"><span>value_width</span></div>
+        </div>
+        <button id="rebuildButton" class="button primary rebuild" type="button">再計算する</button>
+        <p id="inputError" class="input-error" role="alert" hidden></p>
+      </div>
+
+      <div class="playback" aria-label="ステップ操作">
+        <div class="step-status"><span id="stepKicker">INITIAL SEED</span><strong id="stepTitle">最初の長さ2を登録</strong><small id="stepCounter">1 / 1</small></div>
+        <div class="playback-buttons">
+          <button id="prevButton" class="icon-button" type="button" aria-label="前のステップ">←</button>
+          <button id="playButton" class="play-button" type="button" aria-label="自動再生"><span>▶</span> 再生</button>
+          <button id="nextButton" class="icon-button" type="button" aria-label="次のステップ">→</button>
+        </div>
+        <div class="scrubber-wrap">
+          <input id="stepSlider" type="range" min="0" max="0" value="0" aria-label="表示ステップ">
+          <div id="sliderTicks" class="slider-ticks"></div>
+        </div>
+      </div>
+
+      <div class="visual-grid">
+        <section class="panel timeline-panel">
+          <header class="panel-header"><div><span class="panel-index">A</span><h3>入力タイムライン</h3></div><p>明るい点が今回読んだ値です</p></header>
+          <div id="timelineChart" class="timeline-chart" role="img" aria-label="入力時系列グラフ"></div>
+          <div id="activeSlice" class="active-slice"></div>
+        </section>
+
+        <section class="panel scale-panel">
+          <header class="panel-header"><div><span class="panel-index">B</span><h3>文脈スケール</h3></div><p><code>:contextual_global_halves</code></p></header>
+          <div id="scaleGraphic" class="scale-graphic"></div>
+        </section>
+
+        <section class="panel decisions-panel">
+          <header class="panel-header"><div><span class="panel-index">C</span><h3>このステップの比較</h3></div><p>距離 ÷ √window を閾値と比べます</p></header>
+          <div id="decisionList" class="decision-list"></div>
+        </section>
+
+        <section class="panel tasks-panel">
+          <header class="panel-header"><div><span class="panel-index">D</span><h3>次回の伸長予約</h3></div><p><code>tasks</code> キュー</p></header>
+          <div id="taskQueue" class="task-queue"></div>
+        </section>
+      </div>
+
+      <section class="panel tree-panel">
+        <header class="panel-header tree-header">
+          <div><span class="panel-index">E</span><h3>現在のクラスタ木</h3></div>
+          <div class="legend"><span><i class="legend-root"></i>root / window 2</span><span><i class="legend-child"></i>child / window 3+</span><span><i class="legend-new"></i>今回更新</span></div>
+        </header>
+        <div id="clusterTree" class="cluster-tree"></div>
+      </section>
+
+      <div class="lower-grid">
+        <section class="panel event-panel">
+          <header class="panel-header"><div><span class="panel-index">F</span><h3>処理ログ</h3></div><p>実装と同じ順序</p></header>
+          <ol id="eventLog" class="event-log"></ol>
+        </section>
+        <section class="panel response-panel">
+          <header class="panel-header"><div><span class="panel-index">G</span><h3>この時点の要約</h3></div><p>人間向けに整形</p></header>
+          <div id="snapshotSummary" class="snapshot-summary"></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="algorithm" class="algorithm-section">
+      <div class="section-shell">
+        <div class="section-heading light">
+          <p class="eyebrow"><span>ALGORITHM MAP</span> / PROCESS_DATA!</p>
+          <h2>「横に読む」と「縦に伸ばす」を<em>同時に行う</em></h2>
+          <p>各データ点では、前回予約された長い window を先に処理し、最後に最新の長さ2を root へ分類します。</p>
+        </div>
+        <div class="flow-map">
+          <article><span class="flow-num">01</span><div class="flow-icon">＋</div><h3>値を1つ受け取る</h3><p><code>data_index</code> を進め、そこまでの値だけでスケール幅を再計算。</p></article>
+          <div class="flow-arrow">→</div>
+          <article><span class="flow-num">02</span><div class="flow-icon">↗</div><h3>tasks を伸ばす</h3><p>前回統合できた親を window + 1 にして、既存 child または過去系列と比較。</p></article>
+          <div class="flow-arrow">→</div>
+          <article><span class="flow-num">03</span><div class="flow-icon">≈</div><h3>距離比を判定</h3><p>各時点の差を正規化し、Euclidean距離を <code>√window</code> で割る。</p></article>
+          <div class="flow-arrow">→</div>
+          <article><span class="flow-num">04</span><div class="flow-icon">⌘</div><h3>root を分類</h3><p>最新の長さ2を最も近い root に統合。遠ければ新規 root を作る。</p></article>
+        </div>
+        <div class="formula-card">
+          <div class="formula-copy"><span>DISTANCE RULE</span><h3>統合判定は、形の差を window 長で公平にする</h3><p>単音では各点の差を現在の文脈幅で割ります。距離比が設定閾値以下なら、同じパターンとして扱います。</p></div>
+          <div class="formula"><div><small>各点</small><strong>d<sub>i</sub> = clamp(|a<sub>i</sub> − b<sub>i</sub>| / value_width, 0, 1)</strong></div><div><small>部分列</small><strong>distance = √ Σ d<sub>i</sub><sup>2</sup></strong></div><div class="formula-result"><small>最終判定</small><strong>ratio = distance / √window ≤ threshold</strong></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="reference" class="reference-section section-shell">
+      <div class="section-heading">
+        <p class="eyebrow"><span>READING GUIDE</span> / DATA STRUCTURES</p>
+        <h2>画面に出てくる<em>4つの主役</em></h2>
+      </div>
+      <div class="reference-grid">
+        <article><span class="ref-tag">PolySet</span><div class="ref-code">[60.0]</div><h3>1時点の値集合</h3><p>単音でも scalar ではなく、要素1個の配列として扱います。</p></article>
+        <article><span class="ref-tag">PolySeq</span><div class="ref-code">[[60.0], [62.0]]</div><h3>部分列</h3><p>PolySetをwindow個並べたもの。距離比較の候補になります。</p></article>
+        <article><span class="ref-tag">PolyClusterNode</span><div class="ref-code">si · as · cc</div><h3>クラスタの節</h3><p><code>si</code> は開始位置、<code>as</code> は平均代表、<code>cc</code> は1つ長い子です。</p></article>
+        <article><span class="ref-tag">tasks</span><div class="ref-code">([0, 3], 3)</div><h3>次回の予約</h3><p>path [0, 3] のクラスタを、次回は長さ4として調べるという意味です。</p></article>
+      </div>
+      <aside class="implementation-note"><strong>実装との対応</strong><p>このページの計算は <code>PolyphonicClusterManager</code> の単音経路をブラウザ上で再現しています。通常の <code>analyse</code> API が返さない途中状態を説明用に記録しています。</p><a href="../src/polyphonic/polyphonic_cluster_manager.jl">Juliaソースを見る ↗</a></aside>
+    </section>
+  </main>
+
+  <footer><div class="section-shell"><span>SUBSEQUENCE LAB</span><p><code>docs/analyse.md</code> visual companion · No external dependencies</p><a href="#top">ページ先頭へ ↑</a></div></footer>
+
+  <script src="./analyse.js" defer></script>
+</body>
+</html>
