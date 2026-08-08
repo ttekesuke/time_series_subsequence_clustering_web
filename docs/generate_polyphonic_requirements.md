@@ -362,10 +362,12 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 |---|---|---|
 | `AUD-001` | **修正実装済み・受入未完了（2026-08-08）** | lifecycle適用直後、recency・候補評価・commitより前に、全dimension managerの `active_ids` とcontainer存在を `LifecyclePlan.active_ids` に対して非変更で検証する。register centerとAREA Stage 1は `plan.active_ids` から `containers_by_id[id]` を直接解決する。diagnosticsと静的参照検査は成功したが、Julia CLI不在のためdeactivate/revive/順序入替の実行テストは未実施。 |
 | `FIX-001` | **一部完了** | `AUD-001` のpool index誤参照に対する実装修正は完了した。実行時受入テスト、およびglobal encoding、response、tieまでstable IDを伝播する `AUD-002` は未対応。 |
+| `AUD-003` | **実装変更済み・動的受入未完了（2026-08-08）** | 通常dimension、CR、DEN、AREAのglobal managerは、初期履歴幅ではなくinitial/future全体から算出した `max_streams` を `max_set_size` とencoded rangeへ使用する。observed履歴幅とfuture要求がcapacityを超える場合は明示エラーとし、decoderも範囲外slotをclampせず拒否する。静的なコード参照とencode/decode数式の照合は成功したが、Julia CLIとDockerが利用できないため初期1→future Nの実行テストは未実施。 |
+| `FIX-002` | **実装変更済み・動的受入未完了** | streamwise global schemaはrun中固定capacityを持ち、各encoded要素がoffsetによってslotを自己記述するため、初期に存在しないslotは要素省略で表現する。note globalのscalar schemaと、`FIX-003` 対象のCR/DEN feature semanticsは変更していない。 |
 
 ### 7.4 総評
 
-最も危険なのは、音楽的なheuristicではなく**identityと状態管理の不整合**である。`AUD-001` の直接的なpool index誤参照は修正したが、`AUD-002`〜`AUD-004` は、処理が例外なく完了しても誤ったstream履歴またはfeature表現を使用した正常風の出力を返し得る。このため、音質調整や重み調整より先に残るstable stream identityとglobal feature schemaを修正すべきである。
+最も危険なのは、音楽的なheuristicではなく**identityと状態管理の不整合**である。`AUD-001` と `AUD-003` の直接原因には修正を実装したが、Julia実行環境がないため受入テストは未完了である。`AUD-002` と `AUD-004` は、処理が例外なく完了しても誤ったstream identityまたはfeature表現を使用した正常風の出力を返し得る。このため、音質調整や重み調整より先に残るstable stream identityとglobal feature schemaを修正すべきである。
 
 `AUD-005` と `AUD-006` は運用上の障害リスクが高い。例外をzero scoreへ変換する実装はfail-safeではなく、失敗候補を最良候補として選ぶ可能性がある。またUI制限はAPI防御にならない。
 
@@ -404,8 +406,8 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 
 - global managerのrow幅は初期stepのstream数ではなく、runで許容する最大active stream数またはstable ID schemaから決定しなければならない。
 - encode/decodeはclampで異なるstreamを同じslotへ畳み込んではならない。
-- 欠席streamは明示maskまたは予約値で表現しなければならない。
-- **受入条件:** 初期1 streamからfuture 2〜N streamへ増加しても、各stream値を一意にround-tripできる。
+- 欠席streamは、明示mask、予約値、または各encoded要素がslot identityを自己記述するsparse omissionのいずれかで、存在するslotと曖昧なく区別しなければならない。
+- **受入条件:** 初期1 streamからfuture 2〜N streamへ増加しても、存在する各stream値を一意にround-tripでき、欠席slotを別streamの値として復元しない。
 
 **FIX-003: CR/DENとglobal feature表現の統一**
 

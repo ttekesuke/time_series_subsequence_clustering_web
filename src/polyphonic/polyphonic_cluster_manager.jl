@@ -385,7 +385,9 @@ synthetic stream axis and averages each timestep/stream cell independently.
   end
 
   slot = floor(Int, (encoded - mgr.value_min) / offset) + 1
-  slot = clamp(slot, 1, mgr.max_set_size)
+  1 <= slot <= mgr.max_set_size || error(
+    "Encoded stream slot $(slot) is outside configured capacity 1:$(mgr.max_set_size) for value $(encoded).",
+  )
   raw = encoded - float(slot - 1) * offset
   return (slot, raw)
 end

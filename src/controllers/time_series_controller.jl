@@ -3715,15 +3715,20 @@ function generate_polyphonic()
     value_range;
     value_min::Real,
     value_max::Real,
+    global_capacity::Int,
     track_presence::Bool=false,
     global_history=nothing
   )
     offset = offset_for_range(value_min, value_max)
     global_history_src = global_history === nothing ? history : global_history
-    global_row_width = 1
+    observed_global_row_width = 1
     for row in global_history_src
-      global_row_width = max(global_row_width, length(row))
+      observed_global_row_width = max(observed_global_row_width, length(row))
     end
+    global_row_width = max(Int(global_capacity), 1)
+    observed_global_row_width <= global_row_width || error(
+      "$(key) global history width $(observed_global_row_width) exceeds configured capacity $(global_row_width).",
+    )
 
     s_mgr = MultiStreamManager.Manager(
       history,
@@ -3749,7 +3754,12 @@ function generate_polyphonic()
     )
     PolyphonicClusterManager.process_data!(g_mgr)
     PolyphonicClusterManager.update_caches_permanently(g_mgr)
-    managers[key] = Dict(:global => g_mgr, :stream => s_mgr, :global_offset => offset)
+    managers[key] = Dict(
+      :global => g_mgr,
+      :stream => s_mgr,
+      :global_offset => offset,
+      :global_capacity => global_row_width,
+    )
   end
 
   for (key, history, track_presence) in (
@@ -3768,6 +3778,7 @@ function generate_polyphonic()
         key == "vol" ? Config.VOL_STEPS : Config.FLOAT_STEPS;
         value_min=0.0,
         value_max=1.0,
+        global_capacity=max_streams,
         track_presence=track_presence
       )
     end
@@ -3783,6 +3794,7 @@ function generate_polyphonic()
       cr_values;
       value_min=cr_min,
       value_max=cr_max,
+      global_capacity=max_streams,
       track_presence=true,
       global_history=hist_cr_global
     )
@@ -3795,6 +3807,7 @@ function generate_polyphonic()
       Config.FLOAT_STEPS;
       value_min=0.0,
       value_max=1.0,
+      global_capacity=max_streams,
       track_presence=true,
       global_history=hist_den_global
     )
@@ -3808,6 +3821,7 @@ function generate_polyphonic()
     collect(BAND_LOW_MIN:BAND_SIZE:BAND_LOW_MAX);
     value_min=area_min,
     value_max=area_max,
+    global_capacity=max_streams,
     track_presence=true
   )
 
@@ -4000,6 +4014,9 @@ function generate_polyphonic()
   # ----------------------------------------------------------
   for step_idx in 1:steps_to_generate
     desired_stream_count = max(stream_counts[step_idx], 1)
+    desired_stream_count <= max_streams || error(
+      "Requested $(desired_stream_count) streams exceeds global capacity $(max_streams).",
+    )
 
     st_target = step_idx <= length(strength_targets) ? strength_targets[step_idx] : Config.DEFAULT_TARGET_01
     st_spread = step_idx <= length(strength_spreads) ? strength_spreads[step_idx] : Config.DEFAULT_SPREAD_01
