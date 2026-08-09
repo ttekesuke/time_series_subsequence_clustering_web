@@ -452,7 +452,10 @@ const getDimensionPolicyDimForGenRow = (rowIndex: number): ManagedDimKey | null 
   const meta = genRowMetas[rowIndex]
   if (!meta) return null
   for (const key of managedDimKeys) {
-    if (meta.key === `${key}_center`) return key
+    const complexityCenterKey = key === 'area'
+      ? 'area_center'
+      : `${key}_stream_complexity_center`
+    if (meta.key === complexityCenterKey) return key
   }
   return null
 }
@@ -1140,14 +1143,14 @@ const makeTimbreDimensionRows = (
   atMin: string,
   atMax: string
 ): GenRowMeta[] => [
-  { shortName: `${shortName} G`, name: `${name} Global Complexity`, key: `${key}_global`, min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: `${shortName} C`, name: `${name} Center`, key: `${key}_center`, min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: `${shortName} S`, name: `${name} Spread`, key: `${key}_spread`, min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
-  { shortName: `${shortName} Conc`, name: `${name} Conformity (Conc)`, key: `${key}_conc`, min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: `${shortName} G`, name: `${name} Global Complexity Target`, key: `${key}_global_complexity_target`, min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: `${shortName} C`, name: `${name} Stream Complexity Center`, key: `${key}_stream_complexity_center`, min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: `${shortName} Span`, name: `${name} Stream Complexity Span`, key: `${key}_stream_complexity_span`, min: 0, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
+  { shortName: `${shortName} Conc`, name: `${name} Concordance`, key: `${key}_concordance`, min: -1, max: 1, step: 0.01, defaultFactory: (len) => constant(0, len) },
   {
     shortName: `${shortName} Target`,
-    name: `${name} Target`,
-    key: `${key}_target`,
+    name: `${name} Value Target`,
+    key: `${key}_value_target`,
     min: 0,
     max: 1,
     step: 0.1,
@@ -1160,16 +1163,16 @@ const makeTimbreDimensionRows = (
     )
   },
   {
-    shortName: `${shortName} Spread`,
-    name: `${name} Spread (Target Window)`,
-    key: `${key}_target_spread`,
+    shortName: `${shortName} Radius`,
+    name: `${name} Value Radius`,
+    key: `${key}_value_radius`,
     min: 0,
     max: 1,
     step: 0.1,
     defaultFactory: (len) => constant(1, len),
     help: H(
       { min: 0, max: 1, step: 0.1 },
-      `${name} の探索許容幅（中心±幅、0.1刻み）です。`,
+      `${name} の探索許容半径（中心±半径、0.1刻み）です。`,
       "0：中心値のみ探索。",
       "1：ほぼ全域を探索。"
     )
@@ -1210,34 +1213,78 @@ const genRowMetas: GenRowMeta[] = [
     )
   },
   {
-    shortName: "TIE C",
-    name: "Tie Center",
-    key: "tie_center",
+    shortName: "TIE G",
+    name: "TIE Global Complexity Target",
+    key: "tie_global_complexity_target",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "同じ stream で前 step と同じ note/chord が続くときだけ有効な tie 実値の中心です。note の反復自体は recency と低い複雑度で生成し、tie は生成後の同音を再発音せず接続するかだけを決めます。",
-      "0：全体に step ごとに発音し直す方向です。",
-      "1：全体に同音連打を音響的に切らず、1つの長い音として持続する方向です。",
-      "render では各streamの tie が 0.5 以上で結合します。Attack/Decay は結合 run の先頭、Sustain/Release は末尾 step の値を使います。"
+      "tie可能なstream全体のON/OFF率を時系列として見たglobalクラスタ複雑度の目標です。",
+      "0：ensemble全体のtie配置を単純・反復寄りにします。",
+      "1：ensemble全体のtie配置を新規性・変化の大きい方向へ寄せます。"
     )
   },
   {
-    shortName: "TIE S",
-    name: "Tie Spread",
-    key: "tie_spread",
+    shortName: "TIE C",
+    name: "TIE Stream Complexity Center",
+    key: "tie_stream_complexity_center",
     min: 0,
     max: 1,
     step: 0.01,
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "Tie Center を中心に、同一step内のstreamごとの tie 実値をどれだけ広げるかです。center±spread/2 をstream数ぶん線形に割り当てます。",
-      "0：全streamが Tie Center と同じ値になります。",
-      "1：stream間の tie 差が最大になります。"
+      "stable streamごとのbinary tie系列をクラスタ評価するときの複雑度目標中心です。",
+      "0：各streamのtie判断を単純・反復寄りにします。",
+      "1：各streamのtie判断を複雑・新規寄りにします。"
+    )
+  },
+  {
+    shortName: "TIE Span",
+    name: "TIE Stream Complexity Span",
+    key: "tie_stream_complexity_span",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "stream complexity目標の全体幅です。center±span/2をstream間へ線形配置します。",
+      "0：全streamが同じtie複雑度目標を持ちます。",
+      "1：単純なtie streamと複雑なtie streamが分かれやすくなります。"
+    )
+  },
+  {
+    shortName: "TIE Conc",
+    name: "TIE Concordance",
+    key: "tie_concordance",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: -1, max: 1, step: 0.01 },
+      "同じstep境界でeligibleなstreamのtie ON/OFFを揃えるか分けるかを指定します。",
+      "-1：ONとOFFが可能な限り分かれる候補を優先します。",
+      "1：全streamが同じON/OFF判断になる候補を優先します。0では評価しません。"
+    )
+  },
+  {
+    shortName: "TIE Rate",
+    name: "TIE Rate Target",
+    key: "tie_rate_target",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "同一stable stream・同一chord・render互換となるtie可能境界のうち、tieをONにする累積割合の目標です。",
+      "0：tie可能でもstepごとに再発音する方向です。",
+      "1：tie可能なら積極的に接続する方向です。"
     )
   },
   {
@@ -1825,7 +1872,7 @@ const buildGenHelp = (meta: GenRowMeta): RowHelp | undefined => {
   if (!dim) return meta.help
   const info = dimHelp[dim]
 
-  if (k.endsWith('_global')) {
+  if (k.endsWith('_global_complexity_target') || k === 'area_global') {
     return H(
       meta,
       `${info.label} の Global Complexity 目標です。${info.value} を全ストリームまとめて polyphonic set として仮追加し、dist / qty / comp / usage を合成した global score がこの値に近い候補を選びます。${info.note ?? ''} ${dimDisabledNote(dim)}`,
@@ -1834,25 +1881,25 @@ const buildGenHelp = (meta: GenRowMeta): RowHelp | undefined => {
     )
   }
 
-  if (k.endsWith('_center')) {
+  if (k.endsWith('_stream_complexity_center') || k === 'area_center') {
     return H(
       meta,
-      `${info.label} の Stream Complexity 目標の中心です。各ストリームを独立した時系列として評価し、stream score が center±spread/2 に線形配置された目標へ近い候補を選びます。${dimDisabledNote(dim)}`,
+      `${info.label} の Stream Complexity 目標の中心です。各ストリームを独立した時系列として評価し、stream score が center±span/2 に線形配置された目標へ近い候補を選びます。${dimDisabledNote(dim)}`,
       '0：各ストリームを低複雑度寄りの動きにします。変化量や新規性を抑えやすくなります。',
       '1：各ストリームを高複雑度寄りの動きにします。変化量や新規性を増やしやすくなります。'
     )
   }
 
-  if (k.endsWith('_spread') && !k.endsWith('_target_spread')) {
+  if (k.endsWith('_stream_complexity_span') || k === 'area_spread') {
     return H(
       meta,
-      `${info.label} の Stream Complexity 目標をストリーム間でどれだけ広げるかです。複数ストリームでは center±spread/2 の範囲に目標値を並べ、声部ごとの複雑度差を作ります。${dimDisabledNote(dim)}`,
+      `${info.label} の Stream Complexity 目標の全体幅です。複数ストリームでは center±span/2 の範囲に目標値を並べ、声部ごとの複雑度差を作ります。${dimDisabledNote(dim)}`,
       '0：全ストリームが同じ stream complexity 目標になります。',
       '1：stream complexity 目標が最大幅で分散し、単純な声部と複雑な声部が分かれやすくなります。'
     )
   }
 
-  if (k.endsWith('_conc')) {
+  if (k.endsWith('_concordance') || k === 'area_conc') {
     const areaText = dim === 'area'
       ? 'AREA では stream 間の band anchor の平均距離を見ます。'
       : '通常 dimension では同一 step 内の stream 値のばらつきを discordance として見ます。'
@@ -1864,34 +1911,101 @@ const buildGenHelp = (meta: GenRowMeta): RowHelp | undefined => {
     )
   }
 
-  if (k.endsWith('_target')) {
+  if (k.endsWith('_value_target')) {
     return H(
       meta,
-      `${info.label} の実値探索の中心です。候補値はまず target±target spread の窓で絞られ、その中から global / stream / conc の評価で最終選択されます。${info.value} を直接狙う入口になる値です。${dimDisabledNote(dim)}`,
+      `${info.label} の実値探索の中心です。候補値はまず value target±value radius の窓で絞られ、その中から global / stream / concordance の評価で最終選択されます。${info.value} を直接狙う入口になる値です。${dimDisabledNote(dim)}`,
       `${meta.min}：${info.min}`,
       `${meta.max}：${info.max}`,
       info.note
     )
   }
 
-  if (k.endsWith('_target_spread')) {
+  if (k.endsWith('_value_radius')) {
     return H(
       meta,
-      `${info.label} の実値探索窓の半幅です。サーバは target - spread から target + spread までの候補だけを残し、空になった場合は target に最も近い候補を使います。${dimDisabledNote(dim)}`,
+      `${info.label} の実値探索窓の半径です。サーバは value target - radius から value target + radius までの候補だけを残し、空になった場合は target に最も近い候補を使います。${dimDisabledNote(dim)}`,
       `${meta.min}：target 付近の値だけを探索します。値を固定に近づけたいときに使います。`,
-      `${meta.max}：探索窓が広がり、global / stream / conc の評価で選べる候補が増えます。`
+      `${meta.max}：探索窓が広がり、global / stream / concordance の評価で選べる候補が増えます。`
     )
   }
 
   return meta.help
 }
 
+const canonicalizeGeneratedDimensionMeta = (meta: GenRowMeta) => {
+  const dim = detectDimKey(meta.key)
+  if (!dim || dim === 'area') return
+  if (
+    meta.key.endsWith('_global_complexity_target') ||
+    meta.key.endsWith('_stream_complexity_center') ||
+    meta.key.endsWith('_stream_complexity_span') ||
+    meta.key.endsWith('_concordance') ||
+    meta.key.endsWith('_value_target') ||
+    meta.key.endsWith('_value_radius')
+  ) return
+
+  const replacements: Array<[RegExp, string, string]> = [
+    [/_target_spread$/, '_value_radius', 'Value Radius'],
+    [/_global$/, '_global_complexity_target', 'Global Complexity Target'],
+    [/_center$/, '_stream_complexity_center', 'Stream Complexity Center'],
+    [/_spread$/, '_stream_complexity_span', 'Stream Complexity Span'],
+    [/_conc$/, '_concordance', 'Concordance'],
+    [/_target$/, '_value_target', 'Value Target'],
+  ]
+  for (const [pattern, suffix, label] of replacements) {
+    if (!pattern.test(meta.key)) continue
+    meta.key = meta.key.replace(pattern, suffix)
+    const dimLabel = dimHelp[dim]?.label ?? dim
+    meta.name = `${dimLabel} ${label}`
+    if (suffix === '_stream_complexity_span') meta.shortName = `${meta.shortName.split(' ')[0]} Span`
+    if (suffix === '_value_radius') meta.shortName = `${meta.shortName.split(' ')[0]} Radius`
+    return
+  }
+}
+
+const legacyParamKeyForCanonical = (key: string) => key
+  .replace(/_global_complexity_target$/, '_global')
+  .replace(/_stream_complexity_center$/, '_center')
+  .replace(/_stream_complexity_span$/, '_spread')
+  .replace(/_concordance$/, '_conc')
+  .replace(/_value_target$/, '_target')
+  .replace(/_value_radius$/, '_target_spread')
+
+const complexityParamKeys = (key: string) => key === 'area'
+  ? {
+      global: 'area_global',
+      center: 'area_center',
+      span: 'area_spread',
+      concordance: 'area_conc',
+    }
+  : {
+      global: `${key}_global_complexity_target`,
+      center: `${key}_stream_complexity_center`,
+      span: `${key}_stream_complexity_span`,
+      concordance: `${key}_concordance`,
+    }
+
+const valueParamKeys = (key: string) => ({
+  target: `${key}_value_target`,
+  radius: `${key}_value_radius`,
+})
+
 genRowMetas.forEach((meta) => {
+  canonicalizeGeneratedDimensionMeta(meta)
   meta.help = buildGenHelp(meta)
 })
 
 const complexityDimensionKeys = ['area', 'chord_range', 'density', 'vol', 'brightness', 'noise', 'harmonicity', 'attack', 'decay_sustain', 'release'] as const
 const targetWindowDimensionKeys = ['vol', 'chord_range', 'density', 'brightness', 'noise', 'harmonicity', 'attack', 'decay_sustain', 'release'] as const
+const tieParamKeys = [
+  'tie_global_complexity_target',
+  'tie_stream_complexity_center',
+  'tie_stream_complexity_span',
+  'tie_concordance',
+  'tie_rate_target',
+] as const
+const legacyTieParams = ref<{ tie_center: number[]; tie_spread: number[] } | null>(null)
 
 const makeGenRowData = (meta: GenRowMeta, data: number[]): GridRowData => ({
   name: meta.name,
@@ -1917,6 +2031,17 @@ const syncGenRowsDisabledState = () => {
 // rows 実体
 const genRows = ref<GridRowData[]>(
   genRowMetas.map((meta) => makeGenRowData(meta, meta.defaultFactory(genSteps.value)))
+)
+
+watch(
+  () => tieParamKeys.map((key) => {
+    const idx = genRowMetas.findIndex((meta) => meta.key === key)
+    return idx >= 0 ? [...(genRows.value[idx]?.data ?? [])] : []
+  }),
+  () => {
+    if (!suppressGenWatch.value) legacyTieParams.value = null
+  },
+  { deep: true }
 )
 
 // steps 変更時に row.data を合わせる
@@ -1984,21 +2109,24 @@ const buildGenParamsFromRows = () => {
   result.note_register_freedom  = get('note_register_freedom')
   result.dissonance_target      = get('dissonance_target')
   result.future_bpm             = get('future_bpm')
-  result.tie_center             = get('tie_center')
-  result.tie_spread             = get('tie_spread')
+  tieParamKeys.forEach((key) => {
+    result[key] = get(key)
+  })
   result.recency_center         = get('recency_center')
   result.recency_spread         = get('recency_spread')
 
   complexityDimensionKeys.forEach((key) => {
-    result[`${key}_global`] = get(`${key}_global`)
-    result[`${key}_center`] = get(`${key}_center`)
-    result[`${key}_spread`] = get(`${key}_spread`)
-    result[`${key}_conc`] = get(`${key}_conc`)
+    const keys = complexityParamKeys(key)
+    result[keys.global] = get(keys.global)
+    result[keys.center] = get(keys.center)
+    result[keys.span] = get(keys.span)
+    result[keys.concordance] = get(keys.concordance)
   })
 
   targetWindowDimensionKeys.forEach((key) => {
-    result[`${key}_target`] = get(`${key}_target`)
-    result[`${key}_target_spread`] = get(`${key}_target_spread`)
+    const keys = valueParamKeys(key)
+    result[keys.target] = get(keys.target)
+    result[keys.radius] = get(keys.radius)
   })
 
   return result
@@ -2100,18 +2228,43 @@ const applyGenParamsFromPayload = async (payload: any) => {
 
   const getCandidateParam = (key: string) => {
     if (key === 'future_bpm') return candidate.future_bpm ?? candidate.bpm
-    if (key === 'tie_center') return candidate.tie_center
-    if (key === 'tie_spread') return candidate.tie_spread
     if (key === 'recency_center') return candidate.recency_center
     if (key === 'recency_spread') return candidate.recency_spread
-    return candidate[key]
+    const canonicalValue = candidate[key]
+    if (canonicalValue != null) return canonicalValue
+    return candidate[legacyParamKeyForCanonical(key)]
   }
+
+  const hasCanonicalTieParams = tieParamKeys.some((key) => candidate[key] != null)
+  const hasLegacyTieParams = !hasCanonicalTieParams && (
+    candidate.tie_center != null || candidate.tie_spread != null
+  )
+  legacyTieParams.value = null
 
   const lengths = genRowMetas.map((meta) => {
     const val = getCandidateParam(meta.key)
     return Array.isArray(val) ? val.length : (val != null ? 1 : 0)
   })
+  if (hasLegacyTieParams) {
+    for (const val of [candidate.tie_center, candidate.tie_spread]) {
+      lengths.push(Array.isArray(val) ? val.length : (val != null ? 1 : 0))
+    }
+  }
   const steps = Math.max(1, ...lengths)
+
+  if (hasLegacyTieParams) {
+    const normalizeLegacyTieSeries = (raw: any) => {
+      const source = normalizeArray(raw)
+      const fallback = source.length > 0 ? source[source.length - 1] : 0
+      return Array.from({ length: steps }, (_, idx) => (
+        Math.max(0, Math.min(1, normalizeNumber(source[idx] ?? fallback, 0)))
+      ))
+    }
+    legacyTieParams.value = {
+      tie_center: normalizeLegacyTieSeries(candidate.tie_center),
+      tie_spread: normalizeLegacyTieSeries(candidate.tie_spread),
+    }
+  }
 
   suppressGenWatch.value = true
   genSteps.value = steps
@@ -2156,8 +2309,6 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       bpm: futureBpm[0] ?? DEFAULT_BPM,
       future_bpm: futureBpm,
       stream_counts: genParams.stream_counts,
-      tie_center: genParams.tie_center,
-      tie_spread: genParams.tie_spread,
       recency_center: genParams.recency_center,
       recency_spread: genParams.recency_spread,
       initial_context: initialContext,
@@ -2181,15 +2332,25 @@ const buildParamsPayload = (jobIdOverride?: string) => {
     }
   }
 
+  if (legacyTieParams.value) {
+    payload.generate_polyphonic.tie_center = [...legacyTieParams.value.tie_center]
+    payload.generate_polyphonic.tie_spread = [...legacyTieParams.value.tie_spread]
+  } else {
+    tieParamKeys.forEach((key) => {
+      payload.generate_polyphonic[key] = genParams[key]
+    })
+  }
   complexityDimensionKeys.forEach((k) => {
-    payload.generate_polyphonic[`${k}_global`] = genParams[`${k}_global`]
-    payload.generate_polyphonic[`${k}_center`] = genParams[`${k}_center`]
-    payload.generate_polyphonic[`${k}_spread`] = genParams[`${k}_spread`]
-    payload.generate_polyphonic[`${k}_conc`] = genParams[`${k}_conc`]
+    const keys = complexityParamKeys(k)
+    payload.generate_polyphonic[keys.global] = genParams[keys.global]
+    payload.generate_polyphonic[keys.center] = genParams[keys.center]
+    payload.generate_polyphonic[keys.span] = genParams[keys.span]
+    payload.generate_polyphonic[keys.concordance] = genParams[keys.concordance]
   })
   targetWindowDimensionKeys.forEach((k) => {
-    payload.generate_polyphonic[`${k}_target`] = genParams[`${k}_target`]
-    payload.generate_polyphonic[`${k}_target_spread`] = genParams[`${k}_target_spread`]
+    const keys = valueParamKeys(k)
+    payload.generate_polyphonic[keys.target] = genParams[keys.target]
+    payload.generate_polyphonic[keys.radius] = genParams[keys.radius]
   })
 
   return payload

@@ -52,7 +52,7 @@
 - 音楽理論上の和声進行、調性、声部進行の最適性は保証しない。
 - greedy探索の候補順序に対する不変性は保証しない。
 - 生成後の音声合成・MIDIレンダリングそのものは本関数の責務外とする。
-- tieは生成探索中の評価対象ではなく、後段のレンダリングで解釈される。
+- clustered tie modeではtieもnote確定後の二値候補評価対象とし、後段rendererが確定値を接続として解釈する。legacy modeでは従来どおり決定論的に展開する。
 
 ---
 
@@ -124,7 +124,7 @@
 
 | dimension | 候補 |
 |---|---|
-| volume | `0`, `0.5`, `1` |
+| volume | `0`, `1` |
 | chord range | 整数 `0:12` |
 | density | `0:0.1:1` |
 | brightness | `0:0.1:1` |
@@ -147,7 +147,8 @@
 | field | 内容 |
 |---|---|
 | `timeSeries` | 初期コンテキストと生成結果を含むpolyphonic時系列 |
-| `clusters` | managerが保持するクラスタ情報 |
+| `streamIds` | `timeSeries`と同じstep/slot構造で対応するstable stream IDを保持する |
+| `clusters` | managerが保持するクラスタ情報（clustered tie modeでは`tie`を含む） |
 | `processingTime` | 処理時間 |
 | `streamStrengths` | 現行値は `nothing` |
 | `timbreSeries` | timbre dimension系列 |
@@ -158,7 +159,55 @@
 | `bpmSeries` | step別BPM系列 |
 | `stepDurations` | step別duration系列 |
 
-**FR-005:** 現行応答は各stepのslotに対応するstable stream IDを明示的には返さない。
+**FR-005:** 応答は各stepのslotに対応するstable stream IDを `streamIds` として返す。初期コンテキストはslot由来のID、生成stepはlifecycleの `active_ids` を保持する。
+
+### 3.4 canonical clustering parameterと互換性（TO-BE実装済み）
+
+**FR-005A:** AREAは今回のcanonical化対象外とし、既存の `area_global`、`area_center`、`area_spread`、`area_conc` を維持する。
+
+**FR-005B:** AREA以外のmanaged dimension（`vol`、`chord_range`、`density`、`brightness`、`noise`、`harmonicity`、`attack`、`decay_sustain`、`release`）は次のcanonical parameterを使用する。
+
+| 意味 | canonical key | legacy alias |
+|---|---|---|
+| global complexity目標 | `{dim}_global_complexity_target` | `{dim}_global` |
+| stream complexity目標中心 | `{dim}_stream_complexity_center` | `{dim}_center` |
+| stream complexity目標の全体幅 | `{dim}_stream_complexity_span` | `{dim}_spread` |
+| stream間concordance | `{dim}_concordance` | `{dim}_conc` |
+| 候補値の中心 | `{dim}_value_target` | `{dim}_target` |
+| 候補値中心からの半径 | `{dim}_value_radius` | `{dim}_target_spread` |
+
+- `span` はstream群へ配置する目標の全体幅であり、`center ± span / 2` を意味する。
+- `radius` は値候補filterの半径であり、`value_target ± value_radius` を意味する。
+- backendはcanonical keyを優先し、欠落時だけlegacy aliasへfallbackする。
+- frontendはcanonical keyを保存・送信し、旧params JSONのimportおよび可視化ではlegacy aliasを受理する。
+
+**FR-005C:** volume探索候補は `Config.VOL_STEPS = [0, 1]` とし、厳密な二値候補だけを評価する。`vol_value_target/value_radius` はこの二候補をfilterする。
+
+### 3.5 clustered binary tie契約（TO-BE実装済み）
+
+clustered tie modeは次の5 parameterのいずれかがrequestに存在すると有効になる。tieは二値なので `value_radius` を持たない。
+
+| parameter | 範囲 | 意味 |
+|---|---:|---|
+| `tie_global_complexity_target` | 0..1 | eligible stream群のtie-on率系列に対するglobal complexity目標 |
+| `tie_stream_complexity_center` | 0..1 | stable stream別binary tie系列のcomplexity目標中心 |
+| `tie_stream_complexity_span` | 0..1 | stream complexity目標の全体幅（`center ± span / 2`） |
+| `tie_concordance` | -1..1 | 正値は同時ON/OFFの一致、負値はON/OFF分散を優先 |
+| `tie_rate_target` | 0..1 | eligible境界のうちtieをONにするstable stream別累積率の目標 |
+
+- 候補は `Config.TIE_STEPS = [0, 1]` で、note/chord確定後にgreedy評価する。
+- 境界がeligibleとなるのは、同じstable IDが直前stepにも存在し、MIDI note集合が同一で、前後volumeが可聴であり、rendererがtie中に更新できない `vol`、`brightness`、`noise`、`harmonicity`、`attack`、`decay_sustain` が一致する場合だけである。`release` はrun末尾値へ更新できるため相違を許容する。
+- ineligible境界の出力tieは0とし、tie managerおよびtie率履歴へcommitしない。
+- binary concordanceの不一致度は、eligible数を `m`、ON数を `k` として `k(m-k) / floor(m²/4)` で正規化する。
+- 新5 keyが一つもなく、旧 `tie_center/tie_spread` だけのrequestは、従来の決定論的なcenter/spread展開を維持する。
+
+### 3.6 stable stream ID render契約（TO-BE実装済み）
+
+- frontendは生成responseの `streamIds` を `timeSeries` と同じslot対応で保持し、render APIへsnake_caseの `stream_ids` sidecarとして送る。
+- frontendとrender endpointが無効・無音voiceを除外するときは、対応IDも同時に除外してslot対応を維持する。
+- `build_score_events_scd(...; stream_ids=nothing)` はstable IDをoptional keywordで受け取る。省略時は既存互換としてstep内slot indexを使用する。
+- SuperCollider event builderの `active_runs`、present判定、tie継続判定はstable `stream_id` をkeyとする。同じstable ID、同一note集合、tie閾値以上の場合だけ既存runを延長する。
+- lifecycleによるslot順変更、deactivate/revive、新規stream追加があっても、異なるstable IDのrunを誤接続してはならない。
 
 ---
 
@@ -250,7 +299,7 @@ n_notes = clamp(round(density * slot_count), 1, slot_count)
 
 **FR-026:** 生成されたdimension値とnote集合からstrict stream recordを組み立て、`timeSeries` と `timbreSeries` へ追加する。
 
-**FR-027:** tieは生成探索中にnoteを結合するものではなく、生成後のrender処理で分布・接続として解釈される。
+**FR-027:** tieはnote候補の探索とは分離し、note確定後に二値候補を評価する。確定tie値は生成後のrender処理でstable stream ID単位の接続として解釈される。legacy requestでは旧center/spreadの決定論的展開を維持する。
 
 ---
 
@@ -315,13 +364,13 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 | AC-ASIS-001 | 有効な初期履歴と `stream_counts` を送信 | `length(stream_counts)` 個のfuture stepを生成する |
 | AC-ASIS-002 | 初期履歴が2 step以下 | 最終stepを複製してmanager構築に必要な履歴長へ補う |
 | AC-ASIS-003 | densityを0に固定 | note poolが空でなければ最低1音を生成する |
-| AC-ASIS-004 | volumeを生成 | 候補 `0`, `0.5`, `1` から選択し、multi-stream global scoreは使わない |
+| AC-ASIS-004 | volumeを生成 | 二値候補 `0`, `1` から選択し、multi-stream global scoreは使わない |
 | AC-ASIS-005 | CRを生成 | 整数0〜12から選択する |
 | AC-ASIS-006 | timbre/DENを生成 | 0.1刻みの0〜1候補から選択する |
 | AC-ASIS-007 | future BPMを指定 | `bpmSeries` と `stepDurations` にstep別値を返す |
-| AC-ASIS-008 | tieを指定 | 生成後のrendererがtie分布・接続を処理する |
+| AC-ASIS-008 | canonical tie parameterを指定 | eligible境界で0/1をcluster評価し、rendererがstable stream ID単位で接続する |
 | AC-ASIS-009 | lifecycleでstream数を変更 | poolからdeactivate/revive/newを選択し、目標active数へ近づける |
-| AC-ASIS-010 | 正常生成 | 3.3節のresponse fieldを返す。`streamStrengths` は `nothing` |
+| AC-ASIS-010 | 正常生成 | 3.3節のresponse fieldを返し、`streamIds` が `timeSeries` とstep/slot対応する。`streamStrengths` は `nothing` |
 
 ---
 
@@ -361,13 +410,13 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 | 対象 | 状況 | 変更内容・検証 |
 |---|---|---|
 | `AUD-001` | **修正実装済み・受入未完了（2026-08-08）** | lifecycle適用直後、recency・候補評価・commitより前に、全dimension managerの `active_ids` とcontainer存在を `LifecyclePlan.active_ids` に対して非変更で検証する。register centerとAREA Stage 1は `plan.active_ids` から `containers_by_id[id]` を直接解決する。diagnosticsと静的参照検査は成功したが、Julia CLI不在のためdeactivate/revive/順序入替の実行テストは未実施。 |
-| `FIX-001` | **一部完了** | `AUD-001` のpool index誤参照に対する実装修正は完了した。実行時受入テスト、およびglobal encoding、response、tieまでstable IDを伝播する `AUD-002` は未対応。 |
+| `FIX-001` | **一部完了・動的受入未完了（2026-08-08）** | `AUD-001` のpool index誤参照を修正し、responseのstep/slot別 `streamIds`、frontendの `stream_ids` sidecar、rendererのstable ID keyed tie接続を実装した。global feature encodingは引き続きslot-based schemaであり、Julia CLI不在のためdeactivate/revive/順序入替を含む実行受入は未実施。 |
 | `AUD-003` | **実装変更済み・動的受入未完了（2026-08-08）** | 通常dimension、CR、DEN、AREAのglobal managerは、初期履歴幅ではなくinitial/future全体から算出した `max_streams` を `max_set_size` とencoded rangeへ使用する。observed履歴幅とfuture要求がcapacityを超える場合は明示エラーとし、decoderも範囲外slotをclampせず拒否する。静的なコード参照とencode/decode数式の照合は成功したが、Julia CLIとDockerが利用できないため初期1→future Nの実行テストは未実施。 |
 | `FIX-002` | **実装変更済み・動的受入未完了** | streamwise global schemaはrun中固定capacityを持ち、各encoded要素がoffsetによってslotを自己記述するため、初期に存在しないslotは要素省略で表現する。note globalのscalar schemaと、`FIX-003` 対象のCR/DEN feature semanticsは変更していない。 |
 
 ### 7.4 総評
 
-最も危険なのは、音楽的なheuristicではなく**identityと状態管理の不整合**である。`AUD-001` と `AUD-003` の直接原因には修正を実装したが、Julia実行環境がないため受入テストは未完了である。`AUD-002` と `AUD-004` は、処理が例外なく完了しても誤ったstream identityまたはfeature表現を使用した正常風の出力を返し得る。このため、音質調整や重み調整より先に残るstable stream identityとglobal feature schemaを修正すべきである。
+最も危険なのは、音楽的なheuristicではなく**identityと状態管理の不整合**である。`AUD-001`、`AUD-002` のresponse/tie経路、および `AUD-003` の直接原因には修正を実装したが、Julia実行環境がないため受入テストは未完了である。`AUD-002` のglobal feature encodingと `AUD-004` は、処理が例外なく完了しても誤ったidentityまたはfeature表現を使用した正常風の出力を返し得るため、引き続き是正対象とする。
 
 `AUD-005` と `AUD-006` は運用上の障害リスクが高い。例外をzero scoreへ変換する実装はfail-safeではなく、失敗候補を最良候補として選ぶ可能性がある。またUI制限はAPI防御にならない。
 
@@ -383,7 +432,7 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 | 固定calibrator | 維持可能 | candidate間比較の尺度を安定させる意図がある |
 | 短履歴の末尾padding | 維持可能 | padding済み履歴であることを観測可能にするのが望ましい |
 | density=0でも最低1音 | 製品要件次第で維持可能 | 「無音」をdensity 0に期待するUIとは意味が衝突し得る |
-| tieをrender時だけ処理 | 維持可能 | stable stream IDで接続することが前提 |
+| tieをnote探索と分離し、接続はrenderで解釈 | 維持可能 | clustered modeはnote確定後に二値評価し、legacy modeは決定論的値を使う。いずれもstable stream IDで接続する |
 | fixed AREAもmanagerへcommit | 維持可能 | 固定値も時系列状態の一部として学習させる方針なら整合する |
 
 一方、identity混同、異なるschemaの同一manager投入、例外のzero score化は性能trade-offではなく、是正対象である。

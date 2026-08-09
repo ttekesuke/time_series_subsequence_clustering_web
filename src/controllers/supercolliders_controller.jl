@@ -20,7 +20,8 @@ end
 function build_score_events_scd(
   time_series, step_durations::AbstractVector{<:Real},
   outfile::String,
-  tail_pad_seconds::Float64
+  tail_pad_seconds::Float64;
+  stream_ids=nothing,
 )::String
   io = IOBuffer()
   mix_bus = Config.SC_MIX_BUS
@@ -77,7 +78,7 @@ function build_score_events_scd(
     Tuple{Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64}
   }
   StepVoice = NamedTuple{
-    (:stream_idx, :abs_notes, :vol, :brightness, :noise, :harmonicity, :attack, :decay, :sustain_release, :tie),
+    (:stream_id, :abs_notes, :vol, :brightness, :noise, :harmonicity, :attack, :decay, :sustain_release, :tie),
     Tuple{Int,Vector{Int},Float64,Float64,Float64,Float64,Float64,Float64,Float64,Float64}
   }
   events = Event[]
@@ -95,6 +96,35 @@ function build_score_events_scd(
       a[i] == b[i] || return false
     end
     return true
+  end
+
+  validated_stream_ids = nothing
+  series_steps = time_series isa AbstractVector ? time_series : Any[]
+  if stream_ids isa AbstractVector && length(stream_ids) == length(series_steps)
+    parsed_steps = Vector{Int}[]
+    valid_sidecar = true
+    for (step_idx, step_streams) in enumerate(series_steps)
+      raw_step_ids = stream_ids[step_idx]
+      if !(step_streams isa AbstractVector) || !(raw_step_ids isa AbstractVector) || length(raw_step_ids) != length(step_streams)
+        valid_sidecar = false
+        break
+      end
+      parsed_step_ids = Int[]
+      for raw_id in raw_step_ids
+        try
+          push!(parsed_step_ids, _parse_int(raw_id))
+        catch
+          valid_sidecar = false
+          break
+        end
+      end
+      if !valid_sidecar || length(unique(parsed_step_ids)) != length(parsed_step_ids)
+        valid_sidecar = false
+        break
+      end
+      push!(parsed_steps, parsed_step_ids)
+    end
+    valid_sidecar && (validated_stream_ids = parsed_steps)
   end
 
   function _flush_run!(run)
@@ -118,9 +148,10 @@ function build_score_events_scd(
     return nothing
   end
 
-  for (step_idx, step_streams) in enumerate(time_series isa AbstractVector ? time_series : Any[])
+  for (step_idx, step_streams) in enumerate(series_steps)
     step_duration = float(step_durations[clamp(step_idx, 1, length(step_durations))])
     step_voices = StepVoice[]
+    step_stream_ids = validated_stream_ids isa AbstractVector ? validated_stream_ids[step_idx] : nothing
 
     @printf("Step %d: step_duration=%.3f\n", step_idx, step_duration)
     if step_streams isa AbstractVector
@@ -129,8 +160,16 @@ function build_score_events_scd(
         s === nothing && continue
         abs_notes, vol, brightness, noise, harmonicity, attack, decay, sustain_release, tie = _parse_stream(s)
         (vol > Config.SC_MIN_AUDIBLE_VOLUME && !isempty(abs_notes)) || continue
+        stream_id = stream_idx
+        if step_stream_ids isa AbstractVector && stream_idx <= length(step_stream_ids)
+          stream_id = try
+            _parse_int(step_stream_ids[stream_idx])
+          catch
+            stream_idx
+          end
+        end
         push!(step_voices, (
-          stream_idx = stream_idx,
+          stream_id = stream_id,
           abs_notes = abs_notes,
           vol = vol,
           brightness = brightness,
@@ -153,14 +192,14 @@ function build_score_events_scd(
 
       present_streams = Set{Int}()
       for voice in step_voices
-        push!(present_streams, voice.stream_idx)
-        @printf("Step %d, Stream %d: vol=%.3f, notes=%s, bri=%.2f, noi=%.2f, har=%.2f, atk=%.2f, dec=%.2f, sr=%.2f, tie=%.2f\n",
-          step_idx, voice.stream_idx, voice.vol, string(voice.abs_notes), voice.brightness, voice.noise, voice.harmonicity, voice.attack, voice.decay, voice.sustain_release, voice.tie)
+        push!(present_streams, voice.stream_id)
+        @printf("Step %d, Stream ID %d: vol=%.3f, notes=%s, bri=%.2f, noi=%.2f, har=%.2f, atk=%.2f, dec=%.2f, sr=%.2f, tie=%.2f\n",
+          step_idx, voice.stream_id, voice.vol, string(voice.abs_notes), voice.brightness, voice.noise, voice.harmonicity, voice.attack, voice.decay, voice.sustain_release, voice.tie)
         amp_each = (voice.vol / length(voice.abs_notes)) * base_voice_gain * step_gain
-        prev_run = get(active_runs, voice.stream_idx, nothing)
+        prev_run = get(active_runs, voice.stream_id, nothing)
         if prev_run !== nothing && voice.tie >= Config.SC_TIE_THRESHOLD && _same_notes(prev_run.abs_notes, voice.abs_notes)
-          active_runs[voice.stream_idx] = (
-            stream_idx = prev_run.stream_idx,
+          active_runs[voice.stream_id] = (
+            stream_id = prev_run.stream_id,
             abs_notes = prev_run.abs_notes,
             start_time = prev_run.start_time,
             dur = prev_run.dur + step_duration,
@@ -174,8 +213,8 @@ function build_score_events_scd(
           )
         else
           prev_run !== nothing && _flush_run!(prev_run)
-          active_runs[voice.stream_idx] = (
-            stream_idx = voice.stream_idx,
+          active_runs[voice.stream_id] = (
+            stream_id = voice.stream_id,
             abs_notes = copy(voice.abs_notes),
             start_time = current_time,
             dur = step_duration,
@@ -190,10 +229,10 @@ function build_score_events_scd(
         end
       end
 
-      for stream_idx in collect(keys(active_runs))
-        if !(stream_idx in present_streams)
-          _flush_run!(active_runs[stream_idx])
-          delete!(active_runs, stream_idx)
+      for stream_id in collect(keys(active_runs))
+        if !(stream_id in present_streams)
+          _flush_run!(active_runs[stream_id])
+          delete!(active_runs, stream_id)
         end
       end
     end
@@ -360,17 +399,54 @@ end
 function render_polyphonic()
   payload = _payload()
   time_series_any = get(payload, "time_series", Any[])
-  # Sanitize incoming time_series to avoid empty/invalid entries that can
-  # cause downstream reducers (like `maximum`/`minimum`) to error.
-  function _sanitize_time_series(raw)
+  raw_stream_ids = get(payload, "stream_ids", nothing)
+  # Sanitize voices and the optional stable-ID sidecar in lockstep so filtering
+  # never changes which identity is attached to a surviving voice.
+  function _sanitize_time_series(raw, raw_ids)
     out = Any[]
-    for step in (raw isa AbstractVector ? raw : Any[])
+    ids_out = Any[]
+    source_steps = raw isa AbstractVector ? raw : Any[]
+    validated_source_ids = nothing
+    if raw_ids isa AbstractVector && length(raw_ids) == length(source_steps)
+      parsed_steps = Vector{Int}[]
+      valid_sidecar = true
+      for (step_idx, step) in enumerate(source_steps)
+        raw_step_ids = raw_ids[step_idx]
+        if !(step isa AbstractVector) || !(raw_step_ids isa AbstractVector) || length(raw_step_ids) != length(step)
+          valid_sidecar = false
+          break
+        end
+        parsed_step_ids = Int[]
+        for raw_id in raw_step_ids
+          try
+            push!(parsed_step_ids, _parse_int(raw_id))
+          catch
+            valid_sidecar = false
+            break
+          end
+        end
+        if !valid_sidecar || length(unique(parsed_step_ids)) != length(parsed_step_ids)
+          valid_sidecar = false
+          break
+        end
+        push!(parsed_steps, parsed_step_ids)
+      end
+      valid_sidecar && (validated_source_ids = parsed_steps)
+    end
+    has_stream_ids = validated_source_ids isa AbstractVector
+
+    for (step_idx, step) in enumerate(source_steps)
+      step_out = Any[]
+      step_ids_out = Int[]
+      source_ids = has_stream_ids ? validated_source_ids[step_idx] : nothing
+
       if !(step isa AbstractVector)
-        push!(out, Any[])
+        push!(out, step_out)
+        has_stream_ids && push!(ids_out, step_ids_out)
         continue
       end
-      step_out = Any[]
-      for s in step
+
+      for (slot_idx, s) in enumerate(step)
         try
           s === nothing && continue
 
@@ -397,19 +473,23 @@ function render_polyphonic()
                 _parse_float(s[10]),
                 clamp(_parse_float(s[11]), Config.UNIT_MIN, Config.UNIT_MAX)
               ])
+              if has_stream_ids
+                push!(step_ids_out, source_ids[slot_idx])
+              end
             end
           end
         catch
-          # ignore malformed voice entries
+          # ignore malformed voice entries and their matching ID
           continue
         end
       end
       push!(out, step_out)
+      has_stream_ids && push!(ids_out, step_ids_out)
     end
-    return out
+    return out, (has_stream_ids ? ids_out : nothing)
   end
 
-  time_series_any = _sanitize_time_series(time_series_any)
+  time_series_any, stream_ids_any = _sanitize_time_series(time_series_any, raw_stream_ids)
   gp = _to_string_dict(get(payload, "generate_polyphonic", nothing))
   raw_bpm = get(payload, "bpm", nothing)
   if raw_bpm === nothing
@@ -440,7 +520,13 @@ function render_polyphonic()
   wav_path = _safe_tmp_path("supercollider_render_polyphonic", ".wav")
 
   try
-    scd_text = build_score_events_scd(time_series_any, step_durations, wav_path, tail_pad_seconds)
+    scd_text = build_score_events_scd(
+      time_series_any,
+      step_durations,
+      wav_path,
+      tail_pad_seconds;
+      stream_ids=stream_ids_any,
+    )
     open(scd_path, "w") do f
       write(f, scd_text)
     end

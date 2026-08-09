@@ -31,8 +31,11 @@
     "bpm": 480,
     "future_bpm": [480, 480, 480],
     "stream_counts": [1, 2, 2],
-    "tie_center": [0.0, 0.0, 0.0],
-    "tie_spread": [0.0, 0.0, 0.0],
+    "tie_global_complexity_target": [0.0, 0.0, 0.0],
+    "tie_stream_complexity_center": [0.0, 0.0, 0.0],
+    "tie_stream_complexity_span": [0.0, 0.0, 0.0],
+    "tie_concordance": [0.0, 0.0, 0.0],
+    "tie_rate_target": [0.0, 0.0, 0.0],
     "recency_center": [0.0, 0.0, 0.0],
     "recency_spread": [0.0, 0.0, 0.0],
     "initial_context": [
@@ -66,8 +69,12 @@
     "area_center": [0.0, 0.0, 0.0],
     "area_spread": [0.0, 0.0, 0.0],
     "area_conc": [0.0, 0.0, 0.0],
-    "vol_target": [0.5, 0.5, 0.5],
-    "vol_target_spread": [1.0, 1.0, 1.0]
+    "vol_global_complexity_target": [0.0, 0.0, 0.0],
+    "vol_stream_complexity_center": [0.0, 0.0, 0.0],
+    "vol_stream_complexity_span": [0.0, 0.0, 0.0],
+    "vol_concordance": [0.0, 0.0, 0.0],
+    "vol_value_target": [0.5, 0.5, 0.5],
+    "vol_value_radius": [1.0, 1.0, 1.0]
   }
 }
 ```
@@ -99,8 +106,11 @@
 | キー | 範囲 | step | デフォルト | 意味 |
 | --- | ---: | ---: | ---: | --- |
 | `stream_counts` | 1..16 | 1 | 1 | 各 future step の stream 数。この長さが生成 step 数です。 |
-| `tie_center` | 0..1 | 0.01 | 0 | 同じstreamで同じnote/chordが連続した場合、再発音せず接続するtie値の中心。 |
-| `tie_spread` | 0..1 | 0.01 | 0 | `tie_center`を中心としたstream間のtie値の分布幅。 |
+| `tie_global_complexity_target` | 0..1 | 0.01 | 0 | eligible stream群のtie-on率系列に対するglobal complexity目標。 |
+| `tie_stream_complexity_center` | 0..1 | 0.01 | 0 | stable stream別binary tie系列のcomplexity目標中心。 |
+| `tie_stream_complexity_span` | 0..1 | 0.01 | 0 | stream complexity目標の全体幅。 |
+| `tie_concordance` | -1..1 | 0.01 | 0 | 正値は同時ON/OFFを揃え、負値は分散させる。 |
+| `tie_rate_target` | 0..1 | 0.01 | 0 | eligible境界でtieをONにする累積割合の目標。 |
 | `recency_center` | 0..1 | 0.01 | 0 | 直近履歴をどれくらい重く見るか。 |
 | `recency_spread` | 0..1 | 0.01 | 0 | stream 間の recency ばらつき。 |
 | `stream_strength_target` | 0..1 | 0.01 | 0 | stream lifecycle で残す / 復活 / fork する stream 強度の中心。 |
@@ -124,29 +134,22 @@ area, chord_range, density, vol,
 brightness, noise, harmonicity, attack, decay_sustain, release
 ```
 
-画面は各 dimension について、次の 4 キーを送ります。
-
-| キー形式 | 範囲 | step | デフォルト | 意味 |
-| --- | ---: | ---: | ---: | --- |
-| `${key}_global` | 0..1 | 0.01 | 0 | global manager の複雑度 target。 |
-| `${key}_center` | 0..1 | 0.01 | 0 | stream target 分布の中心。 |
-| `${key}_spread` | 0..1 | 0.01 | 0 | stream target 分布の幅。 |
-| `${key}_conc` | -1..1 | 0.01 | 0 | stream 間の一致 / 分散の好み。正は揃える、負は離す。 |
-
-実際に送るキーは次です。
+AREAは今回のcanonical化対象外で、既存の4キーを送ります。
 
 ```text
 area_global, area_center, area_spread, area_conc
-chord_range_global, chord_range_center, chord_range_spread, chord_range_conc
-density_global, density_center, density_spread, density_conc
-vol_global, vol_center, vol_spread, vol_conc
-brightness_global, brightness_center, brightness_spread, brightness_conc
-noise_global, noise_center, noise_spread, noise_conc
-harmonicity_global, harmonicity_center, harmonicity_spread, harmonicity_conc
-attack_global, attack_center, attack_spread, attack_conc
-decay_sustain_global, decay_sustain_center, decay_sustain_spread, decay_sustain_conc
-release_global, release_center, release_spread, release_conc
 ```
+
+AREA以外の9 dimensionは次のcanonical keyを送ります。backendはcanonical keyを優先し、欠落時のみ右記のlegacy aliasを読みます。
+
+| canonicalキー形式 | legacy alias | 範囲 | 意味 |
+| --- | --- | ---: | --- |
+| `${key}_global_complexity_target` | `${key}_global` | 0..1 | global managerの複雑度target。 |
+| `${key}_stream_complexity_center` | `${key}_center` | 0..1 | stream target分布の中心。 |
+| `${key}_stream_complexity_span` | `${key}_spread` | 0..1 | `center ± span / 2`で配置する全体幅。 |
+| `${key}_concordance` | `${key}_conc` | -1..1 | stream間の一致/分散の好み。正は揃え、負は離す。 |
+
+frontendはcanonical keyを保存・送信し、旧params JSONのimportではlegacy aliasを受理します。
 
 ### 3.4 target window rows
 
@@ -157,12 +160,12 @@ vol, chord_range, density,
 brightness, noise, harmonicity, attack, decay_sustain, release
 ```
 
-画面は各 target window dimension について、次の 2 キーを送ります。
+画面は各target window dimensionについて次のcanonical keyを送ります。
 
-| キー形式 | 範囲 | step | デフォルト | 意味 |
-| --- | ---: | ---: | ---: | --- |
-| `${key}_target` | dimension 依存 | dimension 依存 | 下表 | 実値候補の探索中心。 |
-| `${key}_target_spread` | dimension 依存 | dimension 依存 | 下表 | `target ± spread` の探索窓半幅。 |
+| canonicalキー形式 | legacy alias | 意味 |
+| --- | --- | --- |
+| `${key}_value_target` | `${key}_target` | 実値候補の探索中心。 |
+| `${key}_value_radius` | `${key}_target_spread` | `value_target ± value_radius` の探索窓半径。 |
 
 | dimension | target 範囲 | target step | target default | spread 範囲 | spread default |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -176,21 +179,9 @@ brightness, noise, harmonicity, attack, decay_sustain, release
 | `decay_sustain` | 0..1 | 0.1 | 0.5 | 0..1 | 1 |
 | `release` | 0..1 | 0.1 | 0.5 | 0..1 | 1 |
 
-実際に送るキーは次です。
+canonical keyは各dimensionに対して`${key}_value_target`と`${key}_value_radius`です。旧`${key}_target`/`${key}_target_spread`はimport/API互換aliasとしてのみ受理します。
 
-```text
-vol_target, vol_target_spread
-chord_range_target, chord_range_target_spread
-density_target, density_target_spread
-brightness_target, brightness_target_spread
-noise_target, noise_target_spread
-harmonicity_target, harmonicity_target_spread
-attack_target, attack_target_spread
-decay_sustain_target, decay_sustain_target_spread
-release_target, release_target_spread
-```
-
-`area` には target window row はありません。tieは複雑度探索dimensionではなく、note生成後の同音接続を直接指定するため、complexity rows / target window rows / dimension policyには含めません。
+`area` にはtarget window rowはありません。tieは二値の専用cluster parameterを使うためvalue radiusを持たず、dimension policyにも含めません。新5 tie keyが一つもない旧requestでは、backendとfrontend importが`tie_center/tie_spread`の決定論的legacy modeを維持します。
 
 ### 3.5 dimension policy
 
@@ -213,7 +204,7 @@ brightness, noise, harmonicity, attack, decay_sustain, release
 
 | フィールド | 意味 |
 | --- | --- |
-| `accept_params` | `true` なら `*_global/center/spread/conc` と target window を使って探索します。`false` なら固定値を出力します。 |
+| `accept_params` | `true`ならAREAは既存4キー、非AREAはcanonical complexity/concordance keyとvalue windowを使って探索します。`false`なら固定値を出力します。 |
 | `fixed_value` | 固定時に使う値。 |
 | `fixed_value_source` | `"manual_input"` なら `fixed_value`、`"initial_context_last_step"` なら初期文脈の最後の step から引き継ぎます。 |
 
@@ -276,8 +267,8 @@ payload の stream record は strict 形式です。
 16. `area`, `chord_range`, `density` から各 stream の音域と音数を決める。
 17. `dissonance_target` に近づく音を stream 優先順、各 stream 内は単音追加順の greedy で決める。
 18. 実音を dissonance STM と note manager に commit する。
-19. `tie_center/spread`をstream別tie確定値へ展開する。同じnote/chordが連続した場合だけrenderで接続される。
-20. 出力値をclampし、`timeSeries`, `clusters`, `timbreSeries`, BPM系を返す。
+19. clustered modeではrender-compatibleな境界だけについて`0/1` tie候補をglobal/stream complexity、tie率、concordanceで評価する。legacy modeでは`tie_center/spread`を決定論的に展開する。
+20. 出力値をclampし、`timeSeries`, `streamIds`, `clusters`, `timbreSeries`, BPM系を返す。
 
 ## 6. stream lifecycle と優先順
 
@@ -550,12 +541,11 @@ noteの反復とtieは別の段階です。
 
 1. note/AREAの候補評価で、recencyを高くし複雑度targetを低くすると、最近の反復パターンが選ばれやすくなります。
 2. dissonance評価まで含めて各streamのnote/chordを確定します。
-3. `tie_center/spread`から、そのstepのstream別tie値を決定論的に作ります。
-4. SuperCollider render時、同じstreamの前stepとnote/chordが完全一致し、tieが`SC_TIE_THRESHOLD = 0.5`以上なら、再発音せず前の音響runを延長します。
+3. clustered modeでは`TIE_STEPS = [0, 1]`からtieを選びます。対象は、同じstable IDが直前stepにも存在し、note集合、可聴性、tie中に更新できない音響controlがrender-compatibleな境界だけです。
+4. global/stream complexity、stable stream別の累積`tie_rate_target`、eligible stream間の`tie_concordance`を合算してgreedy選択します。ineligible境界は0を出力しmanager/rate履歴へcommitしません。
+5. SuperCollider render時、同じstable IDの前stepとnote/chordが完全一致し、tieが`SC_TIE_THRESHOLD = 0.5`以上なら、再発音せず前の音響runを延長します。
 
-tieはnote候補を固定したり、note探索を省略したりしません。反復そのものはrecencyと低い複雑度で生成し、tieは生成後に同音を接続するかだけを決めます。音が異なる場合、tie値は音響に影響しません。
-
-standaloneの`sustain`生成dimensionはありません。tieは`tie_center/spread`とstream record末尾の`tie`だけで指定します。
+新5 parameterは`tie_global_complexity_target`、`tie_stream_complexity_center`、`tie_stream_complexity_span`、`tie_concordance`、`tie_rate_target`です。新keyが一つもない旧requestだけは`tie_center/tie_spread`の決定論的legacy modeになります。tieはnote候補を固定したり、note探索を省略したりしません。standaloneの`sustain`生成dimensionとtieの`value_radius`はありません。
 
 ## 15. SuperCollider render との関係
 
@@ -566,6 +556,8 @@ render が読む stream record も 11 要素 strict 形式です。
 ```text
 [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, tie]
 ```
+
+生成responseの`streamIds`はfrontendでslot対応を保ったままrender requestの`stream_ids`へ変換されます。voiceをfilterするときはIDも同時にfilterし、rendererの`active_runs`はstable IDをkeyにします。`build_score_events_scd`へIDを渡さない既存呼び出しは、従来どおりstep内slot indexへfallbackします。
 
 SC synth では:
 
@@ -590,10 +582,12 @@ SC synth では:
       [[60], 1.0, 0.5, 0.2, 0.5, 0.05, 0.2, 0.75, 0, 1.0, 0.0]
     ]
   ],
+  "streamIds": [[1]],
   "clusters": {
     "note": { "global": [], "streams": {} },
     "area": { "global": [], "streams": {} },
-    "vol": { "global": [], "streams": {} }
+    "vol": { "global": [], "streams": {} },
+    "tie": { "global": [], "streams": {} }
   },
   "processingTime": 0.12,
   "streamStrengths": null,

@@ -720,6 +720,7 @@ type StepVecStrict = [number[], number, number, number, number, number, number, 
 type StepVec = StepVecStrict
 type PolyphonicResponse = {
   timeSeries: StepVec[][];
+  streamIds?: number[][];
   clusters: Record<string, { global: ClusterData[]; streams: Record<string, ClusterData[]> }>;
   timbreSeries?: {
     brightness?: number[][]
@@ -736,6 +737,7 @@ type PolyphonicResponse = {
 // ===== state =====
 const generate = ref({
   rawTimeSeries: [] as any[],
+  streamIds: [] as number[][],
   notes: [] as (number | null)[][],
   velocities: [] as (number | null)[][],
   brightness: [] as (number | null)[][],
@@ -758,6 +760,7 @@ const generate = ref({
     attack: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     decay_sustain: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
     release:{ global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
+    tie:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
   },
 })
 
@@ -797,6 +800,16 @@ const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   const resTie = convertStepMajorTimbreToStreamMajor(timbreSeries.tie)
 
   generate.value.rawTimeSeries = ts as any
+  generate.value.streamIds = Array.isArray(data.streamIds)
+    ? data.streamIds.map((step) => (
+        Array.isArray(step)
+          ? step.map((id, slot) => {
+              const parsed = Number(id)
+              return Number.isInteger(parsed) ? parsed : slot + 1
+            })
+          : []
+      ))
+    : []
   generate.value.notes        = notes      // root（abs_notes[0] or pcs[0]）互換用途
   generate.value.velocities   = vels
   generate.value.brightness   = resBrightness.length > 0 ? resBrightness : brightnesses
@@ -819,13 +832,14 @@ const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   generate.value.clusters.attack      = clusters.attack      ?? { global: [], streams: {} }
   generate.value.clusters.decay_sustain = clusters.decay_sustain ?? { global: [], streams: {} }
   generate.value.clusters.release     = clusters.release     ?? { global: [], streams: {} }
+  generate.value.clusters.tie         = clusters.tie         ?? { global: [], streams: {} }
 }
 
 const handleGenerated = (data: PolyphonicResponse) => {
   applyPolyphonicResponse(data)
   const ts = data.timeSeries
   const responseBpmSeries = (data as any)?.bpmSeries ?? (data as any)?.futureBpm ?? (data as any)?.bpm
-  renderPolyphonicAudio(ts, responseBpmSeries)
+  renderPolyphonicAudio(ts, responseBpmSeries, data.streamIds)
 }
 
 const handleDispatched = (info: any) => {
@@ -918,21 +932,26 @@ const expandTimeSeries = (ts: any[]) => {
   return { notes, vels, brightnesses, noises, harmonicities, attacks, decaySustains, releases, ties, maxStreams }
 }
 
-const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
+const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any, streamIds?: number[][]) => {
   progress.value.status = 'rendering'
 
-  const normalizeRenderPayload = (ts: any[][]) => {
+  const normalizeRenderPayload = (ts: any[][], ids?: number[][]) => {
     const out: any[] = []
+    const outStreamIds: number[][] = []
 
     const normAbs = (arr: any): number[] => {
       if (!Array.isArray(arr)) return []
       return arr.map(n => Number(n)).filter(n => Number.isFinite(n)).map(n => Math.round(n))
     }
 
-    for (const step of ts) {
+    for (let stepIdx = 0; stepIdx < ts.length; stepIdx++) {
+      const step = ts[stepIdx]
       const stepOut: any[] = []
+      const stepIdsOut: number[] = []
+      const sourceIds = Array.isArray(ids?.[stepIdx]) ? ids[stepIdx] : []
 
-      for (const vec of step) {
+      for (let streamIdx = 0; streamIdx < step.length; streamIdx++) {
+        const vec = step[streamIdx]
         if (!vec) continue
 
         if (Array.isArray(vec[0]) && vec.length === 11) {
@@ -951,20 +970,24 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any) => {
             Number(vec[9]),
             Number(vec[10])
           ])
+          const parsedId = Number(sourceIds[streamIdx])
+          stepIdsOut.push(Number.isInteger(parsedId) ? parsedId : streamIdx + 1)
         }
       }
 
       out.push(stepOut)
+      outStreamIds.push(stepIdsOut)
     }
 
-    return { out }
+    return { out, streamIds: outStreamIds }
   }
 
-  const { out } = normalizeRenderPayload(timeSeries)
+  const { out, streamIds: normalizedStreamIds } = normalizeRenderPayload(timeSeries, streamIds)
   const bpmSeries = resolveGenerationBpmSeries(bpmArg, out.length)
   const bpm = bpmSeries[0] ?? DEFAULT_BPM
   axios.post('/api/web/supercolliders/render_polyphonic', {
     time_series: out,
+    stream_ids: normalizedStreamIds,
     bpm,
     future_bpm: bpmSeries,
     initial_context_bpm: bpmSeries.slice(0, Math.min(1, bpmSeries.length)),
@@ -1081,11 +1104,24 @@ const buildComplexityStreams = (prefix: string) => {
   const gp = (payload as any).generate_polyphonic ?? payload
   const ctx = gp?.initial_context
   const padLen = Array.isArray(ctx) ? ctx.length : 0
-  const order = ['global', 'conc', 'spread', 'center'] as const
+  const keys = prefix === 'area'
+    ? ['area_global', 'area_conc', 'area_spread', 'area_center']
+    : [
+        `${prefix}_global_complexity_target`,
+        `${prefix}_concordance`,
+        `${prefix}_stream_complexity_span`,
+        `${prefix}_stream_complexity_center`,
+      ]
+  const legacyKeys = [
+    `${prefix}_global`,
+    `${prefix}_conc`,
+    `${prefix}_spread`,
+    `${prefix}_center`,
+  ]
 
-  const streams = order.map((suffix) => {
-    const key = `${prefix}_${suffix}`
-    const arr = normalizeParamArray(gp?.[key])
+  const streams = keys.map((key, index) => {
+    const raw = gp?.[key] ?? gp?.[legacyKeys[index]]
+    const arr = normalizeParamArray(raw)
     const padded = Array(padLen).fill(null).concat(arr)
     return padded
   })
