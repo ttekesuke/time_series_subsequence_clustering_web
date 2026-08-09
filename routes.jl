@@ -14,6 +14,13 @@ route("/api/health") do
   (; status="ok", ts=string(now())) |> json
 end
 
+# Runtime feature flags. Never expose connection settings or credentials.
+route("/api/features") do
+  raw = lowercase(strip(get(ENV, "CLUSTERING_QUERY_ENABLED", "false")))
+  clustering_query = raw in ("1", "true", "yes", "y", "on")
+  (; clustering_query=clustering_query) |> json
+end
+
 # ------------------------------------------------------------
 # Rails compatible endpoints
 #   POST /api/web/time_series/analyse

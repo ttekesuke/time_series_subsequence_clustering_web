@@ -129,7 +129,16 @@ import MusicGenerate from '../../components/features/MusicGenerate.vue'
 import InfoDialog from './InfoDialog.vue'
 import TransferDialog from './TransferDialog.vue'
 const infoDialog = ref(false)
-const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'ClusteringQuery', 'MusicGenerate'])
+const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'MusicGenerate'])
+void axios.get('/api/features')
+  .then(({ data }) => {
+    if (data?.clustering_query === true) {
+      modes.value.splice(2, 0, 'ClusteringQuery')
+    }
+  })
+  .catch((error) => {
+    console.warn('Runtime features could not be loaded; ClusteringQuery remains disabled.', error)
+  })
 const selectedMode = ref('ClusteringAnalyse')
 const analysedViewModes = ref(['Cluster', 'Complexity'])
 const analysedViewMode = ref('Complexity')

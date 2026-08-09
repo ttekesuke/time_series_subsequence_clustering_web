@@ -261,8 +261,13 @@ end
 println("[start_server] starting on http://$host:$port")
 flush(stdout)
 
-_log_startup_influx_counts()
-
-@async _run_startup_warmup(_warmup_base_url(host, port))
+if !_bool_env("CLUSTERING_QUERY_ENABLED", false)
+  println("[startup_db] skipped: CLUSTERING_QUERY_ENABLED=false")
+  println("[warmup] skipped: CLUSTERING_QUERY_ENABLED=false")
+  flush(stdout)
+else
+  _log_startup_influx_counts()
+  @async _run_startup_warmup(_warmup_base_url(host, port))
+end
 
 Genie.up(port, host; async=false)

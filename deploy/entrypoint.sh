@@ -43,19 +43,32 @@ fi
 echo "[entrypoint] PORT=${PORT} (nginx listen)"
 echo "[entrypoint] GENIE_HOST=${GENIE_HOST} GENIE_PORT=${GENIE_PORT} (genie listen)"
 
-if [[ "${ENSURE_INFLUX_DBRP_ON_START:-false}" == "true" ]]; then
-  echo "[entrypoint] ENSURE_INFLUX_DBRP_ON_START=true; ensuring Influx DBRP mapping"
+clustering_query_enabled="${CLUSTERING_QUERY_ENABLED:-false}"
+clustering_query_enabled="${clustering_query_enabled//[[:space:]]/}"
+clustering_query_enabled="${clustering_query_enabled,,}"
+case "${clustering_query_enabled}" in
+  1|true|yes|y|on) clustering_query_enabled=true ;;
+  *) clustering_query_enabled=false ;;
+esac
+
+if [[ "${ENSURE_INFLUX_DBRP_ON_START:-false}" == "true" && "${clustering_query_enabled}" == "true" ]]; then
+  echo "[entrypoint] ENSURE_INFLUX_DBRP_ON_START=true and CLUSTERING_QUERY_ENABLED=true; ensuring Influx DBRP mapping"
   julia --project=/app /app/scripts/ensure_influx_dbrp.jl
   echo "[entrypoint] Influx DBRP mapping ensured"
+elif [[ "${ENSURE_INFLUX_DBRP_ON_START:-false}" == "true" ]]; then
+  echo "[entrypoint] Influx DBRP mapping skipped: CLUSTERING_QUERY_ENABLED is false"
 fi
 
 # Optional one-shot seed for hosted environments without shell access.
 # Disable after the first successful run to avoid adding more seed points on every restart.
-if [[ "${SEED_ON_START:-false}" == "true" ]]; then
-  echo "[entrypoint] SEED_ON_START=true; running Influx seed"
+if [[ "${SEED_ON_START:-false}" == "true" && "${clustering_query_enabled}" == "true" ]]; then
+  echo "[entrypoint] SEED_ON_START=true and CLUSTERING_QUERY_ENABLED=true; running Influx seed"
   julia --project=/app /app/scripts/seed_influx.jl
   echo "[entrypoint] Influx seed finished"
+elif [[ "${SEED_ON_START:-false}" == "true" ]]; then
+  echo "[entrypoint] Influx seed skipped: CLUSTERING_QUERY_ENABLED is false"
 fi
+unset clustering_query_enabled
 
 # Nginx 設定生成（外向き PORT / 内向き GENIE_PORT を埋め込む）
 envsubst '${PORT} ${GENIE_PORT}' \
