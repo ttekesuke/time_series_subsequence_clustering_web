@@ -56,8 +56,8 @@ RUN echo "PATH=$PATH" && ls -l /usr/local/julia/bin/julia && which julia || true
 # 依存解決 + 事前 precompile
 RUN julia --startup-file=no --history-file=no --project=/app -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
-# 追加 warmup（「ロードだけでも」やって初回を軽くする）
-RUN julia --startup-file=no --history-file=no --project=/app -e 'using TimeseriesClusteringAPI; println("warmup ok")'
+# 追加 warmup（runtime起動時の自動precompileを避ける）
+RUN julia --startup-file=no --history-file=no --project=/app -e 'using Genie, HTTP, JSON3, TimeseriesClusteringAPI; include("/app/routes.jl"); println("warmup ok")'
 
 
 # ============================================================

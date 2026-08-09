@@ -79,36 +79,65 @@ envsubst '${PORT} ${GENIE_PORT}' \
 nginx -t
 
 # ---- Genie 起動（バックグラウンド）----
-# start_server.jl は routes を読み込み、Genie を明示起動する
+# Render の環境変数を保持しつつ、書き込み可能な HOME で scuser として起動する。
+echo "[entrypoint] CLUSTERING_QUERY_ENABLED=${CLUSTERING_QUERY_ENABLED:-false} STARTUP_WARMUP_ENABLED=${STARTUP_WARMUP_ENABLED:-true}"
 if id scuser >/dev/null 2>&1; then
-  su -s /bin/bash -c "PORT=${GENIE_PORT} HOST=${GENIE_HOST} GENIE_ENV=${GENIE_ENV} JULIA_DEPOT_PATH=${JULIA_DEPOT_PATH} julia --project=/app /app/scripts/start_server.jl" scuser &
+  su --preserve-environment -s /bin/bash -c \
+    'exec env HOME=/home/scuser USER=scuser LOGNAME=scuser PORT="$GENIE_PORT" HOST="$GENIE_HOST" GENIE_ENV="$GENIE_ENV" JULIA_DEPOT_PATH="$JULIA_DEPOT_PATH" julia --project=/app /app/scripts/start_server.jl' \
+    scuser &
 else
   PORT="${GENIE_PORT}" HOST="${GENIE_HOST}" GENIE_ENV="${GENIE_ENV}" JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH}" julia --project=/app /app/scripts/start_server.jl &
 fi
 GENIE_PID=$!
 
-# ---- Nginx 起動（フォアグラウンドじゃなくバックグラウンド）----
-# Render に「ポートが開いた」と認識させるため、Nginx はすぐ起動する
+# Genie がlistenする前にNginxを公開すると、Renderがlive判定した後に/apiが502になる。
+# Genie readinessを同期的に待ち、成功後にだけ公開ポートを開く。
+GENIE_STARTUP_TIMEOUT_SECONDS="${GENIE_STARTUP_TIMEOUT_SECONDS:-300}"
+if ! [[ "${GENIE_STARTUP_TIMEOUT_SECONDS}" =~ ^[0-9]+$ ]] || (( GENIE_STARTUP_TIMEOUT_SECONDS <= 0 )); then
+  echo "[entrypoint] Invalid GENIE_STARTUP_TIMEOUT_SECONDS; using 300"
+  GENIE_STARTUP_TIMEOUT_SECONDS=300
+fi
+
+echo "[entrypoint] Waiting up to ${GENIE_STARTUP_TIMEOUT_SECONDS}s for Genie on 127.0.0.1:${GENIE_PORT}"
+genie_ready=false
+for ((attempt = 0; attempt < GENIE_STARTUP_TIMEOUT_SECONDS * 2; attempt++)); do
+  if ! kill -0 "${GENIE_PID}" >/dev/null 2>&1; then
+    if wait "${GENIE_PID}"; then
+      EXIT_CODE=0
+    else
+      EXIT_CODE=$?
+    fi
+    (( EXIT_CODE == 0 )) && EXIT_CODE=1
+    echo "[entrypoint] Genie exited before becoming ready (code=${EXIT_CODE})"
+    exit "${EXIT_CODE}"
+  fi
+
+  if (echo > "/dev/tcp/127.0.0.1/${GENIE_PORT}") >/dev/null 2>&1; then
+    genie_ready=true
+    break
+  fi
+  sleep 0.5
+done
+
+if [[ "${genie_ready}" != "true" ]]; then
+  echo "[entrypoint] Genie did not become ready within ${GENIE_STARTUP_TIMEOUT_SECONDS}s"
+  kill "${GENIE_PID}" >/dev/null 2>&1 || true
+  wait "${GENIE_PID}" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+echo "[entrypoint] Genie is ready on 127.0.0.1:${GENIE_PORT}; starting Nginx on port ${PORT}"
 nginx -g 'daemon off;' &
 NGINX_PID=$!
 
-# ---- Genie の起動をログ出ししながら待つ（失敗しても即終了はしない）----
-(
-  for i in $(seq 1 360); do   # 最大180秒待つ（0.5秒 × 360）
-    if (echo > /dev/tcp/127.0.0.1/${GENIE_PORT}) >/dev/null 2>&1; then
-      echo "[entrypoint] Genie is up on 127.0.0.1:${GENIE_PORT}"
-      exit 0
-    fi
-    sleep 0.5
-  done
-  echo "[entrypoint] Genie is still not listening on ${GENIE_PORT} after 180s (nginx will keep running)"
-  exit 0
-) &
-
-# ---- どちらかが落ちたらコンテナも落として Render に再起動させる ----
-wait -n "$GENIE_PID" "$NGINX_PID"
-EXIT_CODE=$?
+# どちらかが落ちたらコンテナも落としてRenderに再起動させる。
+if wait -n "${GENIE_PID}" "${NGINX_PID}"; then
+  EXIT_CODE=0
+else
+  EXIT_CODE=$?
+fi
 
 echo "[entrypoint] A process exited (code=${EXIT_CODE}). Shutting down..."
-kill "$GENIE_PID" "$NGINX_PID" >/dev/null 2>&1 || true
-exit "$EXIT_CODE"
+kill "${GENIE_PID}" "${NGINX_PID}" >/dev/null 2>&1 || true
+wait "${GENIE_PID}" "${NGINX_PID}" >/dev/null 2>&1 || true
+exit "${EXIT_CODE}"

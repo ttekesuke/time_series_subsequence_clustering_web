@@ -227,13 +227,20 @@ function _run_startup_warmup(base_url::AbstractString)
     return
   end
 
-  println("[warmup] starting startup warmup actions=$(length(actions)) config=$(config_path)")
+  clustering_query_enabled = _bool_env("CLUSTERING_QUERY_ENABLED", false)
+  println("[warmup] starting startup warmup actions=$(length(actions)) config=$(config_path) clustering_query_enabled=$(clustering_query_enabled)")
   flush(stdout)
 
   headers = ["Content-Type" => "application/json", "Accept" => "application/json"]
   for action in actions
     name = string(_json_get(action, "name", "unknown"))
     path = string(_json_get(action, "path", ""))
+    if !clustering_query_enabled && path == "/api/web/time_series/query_db"
+      println("[warmup] action skipped name=$(name): CLUSTERING_QUERY_ENABLED=false")
+      flush(stdout)
+      continue
+    end
+
     payload = _json_get(action, "payload", Dict{String,Any}())
     url = string(base_url, path)
     t0 = time()
@@ -254,20 +261,21 @@ function _run_startup_warmup(base_url::AbstractString)
     flush(stdout)
   end
 
-  println("[warmup] startup warmup complete")
+  GC.gc(true)
+  println("[warmup] startup warmup complete; full GC finished")
   flush(stdout)
 end
 
 println("[start_server] starting on http://$host:$port")
+println("[start_server] ENV CLUSTERING_QUERY_ENABLED=$(get(ENV, "CLUSTERING_QUERY_ENABLED", "(unset)")) STARTUP_WARMUP_ENABLED=$(get(ENV, "STARTUP_WARMUP_ENABLED", "(unset)"))")
 flush(stdout)
 
-if !_bool_env("CLUSTERING_QUERY_ENABLED", false)
-  println("[startup_db] skipped: CLUSTERING_QUERY_ENABLED=false")
-  println("[warmup] skipped: CLUSTERING_QUERY_ENABLED=false")
-  flush(stdout)
-else
+if _bool_env("CLUSTERING_QUERY_ENABLED", false)
   _log_startup_influx_counts()
-  @async _run_startup_warmup(_warmup_base_url(host, port))
+else
+  println("[startup_db] skipped: CLUSTERING_QUERY_ENABLED=false")
+  flush(stdout)
 end
 
+@async _run_startup_warmup(_warmup_base_url(host, port))
 Genie.up(port, host; async=false)
