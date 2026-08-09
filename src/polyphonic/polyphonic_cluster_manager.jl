@@ -136,6 +136,7 @@ mutable struct Manager <: AbstractClusterManager
   calculate_distance_when_added_subsequence_to_cluster::Bool
   use_streamwise_surface_average::Bool
   stream_axis_offset::Float64
+  stream_axis_capacity::Int
 
   value_min::Float64
   value_max::Float64
@@ -187,6 +188,7 @@ function Manager(
   calculate_distance_when_added_subsequence_to_cluster::Bool = false;
   use_streamwise_surface_average::Bool = false,
   stream_axis_offset::Real = Config.UNIT_MIN,
+  stream_axis_capacity::Union{Nothing,Int} = nothing,
   value_min::Real = Config.UNIT_MIN,
   value_max::Real = Config.UNIT_MAX,
   max_set_size::Int = last(Config.CHORD_SIZE_RANGE),
@@ -212,6 +214,7 @@ function Manager(
   if mss <= 0
     mss = 1
   end
+  axis_capacity = stream_axis_capacity === nothing ? mss : max(Int(stream_axis_capacity), 1)
 
   # seed representative = first subsequence (Ruby fix)
   seed_as =
@@ -237,6 +240,7 @@ function Manager(
     calculate_distance_when_added_subsequence_to_cluster,
     Bool(use_streamwise_surface_average),
     float(stream_axis_offset),
+    axis_capacity,
     vmin,
     vmax,
     vwidth,
@@ -267,6 +271,38 @@ end
 """Clamp to [0,1]."""
 clamp01(x::Float64)::Float64 = x < 0.0 ? 0.0 : (x > 1.0 ? 1.0 : x)
 
+"""Distance between sparse streamwise rows, matched strictly by identity-axis slot."""
+function streamwise_surface_distance01(mgr::Manager, a::PolySet, b::PolySet)::Float64
+  isempty(a) && isempty(b) && return 0.0
+
+  function decode_row(row::PolySet)::Dict{Int,Float64}
+    decoded = Dict{Int,Float64}()
+    for encoded in row
+      slot, raw = _decode_streamwise_value(mgr, encoded)
+      haskey(decoded, slot) && error("Duplicate encoded stream slot $(slot) in global row.")
+      decoded[slot] = raw
+    end
+    return decoded
+  end
+
+  a_by_slot = decode_row(a)
+  b_by_slot = decode_row(b)
+  slots = union(Set(keys(a_by_slot)), Set(keys(b_by_slot)))
+  isempty(slots) && return 0.0
+
+  raw_width = abs(mgr.stream_axis_offset) - 1.0
+  raw_width = raw_width <= 0.0 ? 1.0 : raw_width
+  distance_sum = 0.0
+  for slot in slots
+    if haskey(a_by_slot, slot) && haskey(b_by_slot, slot)
+      distance_sum += clamp01(abs(a_by_slot[slot] - b_by_slot[slot]) / raw_width)
+    else
+      distance_sum += 1.0
+    end
+  end
+  return clamp01(distance_sum / float(length(slots)))
+end
+
 """min_avg_distance(a,b)
 
 Rails:
@@ -275,10 +311,16 @@ Rails:
   - pitch distance uses symmetric min-average
   - pitch normalized by value_width
   - count normalized by max_set_size
+
+Streamwise global rows are sparse identity-keyed surfaces and therefore use
+slot-matched distance rather than nearest encoded-value matching.
 """
 function min_avg_distance(mgr::Manager, a::PolySet, b::PolySet)::Float64
   if mgr.point_distance_mode == :ordered_vector
     return ordered_vector_distance01(mgr, a, b)
+  end
+  if mgr.use_streamwise_surface_average
+    return streamwise_surface_distance01(mgr, a, b)
   end
 
   isempty(a) && isempty(b) && return 0.0
@@ -385,8 +427,8 @@ synthetic stream axis and averages each timestep/stream cell independently.
   end
 
   slot = floor(Int, (encoded - mgr.value_min) / offset) + 1
-  1 <= slot <= mgr.max_set_size || error(
-    "Encoded stream slot $(slot) is outside configured capacity 1:$(mgr.max_set_size) for value $(encoded).",
+  1 <= slot <= mgr.stream_axis_capacity || error(
+    "Encoded stream slot $(slot) is outside configured axis capacity 1:$(mgr.stream_axis_capacity) for value $(encoded).",
   )
   raw = encoded - float(slot - 1) * offset
   return (slot, raw)
@@ -397,8 +439,8 @@ function _average_streamwise_surface_sequences(mgr::Manager, sequences::Vector{P
   result = PolySeq(undef, len)
 
   for t in 1:len
-    sums = zeros(Float64, mgr.max_set_size)
-    counts = zeros(Int, mgr.max_set_size)
+    sums = zeros(Float64, mgr.stream_axis_capacity)
+    counts = zeros(Int, mgr.stream_axis_capacity)
 
     for seq in sequences
       for encoded in seq[t]
@@ -409,8 +451,8 @@ function _average_streamwise_surface_sequences(mgr::Manager, sequences::Vector{P
     end
 
     avg_set = Float64[]
-    sizehint!(avg_set, mgr.max_set_size)
-    for slot in 1:mgr.max_set_size
+    sizehint!(avg_set, mgr.stream_axis_capacity)
+    for slot in 1:mgr.stream_axis_capacity
       counts[slot] <= 0 && continue
       avg_raw = sums[slot] / float(counts[slot])
       push!(avg_set, avg_raw + float(slot - 1) * mgr.stream_axis_offset)

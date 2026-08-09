@@ -240,10 +240,10 @@ payload の stream record は strict 形式です。
 ```
 
 - `abs_notes` は `Vector{Int}` です。例: `[60]`, `[60, 64, 67]`
-- `chord_range` と `density` は画面入力 row にはありません。payload assembly 時またはサーバ側で `abs_notes` から実測再計算されます。
+- `chord_range` と `density` は画面入力 row にはありません。frontendはstrict record用のplaceholderを入れ、サーバが`abs_notes`からper-stream生成controlの初期値を推定します。
 - サーバは11要素のrecordだけを受け付けます。
 
-`chord_range` と `density` は初期文脈から送られても、サーバが `abs_notes` の実観測値から再計算します。
+`chord_range` と `density` は生成controlです。初期文脈では入力値より`abs_notes`からの推定値を優先し、future生成値と同じper-stream schemaでmanagerへ投入します。実音から測った観測値が必要な場合は、このcontrol fieldとは別に扱います。
 
 ## 5. 処理の全体順
 
@@ -253,7 +253,7 @@ payload の stream record は strict 形式です。
 2. `stream_counts`, `stream_strength_target`, `stream_strength_spread`, BPM 系を正規化する。
 3. `initial_context` を読み、空なら default 1 step / 1 stream を作る。
 4. stream record を 11 要素 strict 形式へ正規化する。
-5. 初期文脈の `chord_range` と `density` を `abs_notes` から実測再計算する。
+5. 初期文脈の `chord_range` と `density` 生成controlを `abs_notes` からstream別に推定する。
 6. `dimension_policy` を解決し、固定次元の固定値を決める。
 7. 初期文脈から dimension ごとの履歴 matrix を作る。
 8. 履歴が `POLYPHONIC_MIN_WINDOW_SIZE + 1` 未満なら padding する。
@@ -278,7 +278,9 @@ payload の stream record は strict 形式です。
 - 増える場合: inactive stream を revive するか、active stream を fork します。
 - 変わらない場合: active ids を維持します。
 
-同じ lifecycle plan が全 dimension manager に適用されるため、dimension 間で stream id がずれません。
+同じ lifecycle plan が全 dimension manager に適用されるため、dimension 間で stream id がずれません。global managerもrun-localで不変のstable ID→axis slot mapを共有し、初期履歴・候補simulation・commit・AREAのすべてを同じencoderへ通します。active順が変わっても同じIDは同じaxis slotを使い、inactive IDはそのstepのrowから省略されます。
+
+identity axis capacityは、初期stream数と`stream_counts`の増加量からrequest開始時に確保します。これは1 stepの最大row要素数とは別の値であり、capacity外IDを既存slotへclampしません。
 
 その後、step 内の stream 優先順を作ります。優先順は lifecycle に使った manager の active stream `presence_avg` 降順です。通常は `vol` manager が使われ、`vol` manager がなければ `note` 側が使われます。
 

@@ -16,6 +16,74 @@ import ..PolyphonicClusterManager
 import ..MultiStreamManager
 import ..DissonanceStmManager
 
+"""Run-local stable mapping from stream IDs to synthetic global-axis slots."""
+mutable struct StableStreamAxis
+  capacity::Int
+  id_to_slot::Dict{Int,Int}
+  slot_to_id::Vector{Int}
+end
+
+function StableStreamAxis(capacity::Integer, initial_ids=Int[])
+  axis = StableStreamAxis(max(Int(capacity), 1), Dict{Int,Int}(), Int[])
+  _register_stream_ids!(axis, initial_ids)
+  return axis
+end
+
+function _register_stream_ids!(axis::StableStreamAxis, ids)::Nothing
+  for raw_id in ids
+    stream_id = Int(raw_id)
+    stream_id > 0 || error("Stable stream IDs must be positive; got $(stream_id).")
+    haskey(axis.id_to_slot, stream_id) && continue
+    length(axis.slot_to_id) < axis.capacity || error(
+      "Stable stream ID $(stream_id) exceeds configured axis capacity $(axis.capacity).",
+    )
+    push!(axis.slot_to_id, stream_id)
+    axis.id_to_slot[stream_id] = length(axis.slot_to_id)
+  end
+  return nothing
+end
+
+function _stream_axis_slot(axis::StableStreamAxis, stream_id::Integer)::Int
+  id = Int(stream_id)
+  _register_stream_ids!(axis, Int[id])
+  return axis.id_to_slot[id]
+end
+
+function _encode_streamwise_row(
+  axis::StableStreamAxis,
+  stream_ids,
+  values,
+  offset::Real,
+)::Vector{Float64}
+  length(stream_ids) == length(values) || error(
+    "Stream ID/value length mismatch: $(length(stream_ids)) IDs for $(length(values)) values.",
+  )
+  ids = Int[Int(id) for id in stream_ids]
+  length(unique(ids)) == length(ids) || error("Duplicate stable stream IDs in global row: $(ids).")
+  float(offset) > 0.0 || error("Stream-axis offset must be positive; got $(offset).")
+  _register_stream_ids!(axis, ids)
+
+  encoded_by_slot = Tuple{Int,Float64}[]
+  sizehint!(encoded_by_slot, length(ids))
+  for (id, value) in zip(ids, values)
+    slot = axis.id_to_slot[id]
+    push!(encoded_by_slot, (slot, float(value) + float(slot - 1) * float(offset)))
+  end
+  sort!(encoded_by_slot; by=first)
+  return Float64[value for (_slot, value) in encoded_by_slot]
+end
+
+function _required_stream_axis_capacity(initial_count::Integer, stream_counts)::Int
+  previous_count = max(Int(initial_count), 1)
+  capacity = previous_count
+  for raw_count in stream_counts
+    desired_count = max(Int(raw_count), 1)
+    capacity += max(desired_count - previous_count, 0)
+    previous_count = desired_count
+  end
+  return capacity
+end
+
 # ------------------------------------------------------------
 # Utilities
 # ------------------------------------------------------------
@@ -2919,11 +2987,13 @@ function select_best_chord_for_dimension_with_cost(
     end
 
     g_offset = get(mgrs, :global_offset, 0.0)
-    global_vals = Float64[]
-    sizehint!(global_vals, length(ordered_vals))
-    for (i, v) in enumerate(ordered_vals)
-      push!(global_vals, float(v) + (i - 1) * float(g_offset))
-    end
+    stream_axis = get(mgrs, :stream_axis, nothing)
+    stream_axis isa StableStreamAxis || error("Missing stable stream axis for global dimension evaluation.")
+    length(actives) >= length(ordered_vals) || error(
+      "Only $(length(actives)) active stream identities are available for $(length(ordered_vals)) global values.",
+    )
+    active_ids = Int[actives[i].id for i in 1:length(ordered_vals)]
+    global_vals = _encode_streamwise_row(stream_axis, active_ids, ordered_vals, g_offset)
     global_metrics =
       PolyphonicClusterManager.simulate_add_and_calculate_all_extended(mgrs[:global], global_vals)
     disc =
@@ -3028,6 +3098,8 @@ function select_best_values_for_dimension_greedy(
   range_width = abs(vmax - vmin)
   range_width = range_width <= 0.0 ? 1.0 : range_width
   g_offset = float(get(mgrs, :global_offset, 0.0))
+  stream_axis = get(mgrs, :stream_axis, nothing)
+  stream_axis isa StableStreamAxis || error("Missing stable stream axis for global dimension evaluation.")
 
   for stream_idx in order
     global_calibrator = build_extended_metric_calibrator(mgrs[:global])
@@ -3048,14 +3120,14 @@ function select_best_values_for_dimension_greedy(
       push!(partial_vals, (stream_idx, float(cand)))
       sort!(partial_vals; by=x -> x[1])
 
-      global_vals = Float64[]
-      ordered_vals = Float64[]
-      sizehint!(global_vals, length(partial_vals))
-      sizehint!(ordered_vals, length(partial_vals))
-      for (i, v) in partial_vals
-        push!(ordered_vals, v)
-        push!(global_vals, v + (i - 1) * g_offset)
+      ordered_vals = Float64[value for (_index, value) in partial_vals]
+      partial_ids = Int[]
+      sizehint!(partial_ids, length(partial_vals))
+      for (index, _value) in partial_vals
+        index <= length(actives) || error("Missing stable stream identity for active slot $(index).")
+        push!(partial_ids, actives[index].id)
       end
+      global_vals = _encode_streamwise_row(stream_axis, partial_ids, ordered_vals, g_offset)
 
       global_metrics =
         _safe_simulate_add_and_calculate_all_extended(mgrs[:global], global_vals)
@@ -3597,29 +3669,50 @@ function generate_polyphonic()
     end
   end
 
-  function _observed_chord_range_and_density(abs_notes_raw)::Tuple{Int,Float64}
-    notes = _normalize_abs_notes(abs_notes_raw)
-    sort!(notes)
-    uniq = unique(notes)
-    isempty(uniq) && return (0, 0.0)
+  function _note_pool_geometry(band_low_raw::Integer, chord_range_raw::Integer)::Tuple{Int,Int,Int}
+    band_low = clamp(Int(band_low_raw), BAND_LOW_MIN, BAND_LOW_MAX)
+    band_high = min(band_low + (BAND_SIZE - 1), ABS_MAX)
+    chord_range = clamp(Int(chord_range_raw), CHORD_RANGE_MIN, CHORD_RANGE_MAX)
+    low = clamp(band_low - chord_range, ABS_MIN, ABS_MAX)
+    high = clamp(band_high + chord_range, ABS_MIN, ABS_MAX)
+    return (low, high, max(high - low + 1, 1))
+  end
 
-    low = first(uniq)
-    high = last(uniq)
-    chord_range = clamp(high - low, CHORD_RANGE_MIN, CHORD_RANGE_MAX)
-    slot_count = max((high - low + 1), 1)
-    density = clamp(float(length(uniq)) / float(slot_count), 0.0, 1.0)
+  function _note_count_from_density(density_raw::Real, slot_count::Integer)::Int
+    slots = max(Int(slot_count), 1)
+    density = clamp(float(density_raw), 0.0, 1.0)
+    return clamp(Int(round(density * float(slots))), 1, slots)
+  end
+
+  function _infer_chord_range_and_density_controls(abs_notes_raw)::Tuple{Int,Float64}
+    notes = sort(unique(_normalize_abs_notes(abs_notes_raw)))
+    isempty(notes) && return (0, 0.0)
+
+    anchor = notes[cld(length(notes), 2)]
+    band_low = Config.area_band_low(anchor)
+    band_high = min(band_low + (BAND_SIZE - 1), ABS_MAX)
+    chord_range = clamp(
+      max(band_low - first(notes), last(notes) - band_high, 0),
+      CHORD_RANGE_MIN,
+      CHORD_RANGE_MAX,
+    )
+    _low, _high, slot_count = _note_pool_geometry(band_low, chord_range)
+    target_note_count = clamp(length(notes), 1, slot_count)
+    density = clamp(float(target_note_count) / float(slot_count), 0.0, 1.0)
     return (chord_range, density)
   end
 
-  # Initial context uses observed metrics only: derive chord_range/density from abs_notes per stream/step.
+  # CR/DEN are canonical per-stream generation controls. The frontend does not
+  # expose them in initial-context rows, so infer compatible seed controls from
+  # the notes while preserving the strict 11-element record contract.
   for step_idx in 1:initial_context_steps
     step = results[step_idx]
     for st in step
       abs_notes = _normalize_abs_notes(st[note_abs_idx])
       st[note_abs_idx] = abs_notes
-      observed_cr, observed_den = _observed_chord_range_and_density(abs_notes)
-      st[chord_range_idx] = observed_cr
-      st[density_idx] = observed_den
+      inferred_cr, inferred_den = _infer_chord_range_and_density_controls(abs_notes)
+      st[chord_range_idx] = inferred_cr
+      st[density_idx] = inferred_den
     end
   end
 
@@ -3717,20 +3810,6 @@ function generate_polyphonic()
   hist_cr           = matrix_for_idx(chord_range_idx)
   hist_den          = matrix_for_idx(density_idx)
 
-  hist_cr_global = Vector{Vector{Float64}}()
-  hist_den_global = Vector{Vector{Float64}}()
-
-  for step in results
-    step_notes = Int[]
-    for st in step
-      abs_notes = _normalize_abs_notes(st[note_abs_idx])
-      append!(step_notes, abs_notes)
-    end
-    observed_cr, observed_den = _observed_chord_range_and_density(step_notes)
-    push!(hist_cr_global, Float64[float(observed_cr)])
-    push!(hist_den_global, Float64[observed_den])
-  end
-
   hist_note_anchor = Vector{Vector{Int}}()
   note_global_series = Vector{Vector{Float64}}()
 
@@ -3754,7 +3833,12 @@ function generate_polyphonic()
   end
 
 
-  first_streams = max(get(stream_counts, 1, 1), 1)
+  initial_stream_count = 1
+  for step in results
+    initial_stream_count = max(initial_stream_count, length(step))
+  end
+  first_streams = initial_stream_count
+  history_stream_ids = deepcopy(result_stream_ids)
 
   pad_history!(hist_vol,          [1.0 for _ in 1:first_streams])
   pad_history!(hist_brightness,   [0.5 for _ in 1:first_streams])
@@ -3767,19 +3851,21 @@ function generate_polyphonic()
   pad_history!(hist_den,          [0.0 for _ in 1:first_streams])
   pad_history!(hist_note_anchor, [Int(Config.abs_pitch_min()) for _ in 1:first_streams])
   pad_history!(hist_area_tmp_anchor, [Config.area_band_low(Config.abs_pitch_min()) for _ in 1:first_streams])
-
-  pad_series!(hist_cr_global, Float64[0.0])
-  pad_series!(hist_den_global, Float64[0.0])
+  pad_history!(history_stream_ids, collect(1:first_streams))
 
   pad_series!(note_global_series, Float64[float(Config.abs_pitch_min())])
 
-  max_streams = first_streams
+  max_streams = initial_stream_count
   if !isempty(stream_counts)
     max_streams = max(max_streams, maximum(stream_counts))
   end
-  for step in results
-    max_streams = max(max_streams, length(step))
+
+  stream_axis_capacity = _required_stream_axis_capacity(initial_stream_count, stream_counts)
+  initial_axis_ids = Int[]
+  for ids in result_stream_ids
+    append!(initial_axis_ids, ids)
   end
+  stream_axis = StableStreamAxis(stream_axis_capacity, initial_axis_ids)
 
   # ----------------------------------------------------------
   # Managers
@@ -3795,15 +3881,19 @@ function generate_polyphonic()
     return _safe_width(vmin, vmax) + 1.0
   end
 
-  function global_series_from_matrix(mat, offset::Real)
+  function global_series_from_matrix(mat, id_rows, axis::StableStreamAxis, offset::Real)
+    length(mat) == length(id_rows) || error(
+      "Global history has $(length(mat)) value rows but $(length(id_rows)) stable-ID rows.",
+    )
     series = Vector{Vector{Float64}}()
-    for row in mat
-      vals = Float64[]
-      sizehint!(vals, length(row))
-      for (i, x) in enumerate(row)
-        push!(vals, float(x) + (i - 1) * float(offset))
-      end
-      push!(series, vals)
+    sizehint!(series, length(mat))
+    for row_idx in eachindex(mat)
+      row = mat[row_idx]
+      ids = id_rows[row_idx]
+      length(row) == length(ids) || error(
+        "Global history row $(row_idx) has $(length(row)) values but $(length(ids)) stable IDs.",
+      )
+      push!(series, _encode_streamwise_row(axis, ids, row, offset))
     end
     return series
   end
@@ -3816,17 +3906,15 @@ function generate_polyphonic()
     value_max::Real,
     global_capacity::Int,
     track_presence::Bool=false,
-    global_history=nothing
   )
     offset = offset_for_range(value_min, value_max)
-    global_history_src = global_history === nothing ? history : global_history
     observed_global_row_width = 1
-    for row in global_history_src
+    for row in history
       observed_global_row_width = max(observed_global_row_width, length(row))
     end
     global_row_width = max(Int(global_capacity), 1)
     observed_global_row_width <= global_row_width || error(
-      "$(key) global history width $(observed_global_row_width) exceeds configured capacity $(global_row_width).",
+      "$(key) global history width $(observed_global_row_width) exceeds configured row capacity $(global_row_width).",
     )
 
     s_mgr = MultiStreamManager.Manager(
@@ -3838,16 +3926,18 @@ function generate_polyphonic()
       track_presence=track_presence,
       recency=0.0
     )
+    encoded_max = float(value_max) + (float(stream_axis.capacity - 1) * offset)
     g_mgr = PolyphonicClusterManager.Manager(
-      global_series_from_matrix(global_history_src, offset),
+      global_series_from_matrix(history, history_stream_ids, stream_axis, offset),
       merge_threshold_ratio,
       min_window;
       use_streamwise_surface_average=true,
       stream_axis_offset=offset,
+      stream_axis_capacity=stream_axis.capacity,
       value_min=float(value_min),
-      value_max=float(value_max) + (float(global_row_width - 1) * offset),
+      value_max=encoded_max,
       range_min=float(value_min),
-      range_max=float(value_max) + (float(global_row_width - 1) * offset),
+      range_max=encoded_max,
       max_set_size=global_row_width,
       recency=0.0
     )
@@ -3858,6 +3948,7 @@ function generate_polyphonic()
       :stream => s_mgr,
       :global_offset => offset,
       :global_capacity => global_row_width,
+      :stream_axis => stream_axis,
     )
   end
 
@@ -3894,8 +3985,7 @@ function generate_polyphonic()
       value_min=cr_min,
       value_max=cr_max,
       global_capacity=max_streams,
-      track_presence=true,
-      global_history=hist_cr_global
+      track_presence=true
     )
   end
 
@@ -3907,8 +3997,7 @@ function generate_polyphonic()
       value_min=0.0,
       value_max=1.0,
       global_capacity=max_streams,
-      track_presence=true,
-      global_history=hist_den_global
+      track_presence=true
     )
   end
 
@@ -4236,6 +4325,7 @@ function generate_polyphonic()
     length(unique(plan.active_ids)) == length(plan.active_ids) || error(
       "Lifecycle returned duplicate active stream IDs: $(plan.active_ids).",
     )
+    _register_stream_ids!(stream_axis, plan.active_ids)
 
     # Apply one canonical ID order to every dimension before any recency,
     # candidate evaluation, or commit. Inspect active_ids directly here because
@@ -4358,9 +4448,9 @@ function generate_polyphonic()
         priority_order=step_stream_order,
       )
 
-      # commit (global manager expects stream-offset encoding)
+      # Commit the canonical stable-ID global row used by candidate evaluation.
       g_offset = get(mgrs, :global_offset, 0.0)
-      global_vals = Float64[float(best_vals[i]) + (i - 1) * float(g_offset) for i in 1:desired_stream_count]
+      global_vals = _encode_streamwise_row(stream_axis, plan.active_ids, best_vals, g_offset)
       PolyphonicClusterManager.add_data_point_permanently(mgrs[:global], global_vals)
       PolyphonicClusterManager.update_caches_permanently(mgrs[:global])
 
@@ -4567,6 +4657,8 @@ end
     # ---- Stage 2: decide AREA anchors greedily by stream priority ----
     area_gl = area_mgrs[:global]
     area_offset = float(get(area_mgrs, :global_offset, offset_for_range(area_min, area_max)))
+    area_axis = get(area_mgrs, :stream_axis, nothing)
+    area_axis isa StableStreamAxis || error("Missing stable stream axis for AREA global evaluation.")
     chosen_area = fill(typemin(Int), desired_stream_count)
     area_order = step_stream_order
     area_global_calibrator = build_extended_metric_calibrator(area_gl)
@@ -4585,13 +4677,17 @@ end
       sizehint!(global_temporal, length(anchors))
 
       for cand_anchor in anchors
-        enc = Float64[]
+        partial_ids = Int[]
+        partial_values = Float64[]
         for i in 1:desired_stream_count
           if chosen_area[i] != typemin(Int)
-            push!(enc, float(chosen_area[i]) + (i - 1) * area_offset)
+            push!(partial_ids, plan.active_ids[i])
+            push!(partial_values, float(chosen_area[i]))
           end
         end
-        push!(enc, float(cand_anchor) + (stream_idx - 1) * area_offset)
+        push!(partial_ids, plan.active_ids[stream_idx])
+        push!(partial_values, float(cand_anchor))
+        enc = _encode_streamwise_row(area_axis, partial_ids, partial_values, area_offset)
 
         metrics = _safe_simulate_add_and_calculate_all_extended(area_gl, enc)
         push!(global_raw_d, isfinite(metrics.distance) ? metrics.distance : 0.0)
@@ -4665,8 +4761,8 @@ end
     end
 
     # ---- Commit AREA(tmp_anchor) managers (NOW consistent with evaluation) ----
-    # global: stream-offset encoding
-    enc_best = Float64[float(chosen_area[i]) + (i - 1) * area_offset for i in 1:desired_stream_count]
+    # global: stable-ID stream-axis encoding
+    enc_best = _encode_streamwise_row(area_axis, plan.active_ids, chosen_area, area_offset)
     PolyphonicClusterManager.add_data_point_permanently(area_gl, enc_best)
     PolyphonicClusterManager.update_caches_permanently(area_gl)
 
@@ -4688,19 +4784,13 @@ end
     selected_chords = [Int[] for _ in 1:desired_stream_count]
 
     for s in 1:desired_stream_count
-      band_low  = chosen_area[s]
-      band_high = min(band_low + (BAND_SIZE - 1), ABS_MAX)
-
+      band_low = chosen_area[s]
       chord_range_val = clamp(Int(trunc(step_decisions["chord_range"][s])), CHORD_RANGE_MIN, CHORD_RANGE_MAX)
-      density_val     = clamp(float(step_decisions["density"][s]), 0.0, 1.0)
+      density_val = clamp(float(step_decisions["density"][s]), 0.0, 1.0)
+      low, high, slot_count = _note_pool_geometry(band_low, chord_range_val)
 
-      low  = clamp(band_low  - chord_range_val, ABS_MIN, ABS_MAX)
-      high = clamp(band_high + chord_range_val, ABS_MIN, ABS_MAX)
-      slot_count = max(high - low + 1, 1)
-
-      n_notes = clamp(Int(round(density_val * float(slot_count))), 1, slot_count)
       stream_note_pools[s] = collect(low:high)
-      stream_note_counts[s] = n_notes
+      stream_note_counts[s] = _note_count_from_density(density_val, slot_count)
     end
 
     # Dissonance selection is done on pitch-class-normalized MIDI notes so octave distance

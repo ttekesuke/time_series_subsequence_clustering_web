@@ -7,9 +7,9 @@
 | 文書の目的 | `generate_polyphonic()` の現行実装を要件として再構成し、設計・実装上の不整合と是正要件を明確にする |
 | 対象 | polyphonic生成API、stream lifecycle、dimension/AREA/note選択、dissonance STM、BPM、tie、レスポンス、UIからの呼び出し |
 | 要件区分 | **AS-IS**: 現行コードが実際に行うこと、**TO-BE**: 問題を是正するために満たすべきこと |
-| 調査方法 | コントローラ、manager群、設定、UI、既存Markdown、関連テストの静的調査 |
-| 実行検証 | Julia CLIが環境に存在しないため未実施。既存テストの内容は静的に確認した |
-| 重大度集計 | Critical: 0、High: 6、Medium: 6、Low: 3 |
+| 調査方法 | コントローラ、manager群、設定、UI、既存Markdown、関連テストの静的調査およびDockerコンテナ内での動的検証 |
+| 実行検証 | Julia 1.11.6コンテナで既存36 assertions、stable ID tie、stable-ID global encode/decode、CR/DEN共通schema、`stream_counts: [3,1,2]`のHTTP response/identity/tie経路を確認済み |
+| 重大度集計 | Critical: 0、High: 2、Medium: 5、Low: 3 |
 
 > **重要:** AS-ISは現行挙動の記録であり、正しい仕様として承認するものではない。監査で問題と判定した挙動は、TO-BEの `FIX-*` を優先する。
 
@@ -68,8 +68,8 @@
 | pool index | `stream_pool` 配列内の物理位置。stable stream IDとは別概念 |
 | dimension | note集合以外の生成属性。volume、CR、DEN、各timbre属性を含む |
 | AREA | 4 semitone幅のregister bandの基準位置 |
-| CR | chord range。AREAからnote候補範囲を左右に拡張する量 |
-| DEN | density。note候補slotのうち何音を選ぶかを決める量 |
+| CR | chord range生成control。AREAからnote候補範囲を左右に拡張する量。初期値はnote集合から推定する |
+| DEN | density生成control。note候補slotのうち何音を選ぶかを決める量。初期値はnote集合から推定する |
 | STM | short-term memory。不協和度評価の履歴manager |
 | calibrator | 生のmetricを0〜1付近のscoreへ写像する固定変換 |
 | fixed dimension | 探索せず指定sourceの値を採用するdimension |
@@ -209,6 +209,14 @@ clustered tie modeは次の5 parameterのいずれかがrequestに存在する�
 - SuperCollider event builderの `active_runs`、present判定、tie継続判定はstable `stream_id` をkeyとする。同じstable ID、同一note集合、tie閾値以上の場合だけ既存runを延長する。
 - lifecycleによるslot順変更、deactivate/revive、新規stream追加があっても、異なるstable IDのrunを誤接続してはならない。
 
+### 3.7 stable stream ID global encodingとCR/DEN契約（TO-BE実装済み）
+
+- global managerのstreamwise rowはrun-localで不変のstable ID→axis slot mapを使う。step内のactive配列位置をidentityとして使用しない。
+- identity axis capacityは、初期stream数に`stream_counts`の正の増分を加えたrequest単位上界で初期化する。1 stepの最大要素数を表す`max_set_size`とは分離する。
+- initial history、candidate simulation、commit、AREAは同じstable-ID encoderを使用する。row内でinactiveなIDは要素省略で表現する。
+- CR/DENはper-stream生成controlとして扱う。初期controlは`abs_notes`から推定し、initial/futureとも他dimensionと同じstreamwise global schemaへ投入する。
+- capacity外ID、重複ID、ID/value長不一致は別slotへclampせず明示エラーにする。
+
 ---
 
 ## 4. 生成処理フロー（AS-IS）
@@ -217,7 +225,7 @@ clustered tie modeは次の5 parameterのいずれかがrequestに存在する�
 
 **FR-006:** controllerはpayload、BPM、初期コンテキストを内部表現へ正規化する。
 
-**FR-007:** 初期コンテキストのCRとDENは、入力record値をそのまま信頼せず、実際のnote集合から再計算したglobal履歴を構築する。
+**FR-007:** CRとDENはper-stream生成controlとする。初期コンテキストでは実際のnote集合からcontrol初期値を推定し、他dimensionと同じstable-ID streamwise global履歴を構築する。
 
 **FR-008:** 初期履歴が短い場合、最後のstepを複製して `POLYPHONIC_MIN_WINDOW_SIZE + 1` 以上になるまで末尾paddingする。
 
@@ -389,15 +397,10 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 
 | ID | 重大度 | 確信度 | 問題 | 主な根拠 | 影響 | 推奨 | 受入条件 |
 |---|---|---|---|---|---|---|---|
-| AUD-001 | High | 高 | active stream IDとpool indexを混同する | `time_series_controller.jl`: `_recent_register_center_for_stream()`、AREA処理の `stream_pool[s]`。通常評価/commitは `active_stream_containers()` のactive ID順 | deactivate/revive後に別streamの履歴で候補を評価し、別streamへcommitし得る | stable ID→containerの明示mapを全経路で使う | 非連続ID、deactivate/revive、順序入替後も評価先・commit先・出力IDが一致する |
-| AUD-002 | High | 高 | stable stream IDがglobal encoding、response、tieへ保持されない | global encodeが配列位置 `(i-1)*offset` を使用。responseにstep別IDなし。rendererは位置ベースで接続 | slot移動時にglobal履歴が別streamとして混ざり、tieが誤接続し得る | global rowとresponseにstable IDを保持し、tieもIDで接続する | stream順を入れ替えてもglobal履歴とtie接続が同一identityを維持する |
-| AUD-003 | High | 高 | global managerのrow幅が初期履歴のstream幅に固定される | `_setup_dimension_manager!()` の `global_row_width`。算出した `max_streams` が未使用。`_decode_streamwise_value()` はslotをclamp | 初期1 stream→future N streamで複数slotを独立表現できず、score/clusterが衝突する | run全体の最大stream数またはID capacityでglobal schemaを初期化する | 初期1→future Nで各slotが一意にencode/decodeされ、clamp衝突しない |
-| AUD-004 | High | 高 | CR/DENのglobal履歴で初期とfutureの意味・shapeが異なる | 初期は `hist_cr_global` / `hist_den_global` の全音scalar、futureはstream別offset vector | 同じ時系列managerへ異なるfeature semanticsを投入し、クラスタ距離が無意味になる | 初期・futureで共通のcanonical schemaへ変換する | 全stepのCR/DEN global rowが同一幅・同一定義・可逆encode/decodeを持つ |
 | AUD-005 | High | 高 | 例外をzero metric化し、commit失敗時に状態を二重更新し得る | `_safe_simulate_add_and_calculate_all_extended()`、`MultiStreamManager.build_stream_manager`、`safe_simulate_add_and_calculate`、`update_caches_permanently!` のcatch。`safe_add_data_point!()` のfallback `push!` | 壊れた候補を「cost 0」として優先、部分commit、`mgr.data`二重push、履歴とcacheの不整合を起こし得る | typed error、ログ、transactional simulate/commit、rollbackを導入する | fault injection時にzero scoreへ化けず、履歴長/cache/clusterが変更前へ戻る |
 | AUD-006 | High | 高 | API側にstep、stream、note、候補評価総数の強制上限がない | `stream_counts` 長・値、total notes、evaluation budgetのbackend検証なし。`MAX_NOTE_CANDIDATES` 未使用。UI上限16は迂回可能 | direct APIでCPU・memoryを枯渇させ、サービス不能を起こせる | backend hard limit、request budget、早期拒否、timeout/cancellationを導入する | 上限超過requestが生成前に4xxとなり、設定budgetを超える候補評価を行わない |
 | AUD-007 | Medium | 高 | `initial_context_last_step` が初期snapshotではなく可変系列末尾を参照する | fixed value source処理が更新される `results[end]` を参照。後処理も最終生成stepを基準にし得る | 「初期値固定」のはずがstepごとにdriftし、過去stepを最終値で上書きし得る | 正規化直後にimmutable initial snapshotを保存する | future生成中・後処理後も固定値が初期最終stepと完全一致する |
 | AUD-008 | Medium | 高 | 入力構造、空配列、有限値、範囲の検証が不足する | `array_param()` が空vectorで `val[end]`。ragged/empty step許容。NaN/Inf・範囲検証不足。scalar strength target/spread無視 | BoundsError、NaN伝播、黙ったparameter無視、500応答を生む | schema validationとfield別errorをendpoint境界に置く | empty/ragged/NaN/Inf/範囲外/不正長を決定的な4xxで拒否する |
-| AUD-009 | Medium | 高 | 生成後のCR/DEN fieldが実音の観測値でなく探索parameterのまま | 初期CR/DENは実noteから再計算するが、future recordは選択parameterを格納 | 同じfieldが初期とfutureで異なる意味を持ち、再学習・表示・再生成が不整合になる | canonical semanticsを「parameter」か「観測値」に統一し、必要なら両fieldを分離する | 初期/futureを同じ再計算関数へ通した結果が契約どおり一致する |
 | AUD-010 | Medium | 中〜高 | dissonance STMでpitch classとabsolute MIDI表現が混在する | candidateはpitch-class normalized、STM seed/commitはabsolute MIDI | 同音名のoctave違いと絶対音程がmetric/calibrator内で一貫しない | STM境界でcanonical representationを一つに統一する | seed、preview、commitが同じ表現を使い、octave方針がテストで明示される |
 | AUD-011 | Medium | 中〜高 | volume固定時のlifecycle fallbackがnote managerを使う | volume managerが利用できない経路でnote manager由来の値をstrengthとして使用 | volume strengthのはずがpitch正規化値になり、deactivate/revive判断が変質する | strength sourceをdimension型付きで定義し、volume不在時の明示fallbackを設ける | volume固定時もstrengthが契約した0〜1 volume指標から算出される |
 | AUD-012 | Medium | 高 | backendとfrontendのBPM defaultが不一致 | `Config.POLYPHONIC_BPM = 240`、`MusicGenerateDialog.vue` default 480 | 呼出経路により同じ未指定操作のテンポとdurationが変わる | 単一のdefault sourceまたはAPI明示必須化 | UI経由・direct APIで未指定時のBPMが一致する |
@@ -405,18 +408,7 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 | AUD-014 | Low | 高 | no-op/dead parameterと観測不能な出力が残る | `streamStrengths => nothing`、`debug_score*`、`use_recent_position_weight`、`debug_poly`、`strength_params`、`_apply_fixed_dimension_values!`、未使用 `max_streams` | 利用者が有効機能と誤認し、デバッグ不能・保守コスト増になる | 削除、実装、deprecated明記のいずれかを選ぶ | 公開parameter/outputが動作テストを持ち、未実装fieldはAPI契約から除外または明記される |
 | AUD-015 | Low | 中 | byte-for-byte再現性が保証されない | Dict走査、serialization順、同点候補の順序規則が契約化されていない | 同一入力でも環境差で順序やserialized bytesが変わり得る | stable sort、tie-break、seed、canonical serializationを定義する | 同一version・seed・inputで意味上同一かつ規定範囲の再現性を満たす |
 
-### 7.3 修正状況
-
-| 対象 | 状況 | 変更内容・検証 |
-|---|---|---|
-| `AUD-001` | **修正実装済み・受入未完了（2026-08-08）** | lifecycle適用直後、recency・候補評価・commitより前に、全dimension managerの `active_ids` とcontainer存在を `LifecyclePlan.active_ids` に対して非変更で検証する。register centerとAREA Stage 1は `plan.active_ids` から `containers_by_id[id]` を直接解決する。diagnosticsと静的参照検査は成功したが、Julia CLI不在のためdeactivate/revive/順序入替の実行テストは未実施。 |
-| `FIX-001` | **一部完了・動的受入未完了（2026-08-08）** | `AUD-001` のpool index誤参照を修正し、responseのstep/slot別 `streamIds`、frontendの `stream_ids` sidecar、rendererのstable ID keyed tie接続を実装した。global feature encodingは引き続きslot-based schemaであり、Julia CLI不在のためdeactivate/revive/順序入替を含む実行受入は未実施。 |
-| `AUD-003` | **実装変更済み・動的受入未完了（2026-08-08）** | 通常dimension、CR、DEN、AREAのglobal managerは、初期履歴幅ではなくinitial/future全体から算出した `max_streams` を `max_set_size` とencoded rangeへ使用する。observed履歴幅とfuture要求がcapacityを超える場合は明示エラーとし、decoderも範囲外slotをclampせず拒否する。静的なコード参照とencode/decode数式の照合は成功したが、Julia CLIとDockerが利用できないため初期1→future Nの実行テストは未実施。 |
-| `FIX-002` | **実装変更済み・動的受入未完了** | streamwise global schemaはrun中固定capacityを持ち、各encoded要素がoffsetによってslotを自己記述するため、初期に存在しないslotは要素省略で表現する。note globalのscalar schemaと、`FIX-003` 対象のCR/DEN feature semanticsは変更していない。 |
-
 ### 7.4 総評
-
-最も危険なのは、音楽的なheuristicではなく**identityと状態管理の不整合**である。`AUD-001`、`AUD-002` のresponse/tie経路、および `AUD-003` の直接原因には修正を実装したが、Julia実行環境がないため受入テストは未完了である。`AUD-002` のglobal feature encodingと `AUD-004` は、処理が例外なく完了しても誤ったidentityまたはfeature表現を使用した正常風の出力を返し得るため、引き続き是正対象とする。
 
 `AUD-005` と `AUD-006` は運用上の障害リスクが高い。例外をzero scoreへ変換する実装はfail-safeではなく、失敗候補を最良候補として選ぶ可能性がある。またUI制限はAPI防御にならない。
 
@@ -435,35 +427,13 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 | tieをnote探索と分離し、接続はrenderで解釈 | 維持可能 | clustered modeはnote確定後に二値評価し、legacy modeは決定論的値を使う。いずれもstable stream IDで接続する |
 | fixed AREAもmanagerへcommit | 維持可能 | 固定値も時系列状態の一部として学習させる方針なら整合する |
 
-一方、identity混同、異なるschemaの同一manager投入、例外のzero score化は性能trade-offではなく、是正対象である。
+一方、例外のzero score化は性能trade-offではなく、是正対象である。
 
 ---
 
 ## 9. 是正必須要件（TO-BE）
 
 ### 9.1 P0: 正しさと状態保全
-
-**FIX-001: stable stream identityのend-to-end保証**
-
-- lifecycleは各streamへrun内で一意かつ不変のIDを割り当てなければならない。
-- pool配列indexをstream IDとして使用してはならない。
-- recency、register center、AREA、通常dimension、note、commit、global encoding、response、tieは同じIDを使わなければならない。
-- responseは各stepのrecordとstable stream IDの対応を返さなければならない。
-- **受入条件:** deactivate、revive、新規stream追加、active順入替、非連続IDを含むシナリオで、全managerの評価・commit・tie接続が同一IDへ行われる。
-
-**FIX-002: global manager capacityとencoding schemaの固定**
-
-- global managerのrow幅は初期stepのstream数ではなく、runで許容する最大active stream数またはstable ID schemaから決定しなければならない。
-- encode/decodeはclampで異なるstreamを同じslotへ畳み込んではならない。
-- 欠席streamは、明示mask、予約値、または各encoded要素がslot identityを自己記述するsparse omissionのいずれかで、存在するslotと曖昧なく区別しなければならない。
-- **受入条件:** 初期1 streamからfuture 2〜N streamへ増加しても、存在する各stream値を一意にround-tripでき、欠席slotを別streamの値として復元しない。
-
-**FIX-003: CR/DENとglobal feature表現の統一**
-
-- 初期履歴とfuture生成値は同一dimensionについて同じ意味、shape、単位、offset規則を使わなければならない。
-- CR/DENを全音集約値として扱うかstream別値として扱うかを一つに定めなければならない。
-- parameter値と実音からの観測値が必要なら別fieldに分けなければならない。
-- **受入条件:** 初期・futureの任意stepを同じencoderへ通したrow幅とfeature定義が一致し、decode後の意味が一致する。
 
 **FIX-004: simulation/commitの例外安全性**
 
@@ -536,9 +506,6 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 
 | テストID | 対応要件・指摘 | 必須シナリオ |
 |---|---|---|
-| T-001 | FIX-001 / AUD-001,002 | deactivate→revive、非連続ID、active順入替、tie接続 |
-| T-002 | FIX-002 / AUD-003 | 初期1 stream→future N、encode/decode round-trip |
-| T-003 | FIX-003 / AUD-004,009 | 初期/future CR/DEN schemaと意味の一致 |
 | T-004 | FIX-004 / AUD-005,013 | preview/各commit箇所のfault injectionと完全rollback |
 | T-005 | FIX-005 / AUD-006,008 | empty/ragged/NaN/Inf/過大request、budget上限、4xx |
 | T-006 | FIX-006 / AUD-007 | fixed sourceが複数stepでdriftしない |
@@ -570,9 +537,7 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 実装修正前に、少なくとも次を製品要件として決める必要がある。
 
 1. density 0は「最低1音」か「無音」か。
-2. CR/DENは生成parameterか、生成noteから測った観測値か。両方必要ならfield名をどう分けるか。
 3. dissonanceはoctaveを区別するか、pitch classだけを見るか。
-4. stream IDをAPI上で整数、UUID、または別形式のどれにするか。
 5. deactivateしたstreamが復帰した際、tieと音響dimensionの継続性を維持するか。
 6. backendの最大future step数、最大stream数、最大note数、総候補評価budgetをいくつにするか。
 7. BPM defaultを240、480、その他のどれに統一するか。
@@ -584,12 +549,9 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 
 ## 12. 推奨実施順
 
-1. **FIX-001**: stable stream identityを全経路で統一する。
-2. **FIX-002**: global managerのcapacityとencodingを修正する。
-3. **FIX-003**: CR/DENを含むfeature schemaを統一する。
 4. **FIX-004**: simulation/commitの例外安全性とatomicityを確保する。
 5. **FIX-005**: endpoint validationとresource budgetを導入する。
 6. FIX-006〜009でfixed source、dissonance、strength、BPMの意味を統一する。
 7. FIX-010〜011で観測性と再現性を整える。
 
-この順序は、音楽的なscore調整より先に、どのstreamを評価・更新しているか、同じ時系列へ同じ意味のfeatureを入れているか、失敗時に状態が壊れないかを保証するためである。
+この順序は、音楽的なscore調整より先に、失敗時に状態が壊れないこととAPI入力が安全な範囲に収まることを保証するためである。
