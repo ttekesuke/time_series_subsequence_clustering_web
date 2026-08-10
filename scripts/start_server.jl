@@ -228,7 +228,8 @@ function _run_startup_warmup(base_url::AbstractString)
   end
 
   clustering_query_enabled = _bool_env("CLUSTERING_QUERY_ENABLED", false)
-  println("[warmup] starting startup warmup actions=$(length(actions)) config=$(config_path) clustering_query_enabled=$(clustering_query_enabled)")
+  polyphonic_enabled = _bool_env("STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED", false)
+  println("[warmup] starting startup warmup actions=$(length(actions)) config=$(config_path) clustering_query_enabled=$(clustering_query_enabled) polyphonic_enabled=$(polyphonic_enabled)")
   flush(stdout)
 
   headers = ["Content-Type" => "application/json", "Accept" => "application/json"]
@@ -237,6 +238,11 @@ function _run_startup_warmup(base_url::AbstractString)
     path = string(_json_get(action, "path", ""))
     if !clustering_query_enabled && path == "/api/web/time_series/query_db"
       println("[warmup] action skipped name=$(name): CLUSTERING_QUERY_ENABLED=false")
+      flush(stdout)
+      continue
+    end
+    if !polyphonic_enabled && path == "/api/web/time_series/generate_polyphonic"
+      println("[warmup] action skipped name=$(name): STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED=false")
       flush(stdout)
       continue
     end
@@ -259,15 +265,28 @@ function _run_startup_warmup(base_url::AbstractString)
       println("[warmup] action error name=$(name) elapsed=$(elapsed)s error=$(err)")
     end
     flush(stdout)
+    GC.gc(true)
   end
 
-  GC.gc(true)
-  println("[warmup] startup warmup complete; full GC finished")
+  println("[warmup] startup warmup actions complete")
+  flush(stdout)
+end
+
+function _signal_startup_warmup_complete()
+  marker = get(ENV, "STARTUP_WARMUP_MARKER", "/tmp/startup-warmup-complete")
+  try
+    open(marker, "w") do io
+      write(io, "ready\n")
+    end
+    println("[warmup] readiness marker written path=$(marker)")
+  catch err
+    println("[warmup] failed to write readiness marker path=$(marker) error=$(err)")
+  end
   flush(stdout)
 end
 
 println("[start_server] starting on http://$host:$port")
-println("[start_server] ENV CLUSTERING_QUERY_ENABLED=$(get(ENV, "CLUSTERING_QUERY_ENABLED", "(unset)")) STARTUP_WARMUP_ENABLED=$(get(ENV, "STARTUP_WARMUP_ENABLED", "(unset)"))")
+println("[start_server] ENV CLUSTERING_QUERY_ENABLED=$(get(ENV, "CLUSTERING_QUERY_ENABLED", "(unset)")) STARTUP_WARMUP_ENABLED=$(get(ENV, "STARTUP_WARMUP_ENABLED", "(unset)")) STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED=$(get(ENV, "STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED", "(unset)"))")
 flush(stdout)
 
 if _bool_env("CLUSTERING_QUERY_ENABLED", false)
@@ -277,5 +296,15 @@ else
   flush(stdout)
 end
 
-@async _run_startup_warmup(_warmup_base_url(host, port))
+@async begin
+  try
+    _run_startup_warmup(_warmup_base_url(host, port))
+  catch err
+    println("[warmup] unexpected startup warmup error=$(err)")
+    flush(stdout)
+  finally
+    GC.gc(true)
+    _signal_startup_warmup_complete()
+  end
+end
 Genie.up(port, host; async=false)

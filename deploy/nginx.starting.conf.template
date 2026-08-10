@@ -1,0 +1,29 @@
+server {
+  listen ${PORT};
+  server_name _;
+
+  client_header_buffer_size 16k;
+  large_client_header_buffers 8 64k;
+
+  root /app/public;
+  index index.html;
+
+  # Keep Render's configured health check unhealthy until Genie warmup completes.
+  location = /api/health {
+    default_type application/json;
+    add_header Retry-After 5 always;
+    return 503 '{"status":"warming_up"}';
+  }
+
+  # Never proxy user requests to Genie while startup warmup owns the process.
+  location /api/ {
+    default_type application/json;
+    add_header Retry-After 5 always;
+    return 503 '{"error":"service_warming_up"}';
+  }
+
+  # Static assets and HEAD / remain available without touching internal Genie.
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}

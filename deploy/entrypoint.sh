@@ -70,18 +70,32 @@ elif [[ "${SEED_ON_START:-false}" == "true" ]]; then
 fi
 unset clustering_query_enabled
 
-# Nginx 設定生成（外向き PORT / 内向き GENIE_PORT を埋め込む）
+if [[ "${PORT}" == "${GENIE_PORT}" ]]; then
+  echo "[entrypoint] PORT and GENIE_PORT must differ"
+  exit 1
+fi
+
+: "${STARTUP_WARMUP_MARKER:=/tmp/startup-warmup-complete}"
+export STARTUP_WARMUP_MARKER
+rm -f -- "${STARTUP_WARMUP_MARKER}"
+
+# Nginxは先にmaintenance設定で起動する。RenderはPORTを検出できるが、
+# /api/healthはwarmup完了まで503なので準備前のinstanceはhealthyにならない。
+envsubst '${PORT} ${GENIE_PORT}' \
+  < /etc/nginx/templates/app.starting.conf.template \
+  > /etc/nginx/conf.d/default.conf
 envsubst '${PORT} ${GENIE_PORT}' \
   < /etc/nginx/templates/app.conf.template \
-  > /etc/nginx/conf.d/default.conf
-
-# Nginx conf 検証
+  > /tmp/nginx-ready.conf
 nginx -t
+nginx -g 'daemon off;' &
+NGINX_PID=$!
+echo "[entrypoint] Nginx is listening on port ${PORT} in warming-up mode"
 
 # ---- Genie 起動（バックグラウンド）----
 # Render の環境変数を保持しつつ、書き込み可能な HOME で scuser として起動する。
 # build時に作成したportable cacheだけを使い、512MiB環境でのruntime precompileを禁止する。
-echo "[entrypoint] CLUSTERING_QUERY_ENABLED=${CLUSTERING_QUERY_ENABLED:-false} STARTUP_WARMUP_ENABLED=${STARTUP_WARMUP_ENABLED:-true}"
+echo "[entrypoint] CLUSTERING_QUERY_ENABLED=${CLUSTERING_QUERY_ENABLED:-false} STARTUP_WARMUP_ENABLED=${STARTUP_WARMUP_ENABLED:-true} STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED=${STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED:-false}"
 echo "[entrypoint] JULIA_CPU_TARGET=${JULIA_CPU_TARGET:-generic}; runtime precompile disabled"
 if id scuser >/dev/null 2>&1; then
   su --preserve-environment -s /bin/bash -c \
@@ -92,8 +106,6 @@ else
 fi
 GENIE_PID=$!
 
-# Genie がlistenする前にNginxを公開すると、Renderがlive判定した後に/apiが502になる。
-# Genie readinessを同期的に待ち、成功後にだけ公開ポートを開く。
 GENIE_STARTUP_TIMEOUT_SECONDS="${GENIE_STARTUP_TIMEOUT_SECONDS:-300}"
 if ! [[ "${GENIE_STARTUP_TIMEOUT_SECONDS}" =~ ^[0-9]+$ ]] || (( GENIE_STARTUP_TIMEOUT_SECONDS <= 0 )); then
   echo "[entrypoint] Invalid GENIE_STARTUP_TIMEOUT_SECONDS; using 300"
@@ -104,16 +116,17 @@ echo "[entrypoint] Waiting up to ${GENIE_STARTUP_TIMEOUT_SECONDS}s for Genie on 
 genie_ready=false
 for ((attempt = 0; attempt < GENIE_STARTUP_TIMEOUT_SECONDS * 2; attempt++)); do
   if ! kill -0 "${GENIE_PID}" >/dev/null 2>&1; then
-    if wait "${GENIE_PID}"; then
-      EXIT_CODE=0
-    else
-      EXIT_CODE=$?
-    fi
-    (( EXIT_CODE == 0 )) && EXIT_CODE=1
-    echo "[entrypoint] Genie exited before becoming ready (code=${EXIT_CODE})"
-    exit "${EXIT_CODE}"
+    echo "[entrypoint] Genie exited before becoming ready"
+    kill "${NGINX_PID}" >/dev/null 2>&1 || true
+    wait "${GENIE_PID}" "${NGINX_PID}" >/dev/null 2>&1 || true
+    exit 1
   fi
-
+  if ! kill -0 "${NGINX_PID}" >/dev/null 2>&1; then
+    echo "[entrypoint] Nginx exited during startup"
+    kill "${GENIE_PID}" >/dev/null 2>&1 || true
+    wait "${GENIE_PID}" "${NGINX_PID}" >/dev/null 2>&1 || true
+    exit 1
+  fi
   if (echo > "/dev/tcp/127.0.0.1/${GENIE_PORT}") >/dev/null 2>&1; then
     genie_ready=true
     break
@@ -123,14 +136,51 @@ done
 
 if [[ "${genie_ready}" != "true" ]]; then
   echo "[entrypoint] Genie did not become ready within ${GENIE_STARTUP_TIMEOUT_SECONDS}s"
-  kill "${GENIE_PID}" >/dev/null 2>&1 || true
-  wait "${GENIE_PID}" >/dev/null 2>&1 || true
+  kill "${GENIE_PID}" "${NGINX_PID}" >/dev/null 2>&1 || true
+  wait "${GENIE_PID}" "${NGINX_PID}" >/dev/null 2>&1 || true
   exit 1
 fi
 
-echo "[entrypoint] Genie is ready on 127.0.0.1:${GENIE_PORT}; starting Nginx on port ${PORT}"
-nginx -g 'daemon off;' &
-NGINX_PID=$!
+STARTUP_WARMUP_TIMEOUT_SECONDS="${STARTUP_WARMUP_TIMEOUT_SECONDS:-300}"
+if ! [[ "${STARTUP_WARMUP_TIMEOUT_SECONDS}" =~ ^[0-9]+$ ]] || (( STARTUP_WARMUP_TIMEOUT_SECONDS <= 0 )); then
+  echo "[entrypoint] Invalid STARTUP_WARMUP_TIMEOUT_SECONDS; using 300"
+  STARTUP_WARMUP_TIMEOUT_SECONDS=300
+fi
+
+echo "[entrypoint] Genie is listening; waiting up to ${STARTUP_WARMUP_TIMEOUT_SECONDS}s for startup warmup"
+warmup_ready=false
+for ((attempt = 0; attempt < STARTUP_WARMUP_TIMEOUT_SECONDS * 2; attempt++)); do
+  if [[ -f "${STARTUP_WARMUP_MARKER}" ]]; then
+    warmup_ready=true
+    break
+  fi
+  if ! kill -0 "${GENIE_PID}" >/dev/null 2>&1; then
+    echo "[entrypoint] Genie exited during startup warmup"
+    kill "${NGINX_PID}" >/dev/null 2>&1 || true
+    wait "${GENIE_PID}" "${NGINX_PID}" >/dev/null 2>&1 || true
+    exit 1
+  fi
+  if ! kill -0 "${NGINX_PID}" >/dev/null 2>&1; then
+    echo "[entrypoint] Nginx exited during startup warmup"
+    kill "${GENIE_PID}" >/dev/null 2>&1 || true
+    wait "${GENIE_PID}" "${NGINX_PID}" >/dev/null 2>&1 || true
+    exit 1
+  fi
+  sleep 0.5
+done
+
+if [[ "${warmup_ready}" != "true" ]]; then
+  echo "[entrypoint] Startup warmup did not complete within ${STARTUP_WARMUP_TIMEOUT_SECONDS}s"
+  kill "${GENIE_PID}" "${NGINX_PID}" >/dev/null 2>&1 || true
+  wait "${GENIE_PID}" "${NGINX_PID}" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+# warmup完了後にだけAPI proxyを有効化し、health checkを200へ切り替える。
+cp /tmp/nginx-ready.conf /etc/nginx/conf.d/default.conf
+nginx -t
+nginx -s reload
+echo "[entrypoint] Startup warmup complete; service is ready on port ${PORT}"
 
 # どちらかが落ちたらコンテナも落としてRenderに再起動させる。
 if wait -n "${GENIE_PID}" "${NGINX_PID}"; then
