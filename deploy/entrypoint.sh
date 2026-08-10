@@ -80,13 +80,15 @@ nginx -t
 
 # ---- Genie 起動（バックグラウンド）----
 # Render の環境変数を保持しつつ、書き込み可能な HOME で scuser として起動する。
+# build時に作成したportable cacheだけを使い、512MiB環境でのruntime precompileを禁止する。
 echo "[entrypoint] CLUSTERING_QUERY_ENABLED=${CLUSTERING_QUERY_ENABLED:-false} STARTUP_WARMUP_ENABLED=${STARTUP_WARMUP_ENABLED:-true}"
+echo "[entrypoint] JULIA_CPU_TARGET=${JULIA_CPU_TARGET:-generic}; runtime precompile disabled"
 if id scuser >/dev/null 2>&1; then
   su --preserve-environment -s /bin/bash -c \
-    'exec env HOME=/home/scuser USER=scuser LOGNAME=scuser PORT="$GENIE_PORT" HOST="$GENIE_HOST" GENIE_ENV="$GENIE_ENV" JULIA_DEPOT_PATH="$JULIA_DEPOT_PATH" julia --project=/app /app/scripts/start_server.jl' \
+    'exec env HOME=/home/scuser USER=scuser LOGNAME=scuser PORT="$GENIE_PORT" HOST="$GENIE_HOST" GENIE_ENV="$GENIE_ENV" JULIA_DEPOT_PATH="$JULIA_DEPOT_PATH" julia --startup-file=no --history-file=no --compiled-modules=existing --pkgimages=existing --project=/app /app/scripts/start_server.jl' \
     scuser &
 else
-  PORT="${GENIE_PORT}" HOST="${GENIE_HOST}" GENIE_ENV="${GENIE_ENV}" JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH}" julia --project=/app /app/scripts/start_server.jl &
+  PORT="${GENIE_PORT}" HOST="${GENIE_HOST}" GENIE_ENV="${GENIE_ENV}" JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH}" julia --startup-file=no --history-file=no --compiled-modules=existing --pkgimages=existing --project=/app /app/scripts/start_server.jl &
 fi
 GENIE_PID=$!
 

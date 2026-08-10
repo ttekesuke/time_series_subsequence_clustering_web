@@ -42,7 +42,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV GENIE_ENV=prod \
     JULIA_REVISE=off \
     JULIA_DEPOT_PATH=/app/.julia \
-    JULIA_NUM_THREADS=1
+    JULIA_NUM_THREADS=1 \
+    JULIA_CPU_TARGET=generic \
+    JULIA_NUM_PRECOMPILE_TASKS=1 \
+    JULIA_PKG_PRECOMPILE_AUTO=0
 
 RUN mkdir -p /app/.julia
 
@@ -80,7 +83,10 @@ RUN rm -f /etc/nginx/sites-enabled/default \
 ENV GENIE_ENV=prod \
     JULIA_REVISE=off \
     JULIA_DEPOT_PATH=/app/.julia \
-    JULIA_NUM_THREADS=1
+    JULIA_NUM_THREADS=1 \
+    JULIA_CPU_TARGET=generic \
+    JULIA_NUM_PRECOMPILE_TASKS=1 \
+    JULIA_PKG_PRECOMPILE_AUTO=0
 
 RUN mkdir -p /app/.julia
 
