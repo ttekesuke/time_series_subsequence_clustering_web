@@ -155,6 +155,9 @@ const SC_RENDER_LOG_TAIL_CHARS::Int = 12000
 const GITHUB_WORKFLOW_RUNS_PER_PAGE::Int = 10
 const GITHUB_WORKFLOW_POLL_INTERVAL_SECONDS::Float64 = 1.0
 const GITHUB_WORKFLOW_DISPATCH_TOLERANCE_SECONDS::Int = 5
+# GitHub caps the complete workflow_dispatch inputs payload at 65,535 chars.
+# Leave room for request_id and JSON framing in addition to params_b64.
+const GITHUB_WORKFLOW_PARAMS_B64_MAX_CHARS::Int = 60_000
 
 """base C (MIDI) for given octave index in this system"""
 base_c_midi(octave::Integer)::Int = (Int(octave) + OCTAVE_TO_MIDI_C_OFFSET) * STEPS_PER_OCTAVE

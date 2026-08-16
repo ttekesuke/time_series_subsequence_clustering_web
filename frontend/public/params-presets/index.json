@@ -1,0 +1,59 @@
+{
+  "presets": [
+    {
+      "file": "all-parameters-500-steps-4-streams.params.json",
+      "label": "All parameters: 500 steps / 4 streams",
+      "description": "BPM 480固定。densityだけは単音化のため0固定とし、ほかの全パラメータに大きな上昇・下降・急反転・段階・周期変化を与えます。"
+    },
+    {
+      "file": "tie-increasing.params.json",
+      "label": "Tie: increasing",
+      "description": "同音反復を保ちながら、tie率を0から1へ徐々に増やします。"
+    },
+    {
+      "file": "tie-decreasing.params.json",
+      "label": "Tie: decreasing",
+      "description": "tie率を1から0へ徐々に減らし、後半ほど再発音を増やします。"
+    },
+    {
+      "file": "register-motion-increasing.params.json",
+      "label": "Register motion: increasing",
+      "description": "音域移動の自由度とAREA複雑度を徐々に増やします。"
+    },
+    {
+      "file": "register-motion-decreasing.params.json",
+      "label": "Register motion: decreasing",
+      "description": "広い音域移動から始め、徐々に同じ音域へ収束させます。"
+    },
+    {
+      "file": "dissonance-increasing.params.json",
+      "label": "Dissonance: increasing",
+      "description": "協和的な響きから不協和度の高い響きへ移行します。"
+    },
+    {
+      "file": "dissonance-decreasing.params.json",
+      "label": "Dissonance: decreasing",
+      "description": "不協和度の高い響きから協和的な響きへ移行します。"
+    },
+    {
+      "file": "volume-crescendo.params.json",
+      "label": "Volume: crescendo",
+      "description": "音量ターゲットを0.2から0.9へ上げます。"
+    },
+    {
+      "file": "volume-decrescendo.params.json",
+      "label": "Volume: decrescendo",
+      "description": "音量ターゲットを0.9から0.2へ下げます。"
+    },
+    {
+      "file": "calm-to-busy.params.json",
+      "label": "Combined: calm to busy",
+      "description": "音域移動、不協和度、音量、音色複雑度、テンポをまとめて増やします。"
+    },
+    {
+      "file": "busy-to-calm.params.json",
+      "label": "Combined: busy to calm",
+      "description": "複雑で強い状態から、静かで反復的な状態へ収束させます。"
+    }
+  ]
+}

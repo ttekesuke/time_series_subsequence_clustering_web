@@ -5,6 +5,7 @@ using Dates
 using HTTP
 using JSON3
 using Base64
+using CodecZlib
 using UUIDs
 using EzXML
 
@@ -5731,6 +5732,11 @@ function _github_list_workflow_runs(; workflow::AbstractString, ref::AbstractStr
   return JSON3.read(String(res.body))
 end
 
+function _gzip_base64encode(payload::AbstractString)::String
+  compressed = transcode(GzipCompressor, Vector{UInt8}(codeunits(payload)))
+  return base64encode(compressed)
+end
+
 function _find_new_run_after(obj, dispatched_at_utc::DateTime)
   obj === nothing && return nothing
   runs = get(obj, "workflow_runs", Any[])
@@ -5763,7 +5769,16 @@ function dispatch_generate_polyphonic()
   ref = _env_required("GITHUB_REF")
 
   params_json = JSON3.write(payload_dict)
-  params_b64 = base64encode(params_json)
+  params_b64 = _gzip_base64encode(params_json)
+  if length(params_b64) > Config.GITHUB_WORKFLOW_PARAMS_B64_MAX_CHARS
+    return Dict(
+      "ok" => false,
+      "error" => "Compressed workflow input is still too large: $(length(params_b64)) chars (limit $(Config.GITHUB_WORKFLOW_PARAMS_B64_MAX_CHARS)).",
+      "request_id" => request_id,
+      "params_json_bytes" => ncodeunits(params_json),
+      "params_b64_chars" => length(params_b64),
+    )
+  end
 
   dispatched_at = now(UTC)
 
@@ -5816,6 +5831,8 @@ function dispatch_generate_polyphonic()
     "run_url" => run_url,
     "run_html_url" => html_url,
     "http_status" => res.status,
+    "params_json_bytes" => ncodeunits(params_json),
+    "params_b64_chars" => length(params_b64),
   )
 end
 

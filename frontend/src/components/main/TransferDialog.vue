@@ -57,13 +57,50 @@
             </div>
           </div>
         </div>
+        <div class="preset-block">
+          <div class="transfer-label">Sample params</div>
+          <div class="preset-controls">
+            <v-select
+              v-model="selectedPreset"
+              class="preset-select"
+              :items="presets"
+              item-title="label"
+              item-value="file"
+              density="compact"
+              variant="outlined"
+              hide-details
+              clearable
+              label="Choose a preset"
+              :loading="presetsLoading"
+              :disabled="presetsLoading || presets.length === 0"
+            />
+            <v-btn
+              size="small"
+              variant="outlined"
+              color="primary"
+              :loading="presetLoading"
+              :disabled="!selectedPreset || presetLoading"
+              @click="applySelectedPreset"
+            >Apply</v-btn>
+          </div>
+          <div v-if="presetDescription" class="preset-description">
+            {{ presetDescription }}
+          </div>
+          <div v-if="presetError" class="preset-error">{{ presetError }}</div>
+        </div>
       </v-card-text>
     </v-card>
   </v-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+
+type ParamsPreset = {
+  file: string
+  label: string
+  description?: string
+}
 
 const props = defineProps<{
   modelValue: boolean
@@ -87,6 +124,36 @@ const open = computed({
 const resultJsonModel = ref<any>(null)
 const wavModel = ref<any>(null)
 const paramsJsonModel = ref<any>(null)
+const presets = ref<ParamsPreset[]>([])
+const selectedPreset = ref<string | null>(null)
+const presetsLoading = ref(false)
+const presetLoading = ref(false)
+const presetError = ref('')
+
+const presetDescription = computed(() => (
+  presets.value.find(preset => preset.file === selectedPreset.value)?.description ?? ''
+))
+
+const publicAssetUrl = (relativePath: string) => {
+  const base = String(import.meta.env.BASE_URL || '/')
+  return `${base.replace(/\/$/, '')}/${relativePath.replace(/^\//, '')}`
+}
+
+onMounted(async () => {
+  presetsLoading.value = true
+  presetError.value = ''
+  try {
+    const response = await fetch(publicAssetUrl('params-presets/index.json'))
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const manifest = await response.json()
+    presets.value = Array.isArray(manifest?.presets) ? manifest.presets : []
+  } catch (error) {
+    console.error('Failed to load sample params list', error)
+    presetError.value = 'Sample params list could not be loaded.'
+  } finally {
+    presetsLoading.value = false
+  }
+})
 
 const normalizeSingleFile = (val: any): File | null => {
   if (!val) return null
@@ -112,6 +179,25 @@ const onPickParamsJson = (val: any) => {
   paramsJsonModel.value = null
 }
 
+const applySelectedPreset = async () => {
+  if (!selectedPreset.value) return
+  presetLoading.value = true
+  presetError.value = ''
+  try {
+    const response = await fetch(publicAssetUrl(`params-presets/${selectedPreset.value}`))
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const text = await response.text()
+    JSON.parse(text)
+    const file = new File([text], selectedPreset.value, { type: 'application/json' })
+    emit('upload-params-json', file)
+  } catch (error) {
+    console.error('Failed to load sample params', error)
+    presetError.value = 'The selected sample params could not be loaded.'
+  } finally {
+    presetLoading.value = false
+  }
+}
+
 const emitDownloadResultJson = () => emit('download-result-json')
 const emitDownloadResultWav = () => emit('download-result-wav')
 const emitDownloadParamsJson = () => emit('download-params-json')
@@ -133,6 +219,35 @@ const emitDownloadParamsJson = () => emit('download-params-json')
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.preset-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 330px;
+}
+.preset-block {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #fafafa;
+}
+.preset-block .preset-controls {
+  margin-top: 6px;
+}
+.preset-select {
+  min-width: 260px;
+}
+.preset-description {
+  margin-top: 6px;
+  color: #666;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+.preset-error {
+  color: #b00020;
+  font-size: 0.75rem;
 }
 .transfer-label {
   font-size: 0.75rem;
