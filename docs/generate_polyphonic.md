@@ -314,59 +314,28 @@ weight = (1 - r) + r * exp(-age / span)
 
 `recency=0` は直近重視ではなく recency weighting 無効です。このとき全履歴が等重みになります。直近の音型を強く参照したい場合は `recency_center` を 1 側に寄せます。
 
-この重みは `dist`, `quantity`, `complexity`, `usage` の集計に使われます。古いクラスタを削除するのではなく、候補評価時の重みだけを下げます。dissonance STM の roughness 計算には直接入りません。
+この重みは、各windowの予測分布内で過去の後続値が投票するときに使われます。古いクラスタを削除するのではなく、古い後続例の票だけを下げます。予測分布を作れない場合のfallbackでは、従来どおり `dist`, `quantity`, `complexity`, `usage` の集計にも使われます。dissonance STM の roughness 計算には直接入りません。
 
-### 7.1 occurrence interval complexity
+### 7.1 複数windowの予測分布
 
-通常 dimension と AREA の候補評価には、既存 4 指標に加えて、クラスタの出現間隔を同じクラスタリング機構で再解析した 5 番目の指標が入ります。
+global managerと各stream managerは同じ方式で予測分布を作ります。現在末尾が属する各window sizeのクラスタについて、過去の出現位置の直後にあった値を集めます。各window内の分布を一度正規化し、文脈長、支持数、現在文脈との類似度を掛けたwindow weightで合成します。
 
-```text
-base cluster starts:
-si = [0, 4, 8, 12]
-
-occurrence interval series:
-diff(si) = [4, 4, 4]
-```
-
-`si` が 3 件未満の場合は interval series が subsequence を作れないため、この指標は `ready=false` となり、候補 score の分子にも分母にも入りません。3 件に達すると `diff(si)` が 2 点になり、`POLYPHONIC_MIN_WINDOW_SIZE=2` のメタ時系列として初めてクラスタリングされます。
-
-メタ時系列からも同じ 4 指標を計算します。
+候補の基礎scoreは合成分布上のpredictive surpriseです。
 
 ```text
-interval cluster distance
-interval cluster quantity
-interval calculate_cluster_complexity
-interval usage
+likelihood(candidate) = Σ mass * exp(-0.5 * (distance / 0.22)^2)
+score(candidate) = 1 - likelihood(candidate) / peak_likelihood
 ```
 
-これらをまとめた occurrence interval complexity を、base 4 指標と同じ 1 指標分の重みで合成します。base 4 指標がすべて有効なら、base 側が 80%、occurrence interval 側が 20% です。現在この重みを変更する画面パラメータはありません。
+このscoreへ、クラスタ代表間距離による多様性、クラスタ代表系列の形状複雑度、occurrence interval complexityを`6:1:1:1`で合成します。各構造軸は同じ候補集合内で0..1化し、候補間に差がない軸は除外します。
 
-絶対的な周期長ではなく間隔パターンの複雑さを見るため、gap は最初の interval window の平均値で割って比率化します。等間隔の `[4,4]` と `[8,8]` はどちらも `[1,1]` になります。
+occurrence interval complexityの内部も通常系列と同じ方式です。正規化した出現間隔列に対して、`interval predictive surprise : interval cluster diversity : interval cluster shape complexity = 6:1:1`で合成します。旧`interval quantity`と`interval usage`はscoreには使いません。区間の後続分布をまだ作れない段階ではoccurrence軸全体を合成から外します。
 
-計算量を抑えるため、次の決定論的な制限があります。
+globalとstreamで履歴は別ですが、分布構築、構造軸合成、score変換の関数は共通です。通常dimension、AREA、note complexity、clustered tieの候補評価に同じ方式を使います。
 
-- 候補が完成させる全 window のうち、対数間隔で最大 4 scale を評価する。
-- 各 interval manager は直近 64 gap を基本履歴とする。
-- manager が 128 gap まで伸びた場合、直近 64 gap から再構築する。
-- interval manager 自身では occurrence interval complexity を再計算しない。再帰は 1 段で止まる。
+### 7.2 fallback metric
 
-global manager の `si` からは複数 stream を合わせた状態の反復間隔、stream manager の `si` からは各 stream の反復間隔が評価されます。最終実音を選ぶ dissonance 専用段階には入りません。
-
-### 7.2 metric calibrator
-
-`dist`, `quantity`, `complexity`, `usage` と occurrence interval 側の同じ4指標は、候補集合内の min/max では正規化しません。候補評価を始める前に、commit 済み manager の metric snapshot から calibrator を固定します。
-
-```text
-z = direction * (raw - committed_center) / scale
-score = 0.5 + atan(z) / pi
-```
-
-- `dist`, `complexity`: raw が大きいほど score が高い。
-- `quantity`, `usage`: raw が小さいほど score が高い。
-- commit 済み現在値は `0.5`。
-- `scale` は現在値と有効 step 数から事前に決まり、候補評価中は変わらない。
-
-通常 dimension の各 stream 決定、AREA stage 1 / stage 2 のそれぞれで、候補loopより前にglobal / stream calibratorを作ります。同じcalibratorに対する同じraw値は、候補数や候補範囲を変えても同じ0..1 scoreになります。
+過去の後続例がなく予測分布を作れないmanagerだけ、予測軸を従来の `dist`, `quantity`, `complexity`, `usage` と occurrence interval complexityへfallbackします。画面のglobal/stream metric weightはこのfallback scoreに適用されます。多様性・形状・occurrenceの3構造軸は、予測軸がfallbackした場合も候補間に差があれば合成されます。
 
 ## 8. 通常 dimension の greedy 選択
 

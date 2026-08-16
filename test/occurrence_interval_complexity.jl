@@ -14,18 +14,18 @@ using Test
   @test irregular.complexity > regular.complexity
 end
 
-@testset "repeating interval subsequences use the existing four metrics" begin
+@testset "occurrence intervals predict the next normalized gap" begin
   pcm = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
 
-  regular = pcm._occurrence_interval_metrics_for_starts([0, 4, 8, 12], 0.02, 2)
-  alternating = pcm._occurrence_interval_metrics_for_starts([0, 3, 8, 11, 16], 0.02, 2)
+  regular = pcm._occurrence_interval_metrics_for_starts([0, 4, 8, 12, 16], 0.02, 2)
+  delayed = pcm._occurrence_interval_metrics_for_starts([0, 4, 8, 12, 20], 0.02, 2)
 
   @test regular.ready
-  @test regular.quantity > 0.0
-  @test regular.usage > 0.0
-  @test alternating.ready
-  @test alternating.quantity > 0.0
-  @test alternating.usage > 0.0
+  @test delayed.ready
+  @test isfinite(regular.prediction)
+  @test isfinite(delayed.prediction)
+  @test regular.prediction == 0.0
+  @test delayed.prediction > regular.prediction
 end
 
 @testset "candidate simulation exposes interval metrics only at the third match" begin
@@ -90,7 +90,7 @@ end
   @test length(legacy) == 4
 end
 
-@testset "not-ready interval metrics do not change candidate scores" begin
+@testset "interval structure waits for a predictive distribution" begin
   pcm = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
   controller = Main.TimeseriesClusteringAPI.TimeSeriesController
   empty_temporal = pcm.EMPTY_OCCURRENCE_INTERVAL_METRICS
@@ -111,5 +111,60 @@ end
   )
 
   @test combined[1] == base[1]
-  @test combined[2] != base[2]
+  @test combined[2] == base[2]
+end
+
+@testset "recency changes candidate complexity scores" begin
+  pcm = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
+  controller = Main.TimeseriesClusteringAPI.TimeSeriesController
+  config = Main.TimeseriesClusteringAPI.Config
+
+  function scores_for_recency(recency)
+    manager = pcm.Manager(
+      [[0.0], [0.0], [0.0], [1.0], [1.0], [1.0], [0.0], [0.0], [0.0]],
+      config.DEFAULT_MERGE_THRESHOLD_RATIO,
+      config.SUBSEQUENCE_MIN_WINDOW_SIZE,
+      false;
+      scale_mode=:range_fixed,
+      range_min=0.0,
+      range_max=5.0,
+      recency=recency,
+    )
+    pcm.process_data!(manager)
+    controller.initial_calc_values!(
+      manager,
+      pcm.transform_clusters(manager.clusters, config.SUBSEQUENCE_MIN_WINDOW_SIZE),
+    )
+    empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
+
+    calibrator = controller.build_extended_metric_calibrator(manager)
+    raw_dist = Float64[]
+    raw_quantity = Float64[]
+    raw_complexity = Float64[]
+    raw_usage = Float64[]
+    temporal_metrics = pcm.OccurrenceIntervalMetrics[]
+    for candidate in 0:5
+      metrics = pcm.simulate_add_and_calculate_all_extended(manager, Float64[candidate])
+      push!(raw_dist, metrics.distance)
+      push!(raw_quantity, metrics.quantity)
+      push!(raw_complexity, metrics.complexity)
+      push!(raw_usage, metrics.usage)
+      push!(temporal_metrics, metrics.occurrence_intervals)
+    end
+
+    return controller.combine_complexity_metric_scores_with_occurrence_intervals(
+      raw_dist,
+      raw_quantity,
+      raw_complexity,
+      raw_usage,
+      temporal_metrics;
+      calibrator=calibrator,
+    )
+  end
+
+  no_recency = scores_for_recency(0.0)
+  max_recency = scores_for_recency(1.0)
+
+  @test length(no_recency) == length(max_recency) == 6
+  @test maximum(abs.(no_recency .- max_recency)) > 0.1
 end

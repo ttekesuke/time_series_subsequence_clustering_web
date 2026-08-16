@@ -4,7 +4,7 @@
 
 `generate()` は、既存の初期系列をクラスタリングした上で、候補値を 1 つずつ仮追加し、候補ごとの単純/複雑スコアが `complexity_transition` の目標値に近いものを選びます。
 
-現在の単純/複雑スコアは `dist`, `quantity`, `complexity`, `usage` の 4 基本指標と、クラスタの出現間隔を再解析する occurrence interval complexity を合成します。
+現在の単純/複雑スコアは、現在末尾が属する複数 window size のクラスタから作る predictive surprise を主軸に、クラスタ間距離による多様性、クラスタ代表系列の形状複雑度、occurrence interval complexityを合成します。`quantity`と`usage`は予測分布の支持数・recencyへ役割を移し、後続例がなく予測分布を作れない場合は従来4指標scoreのfallbackにも使います。
 
 ## 1. エンドポイント
 
@@ -63,10 +63,11 @@
    - `range_min/range_max` を manager に渡す。
 4. 初期系列 `first_elements` を `process_data!` でクラスタリングする。
 5. 初期クラスタから距離・量・複雑度キャッシュを作る。
-6. `complexity_transition` の各 target について、候補値を全て仮追加してスコアを計算する。
-7. target に最も近い候補を選ぶ。
-8. 選ばれた値を本当に manager に追加し、キャッシュを更新する。
-9. 生成終了後、timeline と cluster tree を返す。
+6. 各 window size の最新クラスタから過去の後続値を集め、予測分布を作る。
+7. `complexity_transition` の各 target について、候補値の predictive surprise を計算する。
+8. target に最も近い候補を選ぶ。
+9. 選ばれた値を本当に manager に追加し、キャッシュを更新する。
+10. 生成終了後、timeline と cluster tree を返す。
 
 仮追加は `simulate_add_and_calculate(manager, Float64[candidate])` で行います。この関数は rollback transaction を使うため、候補試算後に manager の状態は元に戻ります。
 
@@ -95,103 +96,72 @@ PolyphonicClusterManager.Manager(
 abs(3 - 0) / 9 = 0.333...
 ```
 
-ただし、最終的な候補スコアはこの直接距離だけでは決まりません。候補を追加した結果としてできるクラスタ構造、クラスタ間距離、クラスタ内数量、代表系列の複雑度を集計した値で決まります。
+この正規化距離は、過去に観測した後続値の周辺へ確率を滑らかに広げるときに使います。
 
-## 5. 候補ごとの生スコア
+## 5. 複数 window の予測分布
 
-各生成ステップで、候補 `range_min:range_max` を全て試します。
+候補を追加する前に、各 window size の最新部分列が属するクラスタを調べます。そのクラスタの過去の start index ごとに、部分列の直後に実際に現れた値を後続例として集めます。
 
-```julia
-avg_dist, quantity, complexity, usage =
-  PolyphonicClusterManager.simulate_add_and_calculate_all(manager, Float64[candidate])
-```
-
-返る値は次です。
-
-- `avg_dist`
-  - クラスタ代表間距離の集計です。
-  - 大きいほど複雑側として扱います。
-- `quantity`
-  - クラスタ内の数に基づく量スコアです。
-  - 基本式は `cluster_size * window_size`。
-  - 大きいほど反復・まとまりが強いので、複雑度判定では小さいほど複雑側として扱います。
-- `complexity`
-  - クラスタ代表系列そのものの隣接変化量です。
-  - 大きいほど複雑側として扱います。
-- `usage`
-  - 候補を仮追加したあと、最新部分列が入ったクラスタの使用密度です。
-  - そのクラスタの `si` にある過去 start index を、直近性ウェイト付きで数えます。
-  - 大きいほど「似た近傍が最近よく使われている」ため、複雑度判定では小さいほど複雑側として扱います。
-
-重要なのは、`avg_dist` は `abs(candidate - current_value) / range` の直接値ではないことです。候補追加後のクラスタ木とキャッシュを使った集計値です。
-
-`usage` も候補値の完全一致ヒストグラムではありません。例えば過去に `50` 近傍の部分列が多くあり、候補 `51` が同じクラスタへ入るなら、`51` の `usage` は高くなります。つまり「50 ではないから 51 は新しい」とは扱いません。
-
-### 5.1 出現間隔の二階クラスタリング
-
-候補追加後のクラスタに start index が 3 件以上ある場合、そのクラスタの `si` から階差数列を作ります。
+各 window は後続例の合計が 1 になるように正規化し、次の積で window 間の重みを決めます。
 
 ```text
-si = [0, 4, 8, 12]
-diff(si) = [4, 4, 4]
+window_weight = window_size * support_reliability * context_cohesion
+support_reliability = support / (support + 2)
 ```
 
-この階差数列を同じ `PolyphonicClusterManager` へ入れ、再び `dist`, `quantity`, `complexity`, `usage` を計算します。4つをまとめた occurrence interval complexity が、基本4指標に対する5番目の指標になります。
+長い文脈、後続例が多い文脈、現在末尾と過去文脈がよく似るクラスタほど強くなります。最大 context length は32、各contextの履歴は直近64件です。
 
-`si` が2件以下なら階差数列がsubsequenceを作れないため、候補scoreには一切寄与しません。`si`が3件になった時点で`diff(si)`が2点になり、初めて有効になります。
+## 6. 候補の predictive surprise
 
-間隔は最初のinterval windowの平均値で割った比率として解析するため、`[4,4]`と`[8,8]`は同じ単純な間隔形として扱われます。計算量を制限するため、base clusterは対数間隔の最大4 scale、interval履歴は基本的に直近64 gapを使います。二階manager自身の出現間隔は解析せず、再帰は1段で止まります。
-
-## 6. 候補評価前に固定する calibrator
-
-各候補の raw metric は、候補集合の min/max では正規化しません。各 generation step の候補評価を始める前に、commit 済み manager の現在値だけから `ExtendedMetricCalibrator` を作り、その snapshot を全候補で共有します。
-
-metric ごとの写像は次です。
+各後続値の周辺へ Gaussian kernel で確率を広げ、全 window の分布を合成します。候補と後続値の距離は manager と同じ `range_fixed` 距離を使い、bandwidth は0.22です。
 
 ```text
-z = direction * (raw - committed_center) / scale
-score = 0.5 + atan(z) / pi
+likelihood(candidate) = Σ mass * exp(-0.5 * (distance / 0.22)^2)
+surprise(candidate) = 1 - likelihood(candidate) / peak_likelihood
 ```
 
-`score` は 0..1 に収まり、commit 済みの現在値は 0.5 です。`scale` は現在の metric の絶対値と有効 step 数から、1 step で動く幅として候補評価前に固定します。値が0付近でも写像が潰れないように metric ごとの下限があります。
+最も典型的な既知の後続は surprise 0、予測分布から遠い候補ほど1へ近づきます。複数の後続パターンがあれば分布は複数の山を持ちます。
 
-複雑側の向き `direction` は指標ごとに違います。
-
-- `dist`: 大きいほど複雑
-- `quantity`: 小さいほど複雑
-- `complexity`: 大きいほど複雑
-- `usage`: 小さいほど複雑
-
-したがって候補を追加・削除したり候補範囲を広げたりしても、同じ calibrator に対する同じ raw 値の score は変わりません。occurrence interval の4指標も、base metric とは別の calibrator を候補評価前に固定します。
+予測に使える過去の後続例が一件もない場合だけ、従来の4基本指標と occurrence interval complexity の合成scoreへfallbackします。
 
 ## 7. target へのマッチング
 
-`combine_complexity_metric_scores(...)` は、固定 calibrator で0..1化した4指標を metric weight で加重平均します。その後 `select_candidate_by_complexity_score(...)` が target に最も近い候補を選びます。
-
-概念的には次です。
+predictive surpriseに3つの構造軸を合成します。
 
 ```text
-candidate_score =
-  (
-    dist_score
-    + quantity_score
-    + complexity_score
-    + usage_score
-    + occurrence_interval_score
-  ) / total_weight
+combined = (
+  6 * predictive_surprise
+  + 1 * cluster_diversity
+  + 1 * cluster_shape_complexity
+  + 1 * occurrence_interval_complexity
+) / active_weights
 ```
 
-そして次を最小化する候補を選びます。
+`cluster_diversity`は候補追加後のクラスタ代表間距離、`cluster_shape_complexity`はクラスタ代表系列内の変化量です。各構造軸は候補集合内で0..1化し、候補間に差がない軸は合成から外します。
+
+`occurrence_interval_complexity`も、出現間隔を正規化した時系列に同じ方式を適用して計算します。
 
 ```text
-abs(candidate_score - target_val)
+occurrence_interval_complexity = (
+  6 * interval_predictive_surprise
+  + 1 * interval_cluster_diversity
+  + 1 * interval_cluster_shape_complexity
+) / active_weights
 ```
 
-つまり `complexity_transition=0.3` は「候補値 3 を選ぶ」という意味ではありません。「現在のクラスタ構造から見た単純/複雑スコアが 0.3 に近い候補を選ぶ」という意味です。
+旧方式の`interval quantity`と`interval usage`は診断値としては保持しますが、このscoreには使いません。区間の後続分布をまだ作れない段階ではoccurrence軸全体を合成から外します。候補ごとにoccurrence intervalが未準備の場合はpredictive surpriseをその軸の値として使い、未準備自体を単純・複雑のどちらにも決めつけません。合成後も候補集合内で0..1へ揃えます。
+
+全候補について次を最小化します。
+
+```text
+abs(combined_complexity(candidate) - target_val)
+```
+
+`complexity_transition=0`は最も典型的な反復の継続、`1`は予測分布から最も外れた候補を意味します。
 
 ## 8. 直近性ウェイト
 
-`recency_center > 0` の場合、候補追加後の集計で直近のクラスタほど重く扱います。
+`recency_center > 0` の場合、各windowの後続分布を作る際に、最近観測した後続例ほど強く投票します。
 
 ユーザ入力 `x` はそのまま直線では使わず、次の smoothstep カーブで内部値 `r` に変換します。
 
@@ -235,9 +205,9 @@ age = 1 -> weight = exp(-1) = 0.3679
 age = 2 -> weight = exp(-2) = 0.1353
 ```
 
-`recency_center=0.0` なら常に重み `1.0` になり、旧来の全履歴集計に戻ります。
+`recency_center=0.0` なら常に重み `1.0` になり、古い後続例と新しい後続例が同じ強さで投票します。
 
-直近性は prune ではありません。古いクラスタを消すのではなく、集計時の重みを下げます。
+直近性は prune ではありません。古いクラスタを消すのではなく、予測分布を作る際の投票ウェイトを下げます。
 
 ## 9. キャッシュと rollback
 
