@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref } from 'vue'
 
 export const useScrollSync = (refs: any[]) => {
   const isSyncing = ref(false)
@@ -11,12 +11,14 @@ export const useScrollSync = (refs: any[]) => {
     const scrollLeft = target.scrollLeft
 
     refs.forEach(r => {
-      const el = r.value
-      // scrollWrapperというref名でdivを持っているか、自身がHTMLElement想定
-      const scrollEl = el?.scrollWrapper || el
-      if (scrollEl && scrollEl !== target) {
-        scrollEl.scrollLeft = scrollLeft
-      }
+      const entries = Array.isArray(r.value) ? r.value : [r.value]
+      entries.forEach((el: any) => {
+        // scrollWrapperというref名でdivを持っているか、自身がHTMLElement想定
+        const scrollEl = el?.scrollWrapper || el
+        if (scrollEl && scrollEl !== target) {
+          scrollEl.scrollLeft = scrollLeft
+        }
+      })
     })
 
     // イベントループによる無限ループ防止

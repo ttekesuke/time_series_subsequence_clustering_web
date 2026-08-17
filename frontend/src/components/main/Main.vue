@@ -142,7 +142,7 @@ void axios.get('/api/features')
 const selectedMode = ref('ClusteringAnalyse')
 const analysedViewModes = ref(['Cluster', 'Complexity'])
 const analysedViewMode = ref('Complexity')
-const resultViewModes = ref(['pianoRoll', 'timbreRoll', 'volRoll'])
+const resultViewModes = ref(['pianoRoll', 'timbreRoll', 'volRoll', 'chordRangeRoll', 'densityRoll'])
 const resultViewMode = ref('pianoRoll')
 const transferDialog = ref(false)
 
@@ -241,7 +241,8 @@ const onAnalysedViewModeChange = (val: string) => {
 }
 
 const onResultViewModeChange = (val: string) => {
-  resultViewMode.value = val === 'timbreRoll' || val === 'volRoll' ? val : 'pianoRoll'
+  const supported = ['pianoRoll', 'timbreRoll', 'volRoll', 'chordRangeRoll', 'densityRoll']
+  resultViewMode.value = supported.includes(val) ? val : 'pianoRoll'
   const inst = activeFeatureRef.value as any
   inst?.setResultViewMode?.(resultViewMode.value)
 }

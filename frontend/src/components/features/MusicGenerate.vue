@@ -6,6 +6,7 @@
           v-if="resultViewMode === 'pianoRoll'"
           ref="pianoRollRef"
           :streamValues="chordPitchStreams"
+          :streamLabels="pianoResultStreamLabels"
           :stepWidth="computedStepWidth"
           :minValue="minPitch"
           :maxValue="maxPitch"
@@ -30,317 +31,86 @@
           @scroll="onScroll"
         />
         <StreamsRoll
-          v-else
+          v-else-if="resultViewMode === 'volRoll'"
           ref="volRollRef"
           :streamValues="volResultStreams"
           :streamLabels="volResultStreamLabels"
           :stepWidth="computedStepWidth"
           :minValue="0"
           :maxValue="1"
-          :valueResolution="1"
+          :valueResolution="0.01"
           :playheadStep="playheadStepForRoll"
           title="VOL Roll"
+          @scroll="onScroll"
+        />
+        <StreamsRoll
+          v-else-if="resultViewMode === 'chordRangeRoll'"
+          ref="chordRangeRollRef"
+          :streamValues="generate.chordRange"
+          :streamLabels="chordRangeResultStreamLabels"
+          :stepWidth="computedStepWidth"
+          :minValue="0"
+          :maxValue="12"
+          :valueResolution="1"
+          :playheadStep="playheadStepForRoll"
+          title="CHORD_RANGE Roll"
+          @scroll="onScroll"
+        />
+        <StreamsRoll
+          v-else
+          ref="densityRollRef"
+          :streamValues="generate.density"
+          :streamLabels="densityResultStreamLabels"
+          :stepWidth="computedStepWidth"
+          :minValue="0"
+          :maxValue="1"
+          :valueResolution="0.01"
+          :playheadStep="playheadStepForRoll"
+          title="DENSITY Roll"
           @scroll="onScroll"
         />
       </div>
 
       <div class="quadrant bottom-left">
         <div class="in-quadrant">
-          <div v-if="analysedViewMode === 'Complexity'" class="row-in-quadrant">
-            <StreamsRoll
-              ref="dissonanceRollRef"
-              :streamValues="dissonanceTargetStreams"
-              :streamLabels="singleValueStreamLabel"
-              :stepWidth="computedStepWidth"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :playheadStep="playheadStepForRoll"
-              title="DISSONANCE Params"
-              @scroll="onScroll"
-            />
-          </div>
-
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              v-if="analysedViewMode === 'Cluster'"
-              ref="velClustersRef"
-              :clustersData="velocityClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              title="VOL Clusters"
-              :highlightedIndices="leftHighlightedIndices"
-              :highlightedWindowSize="leftHighlightedWindowSize"
-              @hover-cluster="onHoverClusterLeftAndPiano"
-              @scroll="onScroll"
-            />
-            <StreamsRoll
-              v-else
-              ref="velClustersRef"
-              :streamValues="complexityStreams.vol"
-              :streamLabels="complexityParamStreamLabels"
-              :stepWidth="computedStepWidth"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :playheadStep="playheadStepForRoll"
-              title="VOL Params"
-              @scroll="onScroll"
-            />
-          </div>
-
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              v-if="analysedViewMode === 'Cluster'"
-              ref="chordRangeClustersRef"
-              :clustersData="chordRangeClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              title="CHORD_RANGE Clusters"
-              :highlightedIndices="leftHighlightedIndices"
-              :highlightedWindowSize="leftHighlightedWindowSize"
-              @hover-cluster="onHoverClusterLeftAndPiano"
-              @scroll="onScroll"
-            />
-            <StreamsRoll
-              v-else
-              ref="chordRangeClustersRef"
-              :streamValues="complexityStreams.chordRange"
-              :streamLabels="complexityParamStreamLabels"
-              :stepWidth="computedStepWidth"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :playheadStep="playheadStepForRoll"
-              title="CHORD_RANGE Params"
-              @scroll="onScroll"
-            />
-          </div>
-
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              v-if="analysedViewMode === 'Cluster'"
-              ref="areaClustersRef"
-              :clustersData="areaClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              title="AREA Clusters"
-              :highlightedIndices="leftHighlightedIndices"
-              :highlightedWindowSize="leftHighlightedWindowSize"
-              @hover-cluster="onHoverClusterLeftAndPiano"
-              @scroll="onScroll"
-            />
-            <StreamsRoll
-              v-else
-              ref="areaClustersRef"
-              :streamValues="complexityStreams.area"
-              :streamLabels="complexityParamStreamLabels"
-              :stepWidth="computedStepWidth"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :playheadStep="playheadStepForRoll"
-              title="AREA Params"
-              @scroll="onScroll"
-            />
-          </div>
-
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              v-if="analysedViewMode === 'Cluster'"
-              ref="densityClustersRef"
-              :clustersData="densityClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              title="DENSITY Clusters"
-              :highlightedIndices="leftHighlightedIndices"
-              :highlightedWindowSize="leftHighlightedWindowSize"
-              @hover-cluster="onHoverClusterLeftAndPiano"
-              @scroll="onScroll"
-            />
-            <StreamsRoll
-              v-else
-              ref="densityClustersRef"
-              :streamValues="complexityStreams.density"
-              :streamLabels="complexityParamStreamLabels"
-              :stepWidth="computedStepWidth"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :playheadStep="playheadStepForRoll"
-              title="DENSITY Params"
-              @scroll="onScroll"
-            />
-          </div>
-
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              v-if="analysedViewMode === 'Cluster'"
-              ref="attackClustersRef"
-              :clustersData="attackClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              title="ATK Clusters"
-              :highlightedIndices="leftHighlightedIndices"
-              :highlightedWindowSize="leftHighlightedWindowSize"
-              @hover-cluster="onHoverClusterLeft"
-              @scroll="onScroll"
-            />
-            <StreamsRoll
-              v-else
-              ref="attackClustersRef"
-              :streamValues="complexityStreams.attack"
-              :streamLabels="complexityParamStreamLabels"
-              :stepWidth="computedStepWidth"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :playheadStep="playheadStepForRoll"
-              title="ATK Params"
-              @scroll="onScroll"
-            />
-          </div>
-
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              v-if="analysedViewMode === 'Cluster'"
-              ref="brightnessClustersRef"
-              :clustersData="brightnessClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              title="BRI Clusters"
-              :highlightedIndices="rightHighlightedIndices"
-              :highlightedWindowSize="rightHighlightedWindowSize"
-              @hover-cluster="onHoverClusterRight"
-              @scroll="onScroll"
-            />
-            <StreamsRoll
-              v-else
-              ref="brightnessClustersRef"
-              :streamValues="complexityStreams.brightness"
-              :streamLabels="complexityParamStreamLabels"
-              :stepWidth="computedStepWidth"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :playheadStep="playheadStepForRoll"
-              title="BRI Params"
-              @scroll="onScroll"
-            />
-          </div>
-
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              v-if="analysedViewMode === 'Cluster'"
-              ref="noiseClustersRef"
-              :clustersData="noiseClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              title="NOI Clusters"
-              :highlightedIndices="rightHighlightedIndices"
-              :highlightedWindowSize="rightHighlightedWindowSize"
-              @hover-cluster="onHoverClusterRight"
-              @scroll="onScroll"
-            />
-            <StreamsRoll
-              v-else
-              ref="noiseClustersRef"
-              :streamValues="complexityStreams.noise"
-              :streamLabels="complexityParamStreamLabels"
-              :stepWidth="computedStepWidth"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :playheadStep="playheadStepForRoll"
-              title="NOI Params"
-              @scroll="onScroll"
-            />
-          </div>
-
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              v-if="analysedViewMode === 'Cluster'"
-              ref="harmonicityClustersRef"
-              :clustersData="harmonicityClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              title="HAR Clusters"
-              :highlightedIndices="rightHighlightedIndices"
-              :highlightedWindowSize="rightHighlightedWindowSize"
-              @hover-cluster="onHoverClusterRight"
-              @scroll="onScroll"
-            />
-            <StreamsRoll
-              v-else
-              ref="harmonicityClustersRef"
-              :streamValues="complexityStreams.harmonicity"
-              :streamLabels="complexityParamStreamLabels"
-              :stepWidth="computedStepWidth"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :playheadStep="playheadStepForRoll"
-              title="HAR Params"
-              @scroll="onScroll"
-            />
-          </div>
-
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              v-if="analysedViewMode === 'Cluster'"
-              ref="decaySustainClustersRef"
-              :clustersData="decaySustainClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              title="DEC Clusters"
-              :highlightedIndices="rightHighlightedIndices"
-              :highlightedWindowSize="rightHighlightedWindowSize"
-              @hover-cluster="onHoverClusterRight"
-              @scroll="onScroll"
-            />
-            <StreamsRoll
-              v-else
-              ref="decaySustainClustersRef"
-              :streamValues="complexityStreams.decaySustain"
-              :streamLabels="complexityParamStreamLabels"
-              :stepWidth="computedStepWidth"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :playheadStep="playheadStepForRoll"
-              title="DEC Params"
-              @scroll="onScroll"
-            />
-          </div>
-
-          <div class="row-in-quadrant">
-            <ClustersRoll
-              v-if="analysedViewMode === 'Cluster'"
-              ref="releaseClustersRef"
-              :clustersData="releaseClustersForView"
-              :stepWidth="computedStepWidth"
-              :maxSteps="stepCount"
-              title="SR Clusters"
-              :highlightedIndices="rightHighlightedIndices"
-              :highlightedWindowSize="rightHighlightedWindowSize"
-              @hover-cluster="onHoverClusterRight"
-              @scroll="onScroll"
-            />
-            <StreamsRoll
-              v-else
-              ref="releaseClustersRef"
-              :streamValues="complexityStreams.release"
-              :streamLabels="complexityParamStreamLabels"
-              :stepWidth="computedStepWidth"
-              :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :playheadStep="playheadStepForRoll"
-              title="SR Params"
-              @scroll="onScroll"
-            />
-          </div>
-
+          <template v-if="analysedViewMode === 'Cluster'">
+            <div class="analysis-toolbar">
+              <label for="music-cluster-scope">Cluster scope</label>
+              <select id="music-cluster-scope" v-model="clusterScope">
+                <option value="global">Global</option>
+                <option v-for="id in generate.stableStreamIds" :key="id" :value="String(id)">
+                  Stream {{ id }}
+                </option>
+              </select>
+            </div>
+            <div v-for="(section, index) in clusterSections" :key="section.key" class="row-in-quadrant">
+              <ClustersRoll
+                :ref="el => setAnalysisRollRef(el, index)"
+                :clustersData="section.clusters"
+                :stepWidth="computedStepWidth"
+                :maxSteps="stepCount"
+                :title="`${section.title} Clusters (${clusterScopeLabel})`"
+                @hover-cluster="onHoverClusterLeftAndPiano"
+                @scroll="onScroll"
+              />
+            </div>
+          </template>
+          <template v-else>
+            <div v-for="(section, index) in parameterSections" :key="section.key" class="row-in-quadrant">
+              <StreamsRoll
+                :ref="el => setAnalysisRollRef(el, index)"
+                :streamValues="section.streams"
+                :streamLabels="section.labels"
+                :stepWidth="computedStepWidth"
+                :minValue="section.min"
+                :maxValue="section.max"
+                :valueResolution="section.resolution"
+                :playheadStep="playheadStepForRoll"
+                :title="section.title"
+                @scroll="onScroll"
+              />
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -385,11 +155,27 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 .row-in-quadrant {
-  flex: 1;
+  flex: 1 1 0;
+  height: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
+}
+.analysis-toolbar {
+  flex: 0 0 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid #ddd;
+  background: #fafafa;
+  color: #555;
+  font-size: 12px;
+}
+.analysis-toolbar select {
+  min-width: 110px;
 }
 .music-generate-root {
   display: flex;
@@ -425,17 +211,12 @@ import { defineExpose } from 'vue'
 const pianoRollRef = ref<any>(null)
 const timbreRollRef = ref<any>(null)
 const volRollRef = ref<any>(null)
-const dissonanceRollRef = ref<any>(null)
-const velClustersRef = ref<any>(null)
-const chordRangeClustersRef = ref<any>(null)
-const areaClustersRef = ref<any>(null)
-const densityClustersRef = ref<any>(null)
-const attackClustersRef = ref<any>(null)
-const brightnessClustersRef = ref<any>(null)
-const noiseClustersRef = ref<any>(null)
-const harmonicityClustersRef = ref<any>(null)
-const decaySustainClustersRef = ref<any>(null)
-const releaseClustersRef = ref<any>(null)
+const chordRangeRollRef = ref<any>(null)
+const densityRollRef = ref<any>(null)
+const analysisRollRefs = ref<any[]>([])
+const setAnalysisRollRef = (el: any, index: number) => {
+  analysisRollRefs.value[index] = el ?? null
+}
 const bottomScrollRef = ref<HTMLElement | null>(null)
 const dialogRef = ref<any>(null)
 
@@ -454,16 +235,19 @@ const audio = ref<HTMLAudioElement | null>(null)
 const nowPlaying = ref(false)
 const lastResultJson = ref<any | null>(null)
 const latestParamsPayload = ref<any | null>(null)
-const analysedViewMode = ref<'Cluster' | 'Complexity'>('Cluster')
-const resultViewMode = ref<'pianoRoll' | 'timbreRoll' | 'volRoll'>('pianoRoll')
+const analysedViewMode = ref<'Cluster' | 'Complexity'>('Complexity')
+type ResultViewMode = 'pianoRoll' | 'timbreRoll' | 'volRoll' | 'chordRangeRoll' | 'densityRoll'
+const resultViewMode = ref<ResultViewMode>('pianoRoll')
+const clusterScope = ref('global')
+const clusterScopeLabel = computed(() =>
+  clusterScope.value === 'global' ? 'Global' : `Stream ${clusterScope.value}`
+)
 
 const containerWidth = ref(0)
 let resizeObserver: ResizeObserver | null = null
 
 const progress = ref({ percent: 0, status: 'idle' })
 const setDataDialog = ref(false)
-const complexityParamStreamLabels = ['global', 'conc', 'spread', 'center']
-const singleValueStreamLabel = ['value']
 const playheadStep = ref(-1)
 let playheadTimerId: ReturnType<typeof setInterval> | null = null
 const playheadStepForRoll = computed(() => (nowPlaying.value ? playheadStep.value : -1))
@@ -587,8 +371,9 @@ const createAudioElement = (url: string) => {
 
 const openParams = () => { setDataDialog.value = true }
 const setAnalysedViewMode = (mode: 'Cluster' | 'Complexity') => { analysedViewMode.value = mode }
-const setResultViewMode = (mode: 'pianoRoll' | 'timbreRoll' | 'volRoll') => {
-  resultViewMode.value = mode === 'timbreRoll' || mode === 'volRoll' ? mode : 'pianoRoll'
+const setResultViewMode = (mode: ResultViewMode) => {
+  const supported: ResultViewMode[] = ['pianoRoll', 'timbreRoll', 'volRoll', 'chordRangeRoll', 'densityRoll']
+  resultViewMode.value = supported.includes(mode) ? mode : 'pianoRoll'
 }
 const stopPlayingSound = () => {
   nowPlaying.value = false
@@ -638,6 +423,10 @@ watch(nowPlaying, (playing) => {
   if (!playing) stopPlayhead()
 })
 
+watch(analysedViewMode, () => {
+  analysisRollRefs.value = []
+})
+
 // Keep audio element in sync with the latest soundFilePath (generated or uploaded)
 watch(soundFilePath, (url) => {
   nowPlaying.value = false
@@ -654,17 +443,9 @@ const { syncScroll } = useScrollSync([
   pianoRollRef,
   timbreRollRef,
   volRollRef,
-  dissonanceRollRef,
-  velClustersRef,
-  chordRangeClustersRef,
-  areaClustersRef,
-  densityClustersRef,
-  attackClustersRef,
-  brightnessClustersRef,
-  noiseClustersRef,
-  harmonicityClustersRef,
-  decaySustainClustersRef,
-  releaseClustersRef,
+  chordRangeRollRef,
+  densityRollRef,
+  analysisRollRefs,
   bottomScrollRef
 ])
 const onScroll = (e: Event) => syncScroll(e)
@@ -738,6 +519,8 @@ type PolyphonicResponse = {
 const generate = ref({
   rawTimeSeries: [] as any[],
   streamIds: [] as number[][],
+  stableStreamIds: [] as number[],
+  chords: [] as (number[] | null)[][],
   notes: [] as (number | null)[][],
   velocities: [] as (number | null)[][],
   brightness: [] as (number | null)[][],
@@ -746,6 +529,8 @@ const generate = ref({
   attack: [] as (number | null)[][],
   decay_sustain: [] as (number | null)[][],
   release: [] as (number | null)[][],
+  chordRange: [] as (number | null)[][],
+  density: [] as (number | null)[][],
   tie: [] as (number | null)[][],
 
   clusters: {
@@ -764,61 +549,27 @@ const generate = ref({
   },
 })
 
-const convertStepMajorTimbreToStreamMajor = (stepMajor: any): (number | null)[][] => {
-  if (!Array.isArray(stepMajor)) return []
-  const steps = stepMajor.length
-  const maxStreams = Math.max(0, ...stepMajor.map((step: any) => (Array.isArray(step) ? step.length : 0)))
-  const out = Array.from({ length: maxStreams }, () => Array(steps).fill(null) as (number | null)[])
-
-  for (let stepIdx = 0; stepIdx < steps; stepIdx++) {
-    const step = stepMajor[stepIdx]
-    if (!Array.isArray(step)) continue
-    for (let streamIdx = 0; streamIdx < step.length; streamIdx++) {
-      const raw = step[streamIdx]
-      if (raw == null) continue
-      const v = Number(raw)
-      if (!Number.isFinite(v)) continue
-      out[streamIdx][stepIdx] = Math.max(0, Math.min(1, v))
-    }
-  }
-
-  return out
-}
-
 // ===== handle response =====
 const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   lastResultJson.value = data
-  const ts = (data as any).timeSeries as any[]
-  const { notes, vels, brightnesses, noises, harmonicities, attacks, decaySustains, releases, ties } = expandTimeSeries(ts)
-  const timbreSeries = (data as any).timbreSeries ?? {}
-  const resBrightness = convertStepMajorTimbreToStreamMajor(timbreSeries.brightness)
-  const resNoise = convertStepMajorTimbreToStreamMajor(timbreSeries.noise)
-  const resHarmonicity = convertStepMajorTimbreToStreamMajor(timbreSeries.harmonicity)
-  const resAttack = convertStepMajorTimbreToStreamMajor(timbreSeries.attack)
-  const resDecaySustain = convertStepMajorTimbreToStreamMajor(timbreSeries.decay_sustain)
-  const resRelease = convertStepMajorTimbreToStreamMajor(timbreSeries.release)
-  const resTie = convertStepMajorTimbreToStreamMajor(timbreSeries.tie)
+  const ts = Array.isArray((data as any).timeSeries) ? (data as any).timeSeries as any[] : []
+  const expanded = expandTimeSeries(ts, data.streamIds)
 
   generate.value.rawTimeSeries = ts as any
-  generate.value.streamIds = Array.isArray(data.streamIds)
-    ? data.streamIds.map((step) => (
-        Array.isArray(step)
-          ? step.map((id, slot) => {
-              const parsed = Number(id)
-              return Number.isInteger(parsed) ? parsed : slot + 1
-            })
-          : []
-      ))
-    : []
-  generate.value.notes        = notes      // root（abs_notes[0] or pcs[0]）互換用途
-  generate.value.velocities   = vels
-  generate.value.brightness   = resBrightness.length > 0 ? resBrightness : brightnesses
-  generate.value.noise        = resNoise.length > 0 ? resNoise : noises
-  generate.value.harmonicity  = resHarmonicity.length > 0 ? resHarmonicity : harmonicities
-  generate.value.attack       = resAttack.length > 0 ? resAttack : attacks
-  generate.value.decay_sustain = resDecaySustain.length > 0 ? resDecaySustain : decaySustains
-  generate.value.release      = resRelease.length > 0 ? resRelease : releases
-  generate.value.tie          = resTie.length > 0 ? resTie : ties
+  generate.value.streamIds = expanded.streamIds
+  generate.value.stableStreamIds = expanded.stableStreamIds
+  generate.value.chords = expanded.chords
+  generate.value.notes = expanded.notes
+  generate.value.velocities = expanded.vels
+  generate.value.brightness = expanded.brightnesses
+  generate.value.noise = expanded.noises
+  generate.value.harmonicity = expanded.harmonicities
+  generate.value.attack = expanded.attacks
+  generate.value.decay_sustain = expanded.decaySustains
+  generate.value.release = expanded.releases
+  generate.value.chordRange = expanded.chordRanges
+  generate.value.density = expanded.densities
+  generate.value.tie = expanded.ties
 
   const clusters = ((data as any).clusters ?? {}) as any
   generate.value.clusters.vol         = clusters.vol         ?? { global: [], streams: {} }
@@ -894,11 +645,20 @@ async function loadParamsJsonFile(file: File | null) {
   }
 }
 
-const expandTimeSeries = (ts: any[]) => {
+const expandTimeSeries = (ts: any[], rawStreamIds?: number[][]) => {
   stepCount.value = ts.length
-  const maxStreams = Math.max(0, ...ts.map(step => step.length))
-  const make2D = () => Array.from({ length: maxStreams }, () => Array(stepCount.value).fill(null))
+  const streamIds = ts.map((step, stepIdx) => {
+    const ids = Array.isArray(rawStreamIds?.[stepIdx]) ? rawStreamIds![stepIdx] : []
+    return (Array.isArray(step) ? step : []).map((_: any, slot: number) => {
+      const parsed = Number(ids[slot])
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : slot + 1
+    })
+  })
+  const stableStreamIds = Array.from(new Set(streamIds.flat())).sort((a, b) => a - b)
+  const laneById = new Map(stableStreamIds.map((id, lane) => [id, lane]))
+  const make2D = () => Array.from({ length: stableStreamIds.length }, () => Array(stepCount.value).fill(null))
 
+  const chords = make2D() as (number[] | null)[][]
   const notes = make2D()  // root互換: abs_notes[0] or pcs[0]
   const vels = make2D()
   const brightnesses = make2D()
@@ -907,29 +667,50 @@ const expandTimeSeries = (ts: any[]) => {
   const attacks = make2D()
   const decaySustains = make2D()
   const releases = make2D()
+  const chordRanges = make2D()
+  const densities = make2D()
   const ties = make2D()
 
   ts.forEach((stepStreams, stepIdx) => {
-    stepStreams.forEach((vec, streamIdx) => {
+    if (!Array.isArray(stepStreams)) return
+    stepStreams.forEach((vec, slotIdx) => {
       if (!vec) return
+      const streamId = streamIds[stepIdx]?.[slotIdx]
+      if (streamId == null) return
+      const streamIdx = laneById.get(streamId)
+      if (streamIdx == null) return
 
       // Strict: [abs_notes, vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range, density, tie]
       if (Array.isArray(vec[0]) && vec.length === 11) {
         const absNotes = (vec[0] as any[]).map(n => Number(n)).filter(n => Number.isFinite(n))
-        notes[streamIdx][stepIdx] = absNotes.length ? absNotes[0] : null
-        vels[streamIdx][stepIdx]  = vec[1]
-        brightnesses[streamIdx][stepIdx] = vec[2]
-        noises[streamIdx][stepIdx] = vec[3]
-        harmonicities[streamIdx][stepIdx] = vec[4]
-        attacks[streamIdx][stepIdx] = vec[5]
-        decaySustains[streamIdx][stepIdx] = vec[6]
-        releases[streamIdx][stepIdx] = vec[7]
-        ties[streamIdx][stepIdx] = vec[10]
+        const lanes = {
+          chords: chords[streamIdx], notes: notes[streamIdx], vels: vels[streamIdx],
+          brightnesses: brightnesses[streamIdx], noises: noises[streamIdx],
+          harmonicities: harmonicities[streamIdx], attacks: attacks[streamIdx],
+          decaySustains: decaySustains[streamIdx], releases: releases[streamIdx],
+          chordRanges: chordRanges[streamIdx], densities: densities[streamIdx], ties: ties[streamIdx],
+        }
+        if (Object.values(lanes).some(lane => lane == null)) return
+        lanes.chords![stepIdx] = absNotes.length ? absNotes.map(n => Math.round(n)) : null
+        lanes.notes![stepIdx] = absNotes[0] ?? null
+        lanes.vels![stepIdx] = vec[1]
+        lanes.brightnesses![stepIdx] = vec[2]
+        lanes.noises![stepIdx] = vec[3]
+        lanes.harmonicities![stepIdx] = vec[4]
+        lanes.attacks![stepIdx] = vec[5]
+        lanes.decaySustains![stepIdx] = vec[6]
+        lanes.releases![stepIdx] = vec[7]
+        lanes.chordRanges![stepIdx] = vec[8]
+        lanes.densities![stepIdx] = vec[9]
+        lanes.ties![stepIdx] = vec[10]
       }
     })
   })
 
-  return { notes, vels, brightnesses, noises, harmonicities, attacks, decaySustains, releases, ties, maxStreams }
+  return {
+    streamIds, stableStreamIds, chords, notes, vels, brightnesses, noises,
+    harmonicities, attacks, decaySustains, releases, chordRanges, densities, ties
+  }
 }
 
 const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any, streamIds?: number[][]) => {
@@ -945,10 +726,10 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any, streamIds?: nu
     }
 
     for (let stepIdx = 0; stepIdx < ts.length; stepIdx++) {
-      const step = ts[stepIdx]
+      const step = ts[stepIdx] ?? []
       const stepOut: any[] = []
       const stepIdsOut: number[] = []
-      const sourceIds = Array.isArray(ids?.[stepIdx]) ? ids[stepIdx] : []
+      const sourceIds: number[] = Array.isArray(ids?.[stepIdx]) ? (ids?.[stepIdx] ?? []) : []
 
       for (let streamIdx = 0; streamIdx < step.length; streamIdx++) {
         const vec = step[streamIdx]
@@ -1098,75 +879,145 @@ const normalizeParamArray = (val: any): number[] => {
   return Number.isFinite(num) ? [num] : []
 }
 
-const buildComplexityStreams = (prefix: string) => {
+const generateParams = computed<Record<string, any>>(() => {
   const payload = latestParamsPayload.value
-  if (!payload || typeof payload !== 'object') return []
-  const gp = (payload as any).generate_polyphonic ?? payload
-  const ctx = gp?.initial_context
-  const padLen = Array.isArray(ctx) ? ctx.length : 0
-  const keys = prefix === 'area'
-    ? ['area_global', 'area_conc', 'area_spread', 'area_center']
-    : [
-        `${prefix}_global_complexity_target`,
-        `${prefix}_concordance`,
-        `${prefix}_stream_complexity_span`,
-        `${prefix}_stream_complexity_center`,
-      ]
-  const legacyKeys = [
-    `${prefix}_global`,
-    `${prefix}_conc`,
-    `${prefix}_spread`,
-    `${prefix}_center`,
-  ]
+  if (!payload || typeof payload !== 'object') return {}
+  return (payload as any).generate_polyphonic ?? payload
+})
 
-  const streams = keys.map((key, index) => {
-    const raw = gp?.[key] ?? gp?.[legacyKeys[index]]
-    const arr = normalizeParamArray(raw)
-    const padded = Array(padLen).fill(null).concat(arr)
-    return padded
-  })
+const initialStepCount = computed(() => {
+  const resultInitial = (lastResultJson.value as any)?.initialContextBpm
+  if (Array.isArray(resultInitial)) return resultInitial.length
+  const context = generateParams.value.initial_context
+  return Array.isArray(context) ? context.length : 0
+})
 
-  const maxLen = Math.max(0, ...streams.map(s => s.length))
-  return streams.map(s => {
-    if (s.length >= maxLen) return s
-    return s.concat(Array(maxLen - s.length).fill(null))
-  })
+const parameterFutureStepCount = computed(() => {
+  const ignored = new Set(['initial_context', 'initial_context_bpm'])
+  const configured = Object.entries(generateParams.value).reduce((max, [key, value]) => {
+    if (ignored.has(key) || !Array.isArray(value)) return max
+    return Math.max(max, value.length)
+  }, 0)
+  return Math.max(configured, stepCount.value - initialStepCount.value, 0)
+})
+
+const resolveParamValue = (keys: string[]) => {
+  const gp = generateParams.value
+  for (const key of keys) {
+    if (gp[key] != null) return gp[key]
+  }
+  return null
 }
 
-const complexityStreams = computed(() => ({
-  vol: buildComplexityStreams('vol'),
-  chordRange: buildComplexityStreams('chord_range'),
-  area: buildComplexityStreams('area'),
-  brightness: buildComplexityStreams('brightness'),
-  noise: buildComplexityStreams('noise'),
-  harmonicity: buildComplexityStreams('harmonicity'),
-  attack: buildComplexityStreams('attack'),
-  decaySustain: buildComplexityStreams('decay_sustain'),
-  release: buildComplexityStreams('release'),
-  density: buildComplexityStreams('density'),
-}))
+const buildParamSeries = (keys: string[]): (number | null)[] => {
+  const values = normalizeParamArray(resolveParamValue(keys))
+  const futureLength = parameterFutureStepCount.value
+  if (values.length === 0) return Array(initialStepCount.value + futureLength).fill(null)
+  const last = values[values.length - 1]
+  const future = Array.from({ length: futureLength }, (_, index) => values[index] ?? last)
+  return Array(initialStepCount.value).fill(null).concat(future)
+}
 
-const dissonanceTargetStreams = computed(() => {
-  const payload = latestParamsPayload.value
-  if (!payload || typeof payload !== 'object') return []
-  const gp = (payload as any).generate_polyphonic ?? payload
-  const ctx = gp?.initial_context
-  const padLen = Array.isArray(ctx) ? ctx.length : 0
-  const arr = normalizeParamArray(gp?.dissonance_target)
-  const padded = Array(padLen).fill(null).concat(arr)
-  return [padded]
+type ParameterSection = {
+  key: string
+  title: string
+  streams: (number | null)[][]
+  labels: string[]
+  min: number
+  max: number
+  resolution: number
+}
+
+const makeParameterSection = (
+  key: string,
+  title: string,
+  rows: Array<{ label: string; keys: string[] }>,
+  min = 0,
+  max = 1,
+  resolution = 0.01
+): ParameterSection => ({
+  key,
+  title,
+  streams: rows.map(row => buildParamSeries(row.keys)),
+  labels: rows.map(row => row.label),
+  min,
+  max,
+  resolution,
 })
 
-const maxSeriesLength = (series: unknown[][]) =>
-  Math.max(0, ...series.map(stream => (Array.isArray(stream) ? stream.length : 0)))
+const complexityRows = (prefix: string) => [
+  { label: 'global', keys: [`${prefix}_global_complexity_target`, `${prefix}_global`] },
+  { label: 'center', keys: [`${prefix}_stream_complexity_center`, `${prefix}_center`] },
+  { label: 'span', keys: [`${prefix}_stream_complexity_span`, `${prefix}_spread`] },
+  { label: 'concordance', keys: [`${prefix}_concordance`, `${prefix}_conc`] },
+]
 
-const complexityMaxSteps = computed(() => {
-  const byDimension = [
-    ...(Object.values(complexityStreams.value) as unknown[][][]),
-    dissonanceTargetStreams.value as unknown[][]
+const valueRows = (prefix: string) => [
+  { label: 'target', keys: [`${prefix}_value_target`, `${prefix}_target`] },
+  { label: 'radius', keys: [`${prefix}_value_radius`, `${prefix}_target_spread`] },
+]
+
+const parameterSections = computed<ParameterSection[]>(() => {
+  const sections: ParameterSection[] = [
+    makeParameterSection('stream-count', 'STREAM COUNT Params', [
+      { label: 'count', keys: ['stream_counts'] },
+    ], 1, 16, 1),
+    makeParameterSection('bpm', 'BPM Params', [
+      { label: 'future BPM', keys: ['future_bpm', 'bpm_series', 'bpm'] },
+    ], 1, 960, 1),
+    makeParameterSection('tie', 'TIE Params', [
+      ...complexityRows('tie'),
+      { label: 'rate', keys: ['tie_rate_target'] },
+    ], -1, 1, 0.01),
+    makeParameterSection('generation-controls', 'GENERATION Params', [
+      { label: 'recency center', keys: ['recency_center'] },
+      { label: 'recency spread', keys: ['recency_spread'] },
+      { label: 'strength target', keys: ['stream_strength_target'] },
+      { label: 'strength spread', keys: ['stream_strength_spread'] },
+      { label: 'register freedom', keys: ['note_register_freedom'] },
+      { label: 'dissonance', keys: ['dissonance_target'] },
+    ]),
+    makeParameterSection('weights', 'SCORING WEIGHT Params', [
+      { label: 'global distance', keys: ['global_dist_weight'] },
+      { label: 'global quantity', keys: ['global_qty_weight'] },
+      { label: 'global complexity', keys: ['global_comp_weight'] },
+      { label: 'stream distance', keys: ['stream_dist_weight'] },
+      { label: 'stream quantity', keys: ['stream_qty_weight'] },
+      { label: 'stream complexity', keys: ['stream_comp_weight'] },
+    ], 0, 5, 0.01),
+    makeParameterSection('area-complexity', 'AREA Complexity Params', [
+      { label: 'global', keys: ['area_global'] },
+      { label: 'center', keys: ['area_center'] },
+      { label: 'span', keys: ['area_spread'] },
+      { label: 'concordance', keys: ['area_conc'] },
+    ], -1, 1, 0.01),
   ]
-  return Math.max(0, ...byDimension.map(maxSeriesLength))
+
+  const dimensions = [
+    { key: 'chord_range', title: 'CHORD_RANGE', max: 12, resolution: 1 },
+    { key: 'density', title: 'DENSITY', max: 1, resolution: 0.1 },
+    { key: 'vol', title: 'VOL', max: 1, resolution: 0.1 },
+    { key: 'brightness', title: 'BRI', max: 1, resolution: 0.1 },
+    { key: 'noise', title: 'NOI', max: 1, resolution: 0.1 },
+    { key: 'harmonicity', title: 'HAR', max: 1, resolution: 0.1 },
+    { key: 'attack', title: 'ATK', max: 1, resolution: 0.1 },
+    { key: 'decay_sustain', title: 'DEC', max: 1, resolution: 0.1 },
+    { key: 'release', title: 'S/R', max: 1, resolution: 0.1 },
+  ]
+  dimensions.forEach(dim => {
+    sections.push(makeParameterSection(
+      `${dim.key}-complexity`, `${dim.title} Complexity Params`,
+      complexityRows(dim.key), -1, 1, 0.01
+    ))
+    sections.push(makeParameterSection(
+      `${dim.key}-value`, `${dim.title} Value Params`,
+      valueRows(dim.key), 0, dim.max, dim.resolution
+    ))
+  })
+  return sections
 })
+
+const complexityMaxSteps = computed(() => initialStepCount.value + parameterFutureStepCount.value)
 
 const globalScrollTrackWidth = computed(() => {
   const activeSteps = analysedViewMode.value === 'Cluster'
@@ -1177,64 +1028,42 @@ const globalScrollTrackWidth = computed(() => {
 
 // ===== pitch streams (chord) =====
 const chordPitchStreams = computed(() => {
-  const ts = generate.value.rawTimeSeries as any[]
-  if (!ts.length) return []
-
-  const streamCount = Math.max(0, ...ts.map(step => step.length))
-  const stepLen = ts.length
-
-  return Array.from({ length: streamCount }, (_, sIdx) =>
-    Array.from({ length: stepLen }, (_, stepIdx) => {
-      const vec = ts[stepIdx]?.[sIdx]
-      if (!vec) return null
-
-      // Strict: abs MIDI note numbers
-      if (Array.isArray(vec[0])) {
-        const absNotes = (vec[0] as any[])
-          .map(n => Number(n))
-          .filter(n => Number.isFinite(n))
-          .map(n => Math.round(n))
-        return absNotes.length ? absNotes : null
-      }
-
-      return null
-    })
-  )
+  return generate.value.chords
 })
 
-const timbreResultStreamLabels = ['BRI', 'NOI', 'HAR', 'ATK', 'DEC', 'SR', 'TIE']
+const pianoResultStreamLabels = computed(() =>
+  generate.value.stableStreamIds.map(id => `S${id}`)
+)
 
 const volResultStreamLabels = computed(() => {
-  const labels: string[] = []
-  for (let idx = 0; idx < generate.value.velocities.length; idx++) {
-    labels.push(`VOL-S${idx + 1}`)
-  }
-  return labels
+  return generate.value.stableStreamIds.map(id => `VOL-S${id}`)
 })
+const chordRangeResultStreamLabels = computed(() =>
+  generate.value.stableStreamIds.map(id => `CR-S${id}`)
+)
+const densityResultStreamLabels = computed(() =>
+  generate.value.stableStreamIds.map(id => `DEN-S${id}`)
+)
 
-const buildTimbreLane = (matrix: (number | null)[][]) => {
-  const seriesLen = Math.max(stepCount.value, ...matrix.map(stream => (Array.isArray(stream) ? stream.length : 0)))
-  return Array.from({ length: seriesLen }, (_, stepIdx) => {
-    const values = matrix.flatMap((stream) => {
-      const raw = stream?.[stepIdx]
-      if (raw == null) return []
-      const v = Number(raw)
-      return Number.isFinite(v) ? [Math.max(0, Math.min(1, v))] : []
-    })
+const timbreDimensions = computed(() => [
+  { label: 'BRI', values: generate.value.brightness },
+  { label: 'NOI', values: generate.value.noise },
+  { label: 'HAR', values: generate.value.harmonicity },
+  { label: 'ATK', values: generate.value.attack },
+  { label: 'DEC', values: generate.value.decay_sustain },
+  { label: 'S/R', values: generate.value.release },
+  { label: 'TIE', values: generate.value.tie },
+])
 
-    return values.length > 0 ? values : null
-  })
-}
+const timbreResultStreams = computed(() =>
+  timbreDimensions.value.flatMap(dimension => dimension.values)
+)
 
-const timbreResultStreams = computed(() => ([
-  buildTimbreLane(generate.value.brightness),
-  buildTimbreLane(generate.value.noise),
-  buildTimbreLane(generate.value.harmonicity),
-  buildTimbreLane(generate.value.attack),
-  buildTimbreLane(generate.value.decay_sustain),
-  buildTimbreLane(generate.value.release),
-  buildTimbreLane(generate.value.tie),
-]))
+const timbreResultStreamLabels = computed(() =>
+  timbreDimensions.value.flatMap(dimension =>
+    generate.value.stableStreamIds.map(id => `${dimension.label}-S${id}`)
+  )
+)
 
 const volResultStreams = computed(() =>
   generate.value.velocities.map((stream: (number | null)[]) =>
@@ -1248,134 +1077,115 @@ const volResultStreams = computed(() =>
   )
 )
 
-// ===== cluster view switch =====
-const velocityMode = ref<'global' | 'stream'>('global')
-const velocityStreamId = ref<number>(0)
-const velocityClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.vol
-  if (!src) return []
-  if (velocityMode.value === 'global') return src.global
-  return src.streams[String(velocityStreamId.value)] || []
+// Global cluster timelines returned by the latest response. All server dimensions
+// are listed so Result/Analysed modes cannot silently omit NOTE or TIE.
+const remapClusterTimeline = (clusters: ClusterData[], timelineSteps: number[]): ClusterData[] => {
+  const grouped = new Map<string, ClusterData>()
+  clusters.forEach(cluster => {
+    cluster.indices.forEach(localStart => {
+      const localEnd = localStart + cluster.window_size - 1
+      const actualStart = timelineSteps[localStart]
+      const actualEnd = timelineSteps[localEnd]
+      if (actualStart == null || actualEnd == null) return
+      const actualWindow = actualEnd - actualStart + 1
+      const key = `${cluster.cluster_id}:${actualWindow}`
+      const existing = grouped.get(key)
+      if (existing) existing.indices.push(actualStart)
+      else grouped.set(key, {
+        cluster_id: cluster.cluster_id,
+        window_size: actualWindow,
+        indices: [actualStart],
+      })
+    })
+  })
+  return Array.from(grouped.values())
+}
+
+const sameTieControls = (previous: any, current: any) => {
+  if (!Array.isArray(previous) || !Array.isArray(current)) return false
+  const previousNotes = Array.isArray(previous[0]) ? previous[0].map(Number) : []
+  const currentNotes = Array.isArray(current[0]) ? current[0].map(Number) : []
+  if (currentNotes.length === 0 || previousNotes.length !== currentNotes.length) return false
+  if (!previousNotes.every((note: number, index: number) => note === currentNotes[index])) return false
+  if (Number(previous[1]) <= 0.01 || Number(current[1]) <= 0.01) return false
+  return [1, 2, 3, 4, 5, 6].every(index =>
+    Math.abs(Number(previous[index]) - Number(current[index])) <= 1e-9
+  )
+}
+
+const tieTimelineSteps = computed(() => {
+  const byStream: Record<string, number[]> = {}
+  const global: number[] = []
+  let previousById = new Map<number, any>()
+  generate.value.rawTimeSeries.forEach((step: any[], stepIndex: number) => {
+    const currentById = new Map<number, any>()
+    let hasEligible = false
+    const ids = generate.value.streamIds[stepIndex] ?? []
+    ;(Array.isArray(step) ? step : []).forEach((vec, slot) => {
+      const id = ids[slot]
+      if (id == null) return
+      const previous = previousById.get(id)
+      if (sameTieControls(previous, vec)) {
+        ;(byStream[String(id)] ??= []).push(stepIndex)
+        hasEligible = true
+      }
+      currentById.set(id, vec)
+    })
+    if (hasEligible) global.push(stepIndex)
+    previousById = currentById
+  })
+  return { global, byStream }
 })
 
-const chordRangeMode = ref<'global' | 'stream'>('global')
-const chordRangeStreamId = ref<number>(0)
-const chordRangeClustersForView = computed<ClusterData[]>(() => {
-  const src = (generate.value.clusters as any).chord_range
-  if (!src) return []
-  if (chordRangeMode.value === 'global') return src.global
-  return src.streams[String(chordRangeStreamId.value)] || []
-})
+const clustersForScope = (
+  source: { global: ClusterData[]; streams: Record<string, ClusterData[]> },
+  dimension: string
+) => {
+  if (clusterScope.value === 'global') {
+    return dimension === 'tie'
+      ? remapClusterTimeline(source.global, tieTimelineSteps.value.global)
+      : source.global
+  }
+  const localClusters = source.streams[clusterScope.value] ?? []
+  const timeline = dimension === 'tie'
+    ? (tieTimelineSteps.value.byStream[clusterScope.value] ?? [])
+    : generate.value.streamIds.flatMap((ids, stepIndex) =>
+        ids.includes(Number(clusterScope.value)) ? [stepIndex] : []
+      )
+  return remapClusterTimeline(localClusters, timeline)
+}
 
-const areaMode = ref<'global' | 'stream'>('global')
-const areaStreamId = ref<number>(0)
-const areaClustersForView = computed<ClusterData[]>(() => {
-  const src = (generate.value.clusters as any).area
-  if (!src) return []
-  if (areaMode.value === 'global') return src.global
-  return src.streams[String(areaStreamId.value)] || []
-})
+const clusterSections = computed(() => [
+  { key: 'note', title: 'NOTE', clusters: clustersForScope(generate.value.clusters.note, 'note') },
+  { key: 'area', title: 'AREA', clusters: clustersForScope(generate.value.clusters.area, 'area') },
+  { key: 'chord-range', title: 'CHORD_RANGE', clusters: clustersForScope(generate.value.clusters.chord_range, 'chord_range') },
+  { key: 'density', title: 'DENSITY', clusters: clustersForScope(generate.value.clusters.density, 'density') },
+  { key: 'vol', title: 'VOL', clusters: clustersForScope(generate.value.clusters.vol, 'vol') },
+  { key: 'brightness', title: 'BRI', clusters: clustersForScope(generate.value.clusters.brightness, 'brightness') },
+  { key: 'noise', title: 'NOI', clusters: clustersForScope(generate.value.clusters.noise, 'noise') },
+  { key: 'harmonicity', title: 'HAR', clusters: clustersForScope(generate.value.clusters.harmonicity, 'harmonicity') },
+  { key: 'attack', title: 'ATK', clusters: clustersForScope(generate.value.clusters.attack, 'attack') },
+  { key: 'decay-sustain', title: 'DEC', clusters: clustersForScope(generate.value.clusters.decay_sustain, 'decay_sustain') },
+  { key: 'release', title: 'S/R', clusters: clustersForScope(generate.value.clusters.release, 'release') },
+  { key: 'tie', title: 'TIE', clusters: clustersForScope(generate.value.clusters.tie, 'tie') },
+])
 
-const densityMode = ref<'global' | 'stream'>('global')
-const densityStreamId = ref<number>(0)
-const densityClustersForView = computed<ClusterData[]>(() => {
-  const src = (generate.value.clusters as any).density
-  if (!src) return []
-  if (densityMode.value === 'global') return src.global
-  return src.streams[String(densityStreamId.value)] || []
-})
-
-const attackMode = ref<'global' | 'stream'>('global')
-const attackStreamId = ref<number>(0)
-const attackClustersForView = computed<ClusterData[]>(() => {
-  const src = (generate.value.clusters as any).attack
-  if (!src) return []
-  if (attackMode.value === 'global') return src.global
-  return src.streams[String(attackStreamId.value)] || []
-})
-
-const brightnessMode = ref<'global' | 'stream'>('global')
-const brightnessStreamId = ref<number>(0)
-const brightnessClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.brightness
-  if (!src) return []
-  if (brightnessMode.value === 'global') return src.global
-  return src.streams[String(brightnessStreamId.value)] || []
-})
-
-const noiseMode = ref<'global' | 'stream'>('global')
-const noiseStreamId = ref<number>(0)
-const noiseClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.noise
-  if (!src) return []
-  if (noiseMode.value === 'global') return src.global
-  return src.streams[String(noiseStreamId.value)] || []
-})
-
-const harmonicityMode = ref<'global' | 'stream'>('global')
-const harmonicityStreamId = ref<number>(0)
-const harmonicityClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.harmonicity
-  if (!src) return []
-  if (harmonicityMode.value === 'global') return src.global
-  return src.streams[String(harmonicityStreamId.value)] || []
-})
-
-const decaySustainMode = ref<'global' | 'stream'>('global')
-const decaySustainStreamId = ref<number>(0)
-const decaySustainClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.decay_sustain
-  if (!src) return []
-  if (decaySustainMode.value === 'global') return src.global
-  return src.streams[String(decaySustainStreamId.value)] || []
-})
-
-const releaseMode = ref<'global' | 'stream'>('global')
-const releaseStreamId = ref<number>(0)
-const releaseClustersForView = computed<ClusterData[]>(() => {
-  const src = generate.value.clusters.release
-  if (!src) return []
-  if (releaseMode.value === 'global') return src.global
-  return src.streams[String(releaseStreamId.value)] || []
+watch(() => generate.value.stableStreamIds, (ids) => {
+  if (clusterScope.value !== 'global' && !ids.includes(Number(clusterScope.value))) {
+    clusterScope.value = 'global'
+  }
 })
 
 // ===== highlight =====
-const leftHighlightedIndices = ref<number[]>([])
-const leftHighlightedWindowSize = ref(0)
 const pianoHighlightedIndices = ref<number[]>([])
 const pianoHighlightedWindowSize = ref(0)
-const rightHighlightedIndices = ref<number[]>([])
-const rightHighlightedWindowSize = ref(0)
-
-const onHoverClusterLeft = (payload: { indices: number[]; windowSize: number } | null) => {
-  if (!payload) {
-    leftHighlightedIndices.value = []
-    leftHighlightedWindowSize.value = 0
-  } else {
-    leftHighlightedIndices.value = payload.indices
-    leftHighlightedWindowSize.value = payload.windowSize
-  }
-}
 const onHoverClusterLeftAndPiano = (payload: { indices: number[]; windowSize: number } | null) => {
   if (!payload) {
-    leftHighlightedIndices.value = []
-    leftHighlightedWindowSize.value = 0
     pianoHighlightedIndices.value = []
     pianoHighlightedWindowSize.value = 0
   } else {
-    leftHighlightedIndices.value = payload.indices
-    leftHighlightedWindowSize.value = payload.windowSize
     pianoHighlightedIndices.value = payload.indices
     pianoHighlightedWindowSize.value = payload.windowSize
-  }
-}
-const onHoverClusterRight = (payload: { indices: number[]; windowSize: number } | null) => {
-  if (!payload) {
-    rightHighlightedIndices.value = []
-    rightHighlightedWindowSize.value = 0
-  } else {
-    rightHighlightedIndices.value = payload.indices
-    rightHighlightedWindowSize.value = payload.windowSize
   }
 }
 
