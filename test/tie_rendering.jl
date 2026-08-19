@@ -28,6 +28,7 @@ function _poly_synth_event_lines(scd::String)
 end
 
 @testset "tie target distribution is deterministic" begin
+  @test Main.TimeseriesClusteringAPI.Config.TIE_STEPS == [0.0, 0.5, 1.0]
   @test _time_series_controller_for_tie.generate_centered_targets(1, 0.6, 1.0) == [0.6]
   @test _time_series_controller_for_tie.generate_centered_targets(3, 0.5, 0.5) == [0.25, 0.5, 0.75]
 end
@@ -50,6 +51,17 @@ end
     0.0,
   )
   @test length(_poly_synth_event_lines(untied)) == 2
+
+  partial = _supercollider_controller_for_tie.build_score_events_scd(
+    [[_tie_test_voice(60)], [_tie_test_voice(60; tie=0.5)]],
+    [0.5, 0.5],
+    "/tmp/tie_rendering.wav",
+    0.0,
+  )
+  partial_events = _poly_synth_event_lines(partial)
+  @test length(partial_events) == 2
+  @test any(line -> occursin("\\dur, 1.000000", line), partial_events)
+  @test any(line -> occursin("[0.500000", line) && occursin("\\dur, 0.080000", line), partial_events)
 
   changed_note = _supercollider_controller_for_tie.build_score_events_scd(
     [[_tie_test_voice(60)], [_tie_test_voice(61; tie=1.0)]],

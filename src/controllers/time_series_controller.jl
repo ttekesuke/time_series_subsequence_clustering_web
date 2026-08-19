@@ -3710,12 +3710,14 @@ function generate_polyphonic()
     "tie_stream_complexity_center",
     "tie_stream_complexity_span",
     "tie_concordance",
-    "tie_rate_target",
+    "tie_value_target",
+    "tie_value_radius",
+    "tie_rate_target", # backward-compatible alias for tie_value_target
   )
   clustered_tie_enabled = any(haskey(gp, key) for key in tie_cluster_param_keys)
 
   # Legacy requests retain deterministic center±spread/2 distribution. New
-  # canonical tie parameters opt into clustered binary generation.
+  # Canonical tie parameters opt into clustered three-level generation.
   tie_center_raw = get(gp, "tie_center", nothing)
   tie_spread_raw = get(gp, "tie_spread", nothing)
   tie_center_series = _normalize_unit_series(tie_center_raw, length(stream_counts); fallback=0.0)
@@ -3724,7 +3726,6 @@ function generate_polyphonic()
   tie_stream_center_series = _normalize_unit_series(get(gp, "tie_stream_complexity_center", nothing), length(stream_counts); fallback=0.0)
   tie_stream_span_series = _normalize_unit_series(get(gp, "tie_stream_complexity_span", nothing), length(stream_counts); fallback=0.0)
   tie_concordance_series = _normalize_signed_unit_series(get(gp, "tie_concordance", nothing), length(stream_counts); fallback=0.0)
-  tie_rate_target_series = _normalize_unit_series(get(gp, "tie_rate_target", nothing), length(stream_counts); fallback=0.0)
   initial_step_durations = _step_durations_from_bpm_series(initial_context_bpm)
   future_step_durations = _step_durations_from_bpm_series(future_bpm)
   initial_step_onsets = _step_onsets_from_durations(initial_step_durations)
@@ -4017,6 +4018,11 @@ function generate_polyphonic()
     return true
   end
 
+  function _quantize_tie_value(raw)::Float64
+    value = clamp(_parse_float(raw), 0.0, 1.0)
+    return Config.TIE_STEPS[argmin(abs.(Config.TIE_STEPS .- value))]
+  end
+
   for step in results
     for st in step
       _normalize_stream!(st)
@@ -4030,7 +4036,7 @@ function generate_polyphonic()
   ]
 
   # Clustered tie history contains eligible boundaries only. Initial records are
-  # normalized to binary output here so an ineligible context boundary cannot
+  # quantized to the three-level output here so an ineligible context boundary cannot
   # be rendered as a continuation or seed the tie managers as an ordinary OFF.
   initial_tie_stream_history = Dict{Int,Vector{Float64}}()
   initial_tie_global_history = Vector{Vector{Float64}}()
@@ -4042,12 +4048,12 @@ function generate_polyphonic()
       for (slot, stream_id) in enumerate(result_stream_ids[step_idx])
         slot <= length(results[step_idx]) || continue
         current = results[step_idx][slot]
-        raw_bit = clamp(_parse_float(current[tie_idx]), 0.0, 1.0) >= Config.SC_TIE_THRESHOLD ? 1.0 : 0.0
+        raw_value = _quantize_tie_value(current[tie_idx])
         previous = get(previous_initial_by_id, stream_id, nothing)
         if previous !== nothing && _tie_render_compatible(previous, current)
-          current[tie_idx] = raw_bit
-          push!(get!(initial_tie_stream_history, stream_id, Float64[]), raw_bit)
-          push!(eligible_bits, raw_bit)
+          current[tie_idx] = raw_value
+          push!(get!(initial_tie_stream_history, stream_id, Float64[]), raw_value)
+          push!(eligible_bits, raw_value)
         else
           current[tie_idx] = 0.0
         end
@@ -4539,16 +4545,16 @@ function generate_polyphonic()
     DissonanceStmManager.commit!(stm_mgr, midi_notes, amps, onset)
   end
 
-  tie_on_counts = Dict{Int,Int}()
-  tie_eligible_counts = Dict{Int,Int}()
-
-  function _binary_tie_concordance_cost(bits::Vector{Float64}, raw_concordance::Real)::Float64
-    m = length(bits)
+  function _tie_concordance_cost(values::Vector{Float64}, raw_concordance::Real)::Float64
+    m = length(values)
     m < 2 && return 0.0
-    k = count(bit -> bit >= 0.5, bits)
-    max_disagreement = floor(Int, (m * m) / 4)
-    max_disagreement <= 0 && return 0.0
-    disagreement01 = clamp(float(k * (m - k)) / float(max_disagreement), 0.0, 1.0)
+    pairwise_distance = 0.0
+    pair_count = 0
+    for i in 1:(m - 1), j in (i + 1):m
+      pairwise_distance += abs(values[i] - values[j])
+      pair_count += 1
+    end
+    disagreement01 = pair_count > 0 ? clamp(pairwise_distance / float(pair_count), 0.0, 1.0) : 0.0
     concordance = clamp(float(raw_concordance), -1.0, 1.0)
     if concordance > 0.0
       return concordance * disagreement01
@@ -4569,9 +4575,7 @@ function generate_polyphonic()
         current_by_id[stream_id] = current
         previous = get(previous_step_by_id, stream_id, nothing)
         if previous !== nothing && _tie_render_compatible(previous, current)
-          tie_eligible_counts[stream_id] = get(tie_eligible_counts, stream_id, 0) + 1
-          tie_bit = clamp(_parse_float(current[tie_idx]), 0.0, 1.0) >= Config.SC_TIE_THRESHOLD ? 1 : 0
-          tie_on_counts[stream_id] = get(tie_on_counts, stream_id, 0) + tie_bit
+          current[tie_idx] = _quantize_tie_value(current[tie_idx])
         end
       end
       previous_step_by_id = current_by_id
@@ -4615,7 +4619,7 @@ function generate_polyphonic()
     search_values::Vector{Float64},
     idx0::Int
   )::Vector{Float64}
-    if !(key == "vol" || key == "brightness" || key == "noise" || key == "harmonicity" || key == "attack" || key == "decay_sustain" || key == "release" || key == "chord_range" || key == "density")
+    if !(key == "vol" || key == "brightness" || key == "noise" || key == "harmonicity" || key == "attack" || key == "decay_sustain" || key == "release" || key == "chord_range" || key == "density" || key == "tie")
       return search_values
     end
 
@@ -4627,12 +4631,20 @@ function generate_polyphonic()
       "$(key)_value_target",
       "$(key)_target",
     )
+    if key == "tie" && target_raw === nothing
+      # Old params.json files used rate terminology. Treat that value as the
+      # canonical three-level value target when loading them.
+      target_raw = array_param(gp, "tie_rate_target", idx0)
+    end
     spread_raw = array_param_alias(
       gp,
       idx0,
       "$(key)_value_radius",
       "$(key)_target_spread",
     )
+    if key == "tie" && spread_raw === nothing && haskey(gp, "tie_rate_target")
+      spread_raw = 0.0
+    end
     if target_raw === nothing && spread_raw === nothing
       return search_values
     end
@@ -4732,15 +4744,6 @@ function generate_polyphonic()
         "$(manager_key) has no containers for active stream IDs $(missing_ids).",
       )
     end
-    if clustered_tie_enabled
-      for (_source_id, new_id) in plan.fork_pairs
-        # A fork receives cloned complexity history through the lifecycle plan,
-        # but its stable-ID-specific cumulative tie rate starts fresh.
-        tie_on_counts[new_id] = 0
-        tie_eligible_counts[new_id] = 0
-      end
-    end
-
     idx0 = step_idx - 1
     _apply_step_recency!(idx0, desired_stream_count)
     step_stream_order = stream_priority_order(lifecycle_mgr, desired_stream_count)
@@ -4749,7 +4752,7 @@ function generate_polyphonic()
     else
       tie_center = step_idx <= length(tie_center_series) ? tie_center_series[step_idx] : 0.0
       tie_spread = step_idx <= length(tie_spread_series) ? tie_spread_series[step_idx] : 0.0
-      generate_centered_targets(desired_stream_count, tie_center, tie_spread)
+      [_quantize_tie_value(value) for value in generate_centered_targets(desired_stream_count, tie_center, tie_spread)]
     end
 
     current_step_values = [
@@ -5454,7 +5457,6 @@ end
       stream_center = tie_stream_center_series[step_idx]
       stream_span = tie_stream_span_series[step_idx]
       concordance = tie_concordance_series[step_idx]
-      rate_target = tie_rate_target_series[step_idx]
       stream_targets = generate_centered_targets(desired_stream_count, stream_center, stream_span)
 
       eligible_slots = Int[]
@@ -5478,7 +5480,12 @@ end
         container = tie_stream_mgr.containers_by_id[stream_id]
         stream_calibrator = build_extended_metric_calibrator(container.manager)
         stream_predictor = build_predictive_distribution(container.manager)
-        candidate_bits = Config.TIE_STEPS
+        candidate_bits = _restrict_candidates_with_target_window(
+          "tie",
+          Float64[float(value) for value in Config.TIE_STEPS],
+          step_idx - 1,
+        )
+        isempty(candidate_bits) && (candidate_bits = Float64[float(value) for value in Config.TIE_STEPS])
 
         global_metrics = PolyphonicClusterManager.ExtendedClusterMetrics[]
         stream_metrics = PolyphonicClusterManager.ExtendedClusterMetrics[]
@@ -5545,16 +5552,12 @@ end
         best_bit = 0.0
         best_cost = Inf
         for (candidate_idx, bit) in enumerate(candidate_bits)
-          projected_rate =
-            float(get(tie_on_counts, stream_id, 0) + Int(bit >= 0.5)) /
-            float(get(tie_eligible_counts, stream_id, 0) + 1)
           partial_bits = Float64[chosen_ties[s] for s in sort!(collect(keys(chosen_ties)))]
           push!(partial_bits, bit)
           cost =
             abs(global_scores[candidate_idx] - global_target) +
             abs(stream_scores[candidate_idx] - stream_targets[slot]) +
-            abs(projected_rate - rate_target) +
-            _binary_tie_concordance_cost(partial_bits, concordance)
+            _tie_concordance_cost(partial_bits, concordance)
           if cost < best_cost - 1e-12
             best_cost = cost
             best_bit = bit
@@ -5566,8 +5569,8 @@ end
 
       if !isempty(eligible_slots)
         committed_bits = Float64[current_step_values[slot][tie_idx] for slot in eligible_slots]
-        global_tie_rate = sum(committed_bits) / float(length(committed_bits))
-        PolyphonicClusterManager.add_data_point_permanently(tie_global_mgr, Float64[global_tie_rate])
+        global_tie_value = sum(committed_bits) / float(length(committed_bits))
+        PolyphonicClusterManager.add_data_point_permanently(tie_global_mgr, Float64[global_tie_value])
         PolyphonicClusterManager.update_caches_permanently!(tie_global_mgr)
 
         for slot in eligible_slots
@@ -5577,8 +5580,6 @@ end
           PolyphonicClusterManager.add_data_point_permanently(container.manager, Float64[bit])
           PolyphonicClusterManager.update_caches_permanently!(container.manager)
           container.last_value = Float64[bit]
-          tie_eligible_counts[stream_id] = get(tie_eligible_counts, stream_id, 0) + 1
-          tie_on_counts[stream_id] = get(tie_on_counts, stream_id, 0) + Int(bit >= 0.5)
         end
       end
       step_decisions["tie"] = Float64[current_step_values[slot][tie_idx] for slot in 1:desired_stream_count]
@@ -5616,7 +5617,7 @@ end
       vec[release_idx] = (!get(dim_accept, "release", true) && is_generated_step) ? clamp(_resolved_fixed_value_for_stream("release", stream_idx), 0.0, 1.0) : clamp(_parse_float(vec[release_idx]), 0.0, 1.0)
       vec[chord_range_idx] = (!get(dim_accept, "chord_range", true) && is_generated_step) ? Int(round(clamp(_resolved_fixed_value_for_stream("chord_range", stream_idx), float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))) : clamp(_parse_int(vec[chord_range_idx]), CHORD_RANGE_MIN, CHORD_RANGE_MAX)
       vec[density_idx] = (!get(dim_accept, "density", true) && is_generated_step) ? clamp(_resolved_fixed_value_for_stream("density", stream_idx), 0.0, 1.0) : clamp(_parse_float(vec[density_idx]), 0.0, 1.0)
-      vec[tie_idx] = clamp(_parse_float(vec[tie_idx]), 0.0, 1.0)
+      vec[tie_idx] = _quantize_tie_value(vec[tie_idx])
     end
   end
 

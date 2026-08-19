@@ -967,7 +967,8 @@ const parameterSections = computed<ParameterSection[]>(() => {
     ], 1, 960, 1),
     makeParameterSection('tie', 'TIE Params', [
       ...complexityRows('tie'),
-      { label: 'rate', keys: ['tie_rate_target'] },
+      { label: 'target', keys: ['tie_value_target', 'tie_rate_target'] },
+      { label: 'radius', keys: ['tie_value_radius'] },
     ], -1, 1, 0.01),
     makeParameterSection('generation-controls', 'GENERATION Params', [
       { label: 'recency center', keys: ['recency_center'] },

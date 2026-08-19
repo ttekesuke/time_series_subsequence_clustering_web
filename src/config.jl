@@ -47,7 +47,9 @@ const OCTAVE_RANGE = 0:7
 const NOTE_RANGE = 0:11
 const FLOAT_STEPS::Vector{Float64} = [round(i / 10.0, digits=1) for i in 0:10]
 const VOL_STEPS::Vector{Float64} = [UNIT_MIN, UNIT_MAX]
-const TIE_STEPS::Vector{Float64} = [UNIT_MIN, UNIT_MAX]
+# 0.0 = re-articulate, 0.5 = continue with a light attack accent,
+# 1.0 = continue without re-articulation.
+const TIE_STEPS::Vector{Float64} = [UNIT_MIN, UNIT_MID, UNIT_MAX]
 const CHORD_SIZE_RANGE = 1:4
 const CHORD_RANGE_VALUE_MIN::Int = 0
 const CHORD_RANGE_VALUE_MAX::Int = 24
@@ -142,7 +144,10 @@ const SC_DEFAULT_ATTACK::Float64 = 0.05
 const SC_DEFAULT_DECAY::Float64 = 0.20
 const SC_DEFAULT_SUSTAIN_RELEASE::Float64 = 0.75
 const SC_DEFAULT_TIE::Float64 = 0.0
-const SC_TIE_THRESHOLD::Float64 = 0.5
+const SC_TIE_PARTIAL_THRESHOLD::Float64 = 0.25
+const SC_TIE_FULL_THRESHOLD::Float64 = 0.75
+const SC_TIE_ACCENT_GAIN::Float64 = 0.22
+const SC_TIE_ACCENT_DURATION_RATIO::Float64 = 0.20
 const SC_DEFAULT_TAIL_PAD_SECONDS::Float64 = 2.0
 const SC_MAX_TAIL_PAD_SECONDS::Float64 = 10.0
 const SC_RENDER_TIMEOUT_MIN_SECONDS::Float64 = 30.0

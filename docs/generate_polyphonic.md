@@ -35,7 +35,8 @@
     "tie_stream_complexity_center": [0.0, 0.0, 0.0],
     "tie_stream_complexity_span": [0.0, 0.0, 0.0],
     "tie_concordance": [0.0, 0.0, 0.0],
-    "tie_rate_target": [0.0, 0.0, 0.0],
+    "tie_value_target": [0.0, 0.0, 0.0],
+    "tie_value_radius": [1.0, 1.0, 1.0],
     "recency_center": [0.0, 0.0, 0.0],
     "recency_spread": [0.0, 0.0, 0.0],
     "initial_context": [
@@ -106,11 +107,12 @@
 | キー | 範囲 | step | デフォルト | 意味 |
 | --- | ---: | ---: | ---: | --- |
 | `stream_counts` | 1..16 | 1 | 1 | 各 future step の stream 数。この長さが生成 step 数です。 |
-| `tie_global_complexity_target` | 0..1 | 0.01 | 0 | eligible stream群のtie-on率系列に対するglobal complexity目標。 |
-| `tie_stream_complexity_center` | 0..1 | 0.01 | 0 | stable stream別binary tie系列のcomplexity目標中心。 |
+| `tie_global_complexity_target` | 0..1 | 0.01 | 0 | eligible stream群のtie値平均系列に対するglobal complexity目標。 |
+| `tie_stream_complexity_center` | 0..1 | 0.01 | 0 | stable stream別3値tie系列のcomplexity目標中心。 |
 | `tie_stream_complexity_span` | 0..1 | 0.01 | 0 | stream complexity目標の全体幅。 |
-| `tie_concordance` | -1..1 | 0.01 | 0 | 正値は同時ON/OFFを揃え、負値は分散させる。 |
-| `tie_rate_target` | 0..1 | 0.01 | 0 | eligible境界でtieをONにする累積割合の目標。 |
+| `tie_concordance` | -1..1 | 0.01 | 0 | 正値は同時tie段階を揃え、負値は分散させる。 |
+| `tie_value_target` | 0..1 | 0.5 | 0 | tie値の中心。0=再発音、0.5=軽い再アタック付き継続、1=完全継続。 |
+| `tie_value_radius` | 0..1 | 0.5 | 1 | targetを中心に3値候補を許可する半径。 |
 | `recency_center` | 0..1 | 0.01 | 0 | 直近履歴をどれくらい重く見るか。 |
 | `recency_spread` | 0..1 | 0.01 | 0 | stream 間の recency ばらつき。 |
 | `stream_strength_target` | 0..1 | 0.01 | 0 | stream lifecycle で残す / 復活 / fork する stream 強度の中心。 |
@@ -512,11 +514,11 @@ noteの反復とtieは別の段階です。
 
 1. note/AREAの候補評価で、recencyを高くし複雑度targetを低くすると、最近の反復パターンが選ばれやすくなります。
 2. dissonance評価まで含めて各streamのnote/chordを確定します。
-3. clustered modeでは`TIE_STEPS = [0, 1]`からtieを選びます。対象は、同じstable IDが直前stepにも存在し、note集合、可聴性、tie中に更新できない音響controlがrender-compatibleな境界だけです。
-4. global/stream complexity、stable stream別の累積`tie_rate_target`、eligible stream間の`tie_concordance`を合算してgreedy選択します。ineligible境界は0を出力しmanager/rate履歴へcommitしません。
-5. SuperCollider render時、同じstable IDの前stepとnote/chordが完全一致し、tieが`SC_TIE_THRESHOLD = 0.5`以上なら、再発音せず前の音響runを延長します。
+3. clustered modeでは`TIE_STEPS = [0, 0.5, 1]`からtieを選びます。対象は、同じstable IDが直前stepにも存在し、note集合、可聴性、tie中に更新できない音響controlがrender-compatibleな境界だけです。
+4. `tie_value_target ± tie_value_radius`で候補を絞り、global/stream complexityとeligible stream間の`tie_concordance`を合算してgreedy選択します。ineligible境界は0を出力しmanager履歴へcommitしません。
+5. SuperCollider render時、0は完全に再発音、0.5は前のrunを継続しながら短く弱いattack transientを追加、1は再発音なしで完全にrunを延長します。
 
-新5 parameterは`tie_global_complexity_target`、`tie_stream_complexity_center`、`tie_stream_complexity_span`、`tie_concordance`、`tie_rate_target`です。新keyが一つもない旧requestだけは`tie_center/tie_spread`の決定論的legacy modeになります。tieはnote候補を固定したり、note探索を省略したりしません。standaloneの`sustain`生成dimensionとtieの`value_radius`はありません。
+新6 parameterは`tie_global_complexity_target`、`tie_stream_complexity_center`、`tie_stream_complexity_span`、`tie_concordance`、`tie_value_target`、`tie_value_radius`です。旧`tie_rate_target`は`tie_value_target`の読み込みaliasとして扱います。新keyが一つもない旧requestだけは`tie_center/tie_spread`の決定論的legacy modeになります。tieはnote候補を固定したり、note探索を省略したりしません。
 
 ## 15. SuperCollider render との関係
 

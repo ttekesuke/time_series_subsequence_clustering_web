@@ -148,6 +148,41 @@ function build_score_events_scd(
     return nothing
   end
 
+  function _continued_run(previous, voice, step_duration::Float64)
+    return (
+      stream_id = previous.stream_id,
+      abs_notes = previous.abs_notes,
+      start_time = previous.start_time,
+      dur = previous.dur + step_duration,
+      amp_each = previous.amp_each,
+      brightness = previous.brightness,
+      noise = previous.noise,
+      harmonicity = previous.harmonicity,
+      attack = previous.attack,
+      decay = previous.decay,
+      sustain_release = voice.sustain_release,
+    )
+  end
+
+  function _push_tie_accent!(voice, amp_each::Float64, step_duration::Float64)
+    accent_duration = max(min(step_duration * Config.SC_TIE_ACCENT_DURATION_RATIO, 0.08), 0.01)
+    for midi_note in voice.abs_notes
+      push!(events, (
+        time = current_time,
+        freq = midi_to_freq(midi_note),
+        dur = accent_duration,
+        amp = amp_each * Config.SC_TIE_ACCENT_GAIN * _low_note_audibility_gain(midi_note),
+        brightness = voice.brightness,
+        noise = voice.noise,
+        harmonicity = voice.harmonicity,
+        attack = 0.0,
+        decay = 1.0,
+        sustain_release = 0.0,
+      ))
+    end
+    return nothing
+  end
+
   for (step_idx, step_streams) in enumerate(series_steps)
     step_duration = float(step_durations[clamp(step_idx, 1, length(step_durations))])
     step_voices = StepVoice[]
@@ -197,20 +232,15 @@ function build_score_events_scd(
           step_idx, voice.stream_id, voice.vol, string(voice.abs_notes), voice.brightness, voice.noise, voice.harmonicity, voice.attack, voice.decay, voice.sustain_release, voice.tie)
         amp_each = (voice.vol / length(voice.abs_notes)) * base_voice_gain * step_gain
         prev_run = get(active_runs, voice.stream_id, nothing)
-        if prev_run !== nothing && voice.tie >= Config.SC_TIE_THRESHOLD && _same_notes(prev_run.abs_notes, voice.abs_notes)
-          active_runs[voice.stream_id] = (
-            stream_id = prev_run.stream_id,
-            abs_notes = prev_run.abs_notes,
-            start_time = prev_run.start_time,
-            dur = prev_run.dur + step_duration,
-            amp_each = prev_run.amp_each,
-            brightness = prev_run.brightness,
-            noise = prev_run.noise,
-            harmonicity = prev_run.harmonicity,
-            attack = prev_run.attack,
-            decay = prev_run.decay,
-            sustain_release = voice.sustain_release
-          )
+        can_continue = prev_run !== nothing && _same_notes(prev_run.abs_notes, voice.abs_notes)
+        if can_continue && voice.tie >= Config.SC_TIE_FULL_THRESHOLD
+          active_runs[voice.stream_id] = _continued_run(prev_run, voice, step_duration)
+        elseif can_continue && voice.tie >= Config.SC_TIE_PARTIAL_THRESHOLD
+          # Keep the sustained run alive, but add a short low-level transient at
+          # the boundary. This is the acoustic midpoint between a fresh note and
+          # a completely seamless continuation.
+          active_runs[voice.stream_id] = _continued_run(prev_run, voice, step_duration)
+          _push_tie_accent!(voice, amp_each, step_duration)
         else
           prev_run !== nothing && _flush_run!(prev_run)
           active_runs[voice.stream_id] = (

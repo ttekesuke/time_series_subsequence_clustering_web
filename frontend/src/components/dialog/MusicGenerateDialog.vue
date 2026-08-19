@@ -710,7 +710,7 @@ const buildStrictContextVoiceFromRows = (rows: GridRowData[], streamIdx: number,
     Math.max(0, Math.min(1, release)),
     0,
     0,
-    Math.max(0, Math.min(1, tie))
+    Math.round(Math.max(0, Math.min(1, tie)) * 2) / 2
   ]
 }
 
@@ -795,6 +795,8 @@ watch(soundCheckDialog, (isOpen) => {
 const makeContextConfig = (dimKey: string) => {
   if (dimKey === 'abs_note') {
     return { min: 12, max: 120, isInt: true, step: 1, inputMode: 'note-array' as const }
+  } else if (dimKey === 'tie') {
+    return { min: 0, max: 1, isInt: false, step: 0.5 }
   } else {
     // vol + 6-axis timbre controls
     return { min: 0, max: 1, isInt: false, step: 0.01 }
@@ -1222,7 +1224,7 @@ const genRowMetas: GenRowMeta[] = [
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "tie可能なstream全体のON/OFF率を時系列として見たglobalクラスタ複雑度の目標です。",
+      "tie可能なstream全体の再発音／軽い再アタック／完全継続の平均値を時系列として見たglobalクラスタ複雑度の目標です。",
       "0：ensemble全体のtie配置を単純・反復寄りにします。",
       "1：ensemble全体のtie配置を新規性・変化の大きい方向へ寄せます。"
     )
@@ -1237,7 +1239,7 @@ const genRowMetas: GenRowMeta[] = [
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: 0, max: 1, step: 0.01 },
-      "stable streamごとのbinary tie系列をクラスタ評価するときの複雑度目標中心です。",
+      "stable streamごとの3値tie系列をクラスタ評価するときの複雑度目標中心です。",
       "0：各streamのtie判断を単純・反復寄りにします。",
       "1：各streamのtie判断を複雑・新規寄りにします。"
     )
@@ -1267,24 +1269,39 @@ const genRowMetas: GenRowMeta[] = [
     defaultFactory: (len) => constant(0, len),
     help: H(
       { min: -1, max: 1, step: 0.01 },
-      "同じstep境界でeligibleなstreamのtie ON/OFFを揃えるか分けるかを指定します。",
-      "-1：ONとOFFが可能な限り分かれる候補を優先します。",
-      "1：全streamが同じON/OFF判断になる候補を優先します。0では評価しません。"
+      "同じstep境界でeligibleなstreamのtie段階を揃えるか分けるかを指定します。",
+      "-1：0／0.5／1が可能な限り分かれる候補を優先します。",
+      "1：全streamが同じtie段階になる候補を優先します。0では評価しません。"
     )
   },
   {
-    shortName: "TIE Rate",
-    name: "TIE Rate Target",
-    key: "tie_rate_target",
+    shortName: "TIE Target",
+    name: "TIE Value Target",
+    key: "tie_value_target",
     min: 0,
     max: 1,
-    step: 0.01,
+    step: 0.5,
     defaultFactory: (len) => constant(0, len),
     help: H(
-      { min: 0, max: 1, step: 0.01 },
-      "同一stable stream・同一chord・render互換となるtie可能境界のうち、tieをONにする累積割合の目標です。",
-      "0：tie可能でもstepごとに再発音する方向です。",
-      "1：tie可能なら積極的に接続する方向です。"
+      { min: 0, max: 1, step: 0.5 },
+      "tie可能境界で使う3段階の音響値の中心です。0=完全に再発音、0.5=継続音へ軽いアタックを追加、1=完全に継続です。",
+      "0：stepごとに完全に再発音します。",
+      "1：再発音せず前の音を完全に継続します。"
+    )
+  },
+  {
+    shortName: "TIE Radius",
+    name: "TIE Value Radius",
+    key: "tie_value_radius",
+    min: 0,
+    max: 1,
+    step: 0.5,
+    defaultFactory: (len) => constant(1, len),
+    help: H(
+      { min: 0, max: 1, step: 0.5 },
+      "TIE Value Targetを中心に、0／0.5／1のどの候補まで探索へ含めるかを指定します。",
+      "0：targetに最も近い1段階だけを使います。",
+      "1：3段階すべてを探索できます。"
     )
   },
   {
@@ -2003,7 +2020,8 @@ const tieParamKeys = [
   'tie_stream_complexity_center',
   'tie_stream_complexity_span',
   'tie_concordance',
-  'tie_rate_target',
+  'tie_value_target',
+  'tie_value_radius',
 ] as const
 const legacyTieParams = ref<{ tie_center: number[]; tie_spread: number[] } | null>(null)
 
@@ -2199,6 +2217,7 @@ const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
           continue
         }
         let v = normalizeNumber(rawVal, base)
+        if (key === 'tie') v = Math.round(v * 2) / 2
         const cfg = row.config
         if (cfg) {
           if (cfg.isInt) v = Math.round(v)
@@ -2230,12 +2249,14 @@ const applyGenParamsFromPayload = async (payload: any) => {
     if (key === 'future_bpm') return candidate.future_bpm ?? candidate.bpm
     if (key === 'recency_center') return candidate.recency_center
     if (key === 'recency_spread') return candidate.recency_spread
+    if (key === 'tie_value_target') return candidate.tie_value_target ?? candidate.tie_rate_target
+    if (key === 'tie_value_radius' && candidate.tie_value_radius == null && candidate.tie_rate_target != null) return 0
     const canonicalValue = candidate[key]
     if (canonicalValue != null) return canonicalValue
     return candidate[legacyParamKeyForCanonical(key)]
   }
 
-  const hasCanonicalTieParams = tieParamKeys.some((key) => candidate[key] != null)
+  const hasCanonicalTieParams = tieParamKeys.some((key) => candidate[key] != null) || candidate.tie_rate_target != null
   const hasLegacyTieParams = !hasCanonicalTieParams && (
     candidate.tie_center != null || candidate.tie_spread != null
   )
@@ -2281,7 +2302,10 @@ const applyGenParamsFromPayload = async (payload: any) => {
     for (let i = 0; i < steps; i++) {
       let v = arr[i]
       if (v == null) {
-        v = defaults[i]
+        v = (arr.length > 0 ? arr[arr.length - 1] : defaults[i]) ?? 0
+      }
+      if (meta.key === 'tie_value_target' || meta.key === 'tie_value_radius') {
+        v = Math.round(Number(v) * 2) / 2
       }
       if (meta.isInt) v = Math.round(v)
       else v = Number(Number(v).toFixed(2))

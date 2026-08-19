@@ -8,12 +8,12 @@
     {
       "file": "tie-increasing.params.json",
       "label": "Tie: increasing",
-      "description": "同音反復を保ちながら、tie率を0から1へ徐々に増やします。"
+      "description": "同音反復を保ちながら、再発音→軽い再アタック→完全継続へ移行します。"
     },
     {
       "file": "tie-decreasing.params.json",
       "label": "Tie: decreasing",
-      "description": "tie率を1から0へ徐々に減らし、後半ほど再発音を増やします。"
+      "description": "完全継続→軽い再アタック→完全な再発音へ移行します。"
     },
     {
       "file": "register-motion-increasing.params.json",

@@ -183,30 +183,31 @@
 
 **FR-005C:** volume探索候補は `Config.VOL_STEPS = [0, 1]` とし、厳密な二値候補だけを評価する。`vol_value_target/value_radius` はこの二候補をfilterする。
 
-### 3.5 clustered binary tie契約（TO-BE実装済み）
+### 3.5 clustered three-level tie契約（TO-BE実装済み）
 
-clustered tie modeは次の5 parameterのいずれかがrequestに存在すると有効になる。tieは二値なので `value_radius` を持たない。
+clustered tie modeは次の6 parameterのいずれかがrequestに存在すると有効になる。
 
 | parameter | 範囲 | 意味 |
 |---|---:|---|
-| `tie_global_complexity_target` | 0..1 | eligible stream群のtie-on率系列に対するglobal complexity目標 |
-| `tie_stream_complexity_center` | 0..1 | stable stream別binary tie系列のcomplexity目標中心 |
+| `tie_global_complexity_target` | 0..1 | eligible stream群のtie値平均系列に対するglobal complexity目標 |
+| `tie_stream_complexity_center` | 0..1 | stable stream別3値tie系列のcomplexity目標中心 |
 | `tie_stream_complexity_span` | 0..1 | stream complexity目標の全体幅（`center ± span / 2`） |
-| `tie_concordance` | -1..1 | 正値は同時ON/OFFの一致、負値はON/OFF分散を優先 |
-| `tie_rate_target` | 0..1 | eligible境界のうちtieをONにするstable stream別累積率の目標 |
+| `tie_concordance` | -1..1 | 正値は同時tie段階の一致、負値は3段階の分散を優先 |
+| `tie_value_target` | 0, 0.5, 1 | tieの音響段階の中心。再発音／軽い再アタック付き継続／完全継続 |
+| `tie_value_radius` | 0, 0.5, 1 | targetを中心に許可するtie候補の半径 |
 
-- 候補は `Config.TIE_STEPS = [0, 1]` で、note/chord確定後にgreedy評価する。
+- 候補は `Config.TIE_STEPS = [0, 0.5, 1]` で、note/chord確定後にgreedy評価する。
 - 境界がeligibleとなるのは、同じstable IDが直前stepにも存在し、MIDI note集合が同一で、前後volumeが可聴であり、rendererがtie中に更新できない `vol`、`brightness`、`noise`、`harmonicity`、`attack`、`decay_sustain` が一致する場合だけである。`release` はrun末尾値へ更新できるため相違を許容する。
-- ineligible境界の出力tieは0とし、tie managerおよびtie率履歴へcommitしない。
-- binary concordanceの不一致度は、eligible数を `m`、ON数を `k` として `k(m-k) / floor(m²/4)` で正規化する。
-- 新5 keyが一つもなく、旧 `tie_center/tie_spread` だけのrequestは、従来の決定論的なcenter/spread展開を維持する。
+- ineligible境界の出力tieは0とし、tie managerへcommitしない。
+- concordanceの不一致度は、eligible stream間のtie値の平均pairwise absolute distanceで正規化する。
+- 新6 keyが一つもなく、旧 `tie_center/tie_spread` だけのrequestは、center/spread展開後に最も近い3段階へ量子化する。
 
 ### 3.6 stable stream ID render契約（TO-BE実装済み）
 
 - frontendは生成responseの `streamIds` を `timeSeries` と同じslot対応で保持し、render APIへsnake_caseの `stream_ids` sidecarとして送る。
 - frontendとrender endpointが無効・無音voiceを除外するときは、対応IDも同時に除外してslot対応を維持する。
 - `build_score_events_scd(...; stream_ids=nothing)` はstable IDをoptional keywordで受け取る。省略時は既存互換としてstep内slot indexを使用する。
-- SuperCollider event builderの `active_runs`、present判定、tie継続判定はstable `stream_id` をkeyとする。同じstable ID、同一note集合、tie閾値以上の場合だけ既存runを延長する。
+- SuperCollider event builderの `active_runs`、present判定、tie継続判定はstable `stream_id` をkeyとする。同じstable ID・同一note集合で、tie=0は再発音、0.5はrun継続と軽いattack transient、1は完全継続にする。
 - lifecycleによるslot順変更、deactivate/revive、新規stream追加があっても、異なるstable IDのrunを誤接続してはならない。
 
 ### 3.7 stable stream ID global encodingとCR/DEN契約（TO-BE実装済み）
