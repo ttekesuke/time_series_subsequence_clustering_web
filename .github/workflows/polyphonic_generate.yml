@@ -23,6 +23,8 @@ jobs:
       GENIE_PORT: "9111"
       PORT: "9111"
       JULIA_NUM_THREADS: "auto"
+      VOICEVOX_ENABLED: "true"
+      VOICEVOX_URL: "http://127.0.0.1:9120"
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +46,29 @@ jobs:
           set -eux
           sudo apt-get update
           sudo apt-get install -y supercollider
+
+      - name: Start VOICEVOX Song services
+        shell: bash
+        run: |
+          set -euxo pipefail
+          docker run -d --name voicevox-engine -p 50021:50021 \
+            voicevox/voicevox_engine:cpu-ubuntu20.04-latest
+          docker build -t local-voicevox-worker -f voicevox_worker/Dockerfile .
+          docker run -d --name voicevox-worker --network host \
+            -e VOICEVOX_ENGINE_URL=http://127.0.0.1:50021 \
+            -e VOICEVOX_SPEAKER=2 \
+            -e VOICEVOX_RENDER_MODE=sing \
+            -e VOICEVOX_SINGING_TEACHER=6000 \
+            -e VOICEVOX_SINGER=3003 \
+            -e VOICEVOX_WORKER_PORT=9120 \
+            local-voicevox-worker
+          for i in $(seq 1 180); do
+            if curl -fsS http://127.0.0.1:9120/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:9120/health >/dev/null
 
       - name: Decode params
         shell: bash
@@ -186,6 +211,7 @@ jobs:
           if [ -f server.pid ]; then
             kill "$(cat server.pid)" || true
           fi
+          docker rm -f voicevox-worker voicevox-engine || true
 
       - name: Upload artifacts
         if: always()

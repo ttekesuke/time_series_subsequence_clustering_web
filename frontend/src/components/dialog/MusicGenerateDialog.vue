@@ -2598,12 +2598,9 @@ const handleGeneratePolyphonic = async () => {
     const payload = buildParamsPayload(jobId)
     emit('params-built', payload)
 
-    // Voice rendering uses the local VOICEVOX service. The GitHub
-    // artifact runner intentionally has no singer model because model licences
-    // are deployment-specific.
-    const containsVoice = voicevoxEnabled.value &&
-      (payload.generate_polyphonic.voice_stream_counts ?? []).some((count: number) => count > 0)
-    const dispatchToGithub = runOnGithubActions.value && !containsVoice
+    // This flag controls where the whole job runs. Voice streams are included
+    // in the dispatched payload and rendered by the workflow's VOICEVOX worker.
+    const dispatchToGithub = runOnGithubActions.value
     const endpoint = dispatchToGithub
       ? '/api/web/time_series/dispatch_generate_polyphonic'
       : '/api/web/time_series/generate_polyphonic'

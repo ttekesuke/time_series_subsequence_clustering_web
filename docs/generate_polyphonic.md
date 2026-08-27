@@ -18,7 +18,7 @@
 - 直接実行: `POST /api/web/time_series/generate_polyphonic`
 - GitHub Actions dispatch: `POST /api/web/time_series/dispatch_generate_polyphonic`
 
-画面の `RUN` は `VITE_RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS` により、直接実行か GitHub Actions dispatch に切り替わります。どちらも生成本体に渡す payload は `generate_polyphonic` キー配下です。
+画面の `RUN` は `VITE_RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS` により、直接実行か GitHub Actions dispatch に切り替わります。GitHub Actions有効時はvoice streamを含む場合もローカル生成へフォールバックせず、workflow内でVOICEVOX Songを起動して処理します。どちらも生成本体に渡す payload は `generate_polyphonic` キー配下です。
 
 ## 2. 画面が送る payload
 
