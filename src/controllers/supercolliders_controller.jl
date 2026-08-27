@@ -432,7 +432,15 @@ end
 
 function _render_timeout_seconds(render_duration::Real)::Float64
   estimated = float(render_duration) * Config.SC_RENDER_TIMEOUT_DURATION_MULTIPLIER + Config.SC_RENDER_TIMEOUT_EXTRA_SECONDS
-  return clamp(estimated, Config.SC_RENDER_TIMEOUT_MIN_SECONDS, Config.SC_RENDER_TIMEOUT_MAX_SECONDS)
+  configured_minimum = try
+    max(0.0, parse(Float64, get(ENV, "SC_RENDER_TIMEOUT_SECONDS", "0")))
+  catch
+    0.0
+  end
+  return max(
+    clamp(estimated, Config.SC_RENDER_TIMEOUT_MIN_SECONDS, Config.SC_RENDER_TIMEOUT_MAX_SECONDS),
+    configured_minimum,
+  )
 end
 
 function _run_sclang_with_timeout(scd_path::AbstractString, timeout_seconds::Real)
@@ -656,9 +664,9 @@ function render_polyphonic()
       )
     end
 
-    if !isfile(wav_path)
+    if !isfile(wav_path) || filesize(wav_path) <= 44
       return Dict(
-        "error" => "wav file not generated",
+        "error" => "wav file was not generated or is empty",
         "scd_file_path" => scd_path,
         "sound_file_path" => wav_path,
       )
