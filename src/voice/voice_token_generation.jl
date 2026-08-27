@@ -282,20 +282,26 @@ function generate_tokens!(
     previous = get(state.last_token_by_stream, stream_id, nothing)
 
     best_index = 1
-    best_cost = Inf
+    best_target_distance = Inf
+    best_tiebreak_cost = Inf
     for i in eachindex(tokens)
       if require_distinct_text && tokens[i].text in chosen_texts
         continue
       end
       transition_cost = previous === nothing ? 0.0 :
         clamp(float(transition_weight), 0.0, 1.0) * embedding_distance(previous.embedding, candidates[i])
-      cost =
+      # The per-stream complexity center is the user's direct target. Choose
+      # the candidate nearest to it first; global complexity, concordance, and
+      # transition history only resolve ties between equally close candidates.
+      target_distance = abs(stream_scores[i] - stream_target)
+      tiebreak_cost =
         abs(global_scores[i] - clamp(float(global_target), 0.0, 1.0)) +
-        abs(stream_scores[i] - stream_target) +
         _concordance_cost(candidates[i], chosen_embeddings, concordance) +
         transition_cost
-      if cost < best_cost - 1e-12
-        best_cost = cost
+      if target_distance < best_target_distance - 1e-12 ||
+         (abs(target_distance - best_target_distance) <= 1e-12 && tiebreak_cost < best_tiebreak_cost - 1e-12)
+        best_target_distance = target_distance
+        best_tiebreak_cost = tiebreak_cost
         best_index = i
       end
     end

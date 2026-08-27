@@ -36,7 +36,12 @@ function _voice_item(step_idx::Int, stream_id::Int, time_series, stream_ids, voi
   step_idx <= length(voice_plan) || return nothing
   plan = _find_plan_entry(voice_plan[step_idx], stream_id)
   plan !== nothing && lowercase(string(get(plan, "mode", "synth"))) == "voice" || return nothing
-  text = strip(string(get(plan, "text", get(plan, "token", ""))))
+  raw_text = get(plan, "text", get(plan, "token", nothing))
+  # JSON null is decoded as Julia `nothing`. Converting it with string(...) to
+  # "nothing" produces an invalid Song lyric; treat it as a normal synth step.
+  raw_text === nothing && return nothing
+  text = strip(string(raw_text))
+  lowercase(text) == "nothing" && return nothing
   isempty(text) && return nothing
   tuple = _stream_tuple_by_id(time_series[step_idx], stream_ids[step_idx], stream_id)
   tuple isa AbstractVector && length(tuple) == 11 || return nothing

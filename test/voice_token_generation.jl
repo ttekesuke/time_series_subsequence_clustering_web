@@ -49,4 +49,19 @@ const VTG = Main.TimeseriesClusteringAPI.VoiceTokenGeneration
     concordance=-1.0,
   )
   @test discordant[1].text != discordant[2].text
+
+  target_state = VTG.VoiceTokenState(inventory, [1], 0.02, 2)
+  candidates = Vector{Float64}[token.embedding for token in inventory.tokens]
+  scores = VTG._candidate_complexity_scores(target_state.stream_managers[1], candidates)
+  target = 0.37
+  expected_index = argmin(abs(score - target) for score in scores)
+  closest = VTG.generate_tokens!(
+    target_state,
+    [1];
+    global_target=1.0,
+    stream_targets=Dict(1 => target),
+    concordance=0.0,
+    transition_weight=0.0,
+  )
+  @test closest[1].id == inventory.tokens[expected_index].id
 end

@@ -4331,7 +4331,11 @@ function generate_polyphonic()
           end
         end
       end
-      initial_text = initial_voice_entry === nothing ? "" : strip(string(get(initial_voice_entry, "text", "")))
+      raw_initial_text = initial_voice_entry === nothing ? nothing : get(initial_voice_entry, "text", nothing)
+      # A JSON null must remain an empty lyric. `string(nothing)` is the
+      # literal "nothing", which was incorrectly marked as a voice token.
+      initial_text = raw_initial_text === nothing ? "" : strip(string(raw_initial_text))
+      lowercase(initial_text) == "nothing" && (initial_text = "")
       initial_mode = isempty(initial_text) ? "synth" : "voice"
       push!(step_plan, Dict(
         "streamId" => stream_id,
