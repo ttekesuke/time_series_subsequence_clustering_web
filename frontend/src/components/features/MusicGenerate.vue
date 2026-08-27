@@ -502,6 +502,15 @@ type StepVec = StepVecStrict
 type PolyphonicResponse = {
   timeSeries: StepVec[][];
   streamIds?: number[][];
+  voicePlan?: Array<Array<{
+    streamId: number
+    mode: 'synth' | 'voice'
+    token: string | null
+    text: string | null
+    phones: string[]
+    carrierNote: number | null
+    notes: number[]
+  }>>;
   clusters: Record<string, { global: ClusterData[]; streams: Record<string, ClusterData[]> }>;
   timbreSeries?: {
     brightness?: number[][]
@@ -590,7 +599,7 @@ const handleGenerated = (data: PolyphonicResponse) => {
   applyPolyphonicResponse(data)
   const ts = data.timeSeries
   const responseBpmSeries = (data as any)?.bpmSeries ?? (data as any)?.futureBpm ?? (data as any)?.bpm
-  renderPolyphonicAudio(ts, responseBpmSeries, data.streamIds)
+  renderPolyphonicAudio(ts, responseBpmSeries, data.streamIds, data.voicePlan)
 }
 
 const handleDispatched = (info: any) => {
@@ -713,7 +722,7 @@ const expandTimeSeries = (ts: any[], rawStreamIds?: number[][]) => {
   }
 }
 
-const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any, streamIds?: number[][]) => {
+const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any, streamIds?: number[][], voicePlan?: any[][]) => {
   progress.value.status = 'rendering'
 
   const normalizeRenderPayload = (ts: any[][], ids?: number[][]) => {
@@ -769,6 +778,7 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any, streamIds?: nu
   axios.post('/api/web/supercolliders/render_polyphonic', {
     time_series: out,
     stream_ids: normalizedStreamIds,
+    voice_plan: voicePlan,
     bpm,
     future_bpm: bpmSeries,
     initial_context_bpm: bpmSeries.slice(0, Math.min(1, bpmSeries.length)),

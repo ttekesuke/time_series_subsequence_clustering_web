@@ -41,6 +41,16 @@ Thumbs.db
 # NPM packages folder.
 node_modules/
 
+# Python caches / local virtual environments.
+__pycache__/
+*.py[cod]
+.venv-voice/
+
+# Local voice model assets are deployment-local.
+models/diffsinger/*
+!models/diffsinger/README.md
+diffsinger_model/
+
 # Database
 db/*.sqlite
 

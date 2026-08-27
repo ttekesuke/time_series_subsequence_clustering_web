@@ -1,0 +1,19 @@
+{
+  "inventory_id": "ja_mora_demo",
+  "model_id": "demo-only",
+  "feature_version": "fixture-v1",
+  "source": "fixture-only; replace with an inventory measured from VOICEVOX WAV samples",
+  "dimensions": 6,
+  "tokens": [
+    { "id": "a",  "text": "あ", "phones": ["a"],      "embedding": [0.05, 0.15, 0.82, 0.20, 0.10, 0.08] },
+    { "id": "i",  "text": "い", "phones": ["i"],      "embedding": [0.08, 0.88, 0.18, 0.16, 0.08, 0.06] },
+    { "id": "u",  "text": "う", "phones": ["u"],      "embedding": [0.10, 0.32, 0.28, 0.72, 0.09, 0.07] },
+    { "id": "e",  "text": "え", "phones": ["e"],      "embedding": [0.07, 0.70, 0.42, 0.22, 0.08, 0.06] },
+    { "id": "o",  "text": "お", "phones": ["o"],      "embedding": [0.06, 0.24, 0.62, 0.68, 0.09, 0.07] },
+    { "id": "ka", "text": "か", "phones": ["k", "a"], "embedding": [0.74, 0.16, 0.78, 0.22, 0.42, 0.34] },
+    { "id": "ki", "text": "き", "phones": ["k", "i"], "embedding": [0.76, 0.84, 0.20, 0.18, 0.43, 0.35] },
+    { "id": "sa", "text": "さ", "phones": ["s", "a"], "embedding": [0.90, 0.18, 0.76, 0.21, 0.82, 0.68] },
+    { "id": "shi","text": "し", "phones": ["sh", "i"],"embedding": [0.92, 0.80, 0.22, 0.17, 0.86, 0.72] },
+    { "id": "na", "text": "な", "phones": ["n", "a"], "embedding": [0.38, 0.17, 0.80, 0.20, 0.18, 0.55] }
+  ]
+}

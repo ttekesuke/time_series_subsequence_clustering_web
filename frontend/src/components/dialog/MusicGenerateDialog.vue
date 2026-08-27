@@ -110,6 +110,17 @@
                   </div>
                 </template>
                 <template #toolbar-extra>
+                  <div v-if="voicevoxEnabled" class="d-flex align-center mr-4" style="font-size: 0.9rem;">
+                    <span class="mr-2">VoiceInventory:</span>
+                    <input
+                      type="text"
+                      :value="voiceInventoryId"
+                      @input="onVoiceInventoryInput"
+                      maxlength="64"
+                      class="step-input voice-inventory-input mr-1"
+                      title="config/voice_inventories にあるインベントリID"
+                    >
+                  </div>
                   <div class="d-flex align-center mr-4" style="font-size: 0.9rem;">
                     <span class="mr-2">MergeThresholdRatio:</span>
                     <input
@@ -223,6 +234,20 @@ const runButtonLabel = computed(() =>
   runOnGithubActions.value ? 'RUN ON GITHUB ACTIONS' : 'RUN'
 )
 
+const frontendVoicevoxAllowed = (() => {
+  const raw = (import.meta as any).env?.VITE_VOICEVOX_ENABLED ?? 'true'
+  return !['0', 'false', 'no', 'off'].includes(String(raw).trim().toLowerCase())
+})()
+const voicevoxEnabled = ref(frontendVoicevoxAllowed)
+const voiceParamKeys = new Set([
+  'voice_stream_counts',
+  'voice_token_global_complexity_target',
+  'voice_token_stream_complexity_center',
+  'voice_token_stream_complexity_span',
+  'voice_token_concordance',
+  'voice_transition_weight',
+])
+
 
 /** ========== 進捗管理 ========== */
 const progressState = ref<{ percent: number; status: string }>(
@@ -272,13 +297,14 @@ const DEFAULT_BPM = 480
 type GridRowData = {
   name: string;
   shortName: string;
+  dimensionKey?: string;
   data: Array<number | string>;
   config: {
     min: number;
     max: number;
     step?: number;
     isInt?: boolean;
-    inputMode?: 'number' | 'note-array';
+    inputMode?: 'number' | 'note-array' | 'text';
   }
   help?: any;
   disabled?: boolean;
@@ -529,7 +555,8 @@ const contextInputDimensions = [
   { key: 'attack', shortName: 'ATTACK', name: 'ATTACK' },
   { key: 'decay_sustain', shortName: 'DECAY', name: 'DECAY' },
   { key: 'release', shortName: 'SUSTAIN_RELEASE', name: 'SUSTAIN/RELEASE' },
-  { key: 'tie', shortName: 'TIE', name: 'TIE' }
+  { key: 'tie', shortName: 'TIE', name: 'TIE' },
+  { key: 'lyrics', shortName: 'LYRICS', name: 'LYRICS' }
 ]
 
 
@@ -577,7 +604,8 @@ const contextInputIndexByKey = {
   attack: 5,
   decay_sustain: 6,
   release: 7,
-  tie: 8
+  tie: 8,
+  lyrics: 9
 } as const
 
 const contextSteps = ref(3)
@@ -605,7 +633,6 @@ const makeBpmGridRow = (data: number[]): GridRowData => ({
 })
 
 const initialContextBpm = ref<number[]>(Array(contextSteps.value).fill(DEFAULT_BPM))
-
 const contextRowsForGrid = computed<GridRowData[]>({
   get: () => [
     makeBpmGridRow(initialContextBpm.value),
@@ -652,7 +679,7 @@ const soundCheckStreamItems = computed(() => {
 })
 
 const cloneRowSingleColumn = (row: GridRowData, colIndex: number): GridRowData => {
-  const fallback = row.config.inputMode === 'note-array' ? '' : 0
+  const fallback = row.config.inputMode === 'note-array' || row.config.inputMode === 'text' ? '' : 0
   return {
     ...row,
     config: { ...row.config },
@@ -795,6 +822,8 @@ watch(soundCheckDialog, (isOpen) => {
 const makeContextConfig = (dimKey: string) => {
   if (dimKey === 'abs_note') {
     return { min: 12, max: 120, isInt: true, step: 1, inputMode: 'note-array' as const }
+  } else if (dimKey === 'lyrics') {
+    return { min: 0, max: 0, isInt: false, step: 1, inputMode: 'text' as const }
   } else if (dimKey === 'tie') {
     return { min: 0, max: 1, isInt: false, step: 0.5 }
   } else {
@@ -809,7 +838,8 @@ const makeContextRow = (streamIdx: number, dimIdx: number): GridRowData => {
   return {
     name: `S${streamIdx + 1} ${dim.name}`,
     shortName: `S${streamIdx + 1} ${dim.shortName}`,
-    data: Array(contextSteps.value).fill(dim.key === 'abs_note' ? `[${base}]` : base),
+    dimensionKey: dim.key,
+    data: Array(contextSteps.value).fill(dim.key === 'abs_note' ? `[${base}]` : dim.key === 'lyrics' ? '' : base),
     config: makeContextConfig(dim.key)
   }
 }
@@ -1029,7 +1059,7 @@ watch(contextSteps, (len) => {
   contextRows.value = contextRows.value.map((row) => {
     const data = [...row.data]
     while (data.length < len) {
-      data.push(data.length > 0 ? data[data.length - 1] : (row.config.inputMode === 'note-array' ? '' : 0))
+      data.push(data.length > 0 ? data[data.length - 1] : (row.config.inputMode === 'note-array' || row.config.inputMode === 'text' ? '' : 0))
     }
     if (data.length > len) data.splice(len)
     return { ...row, data }
@@ -1184,6 +1214,14 @@ const makeTimbreDimensionRows = (
 const genSteps = ref<number>(stepsDefault)
 const suppressGenWatch = ref(false)
 const mergeThresholdRatio = ref(0.02)
+const voiceInventoryId = ref('ja_voicevox_all')
+
+const onVoiceInventoryInput = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  const sanitized = target.value.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
+  target.value = sanitized
+  voiceInventoryId.value = sanitized
+}
 
 const onMergeThresholdInput = (e: Event) => {
   const target = e.target as HTMLInputElement
@@ -1212,6 +1250,97 @@ const genRowMetas: GenRowMeta[] = [
       "各stepで同時に扱うストリーム（声部）の本数を指定します。",
       "1：単一ストリーム（モノフォニック寄り）。",
       "16：最大16ストリーム。探索空間と評価の負荷が増える。"
+    )
+  },
+  {
+    shortName: "VOICE COUNT",
+    name: "Voice Stream Count",
+    key: "voice_stream_counts",
+    min: 0,
+    max: 16,
+    step: 1,
+    isInt: true,
+    defaultFactory: (len) => Array(len).fill(0),
+    help: H(
+      { min: 0, max: 16, step: 1, isInt: true },
+      "各stepでVOICEVOX発声へ切り替えるstream数です。stream count以下にしてください。",
+      "0：すべて通常のSuperCollider音。",
+      "1以上：stable streamを維持しながら指定本数だけ発音tokenを生成します。"
+    )
+  },
+  {
+    shortName: "VOICE G",
+    name: "Voice Token Global Complexity Target",
+    key: "voice_token_global_complexity_target",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "同時発音全体の音響token系列について、既存クラスタ処理の複雑度targetを指定します。",
+      "0：既存の発音パターンを反復しやすい。",
+      "1：音響embedding上で意外な発音を選びやすい。"
+    )
+  },
+  {
+    shortName: "VOICE S",
+    name: "Voice Token Stream Complexity Center",
+    key: "voice_token_stream_complexity_center",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "各voice streamの発音token複雑度の中心です。",
+      "0：反復寄り。",
+      "1：変化寄り。"
+    )
+  },
+  {
+    shortName: "VOICE SPAN",
+    name: "Voice Token Stream Complexity Span",
+    key: "voice_token_stream_complexity_span",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "voice stream間の発音複雑度targetの広がりです。",
+      "0：全voice streamを同じtargetにする。",
+      "1：stream間の役割差を最大にする。"
+    )
+  },
+  {
+    shortName: "VOICE CONC",
+    name: "Voice Token Concordance",
+    key: "voice_token_concordance",
+    min: -1,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: -1, max: 1, step: 0.01 },
+      "同じstepで発声するtoken同士の音響距離を制御します。",
+      "-1：互いに離れた発音を選びやすい。",
+      "1：互いに近い発音を選びやすい。"
+    )
+  },
+  {
+    shortName: "VOICE MOVE",
+    name: "Voice Transition Weight",
+    key: "voice_transition_weight",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultFactory: (len) => constant(0, len),
+    help: H(
+      { min: 0, max: 1, step: 0.01 },
+      "同じstable streamの直前tokenとの音響距離にかける重みです。",
+      "0：遷移距離を制約しない。",
+      "1：近い発音へ滑らかに移りやすい。"
     )
   },
   {
@@ -1730,6 +1859,12 @@ const genRowMetas: GenRowMeta[] = [
   ...makeTimbreDimensionRows('S/R', 'SUSTAIN/RELEASE', 'release', 'SUSTAIN/RELEASE の探索中心値です。Attack / Decay / SustainRelease の比率で音全体の長さに正規化され、この区間のうち 70% を sustain、30% を release に使います。', '0：末尾区間ほぼなし。', '1：Sustain/Release 比率が大きい。'),
 ]
 
+if (!voicevoxEnabled.value) {
+  for (let idx = genRowMetas.length - 1; idx >= 0; idx--) {
+    if (voiceParamKeys.has(genRowMetas[idx]?.key ?? '')) genRowMetas.splice(idx, 1)
+  }
+}
+
 const adsrRenderNote = 'SuperCollider では Attack / Decay / SustainRelease の3値を 0〜1 に clamp し、合計が 1 を超える場合は 1 step 内に収まるよう比率で正規化します。合計が 1 以下の場合はその合計分だけ鳴り、残りは無音になります。SustainRelease は 70% を sustain、30% を release に分けます。例: BPM 480 では 1 step = 0.125 秒です。'
 
 const dimHelp: Record<string, { label: string; value: string; min: string; max: string; note?: string }> = {
@@ -2051,6 +2186,27 @@ const genRows = ref<GridRowData[]>(
   genRowMetas.map((meta) => makeGenRowData(meta, meta.defaultFactory(genSteps.value)))
 )
 
+const disableVoicevoxControls = () => {
+  if (!voicevoxEnabled.value) return
+  const keepIndices = genRowMetas
+    .map((meta, idx) => voiceParamKeys.has(meta.key) ? -1 : idx)
+    .filter((idx) => idx >= 0)
+  genRows.value = keepIndices.map((idx) => genRows.value[idx]).filter(Boolean) as GridRowData[]
+  const keptMetas = keepIndices.map((idx) => genRowMetas[idx]).filter(Boolean) as GenRowMeta[]
+  genRowMetas.splice(0, genRowMetas.length, ...keptMetas)
+  voicevoxEnabled.value = false
+}
+
+// The runtime flag is authoritative. This matters for the single-image Render
+// deployment, where Vite was built before the service environment was applied.
+void axios.get('/api/features')
+  .then(({ data }) => {
+    if (!frontendVoicevoxAllowed || data?.voicevox === false) disableVoicevoxControls()
+  })
+  .catch((error) => {
+    console.warn('Runtime VOICEVOX feature flag could not be loaded; using the build-time setting.', error)
+  })
+
 watch(
   () => tieParamKeys.map((key) => {
     const idx = genRowMetas.findIndex((meta) => meta.key === key)
@@ -2115,6 +2271,14 @@ const buildGenParamsFromRows = () => {
   const result: any = {}
 
   result.stream_counts = get('stream_counts')
+  if (voicevoxEnabled.value) {
+    result.voice_stream_counts = get('voice_stream_counts')
+    result.voice_token_global_complexity_target = get('voice_token_global_complexity_target')
+    result.voice_token_stream_complexity_center = get('voice_token_stream_complexity_center')
+    result.voice_token_stream_complexity_span = get('voice_token_stream_complexity_span')
+    result.voice_token_concordance = get('voice_token_concordance')
+    result.voice_transition_weight = get('voice_transition_weight')
+  }
 
   result.stream_strength_target = get('stream_strength_target')
   result.stream_strength_spread = get('stream_strength_spread')
@@ -2199,8 +2363,13 @@ const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
   for (let s = 0; s < streamCount; s++) {
     for (let d = 0; d < contextInputDimensions.length; d++) {
       const row = makeContextRow(s, d)
-      const key = contextInputDimensions[d]?.key as keyof typeof strictContextIndexByKey
-      const strictIndex = strictContextIndexByKey[key]
+      const key = contextInputDimensions[d]?.key ?? ''
+      if (key === 'lyrics') {
+        row.data = Array.from({ length: steps }, () => '')
+        rows.push(row)
+        continue
+      }
+      const strictIndex = strictContextIndexByKey[key as keyof typeof strictContextIndexByKey]
       const base = defaultContextBase[strictIndex] ?? 0
       const data: Array<number | string> = []
       for (let step = 0; step < steps; step++) {
@@ -2239,6 +2408,10 @@ const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
 
 const applyGenParamsFromPayload = async (payload: any) => {
   const candidate = payload?.generate_polyphonic ?? payload ?? {}
+  if (voicevoxEnabled.value && typeof candidate.voice_inventory_id === 'string') {
+    const sanitized = candidate.voice_inventory_id.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
+    if (sanitized) voiceInventoryId.value = sanitized
+  }
   if (candidate.merge_threshold_ratio != null) {
     const v = normalizeNumber(candidate.merge_threshold_ratio, mergeThresholdRatio.value)
     mergeThresholdRatio.value = Math.min(1, Math.max(0, Number(v)))
@@ -2336,6 +2509,13 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       recency_center: genParams.recency_center,
       recency_spread: genParams.recency_spread,
       initial_context: initialContext,
+      initial_context_voice_plan: Array.from({ length: contextSteps.value }, (_, stepIdx) =>
+        Array.from({ length: contextStreamCount.value }, (_, streamIdx) => {
+          const lyricsRow = contextRows.value[streamIdx * contextInputDimensions.length + contextInputIndexByKey.lyrics]
+          const text = String(lyricsRow?.data?.[stepIdx] ?? '').trim()
+          return { streamId: streamIdx + 1, mode: text ? 'voice' : 'synth', text: text || null }
+        })
+      ),
       initial_context_bpm: normalizeBpmSeries(initialContextBpm.value, contextSteps.value),
       dimension_policy: buildDimensionPolicyPayload(),
       merge_threshold_ratio: mergeThresholdRatio.value,
@@ -2354,6 +2534,20 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       debug_score_top_n: 20,
       dissonance_target: genParams.dissonance_target
     }
+  }
+
+  if (voicevoxEnabled.value) {
+    Object.assign(payload.generate_polyphonic, {
+      voice_stream_counts: genParams.voice_stream_counts.map((value: number, index: number) =>
+        Math.min(value, genParams.stream_counts[index] ?? value)
+      ),
+      voice_inventory_id: voiceInventoryId.value || 'ja_voicevox_all',
+      voice_token_global_complexity_target: genParams.voice_token_global_complexity_target,
+      voice_token_stream_complexity_center: genParams.voice_token_stream_complexity_center,
+      voice_token_stream_complexity_span: genParams.voice_token_stream_complexity_span,
+      voice_token_concordance: genParams.voice_token_concordance,
+      voice_transition_weight: genParams.voice_transition_weight,
+    })
   }
 
   if (legacyTieParams.value) {
@@ -2384,6 +2578,16 @@ const applyParamsPayload = async (payload: any) => {
   if (!payload || typeof payload !== 'object') return
   const candidate = payload.generate_polyphonic ?? payload
   await applyInitialContextFromPayload(candidate.initial_context, candidate.initial_context_bpm ?? candidate.bpm)
+  if (Array.isArray(candidate.initial_context_voice_plan)) {
+    candidate.initial_context_voice_plan.forEach((stepPlan: any[], stepIdx: number) => {
+      if (!Array.isArray(stepPlan)) return
+      stepPlan.forEach((entry: any) => {
+        const streamIdx = Number(entry?.streamId) - 1
+        const row = contextRows.value[streamIdx * contextInputDimensions.length + contextInputIndexByKey.lyrics]
+        if (row && stepIdx < contextSteps.value) row.data[stepIdx] = typeof entry?.text === 'string' ? entry.text : ''
+      })
+    })
+  }
   await applyGenParamsFromPayload(candidate)
 }
 
@@ -2394,13 +2598,19 @@ const handleGeneratePolyphonic = async () => {
     const payload = buildParamsPayload(jobId)
     emit('params-built', payload)
 
-    const endpoint = runOnGithubActions.value
+    // Voice rendering uses the local VOICEVOX service. The GitHub
+    // artifact runner intentionally has no singer model because model licences
+    // are deployment-specific.
+    const containsVoice = voicevoxEnabled.value &&
+      (payload.generate_polyphonic.voice_stream_counts ?? []).some((count: number) => count > 0)
+    const dispatchToGithub = runOnGithubActions.value && !containsVoice
+    const endpoint = dispatchToGithub
       ? '/api/web/time_series/dispatch_generate_polyphonic'
       : '/api/web/time_series/generate_polyphonic'
 
     const resp = await axios.post(endpoint, payload)
 
-    if (runOnGithubActions.value) {
+    if (dispatchToGithub) {
       emit('dispatched-polyphonic', resp.data)
       emit('dispatched', resp.data)
     } else {
@@ -2464,6 +2674,9 @@ watch(open, (next, prev) => {
   padding: 2px 5px;
   border-radius: 4px;
   background: white;
+}
+.voice-inventory-input {
+  width: 150px;
 }
 .dimension-policy-row-slot {
   width: 120px;

@@ -8,6 +8,10 @@
 - Frontend: **Vue 3 + Vite + Vuetify**
 - Production: **Nginx (static + reverse proxy) + Genie**
 
+VOICEVOX voice rendering is available through the Compose worker. See
+[`docs/voicevox_voice_tokens.md`](docs/voicevox_voice_tokens.md) for voice
+inventory, speaker settings, and synchronized SuperCollider mixing.
+
 ---
 
 ## Production InfluxDB Cloud
@@ -16,6 +20,15 @@ Render ではローカル Docker の `influxdb:1.8` ではなく、InfluxDB Clou
 ローカルと本番で InfluxQL の見え方をそろえるため、v1 database 名、bucket 名、measurement 名はすべて `timeseries` にそろえます。
 
 Render の Environment Variables に次を設定してください。
+
+Render では VOICEVOX worker/model をデプロイしないため、以下も設定します。
+
+```dotenv
+VOICEVOX_ENABLED=false
+```
+
+この設定では画面の音声関連パラメータが非表示になり、APIもVOICEVOXを呼びません。
+`VITE_VOICEVOX_ENABLED=false` も Docker build argument として渡せる環境では、初期表示の時点から非表示になります。
 
 - `INFLUX_URL`: InfluxDB Cloud の API endpoint URL。例: `https://us-east-1-1.aws.cloud2.influxdata.com`
 - `INFLUX_TOKEN`: bucket の read 権限を持つ API token

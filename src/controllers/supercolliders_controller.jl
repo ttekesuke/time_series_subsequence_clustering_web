@@ -6,6 +6,7 @@ using Base64
 using Dates
 using Printf
 import ..Config
+import ..VoicevoxClient
 
 const RENDER_POLYPHONIC_TEMPLATE_PATH = normpath(joinpath(@__DIR__, "..", "supercollider", "render_polyphonic.scd.tpl"))
 
@@ -22,6 +23,8 @@ function build_score_events_scd(
   outfile::String,
   tail_pad_seconds::Float64;
   stream_ids=nothing,
+  voice_keys=Set{Tuple{Int,Int}}(),
+  voice_stems=Any[],
 )::String
   io = IOBuffer()
   mix_bus = Config.SC_MIX_BUS
@@ -203,6 +206,7 @@ function build_score_events_scd(
             stream_idx
           end
         end
+        (step_idx, stream_id) in voice_keys && continue
         push!(step_voices, (
           stream_id = stream_id,
           abs_notes = abs_notes,
@@ -275,18 +279,64 @@ function build_score_events_scd(
   end
   sort!(events; by = ev -> ev.time)
 
-  for (event_idx, ev) in enumerate(events)
-    suffix = event_idx < length(events) ? "," : ""
-    println(io, @sprintf(
-      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\noise, %.6f, \\harmonicity, %.6f, \\attack, %.6f, \\decay, %.6f, \\sustainRelease, %.6f, \\outBus, %d]]%s",
-      ev.time, node_id, ev.freq, ev.dur, ev.amp, ev.brightness, ev.noise, ev.harmonicity, ev.attack, ev.decay, ev.sustain_release, mix_bus, suffix
+  has_voice_stems = voice_stems isa AbstractVector && !isempty(voice_stems)
+  preroll = has_voice_stems ? Config.SC_VOICEVOX_BUFFER_PREROLL_SECONDS : 0.0
+  event_lines = String[]
+  for ev in events
+    push!(event_lines, @sprintf(
+      "  [%.6f, ['/s_new', \\polySynth, %d, 0, 0, \\freq, %.6f, \\dur, %.6f, \\amp, %.6f, \\brightness, %.6f, \\noise, %.6f, \\harmonicity, %.6f, \\attack, %.6f, \\decay, %.6f, \\sustainRelease, %.6f, \\outBus, %d]]",
+      ev.time + preroll, node_id, ev.freq, ev.dur, ev.amp, ev.brightness, ev.noise, ev.harmonicity, ev.attack, ev.decay, ev.sustain_release, mix_bus
     ))
     node_id += 1
   end
 
+  for (stem_idx, raw_stem) in enumerate(voice_stems)
+    stem = _to_string_dict(raw_stem)
+    path = string(get(stem, "path", ""))
+    isempty(path) && continue
+    buffer_id = 100 + stem_idx
+    voice_node_id = node_id
+    node_id += 1
+    push!(event_lines, @sprintf(
+      "  [0.000000, ['/b_allocRead', %d, \"%s\"]]",
+      buffer_id, _sc_string_escape(path),
+    ))
+    push!(event_lines, @sprintf(
+      "  [%.6f, ['/s_new', \\voiceStem, %d, 0, 0, \\bufnum, %d, \\amp, 1.0, \\outBus, %d]]",
+      preroll, voice_node_id, buffer_id, mix_bus,
+    ))
+    controls = get(stem, "controls", Any[])
+    if controls isa AbstractVector
+      for raw_control in controls
+        control = _to_string_dict(raw_control)
+        push!(event_lines, @sprintf(
+          "  [%.6f, ['/n_set', %d, \\amp, %.6f, \\pitchRatio, %.6f, \\brightness, %.6f, \\noise, %.6f, \\harmonicity, %.6f, \\attack, %.6f, \\decay, %.6f, \\sustainRelease, %.6f]]",
+          preroll + _parse_float(get(control, "time", 0.0)),
+          voice_node_id,
+          clamp(_parse_float(get(control, "amp", 0.0)) * Config.SC_VOICEVOX_GAIN, 0.0, 1.0),
+              begin
+                # VOICEVOX Song receives the MIDI note itself. Pitch-shifting
+                # this rendered stem here would apply the note twice.
+                1.0
+              end,
+          clamp(_parse_float(get(control, "brightness", 0.5)), 0.0, 1.0),
+          clamp(_parse_float(get(control, "noise", 0.0)), 0.0, 1.0),
+          clamp(_parse_float(get(control, "harmonicity", 1.0)), 0.0, 1.0),
+          clamp(_parse_float(get(control, "attack", 0.0)), 0.0, 1.0),
+          clamp(_parse_float(get(control, "decay", 0.0)), 0.0, 1.0),
+          clamp(_parse_float(get(control, "sustain_release", 0.0)), 0.0, 1.0),
+        ))
+      end
+    end
+    push!(event_lines, @sprintf(
+      "  [%.6f, ['/b_free', %d]]",
+      preroll + current_time + max(0.0, tail_pad_seconds), buffer_id,
+    ))
+  end
+
   total_duration = current_time
-  total_duration_pad = total_duration + max(0.0, tail_pad_seconds)
-  score_events = String(take!(io))
+  total_duration_pad = preroll + total_duration + max(0.0, tail_pad_seconds)
+  score_events = join(event_lines, ",\n")
   template = _read_render_polyphonic_template()
   default_step_duration = isempty(step_durations) ? Config.step_duration_from_bpm(Config.POLYPHONIC_BPM) : float(step_durations[1])
 
@@ -430,6 +480,10 @@ function render_polyphonic()
   payload = _payload()
   time_series_any = get(payload, "time_series", Any[])
   raw_stream_ids = get(payload, "stream_ids", nothing)
+  # Disabled deployments always render every stream with SuperCollider, even
+  # when an old/client-crafted payload still contains a voice plan.
+  raw_voice_plan = Config.voicevox_enabled() ?
+    get(payload, "voice_plan", get(payload, "voicePlan", nothing)) : nothing
   # Sanitize voices and the optional stable-ID sidecar in lockstep so filtering
   # never changes which identity is attached to a surviving voice.
   function _sanitize_time_series(raw, raw_ids)
@@ -548,14 +602,30 @@ function render_polyphonic()
 
   scd_path = _safe_tmp_path("supercollider_render_polyphonic", ".scd")
   wav_path = _safe_tmp_path("supercollider_render_polyphonic", ".wav")
+  voice_stems = Any[]
+  voice_backend = nothing
 
   try
+    voice_requests, voice_keys = VoicevoxClient.build_stem_requests(
+      time_series_any,
+      stream_ids_any,
+      raw_voice_plan,
+      step_durations,
+    )
+    @info "Polyphonic voice render inputs" voice_plan_type=typeof(raw_voice_plan) voice_plan_steps=(raw_voice_plan isa AbstractVector ? length(raw_voice_plan) : 0) voice_request_count=length(voice_requests) voice_key_count=length(voice_keys)
+    @info "Polyphonic timing" bpm_series=bpm_series step_durations=step_durations
+    voice_stems = VoicevoxClient.render_stems(voice_requests)
+    if !isempty(voice_stems)
+      voice_backend = string(get(voice_stems[1], "backend", "unknown"))
+    end
     scd_text = build_score_events_scd(
       time_series_any,
       step_durations,
       wav_path,
       tail_pad_seconds;
       stream_ids=stream_ids_any,
+      voice_keys=voice_keys,
+      voice_stems=voice_stems,
     )
     open(scd_path, "w") do f
       write(f, scd_text)
@@ -564,6 +634,10 @@ function render_polyphonic()
     render_duration = sum(step_durations) + tail_pad_seconds
     timeout_seconds = _render_timeout_seconds(render_duration)
     sclang_result = _run_sclang_with_timeout(scd_path, timeout_seconds)
+    rendered_voice_stem_count = length(voice_stems)
+    @info "Polyphonic SuperCollider render finished" ok=sclang_result.ok exit_code=sclang_result.exit_code voice_stem_count=rendered_voice_stem_count wav_path=wav_path
+    VoicevoxClient.cleanup_stems!(voice_stems)
+    empty!(voice_stems)
 
     if !sclang_result.ok
       return Dict(
@@ -578,6 +652,7 @@ function render_polyphonic()
         "stepDuration" => (isempty(step_durations) ? Config.step_duration_from_bpm(bpm) : step_durations[1]),
         "stepDurations" => step_durations,
         "tailPadSeconds" => tail_pad_seconds,
+        "voiceBackend" => voice_backend,
       )
     end
 
@@ -599,8 +674,13 @@ function render_polyphonic()
       "stepDuration" => (isempty(step_durations) ? Config.step_duration_from_bpm(bpm) : step_durations[1]),
       "stepDurations" => step_durations,
       "tailPadSeconds" => tail_pad_seconds,
+      "voiceBackend" => voice_backend,
+      "voiceStemCount" => length(voice_requests),
+      "voicePreRollSeconds" => isempty(voice_requests) ? 0.0 : Config.SC_VOICEVOX_BUFFER_PREROLL_SECONDS,
     )
   catch e
+    VoicevoxClient.cleanup_stems!(voice_stems)
+    empty!(voice_stems)
     bt = catch_backtrace()
     io = IOBuffer()
     try

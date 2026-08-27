@@ -133,6 +133,8 @@ const DETAILED_DEBUG_TOP_N::Int = 20
 const SC_MIX_BUS::Int = 16
 const SC_INITIAL_NODE_ID::Int = 1000
 const SC_BASE_VOICE_GAIN::Float64 = 0.30
+const SC_VOICEVOX_GAIN::Float64 = 0.80
+const SC_VOICEVOX_BUFFER_PREROLL_SECONDS::Float64 = 0.10
 const SC_MIN_AUDIBLE_VOLUME::Float64 = 0.01
 const SC_SANITIZE_MIN_AUDIBLE_VOLUME::Float64 = 0.001
 const SC_STEP_GAIN_MIN::Float64 = 0.20
@@ -155,6 +157,12 @@ const SC_RENDER_TIMEOUT_MAX_SECONDS::Float64 = 300.0
 const SC_RENDER_TIMEOUT_DURATION_MULTIPLIER::Float64 = 4.0
 const SC_RENDER_TIMEOUT_EXTRA_SECONDS::Float64 = 20.0
 const SC_RENDER_LOG_TAIL_CHARS::Int = 12000
+
+"""Whether VOICEVOX generation/rendering is enabled for this deployment."""
+function voicevox_enabled()::Bool
+  raw = lowercase(strip(get(ENV, "VOICEVOX_ENABLED", "true")))
+  return raw in ("1", "true", "yes", "y", "on")
+end
 
 # --- GitHub workflow polling defaults ---
 const GITHUB_WORKFLOW_RUNS_PER_PAGE::Int = 10

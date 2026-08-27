@@ -18,7 +18,8 @@ end
 route("/api/features") do
   raw = lowercase(strip(get(ENV, "CLUSTERING_QUERY_ENABLED", "false")))
   clustering_query = raw in ("1", "true", "yes", "y", "on")
-  (; clustering_query=clustering_query) |> json
+  voicevox = TimeseriesClusteringAPI.Config.voicevox_enabled()
+  (; clustering_query=clustering_query, voicevox=voicevox) |> json
 end
 
 # ------------------------------------------------------------

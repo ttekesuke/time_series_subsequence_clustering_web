@@ -546,6 +546,11 @@ SC synth では:
 
 ## 16. 出力
 
+VOICEVOX向けの音響token生成を有効にしたrequestでは、strictな`timeSeries`
+recordを変更せず、`voicePlan`、`voiceStreamCounts`、`voiceInventory`、
+`clusters.voice_token`を追加します。詳細と実測inventoryの作成方法は
+[`voicevox_voice_tokens.md`](voicevox_voice_tokens.md)を参照してください。
+
 レスポンス例:
 
 ```json

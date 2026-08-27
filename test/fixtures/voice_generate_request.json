@@ -1,0 +1,51 @@
+{
+  "generate_polyphonic": {
+    "bpm": 240,
+    "future_bpm": [240, 240, 240],
+    "stream_counts": [3, 3, 3],
+    "voice_stream_counts": [1, 2, 0],
+    "voice_inventory_id": "ja_mora_demo",
+    "voice_token_global_complexity_target": [0.2, 0.8, 0.0],
+    "voice_token_stream_complexity_center": [0.2, 0.8, 0.0],
+    "voice_token_stream_complexity_span": [0.0, 0.2, 0.0],
+    "voice_token_concordance": [0.0, -0.5, 0.0],
+    "voice_transition_weight": [0.2, 0.2, 0.0],
+    "recency_center": [0.5, 0.5, 0.5],
+    "recency_spread": [0.0, 0.0, 0.0],
+    "stream_strength_target": [0.5, 0.5, 0.5],
+    "stream_strength_spread": [0.0, 0.0, 0.0],
+    "initial_context": [
+      [
+        [[60], 0.7, 0.5, 0.1, 0.8, 0.1, 0.3, 0.6, 0, 0, 0],
+        [[64], 0.6, 0.5, 0.1, 0.8, 0.1, 0.3, 0.6, 0, 0, 0],
+        [[67], 0.5, 0.5, 0.1, 0.8, 0.1, 0.3, 0.6, 0, 0, 0]
+      ],
+      [
+        [[62], 0.7, 0.5, 0.1, 0.8, 0.1, 0.3, 0.6, 0, 0, 0],
+        [[65], 0.6, 0.5, 0.1, 0.8, 0.1, 0.3, 0.6, 0, 0, 0],
+        [[69], 0.5, 0.5, 0.1, 0.8, 0.1, 0.3, 0.6, 0, 0, 0]
+      ],
+      [
+        [[64], 0.7, 0.5, 0.1, 0.8, 0.1, 0.3, 0.6, 0, 0, 0],
+        [[67], 0.6, 0.5, 0.1, 0.8, 0.1, 0.3, 0.6, 0, 0, 0],
+        [[71], 0.5, 0.5, 0.1, 0.8, 0.1, 0.3, 0.6, 0, 0, 0]
+      ]
+    ],
+    "initial_context_bpm": [240, 240, 240],
+    "dimension_policy": {
+      "area": { "accept_params": false, "fixed_value": 0.5 },
+      "chord_range": { "accept_params": false, "fixed_value": 0 },
+      "density": { "accept_params": false, "fixed_value": 0 },
+      "vol": { "accept_params": false, "fixed_value": 0.7 },
+      "brightness": { "accept_params": false, "fixed_value": 0.5 },
+      "noise": { "accept_params": false, "fixed_value": 0.1 },
+      "harmonicity": { "accept_params": false, "fixed_value": 0.8 },
+      "attack": { "accept_params": false, "fixed_value": 0.1 },
+      "decay_sustain": { "accept_params": false, "fixed_value": 0.3 },
+      "release": { "accept_params": false, "fixed_value": 0.6 }
+    },
+    "merge_threshold_ratio": 0.02,
+    "note_register_freedom": [0.2, 0.2, 0.2],
+    "dissonance_target": [0.3, 0.3, 0.3]
+  }
+}

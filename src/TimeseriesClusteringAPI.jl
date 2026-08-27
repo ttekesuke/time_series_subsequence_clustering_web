@@ -14,6 +14,8 @@ include("polyphonic/dissonance_tuning.jl")
 include("polyphonic/dissonance_stm_manager.jl")
 include("polyphonic/polyphonic_cluster_manager.jl")
 include("polyphonic/multi_stream_manager.jl")
+include("voice/voice_token_generation.jl")
+include("voice/voicevox_client.jl")
 
 include("controllers/supercolliders_controller.jl")
 include("controllers/time_series_controller.jl")

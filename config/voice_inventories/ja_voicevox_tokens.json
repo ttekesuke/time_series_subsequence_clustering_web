@@ -1,0 +1,6 @@
+{
+  "tokens": [
+    {"id": "a", "text": "あ", "phones": ["a"]},
+    {"id": "e", "text": "え", "phones": ["e"]}
+  ]
+}

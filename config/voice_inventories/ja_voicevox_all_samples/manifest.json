@@ -1,0 +1,1176 @@
+{
+  "inventory_id": "ja_voicevox_all",
+  "model_id": "voicevox-speaker-2",
+  "tokens": [
+    {
+      "id": "a",
+      "text": "あ",
+      "phones": [
+        "a"
+      ],
+      "wavs": [
+        "a.wav"
+      ]
+    },
+    {
+      "id": "i",
+      "text": "い",
+      "phones": [
+        "i"
+      ],
+      "wavs": [
+        "i.wav"
+      ]
+    },
+    {
+      "id": "u",
+      "text": "う",
+      "phones": [
+        "u"
+      ],
+      "wavs": [
+        "u.wav"
+      ]
+    },
+    {
+      "id": "e",
+      "text": "え",
+      "phones": [
+        "e"
+      ],
+      "wavs": [
+        "e.wav"
+      ]
+    },
+    {
+      "id": "o",
+      "text": "お",
+      "phones": [
+        "o"
+      ],
+      "wavs": [
+        "o.wav"
+      ]
+    },
+    {
+      "id": "ka",
+      "text": "か",
+      "phones": [
+        "k",
+        "a"
+      ],
+      "wavs": [
+        "ka.wav"
+      ]
+    },
+    {
+      "id": "ki",
+      "text": "き",
+      "phones": [
+        "k",
+        "i"
+      ],
+      "wavs": [
+        "ki.wav"
+      ]
+    },
+    {
+      "id": "ku",
+      "text": "く",
+      "phones": [
+        "k",
+        "u"
+      ],
+      "wavs": [
+        "ku.wav"
+      ]
+    },
+    {
+      "id": "ke",
+      "text": "け",
+      "phones": [
+        "k",
+        "e"
+      ],
+      "wavs": [
+        "ke.wav"
+      ]
+    },
+    {
+      "id": "ko",
+      "text": "こ",
+      "phones": [
+        "k",
+        "o"
+      ],
+      "wavs": [
+        "ko.wav"
+      ]
+    },
+    {
+      "id": "ga",
+      "text": "が",
+      "phones": [
+        "g",
+        "a"
+      ],
+      "wavs": [
+        "ga.wav"
+      ]
+    },
+    {
+      "id": "gi",
+      "text": "ぎ",
+      "phones": [
+        "g",
+        "i"
+      ],
+      "wavs": [
+        "gi.wav"
+      ]
+    },
+    {
+      "id": "gu",
+      "text": "ぐ",
+      "phones": [
+        "g",
+        "u"
+      ],
+      "wavs": [
+        "gu.wav"
+      ]
+    },
+    {
+      "id": "ge",
+      "text": "げ",
+      "phones": [
+        "g",
+        "e"
+      ],
+      "wavs": [
+        "ge.wav"
+      ]
+    },
+    {
+      "id": "go",
+      "text": "ご",
+      "phones": [
+        "g",
+        "o"
+      ],
+      "wavs": [
+        "go.wav"
+      ]
+    },
+    {
+      "id": "sa",
+      "text": "さ",
+      "phones": [
+        "s",
+        "a"
+      ],
+      "wavs": [
+        "sa.wav"
+      ]
+    },
+    {
+      "id": "shi",
+      "text": "し",
+      "phones": [
+        "sh",
+        "i"
+      ],
+      "wavs": [
+        "shi.wav"
+      ]
+    },
+    {
+      "id": "su",
+      "text": "す",
+      "phones": [
+        "s",
+        "u"
+      ],
+      "wavs": [
+        "su.wav"
+      ]
+    },
+    {
+      "id": "se",
+      "text": "せ",
+      "phones": [
+        "s",
+        "e"
+      ],
+      "wavs": [
+        "se.wav"
+      ]
+    },
+    {
+      "id": "so",
+      "text": "そ",
+      "phones": [
+        "s",
+        "o"
+      ],
+      "wavs": [
+        "so.wav"
+      ]
+    },
+    {
+      "id": "za",
+      "text": "ざ",
+      "phones": [
+        "z",
+        "a"
+      ],
+      "wavs": [
+        "za.wav"
+      ]
+    },
+    {
+      "id": "ji",
+      "text": "じ",
+      "phones": [
+        "j",
+        "i"
+      ],
+      "wavs": [
+        "ji.wav"
+      ]
+    },
+    {
+      "id": "zu",
+      "text": "ず",
+      "phones": [
+        "z",
+        "u"
+      ],
+      "wavs": [
+        "zu.wav"
+      ]
+    },
+    {
+      "id": "ze",
+      "text": "ぜ",
+      "phones": [
+        "z",
+        "e"
+      ],
+      "wavs": [
+        "ze.wav"
+      ]
+    },
+    {
+      "id": "zo",
+      "text": "ぞ",
+      "phones": [
+        "z",
+        "o"
+      ],
+      "wavs": [
+        "zo.wav"
+      ]
+    },
+    {
+      "id": "ta",
+      "text": "た",
+      "phones": [
+        "t",
+        "a"
+      ],
+      "wavs": [
+        "ta.wav"
+      ]
+    },
+    {
+      "id": "chi",
+      "text": "ち",
+      "phones": [
+        "ch",
+        "i"
+      ],
+      "wavs": [
+        "chi.wav"
+      ]
+    },
+    {
+      "id": "tsu",
+      "text": "つ",
+      "phones": [
+        "ts",
+        "u"
+      ],
+      "wavs": [
+        "tsu.wav"
+      ]
+    },
+    {
+      "id": "te",
+      "text": "て",
+      "phones": [
+        "t",
+        "e"
+      ],
+      "wavs": [
+        "te.wav"
+      ]
+    },
+    {
+      "id": "to",
+      "text": "と",
+      "phones": [
+        "t",
+        "o"
+      ],
+      "wavs": [
+        "to.wav"
+      ]
+    },
+    {
+      "id": "da",
+      "text": "だ",
+      "phones": [
+        "d",
+        "a"
+      ],
+      "wavs": [
+        "da.wav"
+      ]
+    },
+    {
+      "id": "di",
+      "text": "ぢ",
+      "phones": [
+        "d",
+        "i"
+      ],
+      "wavs": [
+        "di.wav"
+      ]
+    },
+    {
+      "id": "du",
+      "text": "づ",
+      "phones": [
+        "d",
+        "u"
+      ],
+      "wavs": [
+        "du.wav"
+      ]
+    },
+    {
+      "id": "de",
+      "text": "で",
+      "phones": [
+        "d",
+        "e"
+      ],
+      "wavs": [
+        "de.wav"
+      ]
+    },
+    {
+      "id": "do",
+      "text": "ど",
+      "phones": [
+        "d",
+        "o"
+      ],
+      "wavs": [
+        "do.wav"
+      ]
+    },
+    {
+      "id": "na",
+      "text": "な",
+      "phones": [
+        "n",
+        "a"
+      ],
+      "wavs": [
+        "na.wav"
+      ]
+    },
+    {
+      "id": "ni",
+      "text": "に",
+      "phones": [
+        "n",
+        "i"
+      ],
+      "wavs": [
+        "ni.wav"
+      ]
+    },
+    {
+      "id": "nu",
+      "text": "ぬ",
+      "phones": [
+        "n",
+        "u"
+      ],
+      "wavs": [
+        "nu.wav"
+      ]
+    },
+    {
+      "id": "ne",
+      "text": "ね",
+      "phones": [
+        "n",
+        "e"
+      ],
+      "wavs": [
+        "ne.wav"
+      ]
+    },
+    {
+      "id": "no",
+      "text": "の",
+      "phones": [
+        "n",
+        "o"
+      ],
+      "wavs": [
+        "no.wav"
+      ]
+    },
+    {
+      "id": "ha",
+      "text": "は",
+      "phones": [
+        "h",
+        "a"
+      ],
+      "wavs": [
+        "ha.wav"
+      ]
+    },
+    {
+      "id": "hi",
+      "text": "ひ",
+      "phones": [
+        "h",
+        "i"
+      ],
+      "wavs": [
+        "hi.wav"
+      ]
+    },
+    {
+      "id": "fu",
+      "text": "ふ",
+      "phones": [
+        "f",
+        "u"
+      ],
+      "wavs": [
+        "fu.wav"
+      ]
+    },
+    {
+      "id": "he",
+      "text": "へ",
+      "phones": [
+        "h",
+        "e"
+      ],
+      "wavs": [
+        "he.wav"
+      ]
+    },
+    {
+      "id": "ho",
+      "text": "ほ",
+      "phones": [
+        "h",
+        "o"
+      ],
+      "wavs": [
+        "ho.wav"
+      ]
+    },
+    {
+      "id": "ba",
+      "text": "ば",
+      "phones": [
+        "b",
+        "a"
+      ],
+      "wavs": [
+        "ba.wav"
+      ]
+    },
+    {
+      "id": "bi",
+      "text": "び",
+      "phones": [
+        "b",
+        "i"
+      ],
+      "wavs": [
+        "bi.wav"
+      ]
+    },
+    {
+      "id": "bu",
+      "text": "ぶ",
+      "phones": [
+        "b",
+        "u"
+      ],
+      "wavs": [
+        "bu.wav"
+      ]
+    },
+    {
+      "id": "be",
+      "text": "べ",
+      "phones": [
+        "b",
+        "e"
+      ],
+      "wavs": [
+        "be.wav"
+      ]
+    },
+    {
+      "id": "bo",
+      "text": "ぼ",
+      "phones": [
+        "b",
+        "o"
+      ],
+      "wavs": [
+        "bo.wav"
+      ]
+    },
+    {
+      "id": "pa",
+      "text": "ぱ",
+      "phones": [
+        "p",
+        "a"
+      ],
+      "wavs": [
+        "pa.wav"
+      ]
+    },
+    {
+      "id": "pi",
+      "text": "ぴ",
+      "phones": [
+        "p",
+        "i"
+      ],
+      "wavs": [
+        "pi.wav"
+      ]
+    },
+    {
+      "id": "pu",
+      "text": "ぷ",
+      "phones": [
+        "p",
+        "u"
+      ],
+      "wavs": [
+        "pu.wav"
+      ]
+    },
+    {
+      "id": "pe",
+      "text": "ぺ",
+      "phones": [
+        "p",
+        "e"
+      ],
+      "wavs": [
+        "pe.wav"
+      ]
+    },
+    {
+      "id": "po",
+      "text": "ぽ",
+      "phones": [
+        "p",
+        "o"
+      ],
+      "wavs": [
+        "po.wav"
+      ]
+    },
+    {
+      "id": "ma",
+      "text": "ま",
+      "phones": [
+        "m",
+        "a"
+      ],
+      "wavs": [
+        "ma.wav"
+      ]
+    },
+    {
+      "id": "mi",
+      "text": "み",
+      "phones": [
+        "m",
+        "i"
+      ],
+      "wavs": [
+        "mi.wav"
+      ]
+    },
+    {
+      "id": "mu",
+      "text": "む",
+      "phones": [
+        "m",
+        "u"
+      ],
+      "wavs": [
+        "mu.wav"
+      ]
+    },
+    {
+      "id": "me",
+      "text": "め",
+      "phones": [
+        "m",
+        "e"
+      ],
+      "wavs": [
+        "me.wav"
+      ]
+    },
+    {
+      "id": "mo",
+      "text": "も",
+      "phones": [
+        "m",
+        "o"
+      ],
+      "wavs": [
+        "mo.wav"
+      ]
+    },
+    {
+      "id": "ya",
+      "text": "や",
+      "phones": [
+        "y",
+        "a"
+      ],
+      "wavs": [
+        "ya.wav"
+      ]
+    },
+    {
+      "id": "yu",
+      "text": "ゆ",
+      "phones": [
+        "y",
+        "u"
+      ],
+      "wavs": [
+        "yu.wav"
+      ]
+    },
+    {
+      "id": "yo",
+      "text": "よ",
+      "phones": [
+        "y",
+        "o"
+      ],
+      "wavs": [
+        "yo.wav"
+      ]
+    },
+    {
+      "id": "ra",
+      "text": "ら",
+      "phones": [
+        "r",
+        "a"
+      ],
+      "wavs": [
+        "ra.wav"
+      ]
+    },
+    {
+      "id": "ri",
+      "text": "り",
+      "phones": [
+        "r",
+        "i"
+      ],
+      "wavs": [
+        "ri.wav"
+      ]
+    },
+    {
+      "id": "ru",
+      "text": "る",
+      "phones": [
+        "r",
+        "u"
+      ],
+      "wavs": [
+        "ru.wav"
+      ]
+    },
+    {
+      "id": "re",
+      "text": "れ",
+      "phones": [
+        "r",
+        "e"
+      ],
+      "wavs": [
+        "re.wav"
+      ]
+    },
+    {
+      "id": "ro",
+      "text": "ろ",
+      "phones": [
+        "r",
+        "o"
+      ],
+      "wavs": [
+        "ro.wav"
+      ]
+    },
+    {
+      "id": "wa",
+      "text": "わ",
+      "phones": [
+        "w",
+        "a"
+      ],
+      "wavs": [
+        "wa.wav"
+      ]
+    },
+    {
+      "id": "wi",
+      "text": "ゐ",
+      "phones": [
+        "w",
+        "i"
+      ],
+      "wavs": [
+        "wi.wav"
+      ]
+    },
+    {
+      "id": "we",
+      "text": "ゑ",
+      "phones": [
+        "w",
+        "e"
+      ],
+      "wavs": [
+        "we.wav"
+      ]
+    },
+    {
+      "id": "wo",
+      "text": "を",
+      "phones": [
+        "w",
+        "o"
+      ],
+      "wavs": [
+        "wo.wav"
+      ]
+    },
+    {
+      "id": "n",
+      "text": "ん",
+      "phones": [
+        "N"
+      ],
+      "wavs": [
+        "n.wav"
+      ]
+    },
+    {
+      "id": "kya",
+      "text": "きゃ",
+      "phones": [
+        "ky",
+        "a"
+      ],
+      "wavs": [
+        "kya.wav"
+      ]
+    },
+    {
+      "id": "kyu",
+      "text": "きゅ",
+      "phones": [
+        "ky",
+        "u"
+      ],
+      "wavs": [
+        "kyu.wav"
+      ]
+    },
+    {
+      "id": "kyo",
+      "text": "きょ",
+      "phones": [
+        "ky",
+        "o"
+      ],
+      "wavs": [
+        "kyo.wav"
+      ]
+    },
+    {
+      "id": "gya",
+      "text": "ぎゃ",
+      "phones": [
+        "gy",
+        "a"
+      ],
+      "wavs": [
+        "gya.wav"
+      ]
+    },
+    {
+      "id": "gyu",
+      "text": "ぎゅ",
+      "phones": [
+        "gy",
+        "u"
+      ],
+      "wavs": [
+        "gyu.wav"
+      ]
+    },
+    {
+      "id": "gyo",
+      "text": "ぎょ",
+      "phones": [
+        "gy",
+        "o"
+      ],
+      "wavs": [
+        "gyo.wav"
+      ]
+    },
+    {
+      "id": "sha",
+      "text": "しゃ",
+      "phones": [
+        "sh",
+        "a"
+      ],
+      "wavs": [
+        "sha.wav"
+      ]
+    },
+    {
+      "id": "shu",
+      "text": "しゅ",
+      "phones": [
+        "sh",
+        "u"
+      ],
+      "wavs": [
+        "shu.wav"
+      ]
+    },
+    {
+      "id": "sho",
+      "text": "しょ",
+      "phones": [
+        "sh",
+        "o"
+      ],
+      "wavs": [
+        "sho.wav"
+      ]
+    },
+    {
+      "id": "ja",
+      "text": "じゃ",
+      "phones": [
+        "j",
+        "a"
+      ],
+      "wavs": [
+        "ja.wav"
+      ]
+    },
+    {
+      "id": "ju",
+      "text": "じゅ",
+      "phones": [
+        "j",
+        "u"
+      ],
+      "wavs": [
+        "ju.wav"
+      ]
+    },
+    {
+      "id": "jo",
+      "text": "じょ",
+      "phones": [
+        "j",
+        "o"
+      ],
+      "wavs": [
+        "jo.wav"
+      ]
+    },
+    {
+      "id": "cha",
+      "text": "ちゃ",
+      "phones": [
+        "ch",
+        "a"
+      ],
+      "wavs": [
+        "cha.wav"
+      ]
+    },
+    {
+      "id": "chu",
+      "text": "ちゅ",
+      "phones": [
+        "ch",
+        "u"
+      ],
+      "wavs": [
+        "chu.wav"
+      ]
+    },
+    {
+      "id": "cho",
+      "text": "ちょ",
+      "phones": [
+        "ch",
+        "o"
+      ],
+      "wavs": [
+        "cho.wav"
+      ]
+    },
+    {
+      "id": "nya",
+      "text": "にゃ",
+      "phones": [
+        "ny",
+        "a"
+      ],
+      "wavs": [
+        "nya.wav"
+      ]
+    },
+    {
+      "id": "nyu",
+      "text": "にゅ",
+      "phones": [
+        "ny",
+        "u"
+      ],
+      "wavs": [
+        "nyu.wav"
+      ]
+    },
+    {
+      "id": "nyo",
+      "text": "にょ",
+      "phones": [
+        "ny",
+        "o"
+      ],
+      "wavs": [
+        "nyo.wav"
+      ]
+    },
+    {
+      "id": "hya",
+      "text": "ひゃ",
+      "phones": [
+        "hy",
+        "a"
+      ],
+      "wavs": [
+        "hya.wav"
+      ]
+    },
+    {
+      "id": "hyu",
+      "text": "ひゅ",
+      "phones": [
+        "hy",
+        "u"
+      ],
+      "wavs": [
+        "hyu.wav"
+      ]
+    },
+    {
+      "id": "hyo",
+      "text": "ひょ",
+      "phones": [
+        "hy",
+        "o"
+      ],
+      "wavs": [
+        "hyo.wav"
+      ]
+    },
+    {
+      "id": "bya",
+      "text": "びゃ",
+      "phones": [
+        "by",
+        "a"
+      ],
+      "wavs": [
+        "bya.wav"
+      ]
+    },
+    {
+      "id": "byu",
+      "text": "びゅ",
+      "phones": [
+        "by",
+        "u"
+      ],
+      "wavs": [
+        "byu.wav"
+      ]
+    },
+    {
+      "id": "byo",
+      "text": "びょ",
+      "phones": [
+        "by",
+        "o"
+      ],
+      "wavs": [
+        "byo.wav"
+      ]
+    },
+    {
+      "id": "pya",
+      "text": "ぴゃ",
+      "phones": [
+        "py",
+        "a"
+      ],
+      "wavs": [
+        "pya.wav"
+      ]
+    },
+    {
+      "id": "pyu",
+      "text": "ぴゅ",
+      "phones": [
+        "py",
+        "u"
+      ],
+      "wavs": [
+        "pyu.wav"
+      ]
+    },
+    {
+      "id": "pyo",
+      "text": "ぴょ",
+      "phones": [
+        "py",
+        "o"
+      ],
+      "wavs": [
+        "pyo.wav"
+      ]
+    },
+    {
+      "id": "mya",
+      "text": "みゃ",
+      "phones": [
+        "my",
+        "a"
+      ],
+      "wavs": [
+        "mya.wav"
+      ]
+    },
+    {
+      "id": "myu",
+      "text": "みゅ",
+      "phones": [
+        "my",
+        "u"
+      ],
+      "wavs": [
+        "myu.wav"
+      ]
+    },
+    {
+      "id": "myo",
+      "text": "みょ",
+      "phones": [
+        "my",
+        "o"
+      ],
+      "wavs": [
+        "myo.wav"
+      ]
+    },
+    {
+      "id": "rya",
+      "text": "りゃ",
+      "phones": [
+        "ry",
+        "a"
+      ],
+      "wavs": [
+        "rya.wav"
+      ]
+    },
+    {
+      "id": "ryu",
+      "text": "りゅ",
+      "phones": [
+        "ry",
+        "u"
+      ],
+      "wavs": [
+        "ryu.wav"
+      ]
+    },
+    {
+      "id": "ryo",
+      "text": "りょ",
+      "phones": [
+        "ry",
+        "o"
+      ],
+      "wavs": [
+        "ryo.wav"
+      ]
+    },
+    {
+      "id": "small-tsu",
+      "text": "っ",
+      "phones": [
+        "AP"
+      ],
+      "wavs": [
+        "small-tsu.wav"
+      ]
+    }
+  ]
+}

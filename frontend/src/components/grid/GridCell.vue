@@ -19,7 +19,7 @@
 <script setup lang="ts">
 import { computed, type PropType } from 'vue'
 
-const inputType = computed(() => props.config?.inputMode === 'note-array' ? 'text' : 'number')
+const inputType = computed(() => ['note-array', 'text'].includes(props.config?.inputMode) ? 'text' : 'number')
 
 const props = defineProps({
   modelValue: { type: [Number, String] as PropType<number | string | null> },
@@ -37,7 +37,7 @@ const emit = defineEmits(['update:modelValue', 'focus', 'dblclick', 'paste'])
 
 const onInput = (e: Event) => {
   const target = e.target as HTMLInputElement
-  if (props.config?.inputMode === 'note-array') {
+  if (props.config?.inputMode === 'note-array' || props.config?.inputMode === 'text') {
     emit('update:modelValue', target.value)
     return
   }

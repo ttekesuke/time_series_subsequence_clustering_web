@@ -2,6 +2,9 @@ services:
   api:
     mem_limit: "${API_MEM_LIMIT:-2g}"
     user: "1000:1000"
+    depends_on:
+      voicevox-worker:
+        condition: service_healthy
     env_file:
       - .env
     build:
@@ -17,6 +20,8 @@ services:
       PORT: "${PORT:-9111}"
       QUERY_DB_MEMORY_BUDGET_MB: "${QUERY_DB_MEMORY_BUDGET_MB:-256}"
       QUERY_DB_ESTIMATED_BYTES_PER_POINT: "${QUERY_DB_ESTIMATED_BYTES_PER_POINT:-256}"
+      VOICEVOX_URL: "http://voicevox-worker:9120"
+      VOICEVOX_ENABLED: "${VOICEVOX_ENABLED:-true}"
 
       # IMPORTANT: In Docker + bind-mount environments (especially on WSL/Windows),
       # Revise/AutoReload can trigger continuous re-inference/recompile loops.
@@ -46,6 +51,32 @@ services:
       - ./data/asap-dataset:/app/data/asap-dataset:ro
     command: ["julia", "--project=.", "scripts/start_server.jl"]
 
+  voicevox:
+    image: voicevox/voicevox_engine:cpu-ubuntu20.04-latest
+    ports:
+      - "${VOICEVOX_PORT:-50021}:50021"
+    expose:
+      - "50021"
+
+  voicevox-worker:
+    build:
+      context: .
+      dockerfile: voicevox_worker/Dockerfile
+    environment:
+      VOICEVOX_ENGINE_URL: "http://voicevox:50021"
+      VOICEVOX_SPEAKER: "${VOICEVOX_SPEAKER:-2}"
+      VOICEVOX_RENDER_MODE: "${VOICEVOX_RENDER_MODE:-sing}"
+      VOICEVOX_SINGING_TEACHER: "${VOICEVOX_SINGING_TEACHER:-6000}"
+      VOICEVOX_SINGER: "${VOICEVOX_SINGER:-3003}"
+      VOICEVOX_WORKER_PORT: "9120"
+    depends_on:
+      - voicevox
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9120/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   web:
     build:
       context: ./frontend
@@ -64,6 +95,7 @@ services:
 
       # Frontend toggle: run generate_polyphonic on GitHub Actions or hosting server
       VITE_RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS: "${RUN_GENERATE_POLYPHONIC_ON_GITHUB_ACTIONS:-true}"
+      VITE_VOICEVOX_ENABLED: "${VOICEVOX_ENABLED:-true}"
 
     volumes:
       - ./frontend:/app

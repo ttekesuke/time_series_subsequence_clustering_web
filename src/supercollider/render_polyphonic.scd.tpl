@@ -93,6 +93,41 @@ score = Score([
     }).asBytes;
   ]],
 
+  [0.0, ['/d_recv',
+    SynthDef(\voiceStem, {
+        |outBus=16, bufnum=0, amp=0.0, pitchRatio=1.0, brightness=0.5, noise=0.0,
+         harmonicity=1.0, attack=0.05, decay=0.20, sustainRelease=0.75|
+        var dry, bright, noisy, coloured, sourceLevel, ampControl;
+        var cutoff, harmonicLayer, releaseTime;
+
+        dry = PlayBuf.ar(1, bufnum, BufRateScale.kr(bufnum), doneAction: 2);
+        cutoff = 1200 + (brightness.clip(0, 1) * 16800);
+        dry = PitchShift.ar(dry, 0.08, pitchRatio.clip(0.5, 2.0), 0.01, 0.02);
+        bright = LPF.ar(dry, cutoff);
+        bright = BHiShelf.ar(bright, 3500, 0.8, (brightness.clip(0, 1) - 0.5) * 12);
+
+        // "harmonicity" keeps the original singer at 1 and gradually introduces
+        // inharmonic colour below 1 without replacing intelligibility.
+        harmonicLayer = PitchShift.ar(bright, 0.04, 1.013, 0.002, 0.002);
+        coloured = XFade2.ar(harmonicLayer, bright, (harmonicity.clip(0, 1) * 2) - 1);
+        sourceLevel = Amplitude.kr(dry, 0.005, 0.04);
+        noisy = BPF.ar(WhiteNoise.ar, 1800 + (brightness.clip(0, 1) * 5200), 0.5);
+        noisy = noisy * sourceLevel * noise.clip(0, 1) * 0.7;
+
+        releaseTime = 0.015 + (sustainRelease.clip(0, 1) * 0.30);
+        ampControl = LagUD.kr(amp.clip(0, 1), 0.003 + (attack.clip(0, 1) * 0.25), releaseTime);
+        coloured = CompanderD.ar(
+            coloured + noisy,
+            thresh: 0.55,
+            slopeBelow: 1.0,
+            slopeAbove: 0.65,
+            clampTime: 0.002 + (decay.clip(0, 1) * 0.02),
+            relaxTime: 0.04 + (decay.clip(0, 1) * 0.30)
+        );
+        Out.ar(outBus, (LeakDC.ar(coloured) * ampControl) ! 2);
+    }).asBytes;
+  ]],
+
   [0.0, ['/s_new', \masterOut, 900, 1, 0, \inBus, 16, \out, 0, \masterGain, 0.92]],
 
   {{SCORE_EVENTS}}

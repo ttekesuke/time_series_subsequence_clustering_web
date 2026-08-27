@@ -251,7 +251,7 @@ type GridConfig = {
   max: number;
   step?: number;
   isInt?: boolean;
-  inputMode?: 'number' | 'note-array';
+  inputMode?: 'number' | 'note-array' | 'text';
 }
 
 type GridRowData = {
@@ -461,7 +461,7 @@ const clampToConfig = (value: number, config: GridConfig): number => {
 }
 
 const coerceCellValueForConfig = (value: unknown, config: GridConfig): GridCellValue | null => {
-  if (config.inputMode === 'note-array') {
+  if (config.inputMode === 'note-array' || config.inputMode === 'text') {
     const normalized = normalizeNoteArrayCellText(value)
     return normalized
   }
@@ -480,7 +480,7 @@ const getRowSelectionMatrix = (): GridCellValue[][] => {
     const values: GridCellValue[] = []
     for (let colIndex = 0; colIndex < props.steps; colIndex++) {
       const raw = row.data[colIndex]
-      if (row.config.inputMode === 'note-array') values.push(String(raw ?? ''))
+      if (row.config.inputMode === 'note-array' || row.config.inputMode === 'text') values.push(String(raw ?? ''))
       else {
         const num = Number(raw ?? 0)
         values.push(isFinite(num) ? num : 0)
@@ -497,7 +497,7 @@ const getColSelectionMatrix = (): GridCellValue[][] => {
   return props.rows.map((row) =>
     selectedCols.map((colIndex) => {
       const raw = row.data[colIndex]
-      if (row.config.inputMode === 'note-array') return String(raw ?? '')
+      if (row.config.inputMode === 'note-array' || row.config.inputMode === 'text') return String(raw ?? '')
       const num = Number(raw ?? 0)
       return isFinite(num) ? num : 0
     })
@@ -524,7 +524,7 @@ const applyRowPaste = (clipboard: GridStructuredClipboard) => {
     const targetRow = { ...newRows[dstRowIndex] }
     const newData = [...targetRow.data]
 
-    while (newData.length < props.steps) newData.push(targetRow.config.inputMode === 'note-array' ? '' : 0)
+    while (newData.length < props.steps) newData.push(targetRow.config.inputMode === 'note-array' || targetRow.config.inputMode === 'text' ? '' : 0)
 
     const copyCols = Math.min(sourceValues.length, props.steps)
     for (let colIndex = 0; colIndex < copyCols; colIndex++) {
@@ -565,7 +565,7 @@ const applyColPaste = (clipboard: GridStructuredClipboard) => {
     const targetRow = { ...newRows[rowIndex] }
     const newData = [...targetRow.data]
 
-    while (newData.length < requiredLen) newData.push(targetRow.config.inputMode === 'note-array' ? '' : 0)
+    while (newData.length < requiredLen) newData.push(targetRow.config.inputMode === 'note-array' || targetRow.config.inputMode === 'text' ? '' : 0)
 
     for (let colOffset = 0; colOffset < sourceValues.length; colOffset++) {
       const coerced = coerceCellValueForConfig(sourceValues[colOffset], targetRow.config)
@@ -658,7 +658,7 @@ const onVirtualUpdateCell = (rowIndex: number, colIndex: number, val: GridCellVa
 
   const nextRow = { ...row }
   const newData = [...nextRow.data]
-  while (newData.length <= colIndex) newData.push(nextRow.config?.inputMode === 'note-array' ? '' : 0)
+  while (newData.length <= colIndex) newData.push(nextRow.config?.inputMode === 'note-array' || nextRow.config?.inputMode === 'text' ? '' : 0)
   newData[colIndex] = val
   nextRow.data = newData
   updateRow(rowIndex, nextRow)
@@ -808,7 +808,7 @@ const onCellPaste = (payload: any) => {
   const { text, rowIndex, colIndex, config } = payload
   const targetRow = { ...props.rows[rowIndex] }
 
-  if (config.inputMode === 'note-array') {
+  if (config.inputMode === 'note-array' || config.inputMode === 'text') {
     const newData = [...targetRow.data]
     while (newData.length <= colIndex) newData.push('')
     newData[colIndex] = normalizeNoteArrayCellText(text)
@@ -842,7 +842,7 @@ const onCellPaste = (payload: any) => {
 
 const openParamGenDialogAt = (cell: any) => {
   if (!cell) return
-  if (cell.config?.inputMode === 'note-array') return
+  if (cell.config?.inputMode === 'note-array' || cell.config?.inputMode === 'text') return
   focusedCell.value = cell
   clearHeaderSelections()
 

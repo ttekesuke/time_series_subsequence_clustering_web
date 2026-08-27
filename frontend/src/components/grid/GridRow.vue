@@ -85,7 +85,7 @@ const updateCell = (idx: number, val: number | string) => {
   // (Vueのバージョンによっては直接代入でも検知するが安全のため)
   const newData = [...props.row.data]
   // 配列が足りない場合は埋める
-  while(newData.length <= idx) newData.push(props.row.config?.inputMode === 'note-array' ? '' : 0)
+  while(newData.length <= idx) newData.push(props.row.config?.inputMode === 'note-array' || props.row.config?.inputMode === 'text' ? '' : 0)
 
   newData[idx] = val
 

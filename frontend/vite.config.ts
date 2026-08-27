@@ -26,6 +26,8 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    strictPort: true,
+    hmr: false,
     proxy: {
       "/api": { target: apiTarget, changeOrigin: true },
     },

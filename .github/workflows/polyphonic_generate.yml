@@ -153,8 +153,11 @@ jobs:
             bpm = 240.0
           req = {
             'time_series': result['timeSeries'],
+            'stream_ids': result.get('streamIds', []),
+            'voice_plan': result.get('voicePlan', []),
             'note_chords_pitch_classes': result.get('noteChordsPitchClasses', []),
             'bpm': bpm,
+            'future_bpm': result.get('bpmSeries', gp.get('future_bpm', [])),
           }
           print('render bpm:', bpm)
           data = json.dumps(req).encode('utf-8')

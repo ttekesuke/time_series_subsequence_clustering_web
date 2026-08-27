@@ -16,6 +16,7 @@ import ..Config
 import ..PolyphonicClusterManager
 import ..MultiStreamManager
 import ..DissonanceStmManager
+import ..VoiceTokenGeneration
 
 """Run-local stable mapping from stream IDs to synthetic global-axis slots."""
 mutable struct StableStreamAxis
@@ -3605,6 +3606,28 @@ function generate_polyphonic()
   end
   isempty(stream_counts) && push!(stream_counts, 1)
 
+  voice_counts_present = Config.voicevox_enabled() && haskey(gp, "voice_stream_counts")
+  voice_stream_counts = Int[]
+  if voice_counts_present
+    raw_voice_counts = get(gp, "voice_stream_counts", Any[])
+    raw_voice_counts isa AbstractVector || error("generate_polyphonic.voice_stream_counts must be an Array.")
+    for value in raw_voice_counts
+      count = _parse_int(value)
+      count >= 0 || error("generate_polyphonic.voice_stream_counts values must be >= 0.")
+      push!(voice_stream_counts, count)
+    end
+    length(voice_stream_counts) == length(stream_counts) || error(
+      "generate_polyphonic.voice_stream_counts must have the same length as stream_counts.",
+    )
+    for i in eachindex(stream_counts)
+      voice_stream_counts[i] <= stream_counts[i] || error(
+        "voice_stream_counts[$(i)]=$(voice_stream_counts[i]) exceeds stream_counts[$(i)]=$(stream_counts[i]).",
+      )
+    end
+  else
+    voice_stream_counts = fill(0, length(stream_counts))
+  end
+
   strength_targets_raw = get(gp, "stream_strength_target", Any[])
   strength_spreads_raw = get(gp, "stream_strength_spread", Any[])
 
@@ -3726,6 +3749,11 @@ function generate_polyphonic()
   tie_stream_center_series = _normalize_unit_series(get(gp, "tie_stream_complexity_center", nothing), length(stream_counts); fallback=0.0)
   tie_stream_span_series = _normalize_unit_series(get(gp, "tie_stream_complexity_span", nothing), length(stream_counts); fallback=0.0)
   tie_concordance_series = _normalize_signed_unit_series(get(gp, "tie_concordance", nothing), length(stream_counts); fallback=0.0)
+  voice_global_complexity_series = _normalize_unit_series(get(gp, "voice_token_global_complexity_target", nothing), length(stream_counts); fallback=0.0)
+  voice_stream_center_series = _normalize_unit_series(get(gp, "voice_token_stream_complexity_center", nothing), length(stream_counts); fallback=0.0)
+  voice_stream_span_series = _normalize_unit_series(get(gp, "voice_token_stream_complexity_span", nothing), length(stream_counts); fallback=0.0)
+  voice_concordance_series = _normalize_signed_unit_series(get(gp, "voice_token_concordance", nothing), length(stream_counts); fallback=0.0)
+  voice_transition_series = _normalize_unit_series(get(gp, "voice_transition_weight", nothing), length(stream_counts); fallback=0.0)
   initial_step_durations = _step_durations_from_bpm_series(initial_context_bpm)
   future_step_durations = _step_durations_from_bpm_series(future_bpm)
   initial_step_onsets = _step_onsets_from_durations(initial_step_durations)
@@ -4264,6 +4292,63 @@ function generate_polyphonic()
   end
   stream_axis = StableStreamAxis(stream_axis_capacity, initial_axis_ids)
 
+  voice_inventory = nothing
+  voice_state = nothing
+  if any(count -> count > 0, voice_stream_counts)
+    inventory_id = strip(string(get(gp, "voice_inventory_id", "ja_voicevox_all")))
+    occursin(r"^[A-Za-z0-9_-]+$", inventory_id) || error(
+      "generate_polyphonic.voice_inventory_id may contain only letters, digits, underscore, and hyphen.",
+    )
+    inventory_dir = normpath(joinpath(@__DIR__, "..", "..", "config", "voice_inventories"))
+    inventory_path = joinpath(inventory_dir, "$(inventory_id).json")
+    voice_inventory = VoiceTokenGeneration.load_inventory(inventory_path)
+    voice_inventory.id == inventory_id || error(
+      "Voice inventory id $(voice_inventory.id) does not match requested id $(inventory_id).",
+    )
+    voice_state = VoiceTokenGeneration.VoiceTokenState(
+      voice_inventory,
+      unique(initial_axis_ids),
+      merge_threshold_ratio,
+      min_window,
+    )
+  end
+
+  voice_plan = Vector{Vector{Any}}()
+  initial_voice_plan = get(gp, "initial_context_voice_plan", Any[])
+  for (step_idx, ids) in enumerate(result_stream_ids)
+    step_plan = Any[]
+    for (slot, stream_id) in enumerate(ids)
+      notes = slot <= length(results[step_idx]) ? copy(results[step_idx][slot][note_abs_idx]) : Int[]
+      initial_voice_entry = nothing
+      if step_idx <= initial_context_steps && initial_voice_plan isa AbstractVector && step_idx <= length(initial_voice_plan)
+        for raw_entry in initial_voice_plan[step_idx]
+          try
+            entry = _to_string_dict(raw_entry)
+            Int(entry["streamId"]) == stream_id || continue
+            initial_voice_entry = entry
+            break
+          catch
+          end
+        end
+      end
+      initial_text = initial_voice_entry === nothing ? "" : strip(string(get(initial_voice_entry, "text", "")))
+      initial_mode = isempty(initial_text) ? "synth" : "voice"
+      push!(step_plan, Dict(
+        "streamId" => stream_id,
+        "mode" => initial_mode,
+        "token" => nothing,
+        "text" => isempty(initial_text) ? nothing : initial_text,
+        "phones" => String[],
+        "carrierNote" => nothing,
+        "notes" => notes,
+      ))
+    end
+    push!(voice_plan, step_plan)
+  end
+  # Initial lyrics must seed the token managers; otherwise they are only
+  # echoed in the response and have no effect on subsequent generation.
+  voice_state !== nothing && VoiceTokenGeneration.seed_initial_tokens!(voice_state, voice_plan)
+
   # ----------------------------------------------------------
   # Managers
   # ----------------------------------------------------------
@@ -4747,6 +4832,17 @@ function generate_polyphonic()
     idx0 = step_idx - 1
     _apply_step_recency!(idx0, desired_stream_count)
     step_stream_order = stream_priority_order(lifecycle_mgr, desired_stream_count)
+    requested_voice_count = voice_stream_counts[step_idx]
+    voice_ids = Int[]
+    if voice_state !== nothing
+      VoiceTokenGeneration.apply_lifecycle!(voice_state, plan)
+      voice_ids = VoiceTokenGeneration.select_voice_ids!(
+        voice_state,
+        copy(plan.active_ids),
+        requested_voice_count,
+        step_stream_order,
+      )
+    end
     tie_values = if clustered_tie_enabled
       fill(0.0, desired_stream_count)
     else
@@ -5585,6 +5681,58 @@ end
       step_decisions["tie"] = Float64[current_step_values[slot][tie_idx] for slot in 1:desired_stream_count]
     end
 
+    generated_voice_tokens = Dict{Int,VoiceTokenGeneration.VoiceToken}()
+    if voice_state !== nothing && !isempty(voice_ids)
+      voice_targets = generate_centered_targets(
+        length(voice_ids),
+        voice_stream_center_series[step_idx],
+        voice_stream_span_series[step_idx],
+      )
+      targets_by_id = Dict{Int,Float64}(
+        stream_id => voice_targets[i] for (i, stream_id) in enumerate(voice_ids)
+      )
+      recency = clamp(_parse_float(array_param(gp, "recency_center", step_idx - 1)), 0.0, 1.0)
+      generated_voice_tokens = VoiceTokenGeneration.generate_tokens!(
+        voice_state,
+        voice_ids;
+        global_target=voice_global_complexity_series[step_idx],
+        stream_targets=targets_by_id,
+        concordance=voice_concordance_series[step_idx],
+        transition_weight=voice_transition_series[step_idx],
+        recency=recency,
+      )
+    end
+
+    current_voice_plan = Any[]
+    for (slot, stream_id) in enumerate(plan.active_ids)
+      notes = Int[Int(note) for note in current_step_values[slot][note_abs_idx]]
+      token = get(generated_voice_tokens, stream_id, nothing)
+      if token === nothing
+        push!(current_voice_plan, Dict(
+          "streamId" => stream_id,
+          "mode" => "synth",
+          "token" => nothing,
+          "text" => nothing,
+          "phones" => String[],
+          "carrierNote" => nothing,
+          "notes" => notes,
+        ))
+      else
+        carrier_note = isempty(notes) ? nothing : notes[cld(length(notes), 2)]
+        push!(current_voice_plan, Dict(
+          "streamId" => stream_id,
+          "mode" => "voice",
+          "token" => token.id,
+          "text" => token.text,
+          "phones" => copy(token.phones),
+          "carrierNote" => carrier_note,
+          "notes" => notes,
+        ))
+      end
+    end
+    push!(voice_plan, current_voice_plan)
+    @info "Voice token decisions" step=step_idx bpm=future_bpm[step_idx] step_duration=future_step_durations[step_idx] decisions=[(stream_id=entry["streamId"], mode=entry["mode"], text=entry["text"], notes=entry["notes"], vol=current_step_values[slot][vol_idx]) for (slot, entry) in enumerate(current_voice_plan)]
+
     # store decisions
     step_decisions["area_tmp_anchor"] = chosen_area
     step_decisions["note_anchor"] = global_anchor_note
@@ -5674,10 +5822,22 @@ end
       "streams" => streams_hash,
     )
   end
+  if voice_state !== nothing
+    cluster_payload["voice_token"] = VoiceTokenGeneration.clusters_payload(voice_state, min_window)
+  end
 
   return Dict(
     "timeSeries" => results,
     "streamIds" => result_stream_ids,
+    "voicePlan" => voice_plan,
+    "voiceStreamCounts" => voice_stream_counts,
+    "voiceInventory" => voice_inventory === nothing ? nothing : Dict(
+      "id" => voice_inventory.id,
+      "modelId" => voice_inventory.model_id,
+      "featureVersion" => voice_inventory.feature_version,
+      "source" => voice_inventory.source,
+      "dimensions" => voice_inventory.dimensions,
+    ),
     "clusters" => cluster_payload,
     "processingTime" => processing_time_s,
     "streamStrengths" => nothing,
@@ -5761,6 +5921,20 @@ function dispatch_generate_polyphonic()
   payload_dict = _to_string_dict(payload)
   gp = get(payload_dict, "generate_polyphonic", Dict{String,Any}())
   gp_dict = _to_string_dict(gp)
+
+  if !Config.voicevox_enabled()
+    for key in (
+      "voice_stream_counts",
+      "voice_inventory_id",
+      "voice_token_global_complexity_target",
+      "voice_token_stream_complexity_center",
+      "voice_token_stream_complexity_span",
+      "voice_token_concordance",
+      "voice_transition_weight",
+    )
+      pop!(gp_dict, key, nothing)
+    end
+  end
 
   request_id = string(get(gp_dict, "job_id", uuid4()))
   gp_dict["job_id"] = request_id
