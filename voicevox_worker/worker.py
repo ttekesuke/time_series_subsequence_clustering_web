@@ -9,6 +9,7 @@ import os
 import pathlib
 import tempfile
 import urllib.parse
+import urllib.error
 import urllib.request
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -82,8 +83,12 @@ def _post_json(path: str, payload: dict[str, Any], query: dict[str, Any]) -> byt
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=600) as response:
-        return response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace").strip()
+        raise RuntimeError(f"VOICEVOX {path} returned HTTP {exc.code}: {detail or exc.reason}") from exc
 
 
 def _synthesize_talk(text: str) -> bytes:
@@ -115,8 +120,12 @@ def _song_notes(segments: list[dict[str, Any]], controls: list[dict[str, Any]], 
     cursor = start_time
     for segment, control in zip(segments, controls):
         time = max(cursor, float(control.get("time", cursor)))
-        if time > cursor:
-            notes.append({"key": None, "frame_length": max(1, round((time - cursor) * frame_rate)), "lyric": ""})
+        gap_frames = round((time - cursor) * frame_rate)
+        # Floating-point accumulation can create a phantom 1-frame rest between
+        # adjacent steps. The Song Engine rejects a <=1-frame pause followed by
+        # a consonant mora, so ignore sub-frame drift and make real rests safe.
+        if gap_frames >= 2:
+            notes.append({"key": None, "frame_length": gap_frames, "lyric": ""})
         key = int(control.get("carrier_note", 60) or 60)
         # Song's Score.key is a MIDI note. Keep the composition pitch intact;
         # any singer-specific range shift must be an explicit f0 adjustment.
