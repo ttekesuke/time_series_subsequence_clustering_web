@@ -135,7 +135,7 @@ const SC_INITIAL_NODE_ID::Int = 1000
 const SC_BASE_VOICE_GAIN::Float64 = 0.30
 # Song stems have a substantially lower source level than the procedural SC
 # synths. This is applied before the master compander/limiter.
-const SC_VOICEVOX_GAIN::Float64 = 1.80
+const SC_VOICEVOX_GAIN::Float64 = 4.00
 const SC_VOICEVOX_BUFFER_PREROLL_SECONDS::Float64 = 0.10
 const SC_MIN_AUDIBLE_VOLUME::Float64 = 0.01
 const SC_SANITIZE_MIN_AUDIBLE_VOLUME::Float64 = 0.001
