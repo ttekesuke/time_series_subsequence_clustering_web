@@ -265,9 +265,6 @@ const startPlayingSound = () => {
   const source = unwrapMaybeRef<string>(inst?.soundFilePath)
   if (!source) return
 
-  const bpm = Number(inst?.getPlaybackBpm?.())
-  const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 240
-
   if (!audio.value || currentAudioSrc.value !== source) {
     try { audio.value?.pause() } catch {}
     const a = new Audio(source)
@@ -287,15 +284,19 @@ const startPlayingSound = () => {
   if (!audio.value) return
 
   audio.value.currentTime = 0
-  headerNowPlaying.value = true
-  inst?.startPlaybackVisual?.(safeBpm)
 
   const result = audio.value.play()
-  if (result && typeof (result as Promise<void>).catch === 'function') {
-    ;(result as Promise<void>).catch(() => {
+  const started = () => {
+    headerNowPlaying.value = true
+    inst?.startPlaybackVisual?.(audio.value)
+  }
+  if (result && typeof (result as Promise<void>).then === 'function') {
+    ;(result as Promise<void>).then(started).catch(() => {
       headerNowPlaying.value = false
       inst?.stopPlaybackVisual?.()
     })
+  } else {
+    started()
   }
 }
 

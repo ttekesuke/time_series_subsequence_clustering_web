@@ -249,7 +249,8 @@ let resizeObserver: ResizeObserver | null = null
 const progress = ref({ percent: 0, status: 'idle' })
 const setDataDialog = ref(false)
 const playheadStep = ref(-1)
-let playheadTimerId: ReturnType<typeof setInterval> | null = null
+let playheadAnimationFrame: number | null = null
+let playbackAudioEl: HTMLAudioElement | null = null
 const playheadStepForRoll = computed(() => (nowPlaying.value ? playheadStep.value : -1))
 const DEFAULT_BPM = 480
 const currentPlaybackBpm = ref(DEFAULT_BPM)
@@ -323,34 +324,56 @@ const resolveGenerationBpm = (): number => {
   return resolveGenerationBpmSeries(null, 1)[0] ?? DEFAULT_BPM
 }
 
-const clearPlayheadTimer = () => {
-  if (playheadTimerId) {
-    clearInterval(playheadTimerId)
-    playheadTimerId = null
+const clearPlayheadAnimation = () => {
+  if (playheadAnimationFrame != null) {
+    cancelAnimationFrame(playheadAnimationFrame)
+    playheadAnimationFrame = null
   }
 }
 
 const stopPlayhead = () => {
-  clearPlayheadTimer()
+  clearPlayheadAnimation()
+  playbackAudioEl = null
   playheadStep.value = -1
 }
 
-const startPlayhead = (bpm: number) => {
-  const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : DEFAULT_BPM
-  const stepMs = Math.max(20, Math.round((60 * 1000) / safeBpm))
-  const totalSteps = Math.max(1, stepCount.value)
+const playbackStepDurations = computed(() =>
+  resolveGenerationBpmSeries(null, Math.max(1, stepCount.value)).map(bpm => 60 / bpm)
+)
 
-  playheadStep.value = 0
-  clearPlayheadTimer()
-  playheadTimerId = setInterval(() => {
-    if (!nowPlaying.value) return
-    playheadStep.value = Math.min(playheadStep.value + 1, totalSteps - 1)
-  }, stepMs)
+const stepAtAudioTime = (audioTime: number) => {
+  const time = Math.max(0, Number.isFinite(audioTime) ? audioTime : 0)
+  const durations = playbackStepDurations.value
+  let elapsed = 0
+  for (let index = 0; index < durations.length; index += 1) {
+    const duration = durations[index] ?? 0
+    if (time < elapsed + duration || index === durations.length - 1) return index
+    elapsed += duration
+  }
+  return durations.length - 1
 }
 
-const startPlaybackVisual = (bpm = DEFAULT_BPM) => {
+const startPlayhead = (audioEl: HTMLAudioElement) => {
+  playbackAudioEl = audioEl
+  const totalSteps = Math.max(1, stepCount.value)
+
+  const sync = () => {
+    if (!nowPlaying.value || playbackAudioEl !== audioEl) return
+    playheadStep.value = Math.min(stepAtAudioTime(audioEl.currentTime), totalSteps - 1)
+    if (!audioEl.paused && !audioEl.ended) {
+      playheadAnimationFrame = requestAnimationFrame(sync)
+    }
+  }
+
+  clearPlayheadAnimation()
+  sync()
+}
+
+const startPlaybackVisual = (audioEl?: HTMLAudioElement) => {
+  const source = audioEl ?? audio.value
+  if (!source) return
   nowPlaying.value = true
-  startPlayhead(bpm)
+  startPlayhead(source)
 }
 
 const stopPlaybackVisual = () => {
@@ -382,8 +405,7 @@ const stopPlayingSound = () => {
   stopPlayhead()
 }
 const startPlayingSound = (bpm?: number) => {
-  const safeBpm = normalizeBpm(bpm ?? resolveGenerationBpm())
-  currentPlaybackBpm.value = safeBpm
+  currentPlaybackBpm.value = normalizeBpm(bpm ?? resolveGenerationBpm())
 
   const sourceUrl = soundFilePath.value
   if (!sourceUrl) return
@@ -395,13 +417,16 @@ const startPlayingSound = (bpm?: number) => {
 
   const a = audio.value
   a.currentTime = 0
-  nowPlaying.value = true
-  startPlayhead(currentPlaybackBpm.value)
 
   const tryPlay = (target: HTMLAudioElement, allowRetry: boolean) => {
     const playResult = target.play()
-    if (!playResult || typeof (playResult as Promise<void>).catch !== 'function') return
-    ;(playResult as Promise<void>).catch((err) => {
+    if (!playResult || typeof (playResult as Promise<void>).then !== 'function') {
+      startPlaybackVisual(target)
+      return
+    }
+    ;(playResult as Promise<void>).then(() => {
+      startPlaybackVisual(target)
+    }).catch((err) => {
       if (allowRetry) {
         try { target.pause() } catch {}
         const retried = createAudioElement(sourceUrl)
