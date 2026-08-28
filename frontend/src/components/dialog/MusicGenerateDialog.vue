@@ -18,6 +18,15 @@
           </div>
 
           <v-btn
+            color="secondary"
+            variant="outlined"
+            class="mr-2"
+            @click="voiceEmbeddingDialog = true"
+          >
+            Voice Space
+          </v-btn>
+
+          <v-btn
             color="primary"
             variant="outlined"
             class="mr-2"
@@ -192,6 +201,8 @@
       </v-card-text>
     </v-card>
   </v-dialog>
+
+  <VoiceEmbeddingDialog v-model="voiceEmbeddingDialog" :inventory-id="voiceInventoryId || 'ja_voicevox_all'" />
 </template>
 
 <script setup lang="ts">
@@ -200,6 +211,7 @@ import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
 import GridContainer from '../grid/GridContainer.vue'
 import Fft from '../audio/Fft.vue'
+import VoiceEmbeddingDialog from './VoiceEmbeddingDialog.vue'
 
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
@@ -664,6 +676,7 @@ const onContextSelectedColumnsChange = (raw: unknown) => {
 }
 
 const soundCheckDialog = ref(false)
+const voiceEmbeddingDialog = ref(false)
 const soundCheckRows = ref<GridRowData[]>([])
 const soundCheckPlaying = ref(false)
 const soundCheckStreamIndex = ref(0)

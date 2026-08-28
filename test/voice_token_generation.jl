@@ -4,12 +4,12 @@ using Main.TimeseriesClusteringAPI
 const VTG = Main.TimeseriesClusteringAPI.VoiceTokenGeneration
 
 @testset "voice token inventory and clustered generation" begin
-  inventory_path = normpath(joinpath(@__DIR__, "..", "config", "voice_inventories", "ja_mora_demo.json"))
+  inventory_path = normpath(joinpath(@__DIR__, "..", "config", "voice_inventories", "ja_voicevox_all.json"))
   inventory = VTG.load_inventory(inventory_path)
 
-  @test inventory.id == "ja_mora_demo"
-  @test inventory.dimensions == 6
-  @test length(inventory.tokens) == 10
+  @test inventory.id == "ja_voicevox_all"
+  @test inventory.dimensions == 12
+  @test length(inventory.tokens) == 107
   @test all(length(token.embedding) == inventory.dimensions for token in inventory.tokens)
 
   token_a = only(filter(token -> token.id == "a", inventory.tokens))

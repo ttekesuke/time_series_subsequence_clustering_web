@@ -22,6 +22,34 @@ route("/api/features") do
   (; clustering_query=clustering_query, voicevox=voicevox) |> json
 end
 
+# Public, read-only view of the measured voice-token inventory.  The frontend
+# uses this to inspect the same acoustic embeddings used by voice generation.
+route("/api/web/time_series/voice_inventory", method=POST) do
+  raw_payload = Requests.jsonpayload()
+  raw_payload === nothing && (raw_payload = Dict{String,Any}())
+  payload = Dict{String,Any}(string(k) => v for (k, v) in pairs(raw_payload))
+  inventory_id = strip(string(get(payload, "id", "ja_voicevox_all")))
+  occursin(r"^[A-Za-z0-9_-]+$", inventory_id) || error("Invalid voice inventory id.")
+  inventory_dir = normpath(joinpath(@__DIR__, "config", "voice_inventories"))
+  inventory = TimeseriesClusteringAPI.VoiceTokenGeneration.load_inventory(
+    joinpath(inventory_dir, "$(inventory_id).json"),
+  )
+  inventory.id == inventory_id || error("Voice inventory id does not match its file name.")
+  Dict(
+    "id" => inventory.id,
+    "modelId" => inventory.model_id,
+    "featureVersion" => inventory.feature_version,
+    "source" => inventory.source,
+    "dimensions" => inventory.dimensions,
+    "tokens" => [Dict(
+      "id" => token.id,
+      "text" => token.text,
+      "phones" => token.phones,
+      "embedding" => token.embedding,
+    ) for token in inventory.tokens],
+  ) |> json
+end
+
 # ------------------------------------------------------------
 # Rails compatible endpoints
 #   POST /api/web/time_series/analyse

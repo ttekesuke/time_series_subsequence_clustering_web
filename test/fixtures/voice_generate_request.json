@@ -4,7 +4,7 @@
     "future_bpm": [240, 240, 240],
     "stream_counts": [3, 3, 3],
     "voice_stream_counts": [1, 2, 0],
-    "voice_inventory_id": "ja_mora_demo",
+    "voice_inventory_id": "ja_voicevox_all",
     "voice_token_global_complexity_target": [0.2, 0.8, 0.0],
     "voice_token_stream_complexity_center": [0.2, 0.8, 0.0],
     "voice_token_stream_complexity_span": [0.0, 0.2, 0.0],
