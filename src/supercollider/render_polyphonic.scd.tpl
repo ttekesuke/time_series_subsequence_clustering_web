@@ -115,7 +115,7 @@ score = Score([
         noisy = noisy * sourceLevel * noise.clip(0, 1) * 0.7;
 
         releaseTime = 0.015 + (sustainRelease.clip(0, 1) * 0.30);
-        ampControl = LagUD.kr(amp.clip(0, 4.0), 0.003 + (attack.clip(0, 1) * 0.25), releaseTime);
+        ampControl = LagUD.kr(amp.clip(0, 8.0), 0.003 + (attack.clip(0, 1) * 0.25), releaseTime);
         coloured = CompanderD.ar(
             coloured + noisy,
             thresh: 0.55,

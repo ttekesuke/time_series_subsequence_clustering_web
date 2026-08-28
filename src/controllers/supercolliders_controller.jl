@@ -313,7 +313,7 @@ function build_score_events_scd(
           "  [%.6f, ['/n_set', %d, \\amp, %.6f, \\pitchRatio, %.6f, \\brightness, %.6f, \\noise, %.6f, \\harmonicity, %.6f, \\attack, %.6f, \\decay, %.6f, \\sustainRelease, %.6f]]",
           preroll + _parse_float(get(control, "time", 0.0)),
           voice_node_id,
-          clamp(_parse_float(get(control, "amp", 0.0)) * Config.SC_VOICEVOX_GAIN, 0.0, 4.0),
+          clamp(_parse_float(get(control, "amp", 0.0)) * Config.SC_VOICEVOX_GAIN, 0.0, 8.0),
               begin
                 # VOICEVOX Song receives the MIDI note itself. Pitch-shifting
                 # this rendered stem here would apply the note twice.

@@ -111,26 +111,33 @@ def _song_frame_rate() -> float:
 
 
 def _song_notes(segments: list[dict[str, Any]], controls: list[dict[str, Any]], start_time: float) -> list[dict[str, Any]]:
-    """Make a monophonic Song score, including rests between voice steps."""
+    """Make a monophonic Song score with drift-free frame quantization."""
     frame_rate = _song_frame_rate()
     # The Engine's Song implementation currently raises an internal array-size
     # error when the obligatory initial rest is one frame and the first lyric
     # starts with a consonant. Two frames is its smallest safe lead-in.
-    notes = [{"key": None, "frame_length": max(2, round(start_time * frame_rate)), "lyric": ""}]
+    cursor_frame = max(2, round(start_time * frame_rate))
+    notes = [{"key": None, "frame_length": cursor_frame, "lyric": ""}]
     cursor = start_time
     for segment, control in zip(segments, controls):
         time = max(cursor, float(control.get("time", cursor)))
-        gap_frames = round((time - cursor) * frame_rate)
+        time_frame = round(time * frame_rate)
+        gap_frames = time_frame - cursor_frame
         # Floating-point accumulation can create a phantom 1-frame rest between
         # adjacent steps. The Song Engine rejects a <=1-frame pause followed by
         # a consonant mora, so ignore sub-frame drift and make real rests safe.
         if gap_frames >= 2:
             notes.append({"key": None, "frame_length": gap_frames, "lyric": ""})
+            cursor_frame += gap_frames
         key = int(control.get("carrier_note", 60) or 60)
         # Song's Score.key is a MIDI note. Keep the composition pitch intact;
         # any singer-specific range shift must be an explicit f0 adjustment.
-        notes.append({"key": max(0, min(127, key)), "frame_length": max(2, round(float(segment["duration"]) * frame_rate)), "lyric": segment["text"]})
-        cursor = time + float(segment["duration"])
+        end_time = time + float(segment["duration"])
+        end_frame = round(end_time * frame_rate)
+        note_frames = max(2, end_frame - cursor_frame)
+        notes.append({"key": max(0, min(127, key)), "frame_length": note_frames, "lyric": segment["text"]})
+        cursor_frame += note_frames
+        cursor = end_time
     notes.append({"key": None, "frame_length": max(1, round(0.05 * frame_rate)), "lyric": ""})
     return notes
 
@@ -155,7 +162,11 @@ def _render_stem(segments: list[dict[str, Any]], controls: list[dict[str, Any]],
         rendered = b"\0" * (silence_frames * params.sampwidth * params.nchannels)
         rendered += _fit_wav(audio, sum(float(segment["duration"]) for segment in segments), params)
     else:
-        rendered = audio
+        # The Song Engine works in 93.75 Hz frames. Trim/pad the rendered WAV
+        # to the original step timeline so frame rounding cannot slow a long
+        # 0.125-second (BPM 480) sequence by seconds.
+        total_duration = max(float(control.get("time", start_time)) + float(segment["duration"]) for segment, control in zip(segments, controls))
+        rendered = _fit_wav(audio, total_duration, params)
     output = __import__("io").BytesIO()
     with wave.open(output, "wb") as target:
         target.setparams(params)
