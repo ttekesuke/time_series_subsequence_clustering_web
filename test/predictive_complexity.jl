@@ -109,8 +109,8 @@ end
     Float64[0.0, 0.0],
     Float64[0.0, 0.0],
     _predictive_pcm.OccurrenceIntervalMetrics[
-      _predictive_pcm.OccurrenceIntervalMetrics(0.0, 1.0, 0.0, 1.0, 0.0, true),
-      _predictive_pcm.OccurrenceIntervalMetrics(10.0, 1.0, 10.0, 1.0, 1.0, true),
+      _predictive_pcm.OccurrenceIntervalMetrics(0.0, 1.0, 0.0, 0.0, true),
+      _predictive_pcm.OccurrenceIntervalMetrics(10.0, 1.0, 10.0, 1.0, true),
     ],
   )
 
@@ -119,10 +119,10 @@ end
   @test occurrence == [0.0, 1.0]
 end
 
-@testset "occurrence score ignores interval quantity and usage" begin
+@testset "occurrence score ignores interval quantity" begin
   temporal = _predictive_pcm.OccurrenceIntervalMetrics[
-    _predictive_pcm.OccurrenceIntervalMetrics(1.0, 0.0, 2.0, 0.0, 0.25, true),
-    _predictive_pcm.OccurrenceIntervalMetrics(1.0, 100.0, 2.0, 100.0, 0.25, true),
+    _predictive_pcm.OccurrenceIntervalMetrics(1.0, 0.0, 2.0, 0.25, true),
+    _predictive_pcm.OccurrenceIntervalMetrics(1.0, 100.0, 2.0, 0.25, true),
   ]
   scores, ready = _predictive_controller.combine_occurrence_interval_scores(
     temporal,

@@ -336,13 +336,13 @@ abs(global_score - global_target)
 score = 0.5 + atan(direction * (raw - center) / scale) / pi
 ```
 
-**SR-005:** distanceおよびcomplexityは値が大きい方向を正方向として扱い、quantityおよびusageは逆方向として扱う。
+**SR-005:** distanceおよびcomplexityは値が大きい方向を正方向として扱い、quantityは逆方向として扱う。
 
 **SR-006:** calibratorはcandidate simulationごとに変化させず、同一step内・生成run内で比較可能な尺度を維持する。
 
 ### 5.3 occurrence interval
 
-**SR-007:** cluster評価にはdistance、complexity、quantity、usageに加え、5番目のmetricとしてoccurrence interval complexityを含める。
+**SR-007:** cluster評価にはdistance、complexity、quantityに加え、4番目のmetricとしてoccurrence interval complexityを含める。
 
 **SR-008:** occurrence interval metricがreadyでない間は、利用可能なmetricで評価する。ready時は正規化後の総合scoreに概ね20%相当の寄与を持つ。
 

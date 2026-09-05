@@ -141,14 +141,12 @@ end
     raw_dist = Float64[]
     raw_quantity = Float64[]
     raw_complexity = Float64[]
-    raw_usage = Float64[]
     temporal_metrics = pcm.OccurrenceIntervalMetrics[]
     for candidate in 0:5
       metrics = pcm.simulate_add_and_calculate_all_extended(manager, Float64[candidate])
       push!(raw_dist, metrics.distance)
       push!(raw_quantity, metrics.quantity)
       push!(raw_complexity, metrics.complexity)
-      push!(raw_usage, metrics.usage)
       push!(temporal_metrics, metrics.occurrence_intervals)
     end
 
@@ -156,7 +154,6 @@ end
       raw_dist,
       raw_quantity,
       raw_complexity,
-      raw_usage,
       temporal_metrics;
       calibrator=calibrator,
     )

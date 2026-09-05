@@ -2028,7 +2028,7 @@ const buildGenHelp = (meta: GenRowMeta): RowHelp | undefined => {
     return H(
       meta,
       `${scope} 側の ${metricText} の重みです。通常 dimension と AREA の候補スコアを 0..1 に正規化するとき、この重みで dist / qty / comp の効き方を調整します。対象は ${scopeText} です。`,
-      '0：この metric をほぼ無視します。他の weight と usage metric の影響が相対的に強くなります。',
+      '0：この metric をほぼ無視します。他の weight の影響が相対的に強くなります。',
       '5：この metric を強く見ます。この metric が target に近い候補ほど選ばれやすくなります。'
     )
   }
@@ -2040,7 +2040,7 @@ const buildGenHelp = (meta: GenRowMeta): RowHelp | undefined => {
   if (k.endsWith('_global_complexity_target') || k === 'area_global') {
     return H(
       meta,
-      `${info.label} の Global Complexity 目標です。${info.value} を全ストリームまとめて polyphonic set として仮追加し、dist / qty / comp / usage を合成した global score がこの値に近い候補を選びます。${info.note ?? ''} ${dimDisabledNote(dim)}`,
+      `${info.label} の Global Complexity 目標です。${info.value} を全ストリームまとめて polyphonic set として仮追加し、dist / qty / comp を合成した global score がこの値に近い候補を選びます。${info.note ?? ''} ${dimDisabledNote(dim)}`,
       `0：${info.min}`,
       `1：${info.max}`
     )

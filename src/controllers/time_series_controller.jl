@@ -2171,7 +2171,6 @@ struct ComplexityMetricCalibrator
   distance::ScalarMetricCalibrator
   quantity::ScalarMetricCalibrator
   complexity::ScalarMetricCalibrator
-  usage::ScalarMetricCalibrator
 end
 
 struct ExtendedMetricCalibrator
@@ -2183,7 +2182,6 @@ const DEFAULT_COMPLEXITY_METRIC_CALIBRATOR = ComplexityMetricCalibrator(
   ScalarMetricCalibrator(0.0, 1.0, 1.0),
   ScalarMetricCalibrator(0.0, 1.0, -1.0),
   ScalarMetricCalibrator(0.0, 1.0, 1.0),
-  ScalarMetricCalibrator(0.0, 1.0, -1.0),
 )
 const DEFAULT_EXTENDED_METRIC_CALIBRATOR = ExtendedMetricCalibrator(
   DEFAULT_COMPLEXITY_METRIC_CALIBRATOR,
@@ -2227,11 +2225,6 @@ function _build_complexity_metric_calibrator(
       metrics.complexity,
       _metric_calibration_scale(metrics.complexity, steps, normalized_floor),
       1.0,
-    ),
-    ScalarMetricCalibrator(
-      metrics.usage,
-      _metric_calibration_scale(metrics.usage, steps, normalized_floor),
-      -1.0,
     ),
   )
 end
@@ -2363,19 +2356,17 @@ end
 function combine_complexity_metric_scores(
   raw_dist::Vector{Float64},
   raw_quantity::Vector{Float64},
-  raw_complexity::Vector{Float64},
-  raw_usage::Vector{Float64};
-  metric_weights::NTuple{4,Float64} = (1.0, 1.0, 1.0, 1.0),
+  raw_complexity::Vector{Float64};
+  metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
   calibrator::ComplexityMetricCalibrator = DEFAULT_COMPLEXITY_METRIC_CALIBRATOR,
 )::Vector{Float64}
-  n = maximum([length(raw_dist), length(raw_quantity), length(raw_complexity), length(raw_usage), 0])
+  n = maximum([length(raw_dist), length(raw_quantity), length(raw_complexity), 0])
   n <= 0 && return Float64[]
 
   dw = max(metric_weights[1], 0.0)
   qw = max(metric_weights[2], 0.0)
   cw = max(metric_weights[3], 0.0)
-  uw = max(metric_weights[4], 0.0)
-  denom = dw + qw + cw + uw
+  denom = dw + qw + cw
   denom <= 0.0 && return fill(0.5, n)
 
   combined = Vector{Float64}(undef, n)
@@ -2383,8 +2374,7 @@ function combine_complexity_metric_scores(
     d = i <= length(raw_dist) ? calibrate_metric(raw_dist[i], calibrator.distance) : 0.5
     q = i <= length(raw_quantity) ? calibrate_metric(raw_quantity[i], calibrator.quantity) : 0.5
     c = i <= length(raw_complexity) ? calibrate_metric(raw_complexity[i], calibrator.complexity) : 0.5
-    u = i <= length(raw_usage) ? calibrate_metric(raw_usage[i], calibrator.usage) : 0.5
-    combined[i] = ((dw * d) + (qw * q) + (cw * c) + (uw * u)) / denom
+    combined[i] = ((dw * d) + (qw * q) + (cw * c)) / denom
   end
   return combined
 end
@@ -2393,17 +2383,15 @@ function combine_complexity_metric_scores_with_occurrence_intervals(
   raw_dist::Vector{Float64},
   raw_quantity::Vector{Float64},
   raw_complexity::Vector{Float64},
-  raw_usage::Vector{Float64},
   temporal_metrics::Vector{PolyphonicClusterManager.OccurrenceIntervalMetrics};
-  metric_weights::NTuple{4,Float64} = (1.0, 1.0, 1.0, 1.0),
+  metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
   temporal_weight::Float64 = Config.OCCURRENCE_INTERVAL_COMPLEXITY_WEIGHT,
   calibrator::ExtendedMetricCalibrator = DEFAULT_EXTENDED_METRIC_CALIBRATOR,
 )::Vector{Float64}
   base_scores = combine_complexity_metric_scores(
     raw_dist,
     raw_quantity,
-    raw_complexity,
-    raw_usage;
+    raw_complexity;
     metric_weights=metric_weights,
     calibrator=calibrator.base,
   )
@@ -2422,8 +2410,7 @@ function combine_complexity_metric_scores_with_occurrence_intervals(
   base_weight =
     max(metric_weights[1], 0.0) +
     max(metric_weights[2], 0.0) +
-    max(metric_weights[3], 0.0) +
-    max(metric_weights[4], 0.0)
+    max(metric_weights[3], 0.0)
 
   combined = Vector{Float64}(undef, length(base_scores))
   for candidate_idx in eachindex(base_scores)
@@ -2635,7 +2622,7 @@ end
 
 """Score occurrence intervals with the same predictive structural model as values.
 
-Interval quantity and usage remain available as diagnostic metrics, but do not
+Interval quantity remains available as a diagnostic metric, but does not
 participate in this score. An interval axis without candidate variation is omitted.
 """
 function combine_occurrence_interval_scores(
@@ -2883,12 +2870,10 @@ function generate()
     raw_dist = Float64[]
     raw_quantity = Float64[]
     raw_complexity = Float64[]
-    raw_usage = Float64[]
     temporal_metrics = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
     sizehint!(raw_dist, length(candidates))
     sizehint!(raw_quantity, length(candidates))
     sizehint!(raw_complexity, length(candidates))
-    sizehint!(raw_usage, length(candidates))
     sizehint!(temporal_metrics, length(candidates))
 
     for candidate in candidates
@@ -2897,7 +2882,6 @@ function generate()
       push!(raw_dist, metrics.distance)
       push!(raw_quantity, metrics.quantity)
       push!(raw_complexity, metrics.complexity)
-      push!(raw_usage, metrics.usage)
       push!(temporal_metrics, metrics.occurrence_intervals)
     end
 
@@ -2905,7 +2889,6 @@ function generate()
       raw_dist,
       raw_quantity,
       raw_complexity,
-      raw_usage,
       temporal_metrics,
       calibrator=calibrator,
     )
@@ -3052,11 +3035,9 @@ struct CandidateMetric
   global_dist::Float64
   global_qty::Float64
   global_comp::Float64
-  global_usage::Float64
   stream_dists::Vector{Float64}
   stream_qtys::Vector{Float64}
   stream_comps::Vector{Float64}
-  stream_usages::Vector{Float64}
   global_temporal::PolyphonicClusterManager.OccurrenceIntervalMetrics
   stream_temporals::Vector{PolyphonicClusterManager.OccurrenceIntervalMetrics}
   global_predictive::Float64
@@ -3083,10 +3064,6 @@ function _normalize_metric_weights(dw::Real, qw::Real, cw::Real)::NTuple{3,Float
   return (d, q, c)
 end
 
-function _metric_weights4(weights::NTuple{3,Float64})::NTuple{4,Float64}
-  return (weights[1], weights[2], weights[3], 1.0)
-end
-
 function _safe_simulate_add_and_calculate_all_extended(
   mgr::PolyphonicClusterManager.Manager,
   value::PolyphonicClusterManager.PolySet,
@@ -3095,7 +3072,6 @@ function _safe_simulate_add_and_calculate_all_extended(
     return PolyphonicClusterManager.simulate_add_and_calculate_all_extended(mgr, value)
   catch
     return PolyphonicClusterManager.ExtendedClusterMetrics(
-      0.0,
       0.0,
       0.0,
       0.0,
@@ -3143,8 +3119,8 @@ function select_best_polyphonic_candidate_unified_with_cost(
   global_target::Float64,
   stream_targets::Vector{Float64},
   concordance_weight::Float64,
-  global_metric_weights::NTuple{4,Float64},
-  stream_metric_weights::NTuple{4,Float64};
+  global_metric_weights::NTuple{3,Float64},
+  stream_metric_weights::NTuple{3,Float64};
   use_global_score::Bool = true,
   global_calibrator::ExtendedMetricCalibrator = DEFAULT_EXTENDED_METRIC_CALIBRATOR,
   stream_calibrators::Vector{ExtendedMetricCalibrator} = ExtendedMetricCalibrator[],
@@ -3158,7 +3134,6 @@ function select_best_polyphonic_candidate_unified_with_cost(
     [m.global_dist for m in metrics],
     [m.global_qty for m in metrics],
     [m.global_comp for m in metrics],
-    [m.global_usage for m in metrics],
     [m.global_temporal for m in metrics];
     metric_weights=global_metric_weights,
     calibrator=global_calibrator,
@@ -3182,7 +3157,6 @@ function select_best_polyphonic_candidate_unified_with_cost(
       length(m.stream_dists),
       length(m.stream_qtys),
       length(m.stream_comps),
-      length(m.stream_usages),
     )
   end
   stream_norm = Vector{Vector{Float64}}(undef, n_stream_metrics)
@@ -3191,7 +3165,6 @@ function select_best_polyphonic_candidate_unified_with_cost(
     raw_d = Float64[(s_idx <= length(m.stream_dists)) ? m.stream_dists[s_idx] : 0.0 for m in metrics]
     raw_q = Float64[(s_idx <= length(m.stream_qtys)) ? m.stream_qtys[s_idx] : 0.0 for m in metrics]
     raw_c = Float64[(s_idx <= length(m.stream_comps)) ? m.stream_comps[s_idx] : 0.0 for m in metrics]
-    raw_u = Float64[(s_idx <= length(m.stream_usages)) ? m.stream_usages[s_idx] : 0.0 for m in metrics]
     temporal = PolyphonicClusterManager.OccurrenceIntervalMetrics[
       (s_idx <= length(m.stream_temporals)) ?
         m.stream_temporals[s_idx] :
@@ -3206,7 +3179,6 @@ function select_best_polyphonic_candidate_unified_with_cost(
       raw_d,
       raw_q,
       raw_c,
-      raw_u,
       temporal;
       metric_weights=stream_metric_weights,
       calibrator=stream_calibrator,
@@ -3361,7 +3333,6 @@ function select_best_chord_for_dimension_with_cost(
     stream_dists = Float64[]
     stream_qtys = Float64[]
     stream_comps = Float64[]
-    stream_usages = Float64[]
     stream_temporals = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
     stream_predictives = Float64[]
 
@@ -3372,7 +3343,6 @@ function select_best_chord_for_dimension_with_cost(
         push!(stream_dists, isfinite(stream_metrics.distance) ? stream_metrics.distance : 0.0)
         push!(stream_qtys, isfinite(stream_metrics.quantity) ? stream_metrics.quantity : 0.0)
         push!(stream_comps, isfinite(stream_metrics.complexity) ? stream_metrics.complexity : 0.0)
-        push!(stream_usages, isfinite(stream_metrics.usage) ? stream_metrics.usage : 0.0)
         push!(stream_temporals, stream_metrics.occurrence_intervals)
         predictive = predictive_surprise_score(
           actives[i].manager,
@@ -3384,7 +3354,6 @@ function select_best_chord_for_dimension_with_cost(
         push!(stream_dists, 0.0)
         push!(stream_qtys, 0.0)
         push!(stream_comps, 0.0)
-        push!(stream_usages, 0.0)
         push!(stream_temporals, PolyphonicClusterManager.EMPTY_OCCURRENCE_INTERVAL_METRICS)
         push!(stream_predictives, NaN)
       end
@@ -3401,11 +3370,9 @@ function select_best_chord_for_dimension_with_cost(
       global_metrics.distance,
       global_metrics.quantity,
       global_metrics.complexity,
-      global_metrics.usage,
       stream_dists,
       stream_qtys,
       stream_comps,
-      stream_usages,
       global_metrics.occurrence_intervals,
       stream_temporals,
       global_predictive === nothing ? NaN : global_predictive,
@@ -3520,7 +3487,6 @@ function select_best_values_for_dimension_greedy(
             0.0,
             0.0,
             0.0,
-            0.0,
             PolyphonicClusterManager.EMPTY_OCCURRENCE_INTERVAL_METRICS,
           )
         end
@@ -3544,11 +3510,9 @@ function select_best_values_for_dimension_greedy(
         global_metrics.distance,
         global_metrics.quantity,
         global_metrics.complexity,
-        global_metrics.usage,
         Float64[stream_metrics.distance],
         Float64[stream_metrics.quantity],
         Float64[stream_metrics.complexity],
-        Float64[stream_metrics.usage],
         global_metrics.occurrence_intervals,
         PolyphonicClusterManager.OccurrenceIntervalMetrics[
           stream_metrics.occurrence_intervals,
@@ -4936,8 +4900,8 @@ function generate_polyphonic()
         stream_targets,
         conc_w,
         desired_stream_count;
-        global_metric_weights=_metric_weights4(global_metric_weights),
-        stream_metric_weights=_metric_weights4(stream_metric_weights),
+        global_metric_weights=global_metric_weights,
+        stream_metric_weights=stream_metric_weights,
         use_global_score=use_global_score,
         priority_order=step_stream_order,
       )
@@ -5083,12 +5047,10 @@ for s in 1:desired_stream_count
   raw_d = Float64[]  # avg_dist (complex when larger)
   raw_q = Float64[]  # quantity (complex when smaller)
   raw_c = Float64[]  # complexity (complex when larger)
-  raw_u = Float64[]  # usage (complex when smaller)
   temporal_metrics = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
   sizehint!(raw_d, length(anchors))
   sizehint!(raw_q, length(anchors))
   sizehint!(raw_c, length(anchors))
-  sizehint!(raw_u, length(anchors))
   sizehint!(temporal_metrics, length(anchors))
 
   pa = prev_tmp_anchors[s]
@@ -5100,12 +5062,10 @@ for s in 1:desired_stream_count
     dval = isfinite(metrics.distance) ? metrics.distance : 0.0
     qval = isfinite(metrics.quantity) ? metrics.quantity : 0.0
     cval = isfinite(metrics.complexity) ? metrics.complexity : 0.0
-    uval = isfinite(metrics.usage) ? metrics.usage : 0.0
 
     push!(raw_d, dval)
     push!(raw_q, qval)
     push!(raw_c, cval)
-    push!(raw_u, uval)
     push!(temporal_metrics, metrics.occurrence_intervals)
   end
 
@@ -5113,7 +5073,6 @@ for s in 1:desired_stream_count
     raw_d,
     raw_q,
     raw_c,
-    raw_u,
     temporal_metrics,
     calibrator=stream_calibrator,
   )
@@ -5177,13 +5136,11 @@ end
       global_raw_d = Float64[]
       global_raw_q = Float64[]
       global_raw_c = Float64[]
-      global_raw_u = Float64[]
       global_temporal = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
       global_candidates = PolyphonicClusterManager.PolySet[]
       sizehint!(global_raw_d, length(anchors))
       sizehint!(global_raw_q, length(anchors))
       sizehint!(global_raw_c, length(anchors))
-      sizehint!(global_raw_u, length(anchors))
       sizehint!(global_temporal, length(anchors))
 
       for cand_anchor in anchors
@@ -5204,7 +5161,6 @@ end
         push!(global_raw_d, isfinite(metrics.distance) ? metrics.distance : 0.0)
         push!(global_raw_q, isfinite(metrics.quantity) ? metrics.quantity : 0.0)
         push!(global_raw_c, isfinite(metrics.complexity) ? metrics.complexity : 0.0)
-        push!(global_raw_u, isfinite(metrics.usage) ? metrics.usage : 0.0)
         push!(global_temporal, metrics.occurrence_intervals)
       end
 
@@ -5212,7 +5168,6 @@ end
         global_raw_d,
         global_raw_q,
         global_raw_c,
-        global_raw_u,
         global_temporal,
         calibrator=area_global_calibrator,
       )
@@ -5425,7 +5380,6 @@ end
           Float64[m.distance for m in global_metrics],
           Float64[m.quantity for m in global_metrics],
           Float64[m.complexity for m in global_metrics],
-          Float64[m.usage for m in global_metrics],
           PolyphonicClusterManager.OccurrenceIntervalMetrics[
             m.occurrence_intervals for m in global_metrics
           ];
@@ -5460,7 +5414,6 @@ end
             Float64[m.distance for m in stream_metrics],
             Float64[m.quantity for m in stream_metrics],
             Float64[m.complexity for m in stream_metrics],
-            Float64[m.usage for m in stream_metrics],
             PolyphonicClusterManager.OccurrenceIntervalMetrics[
               m.occurrence_intervals for m in stream_metrics
             ];
@@ -5601,7 +5554,6 @@ end
           Float64[m.distance for m in global_metrics],
           Float64[m.quantity for m in global_metrics],
           Float64[m.complexity for m in global_metrics],
-          Float64[m.usage for m in global_metrics],
           PolyphonicClusterManager.OccurrenceIntervalMetrics[m.occurrence_intervals for m in global_metrics];
           calibrator=global_calibrator,
         )
@@ -5609,7 +5561,6 @@ end
           Float64[m.distance for m in stream_metrics],
           Float64[m.quantity for m in stream_metrics],
           Float64[m.complexity for m in stream_metrics],
-          Float64[m.usage for m in stream_metrics],
           PolyphonicClusterManager.OccurrenceIntervalMetrics[m.occurrence_intervals for m in stream_metrics];
           calibrator=stream_calibrator,
         )

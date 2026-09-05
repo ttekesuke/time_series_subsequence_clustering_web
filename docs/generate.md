@@ -4,7 +4,7 @@
 
 `generate()` は、既存の初期系列をクラスタリングした上で、候補値を 1 つずつ仮追加し、候補ごとの単純/複雑スコアが `complexity_transition` の目標値に近いものを選びます。
 
-現在の単純/複雑スコアは、現在末尾が属する複数 window size のクラスタから作る predictive surprise を主軸に、クラスタ間距離による多様性、クラスタ代表系列の形状複雑度、occurrence interval complexityを合成します。`quantity`と`usage`は予測分布の支持数・recencyへ役割を移し、後続例がなく予測分布を作れない場合は従来4指標scoreのfallbackにも使います。
+現在の単純/複雑スコアは、現在末尾が属する複数 window size のクラスタから作る predictive surprise を主軸に、クラスタ間距離による多様性、クラスタ代表系列の形状複雑度、occurrence interval complexityを合成します。後続例がなく予測分布を作れない場合は、`distance`、`quantity`、`complexity` をfallbackに使います。
 
 ## 1. エンドポイント
 
@@ -149,7 +149,7 @@ occurrence_interval_complexity = (
 ) / active_weights
 ```
 
-旧方式の`interval quantity`と`interval usage`は診断値としては保持しますが、このscoreには使いません。区間の後続分布をまだ作れない段階ではoccurrence軸全体を合成から外します。候補ごとにoccurrence intervalが未準備の場合はpredictive surpriseをその軸の値として使い、未準備自体を単純・複雑のどちらにも決めつけません。合成後も候補集合内で0..1へ揃えます。
+区間の後続分布をまだ作れない段階ではoccurrence軸全体を合成から外します。候補ごとにoccurrence intervalが未準備の場合はpredictive surpriseをその軸の値として使い、未準備自体を単純・複雑のどちらにも決めつけません。合成後も候補集合内で0..1へ揃えます。
 
 全候補について次を最小化します。
 
@@ -225,7 +225,7 @@ age = 2 -> weight = exp(-2) = 0.1353
 2. 候補を一時的に `mgr.data` へ追加。
 3. 追加分だけクラスタリング。
 4. 更新されたクラスタのキャッシュを更新。
-5. `dist/quantity/complexity/usage` を集計して返す。
+5. `dist/quantity/complexity` を集計して返す。
 6. rollback して試算前の状態へ戻す。
 
 候補が選ばれた後だけ、`add_data_point_permanently!` と `update_caches_permanently!` で本当に状態を進めます。
@@ -270,6 +270,5 @@ age = 2 -> weight = exp(-2) = 0.1353
 
 - `generate()` は `range_fixed` なので、候補範囲が距離スケールを決めます。
 - `complexity_transition` は候補値そのものではなく、候補追加後の構造スコアの目標です。
-- `usage` は「似た値そのもの」ではなく「似た部分列クラスタの近傍がどれだけ使われたか」を見ます。
 - 初期値が完全反復の場合、低 target では既存反復に乗る候補が強く選ばれやすくなります。
 - `recency_center=0.0` で直近性ウェイトは無効、`1.0` で直近性を最大反映します。

@@ -40,7 +40,6 @@ struct OccurrenceIntervalMetrics
   distance::Float64
   quantity::Float64
   complexity::Float64
-  usage::Float64
   prediction::Float64
   ready::Bool
 end
@@ -49,13 +48,11 @@ OccurrenceIntervalMetrics(
   distance::Real,
   quantity::Real,
   complexity::Real,
-  usage::Real,
   ready::Bool,
 ) = OccurrenceIntervalMetrics(
   float(distance),
   float(quantity),
   float(complexity),
-  float(usage),
   NaN,
   ready,
 )
@@ -76,12 +73,11 @@ struct ExtendedClusterMetrics
   distance::Float64
   quantity::Float64
   complexity::Float64
-  usage::Float64
   occurrence_intervals::OccurrenceIntervalMetrics
 end
 
 const EMPTY_OCCURRENCE_INTERVAL_METRICS =
-  OccurrenceIntervalMetrics(0.0, 0.0, 0.0, 0.0, NaN, false)
+  OccurrenceIntervalMetrics(0.0, 0.0, 0.0, false)
 const EMPTY_PREDICTIVE_DISTRIBUTION =
   PredictiveDistribution(PredictiveSuccessor[], 0.0, false)
 
@@ -1157,45 +1153,15 @@ function predictive_surprise_score(
   return clamp(1.0 - likelihood / distribution.peak_likelihood, 0.0, 1.0)
 end
 
-function latest_cluster_usage_score(
-  mgr::Manager,
-  clusters_each::Dict{Int,Dict{Int,PolyClusterNode}},
-  now_index::Int
-)::Float64
-  usage = 0.0
-  for (window_size, same_ws) in clusters_each
-    latest_start = now_index - window_size + 1
-    latest_start < 0 && continue
-
-    target::Union{Nothing,PolyClusterNode} = nothing
-    for (_, node) in same_ws
-      if latest_start in node.si
-        target = node
-        break
-      end
-    end
-    target === nothing && continue
-
-    local_usage = 0.0
-    @inbounds for s in target.si
-      s == latest_start && continue
-      local_usage += recency_weight(mgr, now_index, s)
-    end
-    usage += local_usage / sqrt(float(max(window_size, 1)))
-  end
-  return usage
-end
-
 function _aggregate_current_metrics(
   mgr::Manager,
   clusters_each::Dict{Int,Dict{Int,PolyClusterNode}};
   include_singleton_complexity::Bool=false,
-)::NTuple{4,Float64}
+)::NTuple{3,Float64}
   sum_distances = 0.0
   sum_quantities = 0.0
   sum_complexities = 0.0
   now_index = length(mgr.data) - 1
-  usage = latest_cluster_usage_score(mgr, clusters_each, now_index)
 
   for (window_size, same_ws) in clusters_each
     cache = get(mgr.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
@@ -1240,7 +1206,7 @@ function _aggregate_current_metrics(
     end
   end
 
-  return (sum_distances, sum_quantities, sum_complexities, usage)
+  return (sum_distances, sum_quantities, sum_complexities)
 end
 
 function _occurrence_gaps(starts::Vector{Int})::Vector{Float64}
@@ -1385,12 +1351,12 @@ function _occurrence_interval_metrics_for_starts(
       min_window_size,
     )
     interval_clusters = collect_clusters_each(interval_mgr)
-    d, q, c, u = _aggregate_current_metrics(
+    d, q, c = _aggregate_current_metrics(
       interval_mgr,
       interval_clusters;
       include_singleton_complexity=true,
     )
-    return OccurrenceIntervalMetrics(d, q, c, u, NaN, true)
+    return OccurrenceIntervalMetrics(d, q, c, true)
   end
 
   scale = _occurrence_interval_scale(committed_gaps, min_window_size)
@@ -1403,12 +1369,11 @@ function _occurrence_interval_metrics_for_starts(
   candidate = Float64[_normalize_occurrence_gap(retained_gaps[end], scale)]
   distribution = build_predictive_distribution(interval_mgr)
   prediction = predictive_surprise_score(interval_mgr, distribution, candidate)
-  d, q, c, u = simulate_add_and_calculate_all(interval_mgr, candidate)
+  d, q, c = simulate_add_and_calculate_all(interval_mgr, candidate)
   return OccurrenceIntervalMetrics(
     d,
     q,
     c,
-    u,
     prediction === nothing ? NaN : prediction,
     true,
   )
@@ -1433,12 +1398,11 @@ function _preview_occurrence_interval_metrics(
     candidate = Float64[_normalize_occurrence_gap(gap, state.scale)]
     distribution = build_predictive_distribution(interval_manager)
     prediction = predictive_surprise_score(interval_manager, distribution, candidate)
-    d, q, c, u = simulate_add_and_calculate_all(interval_manager, candidate)
+    d, q, c = simulate_add_and_calculate_all(interval_manager, candidate)
     return OccurrenceIntervalMetrics(
       d,
       q,
       c,
-      u,
       prediction === nothing ? NaN : prediction,
       true,
     )
@@ -1508,7 +1472,6 @@ function latest_occurrence_interval_metrics(
   sum_distance = 0.0
   sum_quantity = 0.0
   sum_complexity = 0.0
-  sum_usage = 0.0
   sum_prediction = 0.0
   prediction_count = 0
   ready_count = 0
@@ -1520,7 +1483,6 @@ function latest_occurrence_interval_metrics(
     sum_distance += temporal.distance
     sum_quantity += temporal.quantity
     sum_complexity += temporal.complexity
-    sum_usage += temporal.usage
     if isfinite(temporal.prediction)
       sum_prediction += temporal.prediction
       prediction_count += 1
@@ -1534,7 +1496,6 @@ function latest_occurrence_interval_metrics(
     sum_distance / denom,
     sum_quantity / denom,
     sum_complexity / denom,
-    sum_usage / denom,
     prediction_count > 0 ? sum_prediction / float(prediction_count) : NaN,
     true,
   )
@@ -1551,7 +1512,6 @@ function current_occurrence_interval_metrics(
   sum_distance = 0.0
   sum_quantity = 0.0
   sum_complexity = 0.0
-  sum_usage = 0.0
   sum_prediction = 0.0
   prediction_count = 0
   ready_count = 0
@@ -1567,7 +1527,6 @@ function current_occurrence_interval_metrics(
     sum_distance += temporal.distance
     sum_quantity += temporal.quantity
     sum_complexity += temporal.complexity
-    sum_usage += temporal.usage
     if isfinite(temporal.prediction)
       sum_prediction += temporal.prediction
       prediction_count += 1
@@ -1581,7 +1540,6 @@ function current_occurrence_interval_metrics(
     sum_distance / denom,
     sum_quantity / denom,
     sum_complexity / denom,
-    sum_usage / denom,
     prediction_count > 0 ? sum_prediction / float(prediction_count) : NaN,
     true,
   )
@@ -1590,14 +1548,14 @@ end
 """Read the committed metric state without adding or simulating a candidate."""
 function current_extended_metrics(mgr::Manager)::ExtendedClusterMetrics
   clusters_each = collect_clusters_each(mgr)
-  d, q, c, u = _aggregate_current_metrics(mgr, clusters_each)
+  d, q, c = _aggregate_current_metrics(mgr, clusters_each)
   temporal =
     if mgr.enable_occurrence_intervals
       current_occurrence_interval_metrics(mgr, clusters_each, length(mgr.data) - 1)
     else
       EMPTY_OCCURRENCE_INTERVAL_METRICS
     end
-  return ExtendedClusterMetrics(d, q, c, u, temporal)
+  return ExtendedClusterMetrics(d, q, c, temporal)
 end
 
 # Simulation with rollback
@@ -1619,7 +1577,6 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
     sum_distances = 0.0
     sum_quantities = 0.0
     sum_complexities = 0.0
-    usage = latest_cluster_usage_score(mgr, clusters_each, length(mgr.data) - 1)
 
     for (window_size, same_ws) in clusters_each
       all_ids = collect(keys(same_ws))
@@ -1709,7 +1666,6 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
       sum_distances,
       sum_quantities,
       sum_complexities,
-      usage,
       occurrence_intervals,
     )
   finally
@@ -1719,11 +1675,11 @@ end
 
 function simulate_add_and_calculate_all(mgr::Manager, candidate::PolySet)
   metrics = simulate_add_and_calculate_all_extended(mgr, candidate)
-  return (metrics.distance, metrics.quantity, metrics.complexity, metrics.usage)
+  return (metrics.distance, metrics.quantity, metrics.complexity)
 end
 
 function simulate_add_and_calculate(mgr::Manager, candidate::PolySet)
-  d, q, c, _u = simulate_add_and_calculate_all(mgr, candidate)
+  d, q, c = simulate_add_and_calculate_all(mgr, candidate)
   return (d, q, c)
 end
 
