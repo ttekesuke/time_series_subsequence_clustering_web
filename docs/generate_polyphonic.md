@@ -551,6 +551,8 @@ recordを変更せず、`voicePlan`、`voiceStreamCounts`、`voiceInventory`、
 `clusters.voice_token`を追加します。詳細と実測inventoryの作成方法は
 [`voicevox_voice_tokens.md`](voicevox_voice_tokens.md)を参照してください。
 
+現行のSong singerはずんだもん（`VOICEVOX_SINGER=3003`）固定です。`voice_stream_counts`で選ばれたvoice streamは、note決定前にA3〜E5（MIDI 57〜76）のnote候補範囲を適用します。
+
 レスポンス例:
 
 ```json

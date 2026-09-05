@@ -140,6 +140,8 @@
 
 **DR-012:** BPM未指定時のbackend defaultは `Config.POLYPHONIC_BPM = 240` である。一方、調査時点のfrontend defaultは480であり、同一のdefault契約になっていない。
 
+**DR-013:** 現行のVOICEVOX Song singerはずんだもん（`VOICEVOX_SINGER=3003`）固定であり、voice streamのnote候補はA3〜E5（MIDI 57〜76）に制限する。voice対象streamは`voice_stream_counts`から決まるstable ID集合 `voice_ids` で識別する。
+
 ### 3.3 出力契約
 
 **FR-004:** 正常応答は少なくとも次のfieldを返す。
@@ -243,9 +245,10 @@ clustered tie modeは次の6 parameterのいずれかがrequestに存在する�
 3. 通常dimensionのgreedy選択
 4. AREAの2-stage greedy選択
 5. AREA、CR、DENからnote poolと音数を決定
-6. stream間およびstream内のnoteをsingle-addition greedyで選択
-7. dimension manager、note manager、dissonance STMへ確定値をcommit
-8. step結果をレスポンス用系列へ追加
+6. voice対象streamのnote poolをVOICEVOX音域へ制限
+7. stream間およびstream内のnoteをsingle-addition greedyで選択
+8. dimension manager、note manager、dissonance STMへ確定値をcommit
+9. step結果をレスポンス用系列へ追加
 
 **FR-012:** 通常dimensionの処理順は次のとおりであり、後続dimensionは先行dimensionの確定値に依存し得る。
 

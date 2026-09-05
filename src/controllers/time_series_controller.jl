@@ -4774,8 +4774,24 @@ function generate_polyphonic()
             if key == "chord_range"
               float(Int(round(clamp(_resolved_fixed_value_for_stream("chord_range", s_i), float(CHORD_RANGE_MIN), float(CHORD_RANGE_MAX)))))
             else
-              clamp(_resolved_fixed_value_for_stream(key, s_i), 0.0, 1.0)
+          if plan.active_ids[s] in voice_ids
+            voice_low = max(low, Config.VOICE_NOTE_MIN)
+            voice_high = min(high, Config.VOICE_NOTE_MAX)
+            if voice_low <= voice_high
+              stream_note_pools[s] = collect(voice_low:voice_high)
+            else
+              # Preserve a valid voice candidate when AREA/CR do not overlap the
+              # singer range: choose the nearest in-range note to the band center.
+              band_center = (float(band_low) + float(min(band_low + (BAND_SIZE - 1), ABS_MAX))) / 2.0
+              fallback_note = clamp(round(Int, band_center), Config.VOICE_NOTE_MIN, Config.VOICE_NOTE_MAX)
+              stream_note_pools[s] = Int[fallback_note]
             end
+          else
+            stream_note_pools[s] = collect(low:high)
+          end
+            end
+          stream_note_counts[s] = min(stream_note_counts[s], length(stream_note_pools[s]))
+          stream_note_counts[s] = max(stream_note_counts[s], 1)
           push!(fixed_vals, float(fixed_v))
         end
         step_decisions[key] = fixed_vals

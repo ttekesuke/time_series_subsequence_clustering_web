@@ -130,6 +130,11 @@ const MAX_NOTE_CANDIDATES::Int = 8_000
 const DEFAULT_DEBUG_TOP_N::Int = 10
 const DETAILED_DEBUG_TOP_N::Int = 20
 
+# Current VOICEVOX Song singer is Zundamon (VOICEVOX_SINGER=3003).
+# Its usable singing range is A3-E5.
+const VOICE_NOTE_MIN::Int = 57
+const VOICE_NOTE_MAX::Int = 76
+
 # --- SuperCollider rendering defaults ---
 const SC_MIX_BUS::Int = 16
 const SC_INITIAL_NODE_ID::Int = 1000
