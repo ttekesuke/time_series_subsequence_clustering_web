@@ -65,3 +65,24 @@ const VTG = Main.TimeseriesClusteringAPI.VoiceTokenGeneration
   )
   @test closest[1].id == inventory.tokens[expected_index].id
 end
+
+@testset "full tie forces the previous token vowel" begin
+  state = VTG.VoiceTokenState(inventory, [1], 0.02, 2)
+  token_ha = only(filter(token -> token.text == "は", inventory.tokens))
+  token_a = only(filter(token -> token.text == "あ", inventory.tokens))
+  state.last_token_by_stream[1] = token_ha
+
+  continuation = VTG.continuation_token(state, 1)
+  @test continuation !== nothing
+  @test continuation.text == "あ"
+
+  selected = VTG.generate_tokens!(
+    state,
+    [1];
+    global_target=0.0,
+    stream_targets=Dict(1 => 1.0),
+    forced_tokens=Dict(1 => token_a),
+  )
+  @test selected[1].text == "あ"
+  @test state.last_token_by_stream[1].text == "あ"
+end

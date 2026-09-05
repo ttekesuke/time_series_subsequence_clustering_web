@@ -239,6 +239,32 @@ function _candidate_complexity_scores(
   return _normalize_scores(raw)
 end
 
+const _KANA_VOWEL_GROUPS = Dict(
+  "あ" => "あぁかさたなはまやらわがざだばぱアァカサタナハマヤラワガザダバパ",
+  "い" => "いぃきしちにひみりぎじぢびぴイィキシチニヒミリギジヂビピ",
+  "う" => "うぅくすつぬふむゆるぐずづぶぷゅウゥクスツヌフムユルグズヅブプュヴ",
+  "え" => "えぇけせてねへめれげぜでべぺエェケセテネヘメレゲゼデベペヱヵヶ",
+  "お" => "おぉこそとのほもよろをごぞどぼぽょをオォコソトノホモヨロゴゾドボポョヲ",
+)
+const _KANA_TO_VOWEL = Dict{Char,String}(
+  c => vowel for (vowel, chars) in _KANA_VOWEL_GROUPS for c in chars
+)
+
+function continuation_token(state::VoiceTokenState, stream_id::Int)::Union{Nothing,VoiceToken}
+  previous = get(state.last_token_by_stream, stream_id, nothing)
+  previous === nothing && return nothing
+  vowel = nothing
+  for c in previous.text
+    mapped = get(_KANA_TO_VOWEL, c, nothing)
+    mapped === nothing || (vowel = mapped)
+  end
+  vowel === nothing && return nothing
+  for token in state.inventory.tokens
+    token.text == vowel && return token
+  end
+  return nothing
+end
+
 function _concordance_cost(
   candidate::Vector{Float64},
   chosen::Vector{Vector{Float64}},
@@ -258,6 +284,7 @@ function generate_tokens!(
   concordance::Real=0.0,
   transition_weight::Real=0.0,
   recency::Real=0.0,
+  forced_tokens::Dict{Int,VoiceToken}=Dict{Int,VoiceToken}(),
 )::Dict{Int,VoiceToken}
   isempty(voice_ids) && return Dict{Int,VoiceToken}()
   state.global_manager.recency = clamp(float(recency), 0.0, 1.0)
@@ -271,6 +298,16 @@ function generate_tokens!(
 
   for stream_id in voice_ids
     manager = state.stream_managers[stream_id]
+    forced = get(forced_tokens, stream_id, nothing)
+    if forced !== nothing
+      chosen_tokens[stream_id] = forced
+      push!(chosen_embeddings, forced.embedding)
+      push!(chosen_texts, forced.text)
+      PolyphonicClusterManager.add_data_point_permanently(manager, copy(forced.embedding))
+      PolyphonicClusterManager.update_caches_permanently(manager)
+      state.last_token_by_stream[stream_id] = forced
+      continue
+    end
     manager.recency = clamp(float(recency), 0.0, 1.0)
     stream_scores = _candidate_complexity_scores(manager, candidates)
     global_candidates = Vector{Float64}[

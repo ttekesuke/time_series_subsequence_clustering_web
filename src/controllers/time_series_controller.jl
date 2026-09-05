@@ -5696,6 +5696,32 @@ end
         stream_id => voice_targets[i] for (i, stream_id) in enumerate(voice_ids)
       )
       recency = clamp(_parse_float(array_param(gp, "recency_center", step_idx - 1)), 0.0, 1.0)
+      forced_voice_tokens = Dict{Int,VoiceTokenGeneration.VoiceToken}()
+      for stream_id in voice_ids
+        previous = get(previous_step_by_id, stream_id, nothing)
+        current_slot = findfirst(id -> id == stream_id, plan.active_ids)
+        current_slot === nothing && continue
+        previous === nothing && continue
+        previous_voice_plan = isempty(voice_plan) ? Any[] : voice_plan[end]
+        previous_voice = nothing
+        for entry in previous_voice_plan
+          try
+            Int(entry["streamId"]) == stream_id || continue
+            lowercase(string(get(entry, "mode", "synth"))) == "voice" || break
+            previous_voice = entry
+            break
+          catch
+          end
+        end
+        previous_voice === nothing && continue
+        current = current_step_values[current_slot]
+        same_notes = length(previous[note_abs_idx]) == length(current[note_abs_idx]) &&
+          all(previous[note_abs_idx][i] == current[note_abs_idx][i] for i in eachindex(previous[note_abs_idx], current[note_abs_idx]))
+        same_notes || continue
+        _parse_float(current[tie_idx]) >= 1.0 || continue
+        continuation = VoiceTokenGeneration.continuation_token(voice_state, stream_id)
+        continuation === nothing || (forced_voice_tokens[stream_id] = continuation)
+      end
       generated_voice_tokens = VoiceTokenGeneration.generate_tokens!(
         voice_state,
         voice_ids;
@@ -5704,6 +5730,7 @@ end
         concordance=voice_concordance_series[step_idx],
         transition_weight=voice_transition_series[step_idx],
         recency=recency,
+        forced_tokens=forced_voice_tokens,
       )
     end
 

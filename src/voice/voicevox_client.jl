@@ -65,7 +65,9 @@ function build_stem_requests(time_series, stream_ids, voice_plan, step_durations
     controls = Any[]
     for step_idx in 1:steps
       item = _voice_item(step_idx, stream_id, time_series, stream_ids, voice_plan)
-      item === nothing && continue
+      if item === nothing
+        continue
+      end
       push!(voice_keys, (step_idx, stream_id))
       push!(segments, Dict("text" => item.text, "duration" => float(step_durations[step_idx])))
       tuple = item.tuple

@@ -11,3 +11,4 @@ const VVC = Main.TimeseriesClusteringAPI.VoicevoxClient
   @test isempty(requests)
   @test isempty(voice_keys)
 end
+
