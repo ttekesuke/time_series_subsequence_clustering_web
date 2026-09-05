@@ -316,7 +316,7 @@ weight = (1 - r) + r * exp(-age / span)
 
 `recency=0` は直近重視ではなく recency weighting 無効です。このとき全履歴が等重みになります。直近の音型を強く参照したい場合は `recency_center` を 1 側に寄せます。
 
-この重みは、各windowの予測分布内で過去の後続値が投票するときに使われます。古いクラスタを削除するのではなく、古い後続例の票だけを下げます。予測分布を作れない場合のfallbackでは、`dist`, `quantity`, `complexity` の集計を使います。dissonance STM の roughness 計算には直接入りません。
+この重みは、各windowの予測分布内で過去の後続値が投票するときに使われます。古いクラスタを削除するのではなく、古い後続例の票だけを下げます。予測分布を作れない場合は prediction 軸を除外します。dissonance STM の roughness 計算には直接入りません。
 
 ### 7.1 複数windowの予測分布
 
@@ -329,15 +329,15 @@ likelihood(candidate) = Σ mass * exp(-0.5 * (distance / 0.22)^2)
 score(candidate) = 1 - likelihood(candidate) / peak_likelihood
 ```
 
-このscoreへ、クラスタ代表間距離による多様性、クラスタ代表系列の形状複雑度、occurrence interval complexityを`6:1:1:1`で合成します。各構造軸は同じ候補集合内で0..1化し、候補間に差がない軸は除外します。
+このscoreへ、クラスタ代表間距離による多様性、クラスタ代表系列の形状複雑度、occurrence interval complexity、クラスタ量（mass）を合成します。基本の軸重みは`prediction:diversity:shape:occurrence:mass = 6:1:1:1:1`です。各軸は同じ候補集合内で0..1化し、候補間に差がない軸は除外します。
 
 occurrence interval complexityの内部も通常系列と同じ方式です。正規化した出現間隔列に対して、`interval predictive surprise : interval cluster diversity : interval cluster shape complexity = 6:1:1`で合成します。区間の後続分布をまだ作れない段階ではoccurrence軸全体を合成から外します。
 
 globalとstreamで履歴は別ですが、分布構築、構造軸合成、score変換の関数は共通です。通常dimension、AREA、note complexity、clustered tieの候補評価に同じ方式を使います。
 
-### 7.2 fallback metric
+### 7.2 prediction 軸が利用できない場合
 
-過去の後続例がなく予測分布を作れないmanagerだけ、予測軸を `dist`, `quantity`, `complexity` と occurrence interval complexityへfallbackします。画面のglobal/stream metric weightはこのfallback scoreに適用されます。多様性・形状・occurrenceの3構造軸は、予測軸がfallbackした場合も候補間に差があれば合成されます。
+過去の後続例がなく予測分布を作れないmanagerでは prediction 軸を除外し、diversity、shape、occurrence、mass の4軸だけで重みを再正規化します。過去の後続例がないことを別の複合値で代用しません。
 
 ## 8. 通常 dimension の greedy 選択
 

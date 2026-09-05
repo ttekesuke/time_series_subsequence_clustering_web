@@ -87,31 +87,7 @@ end
 
   @test extended.occurrence_intervals.ready
   @test before_lengths == after_lengths
-  @test length(legacy) == 4
-end
-
-@testset "interval structure waits for a predictive distribution" begin
-  pcm = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
-  controller = Main.TimeseriesClusteringAPI.TimeSeriesController
-  empty_temporal = pcm.EMPTY_OCCURRENCE_INTERVAL_METRICS
-  irregular = pcm._occurrence_interval_metrics_for_starts([0, 4, 9], 0.02, 2)
-
-  base = controller.combine_complexity_metric_scores(
-    [0.0, 1.0],
-    [0.0, 0.0],
-    [0.0, 0.0],
-    [0.0, 0.0],
-  )
-  combined = controller.combine_complexity_metric_scores_with_occurrence_intervals(
-    [0.0, 1.0],
-    [0.0, 0.0],
-    [0.0, 0.0],
-    [0.0, 0.0],
-    [empty_temporal, irregular],
-  )
-
-  @test combined[1] == base[1]
-  @test combined[2] == base[2]
+  @test length(legacy) == 3
 end
 
 @testset "recency changes candidate complexity scores" begin

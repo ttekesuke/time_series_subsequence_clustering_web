@@ -342,7 +342,7 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 
 ### 5.3 occurrence interval
 
-**SR-007:** cluster評価にはdistance、complexity、quantityに加え、4番目のmetricとしてoccurrence interval complexityを含める。
+**SR-007:** cluster評価にはdistance、complexity、quantityに加え、occurrence interval complexityを含める。最終評価軸はprediction、diversity、shape、occurrence、massの5軸とする。
 
 **SR-008:** occurrence interval metricがreadyでない間は、利用可能なmetricで評価する。ready時は正規化後の総合scoreに概ね20%相当の寄与を持つ。
 

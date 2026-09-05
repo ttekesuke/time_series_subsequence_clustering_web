@@ -53,6 +53,7 @@ end
   combined = _predictive_controller.combine_predictive_structural_scores(
     scores,
     Float64[metric.distance for metric in metrics],
+    Float64[metric.quantity for metric in metrics],
     Float64[metric.complexity for metric in metrics],
     _predictive_pcm.OccurrenceIntervalMetrics[
       metric.occurrence_intervals for metric in metrics
@@ -96,16 +97,19 @@ end
     predictive,
     Float64[0.0, 10.0],
     Float64[0.0, 0.0],
+    Float64[0.0, 0.0],
     _predictive_pcm.OccurrenceIntervalMetrics[empty_temporal, empty_temporal],
   )
   shape = _predictive_controller.combine_predictive_structural_scores(
     predictive,
+    Float64[0.0, 0.0],
     Float64[0.0, 0.0],
     Float64[0.0, 10.0],
     _predictive_pcm.OccurrenceIntervalMetrics[empty_temporal, empty_temporal],
   )
   occurrence = _predictive_controller.combine_predictive_structural_scores(
     predictive,
+    Float64[0.0, 0.0],
     Float64[0.0, 0.0],
     Float64[0.0, 0.0],
     _predictive_pcm.OccurrenceIntervalMetrics[
@@ -117,6 +121,19 @@ end
   @test diversity == [0.0, 1.0]
   @test shape == [0.0, 1.0]
   @test occurrence == [0.0, 1.0]
+end
+
+@testset "mass replaces prediction when no successors exist" begin
+  empty_temporal = _predictive_pcm.EMPTY_OCCURRENCE_INTERVAL_METRICS
+  scores = _predictive_controller.combine_predictive_structural_scores(
+    [NaN, NaN],
+    [0.0, 0.0],
+    [0.0, 100.0],
+    [0.0, 0.0],
+    [_predictive_pcm.OccurrenceIntervalMetrics[empty_temporal, empty_temporal]...],
+  )
+
+  @test scores[1] > scores[2]
 end
 
 @testset "occurrence score ignores interval quantity" begin

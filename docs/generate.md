@@ -4,7 +4,7 @@
 
 `generate()` は、既存の初期系列をクラスタリングした上で、候補値を 1 つずつ仮追加し、候補ごとの単純/複雑スコアが `complexity_transition` の目標値に近いものを選びます。
 
-現在の単純/複雑スコアは、現在末尾が属する複数 window size のクラスタから作る predictive surprise を主軸に、クラスタ間距離による多様性、クラスタ代表系列の形状複雑度、occurrence interval complexityを合成します。後続例がなく予測分布を作れない場合は、`distance`、`quantity`、`complexity` をfallbackに使います。
+現在の単純/複雑スコアは、prediction、diversity、shape、occurrence、mass の5軸を合成します。`mass` は候補追加後のクラスタ量（quantity）を表します。後続例がない場合は prediction 軸を除外し、残り4軸だけで重みを再正規化します。
 
 ## 1. エンドポイント
 
@@ -122,7 +122,7 @@ surprise(candidate) = 1 - likelihood(candidate) / peak_likelihood
 
 最も典型的な既知の後続は surprise 0、予測分布から遠い候補ほど1へ近づきます。複数の後続パターンがあれば分布は複数の山を持ちます。
 
-予測に使える過去の後続例が一件もない場合だけ、従来の4基本指標と occurrence interval complexity の合成scoreへfallbackします。
+予測に使える過去の後続例が一件もない場合は prediction 軸を除外し、diversity、shape、occurrence、mass の4軸でスコアを再計算します。
 
 ## 7. target へのマッチング
 

@@ -10,7 +10,7 @@ const _pcm = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
 @testset "metric calibrator is fixed before candidate evaluation" begin
   dist = _controller.ScalarMetricCalibrator(10.0, 2.0, 1.0)
   inverse = _controller.ScalarMetricCalibrator(10.0, 2.0, -1.0)
-  fixed = _controller.ComplexityMetricCalibrator(dist, inverse, dist, inverse)
+  fixed = _controller.ComplexityMetricCalibrator(dist, inverse, dist)
 
   scores_a = _controller.combine_complexity_metric_scores(
     [10.0, 12.0],
