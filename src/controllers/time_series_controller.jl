@@ -5181,10 +5181,9 @@ end
         if voice_low <= voice_high
           stream_note_pools[s] = collect(voice_low:voice_high)
         else
-          # Preserve a valid voice candidate when AREA/CR do not overlap the singer range.
-          band_center = (float(band_low) + float(min(band_low + (BAND_SIZE - 1), ABS_MAX))) / 2.0
-          fallback_note = clamp(round(Int, band_center), Config.VOICE_NOTE_MIN, Config.VOICE_NOTE_MAX)
-          stream_note_pools[s] = Int[fallback_note]
+          # Keep the complete singer range when AREA/CR do not overlap it.
+          # A singleton fallback would force low registers to VOICE_NOTE_MIN.
+          stream_note_pools[s] = collect(Config.VOICE_NOTE_MIN:Config.VOICE_NOTE_MAX)
         end
         stream_note_counts[s] = min(stream_note_counts[s], length(stream_note_pools[s]))
         stream_note_counts[s] = max(stream_note_counts[s], 1)
