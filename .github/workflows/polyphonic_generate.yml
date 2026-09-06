@@ -147,18 +147,27 @@ jobs:
           cleanup() { kill "$tail_pid" 2>/dev/null || true; }
           trap cleanup EXIT
 
-          curl -sS -X POST \
+          response_status="$(curl -sS -o result.json -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
             --data-binary @params.json \
-            http://127.0.0.1:${GENIE_PORT}/api/web/time_series/generate_polyphonic \
-            > result.json
+            http://127.0.0.1:${GENIE_PORT}/api/web/time_series/generate_polyphonic)"
           cleanup
           trap - EXIT
+
+          if [[ "${response_status}" != 2* ]]; then
+            echo "generate_polyphonic returned HTTP ${response_status}" >&2
+            cat result.json >&2
+            echo "==== server.log (tail) ====" >&2
+            tail -n 300 server.log >&2 || true
+            exit 1
+          fi
 
           python3 - <<'PY'
           import json
           obj=json.load(open('result.json','r',encoding='utf-8'))
-          assert 'timeSeries' in obj, 'missing timeSeries in response'
+          if 'timeSeries' not in obj:
+              print('generate_polyphonic response:', json.dumps(obj, ensure_ascii=False), flush=True)
+              raise AssertionError('missing timeSeries in response')
           print('timeSeries length:', len(obj['timeSeries']))
           PY
 
