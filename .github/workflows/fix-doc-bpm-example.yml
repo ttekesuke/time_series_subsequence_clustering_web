@@ -1,0 +1,39 @@
+name: fix-doc-bpm-example
+
+on:
+  push:
+    branches:
+      - fix/issues-16-23
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issues-16-23
+          fetch-depth: 0
+      - name: Fix stale BPM response example
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('docs/generate_polyphonic.md')
+          s = p.read_text()
+          old = '  "bpm": 240,\n  "stepDuration": 0.25,'
+          new = '  "bpm": 480,\n  "stepDuration": 0.125,'
+          if s.count(old) != 1:
+              raise SystemExit(f'expected exactly one stale BPM response example, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          git diff --check
+      - name: Commit doc correction and remove one-shot workflow
+        run: |
+          rm -f .github/workflows/fix-doc-bpm-example.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'docs: align BPM response example with default contract'
+          git push origin HEAD:fix/issues-16-23
