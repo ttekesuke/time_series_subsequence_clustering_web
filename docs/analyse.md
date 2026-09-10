@@ -324,3 +324,8 @@ invalid_group = [2]
 - 現在の `PolyClusterNode` には `last_seen` や `importance_raw` のようなフィールドはありません。
 - 現地点から遠いクラスタを prune する処理は `analyse` にはありません。
 - 代表系列 `as` は、クラスタ内の部分列から再計算されます。単音では平均値、集合サイズが混在する polyphonic では最新値採用などの分岐があります。
+
+
+## 0件・1件の短系列
+
+`time_series` が `Config.SUBSEQUENCE_MIN_WINDOW_SIZE`（現在2）未満の場合、存在しないwindowを表すphantom rootは作りません。`timeSeries` は入力をそのまま返し、`clusteredSubsequences` と `clusters` は空になります。2件以上の通常入力では従来どおり最初の実在するwindowをrootとして開始します。

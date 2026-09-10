@@ -196,7 +196,7 @@ release
 backend default BPM:
 
 ```text
-Config.POLYPHONIC_BPM = 240
+Config.POLYPHONIC_BPM_DEFAULT = 480
 ```
 
 `bpm` をfallbackとして、`initial_context_bpm` と `future_bpm` をそれぞれstep数へ正規化します。配列が短い場合は最後の値を繰り返します。
@@ -864,10 +864,10 @@ abs(stream_score - stream_target)
   "voiceInventory": null,
   "clusters": {},
   "processingTime": 0.0,
-  "streamStrengths": null,
+  "streamStrengths": { "1": { "active": true, "presenceAvg": 0.8, "presenceCount": 4, "lastValue": [0.8] } },
   "timbreSeries": {},
-  "bpm": 240,
-  "stepDuration": 0.25,
+  "bpm": 480,
+  "stepDuration": 0.125,
   "initialContextBpm": [],
   "futureBpm": [],
   "bpmSeries": [],
@@ -971,10 +971,18 @@ tieはrenderer側でrun接続へ変換されます。stable IDがrun identityの
 - `vol` 候補は `[0,1]` で、0.5はありません。
 - tieは `[0,0.5,1]` の3値です。
 - note選択はdissonanceだけではなくnote complexity penaltyも加えます。
-- dissonance候補previewはpitch-class正規化、STM seed/commitはabsolute MIDIです。
+- dissonance STMはseed / candidate preview / commit / memory interferenceをすべて `MIDI_C4 + mod(note, 12)` のpitch-class canonical表現で評価します。octave差そのものはroughnessへ入れません。
 - `density=0` でも最低1音です。
 - fixed dimensionの値も時系列状態へ反映されます。
-- `streamStrengths` は現在nullです。
-- `use_recent_position_weight` は現在の生成本体では参照されません。recency制御は `recency_center/spread` です。
-- `debug_score`, `debug_score_key`, `debug_score_top_n` は画面payloadに存在しますが、現在のmain greedy pathでは詳細score出力として全面的には利用されていません。
+- `streamStrengths` はstable stream IDごとのvolume/presence履歴（`active`, `presenceAvg`, `presenceCount`, `lastValue`）を返します。
 - `_safe_simulate_add_and_calculate_all_extended` や `MultiStreamManager.safe_*` は一部例外を0 metric化/握りつぶす経路を持ちます。これは現行挙動であり、正常系アルゴリズムの仕様とは分けて考える必要があります。
+
+
+## 現行contract補足（Issue #16〜#21）
+
+- `dimension_policy.fixed_value_source = "initial_context_last_step"` は、正規化・CR/DEN推論が完了した**初期context最終stepのsnapshot**だけを参照します。future生成結果へ追従しません。`manual_input` は従来どおりpolicyのfixed valueを使います。
+- stream lifecycleのstrength sourceは、volumeが生成対象かfixedかに関係なく `vol` の0..1 presence履歴です。note/pitch managerへのfallbackはありません。
+- dissonance STMのnote座標系はpitch-class canonical（C4基準）です。seed・preview・commit・memory eventで共通です。
+- BPM未指定時はbackend/frontendとも `480 BPM` です。`stepDuration = 60 / BPM` なのでdefaultは `0.125 s` です。
+- voice tokenのcomplexity targetは通常dimensionと同じ `prediction + diversity(distance) + shape(complexity) + occurrence + mass(quantity)` の共通scoreです。predictionが利用不能ならprediction軸を除外して残りを再正規化します。
+- `use_recent_position_weight`, `debug_score`, `debug_score_key`, `debug_score_top_n`, `debug_poly` は公開生成parameterとして扱いません。frontend payloadからも送信しません。

@@ -241,22 +241,22 @@ function Manager(
   end
   axis_capacity = stream_axis_capacity === nothing ? mss : max(Int(stream_axis_capacity), 1)
 
-  # seed representative = first subsequence (Ruby fix)
-  seed_as =
-    if length(data) >= min_window_size
-      deep_copy_seq(data[1:min_window_size])
-    else
-      [Float64[] for _ in 1:min_window_size]
-    end
+  # A root represents the first real min-window subsequence.  Short inputs
+  # have no such subsequence and therefore start with an empty tree.
+  has_root = length(data) >= min_window_size
+  clusters = Dict{Int,PolyClusterNode}()
+  if has_root
+    seed_as = deep_copy_seq(data[1:min_window_size])
+    clusters[0] = PolyClusterNode([0], Dict{Int,PolyClusterNode}(), seed_as)
+  end
 
-  clusters = Dict{Int,PolyClusterNode}(0 => PolyClusterNode([0], Dict{Int,PolyClusterNode}(), seed_as))
+  updated_dist = has_root ? Dict{Int,Set{Int}}(min_window_size => Set([0])) : Dict{Int,Set{Int}}()
+  updated_qty  = has_root ? Dict{Int,Set{Int}}(min_window_size => Set([0])) : Dict{Int,Set{Int}}()
 
-  updated_dist = Dict{Int,Set{Int}}(min_window_size => Set([0]))
-  updated_qty  = Dict{Int,Set{Int}}(min_window_size => Set([0]))
-
-  dist_cache = Dict{Int,Dict{Tuple{Int,Int},Float64}}(min_window_size => Dict{Tuple{Int,Int},Float64}())
-  qty_cache  = Dict{Int,Dict{Int,Float64}}(min_window_size => Dict{Int,Float64}())
-  comp_cache = Dict{Int,Dict{Int,Float64}}(min_window_size => Dict{Int,Float64}())
+  dist_cache = has_root ? Dict{Int,Dict{Tuple{Int,Int},Float64}}(min_window_size => Dict{Tuple{Int,Int},Float64}()) : Dict{Int,Dict{Tuple{Int,Int},Float64}}()
+  qty_cache  = has_root ? Dict{Int,Dict{Int,Float64}}(min_window_size => Dict{Int,Float64}()) : Dict{Int,Dict{Int,Float64}}()
+  comp_cache = has_root ? Dict{Int,Dict{Int,Float64}}(min_window_size => Dict{Int,Float64}()) : Dict{Int,Dict{Int,Float64}}()
+  cluster_id_counter = has_root ? 1 : 0
 
   return Manager(
     data,
@@ -275,7 +275,7 @@ function Manager(
     scale_mode,
     float(contextual_min_width),
     clusters,
-    1,
+    cluster_id_counter,
     Tuple{Vector{Int},Int}[],
     updated_dist,
     updated_qty,
@@ -289,6 +289,20 @@ function Manager(
     PolyJournalEntry[],
     nothing
   )
+end
+
+function _initialize_root_cluster_if_ready!(mgr::Manager)::Bool
+  !isempty(mgr.clusters) && return false
+  length(mgr.data) >= mgr.min_window_size || return false
+  seed_as = deep_copy_seq(mgr.data[1:mgr.min_window_size])
+  mgr.clusters[0] = PolyClusterNode([0], Dict{Int,PolyClusterNode}(), seed_as)
+  mgr.cluster_id_counter = max(mgr.cluster_id_counter, 1)
+  mgr.updated_cluster_ids_per_window_for_calculate_distance[mgr.min_window_size] = Set([0])
+  mgr.updated_cluster_ids_per_window_for_calculate_quantities[mgr.min_window_size] = Set([0])
+  get!(mgr.cluster_distance_cache, mgr.min_window_size, Dict{Tuple{Int,Int},Float64}())
+  get!(mgr.cluster_quantity_cache, mgr.min_window_size, Dict{Int,Float64}())
+  get!(mgr.cluster_complexity_cache, mgr.min_window_size, Dict{Int,Float64}())
+  return true
 end
 
 # Distance functions (Rails 1:1)
@@ -606,6 +620,8 @@ end
 # Public APIs
 
 function process_data!(mgr::Manager)
+  _initialize_root_cluster_if_ready!(mgr)
+  isempty(mgr.clusters) && return nothing
   for i in 1:length(mgr.data)
     data_index = i - 1
     if data_index <= mgr.min_window_size - 1
@@ -613,11 +629,15 @@ function process_data!(mgr::Manager)
     end
     clustering_subsequences_incremental!(mgr, data_index)
   end
+  return nothing
 end
 
 function add_data_point_permanently!(mgr::Manager, val::PolySet)
   push!(mgr.data, val)
+  length(mgr.data) < mgr.min_window_size && return nothing
+  _initialize_root_cluster_if_ready!(mgr) && return nothing
   clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
+  return nothing
 end
 
 """Update caches after permanent append.

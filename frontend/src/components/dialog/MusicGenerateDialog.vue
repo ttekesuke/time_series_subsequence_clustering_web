@@ -206,6 +206,7 @@
 </template>
 
 <script setup lang="ts">
+import { POLYPHONIC_BPM_DEFAULT } from '../../constants/musicDefaults'
 import { computed, defineExpose, nextTick, onUnmounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
@@ -303,7 +304,7 @@ const isProcessing = computed(
 
 /** ========== 音源側ステート(必要最低限) ========== */
 const music = ref({ loading: false, setDataDialog: false, tracks: [] as any[], midiData: null })
-const DEFAULT_BPM = 480
+const DEFAULT_BPM = POLYPHONIC_BPM_DEFAULT
 
 /** 共通型 */
 type GridRowData = {
@@ -2532,7 +2533,6 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       initial_context_bpm: normalizeBpmSeries(initialContextBpm.value, contextSteps.value),
       dimension_policy: buildDimensionPolicyPayload(),
       merge_threshold_ratio: mergeThresholdRatio.value,
-      use_recent_position_weight: false,
       stream_strength_target: genParams.stream_strength_target,
       stream_strength_spread: genParams.stream_strength_spread,
       global_dist_weight: genParams.global_dist_weight,
@@ -2542,9 +2542,6 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       stream_qty_weight: genParams.stream_qty_weight,
       stream_comp_weight: genParams.stream_comp_weight,
       note_register_freedom: genParams.note_register_freedom,
-      debug_score: true,
-      debug_score_key: 'vol',
-      debug_score_top_n: 20,
       dissonance_target: genParams.dissonance_target
     }
   }

@@ -23,6 +23,22 @@ function _with_polyphonic_request_errors(f::Function)
   end
 end
 
+function _with_generate_request_errors(f::Function)
+  try
+    return f()
+  catch err
+    if err isa TimeSeriesController.GenerateRequestError
+      return json(Dict(
+        "ok" => false,
+        "error" => "invalid_generate_request",
+        "code" => err.code,
+        "message" => err.message,
+      ); status=422)
+    end
+    rethrow()
+  end
+end
+
 # ------------------------------------------------------------
 # Health check (frontend proxy / readiness check)
 # ------------------------------------------------------------
@@ -77,7 +93,9 @@ route("/api/web/time_series/analyse", method=POST) do
 end
 
 route("/api/web/time_series/generate", method=POST) do
-  TimeSeriesController.generate() |> json
+  _with_generate_request_errors() do
+    TimeSeriesController.generate() |> json
+  end
 end
 
 route("/api/web/time_series/generate_polyphonic", method=POST) do
