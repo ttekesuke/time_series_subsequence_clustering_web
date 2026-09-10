@@ -1,0 +1,161 @@
+name: issue15-text-field-fix
+
+on:
+  push:
+    branches:
+      - fix/issue-15-input-budget
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-15-input-budget
+          fetch-depth: 0
+
+      - name: Patch nonfinite string handling and test
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/controllers/time_series_controller.jl')
+          text = p.read_text()
+          old = '''function _reject_nonfinite_request_values!(raw, path::AbstractString="generate_polyphonic")::Nothing
+            if raw isa AbstractFloat
+              isfinite(raw) || _invalid_generate_polyphonic_request(
+                "non_finite_number",
+                "$(path) must be finite.",
+              )
+            elseif raw isa AbstractString
+              sentinel = lowercase(strip(raw))
+              if sentinel in ("nan", "+nan", "-nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity")
+                _invalid_generate_polyphonic_request(
+                  "non_finite_number",
+                  "$(path) must be finite.",
+                )
+              end
+            elseif raw isa AbstractVector
+              for (index, value) in enumerate(raw)
+                _reject_nonfinite_request_values!(value, "$(path)[$(index)]")
+              end
+            elseif raw isa AbstractDict
+              for (key, value) in pairs(raw)
+                _reject_nonfinite_request_values!(value, "$(path).$(key)")
+              end
+            end
+            return nothing
+          end
+          '''
+          new = '''function _polyphonic_text_field(key)::Bool
+            normalized = lowercase(String(key))
+            return normalized in (
+              "text",
+              "mode",
+              "token",
+              "phones",
+              "voice_inventory_id",
+              "job_id",
+              "fixed_value_source",
+              "fixed_source",
+              "value_source",
+            ) || endswith(normalized, "_id") || occursin("source", normalized)
+          end
+
+          function _reject_nonfinite_request_values!(
+            raw,
+            path::AbstractString="generate_polyphonic";
+            allow_non_numeric_strings::Bool=false,
+          )::Nothing
+            if raw isa AbstractFloat
+              isfinite(raw) || _invalid_generate_polyphonic_request(
+                "non_finite_number",
+                "$(path) must be finite.",
+              )
+            elseif raw isa AbstractString && !allow_non_numeric_strings
+              sentinel = lowercase(strip(raw))
+              if sentinel in ("nan", "+nan", "-nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity")
+                _invalid_generate_polyphonic_request(
+                  "non_finite_number",
+                  "$(path) must be finite.",
+                )
+              end
+            elseif raw isa AbstractVector
+              for (index, value) in enumerate(raw)
+                _reject_nonfinite_request_values!(
+                  value,
+                  "$(path)[$(index)]";
+                  allow_non_numeric_strings=allow_non_numeric_strings,
+                )
+              end
+            elseif raw isa AbstractDict
+              for (key, value) in pairs(raw)
+                _reject_nonfinite_request_values!(
+                  value,
+                  "$(path).$(key)";
+                  allow_non_numeric_strings=_polyphonic_text_field(key),
+                )
+              end
+            end
+            return nothing
+          end
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'validator block mismatch: {text.count(old)}')
+          p.write_text(text.replace(old, new, 1))
+
+          t = Path('test/generate_polyphonic_validation.jl')
+          test_text = t.read_text()
+          marker = '''@testset "generate_polyphonic configured structural limits are enforced" begin
+          '''
+          insert = '''@testset "text fields may legitimately contain nonfinite-looking words" begin
+            payload = _valid_gp_payload()
+            payload["voice_inventory_id"] = "Inf"
+            payload["initial_context_voice_plan"] = Any[
+              Any[Dict("mode" => "voice", "token" => "NaN", "text" => "Inf", "phones" => Any["Inf"])],
+            ]
+            validated = _gpv_controller._validate_generate_polyphonic_request!(payload)
+            @test validated.stream_counts == [1, 2]
+
+            payload["recency_center"] = Any["Inf"]
+            err = _validation_error(payload)
+            @test err isa _gpv_controller.GeneratePolyphonicRequestError
+            @test err.code == "non_finite_number"
+          end
+
+          @testset "generate_polyphonic configured structural limits are enforced" begin
+          '''
+          if test_text.count(marker) != 1:
+              raise SystemExit('test marker mismatch')
+          t.write_text(test_text.replace(marker, insert, 1))
+          PY
+          git diff --check
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.11.6'
+
+      - name: Instantiate and run focused tests
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.instantiate()'
+          julia --project=. -e '
+            ENV["GENIE_ENV"] = "test"
+            push!(LOAD_PATH, abspath("src"))
+            using Genie
+            Genie.loadapp()
+            using Main.TimeseriesClusteringAPI, Test
+            include("test/generate_polyphonic_validation.jl")
+            include("test/transaction_safety.jl")
+          '
+
+      - name: Commit verified patch and self-delete
+        run: |
+          rm -f .github/workflows/issue15-text-field-fix.yml
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix: scope nonfinite validation to numeric fields'
+          git push origin HEAD:fix/issue-15-input-budget
