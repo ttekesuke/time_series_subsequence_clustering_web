@@ -20,6 +20,30 @@ jobs:
       - name: Apply guarded patch
         run: |
           python3 .github/issue15_patch.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('routes.jl')
+          text = p.read_text()
+          text = text.replace('import Genie.Responses\n', '', 1)
+          old = '''      Responses.setstatus(422)
+                return Dict(
+                  "ok" => false,
+                  "error" => "invalid_generate_polyphonic_request",
+                  "code" => err.code,
+                  "message" => err.message,
+                ) |> json
+          '''
+          new = '''      return json(Dict(
+                  "ok" => false,
+                  "error" => "invalid_generate_polyphonic_request",
+                  "code" => err.code,
+                  "message" => err.message,
+                ); status=422)
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one response-status block, found {text.count(old)}')
+          p.write_text(text.replace(old, new, 1))
+          PY
           git diff --check
 
       - uses: julia-actions/setup-julia@v2
