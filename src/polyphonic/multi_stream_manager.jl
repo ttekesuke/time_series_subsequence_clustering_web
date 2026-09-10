@@ -241,16 +241,8 @@ function build_stream_manager(
     max_set_size=max_set_size,
     recency=recency,
   )
-  try
-    PolyphonicClusterManager.process_data(mgr)
-  catch
-    # noop
-  end
-  try
-    PolyphonicClusterManager.update_caches_permanently(mgr)
-  catch
-    # noop
-  end
+  PolyphonicClusterManager.process_data(mgr)
+  PolyphonicClusterManager.update_caches_permanently(mgr)
   return mgr
 end
 
@@ -1192,30 +1184,31 @@ end
 # Commit
 # ============================================================
 
-"""Add a data point permanently (safe)."""
-function safe_add_data_point!(mgr::PolyphonicClusterManager.Manager, value::PolyphonicClusterManager.PolySet)::Nothing
-  try
-    PolyphonicClusterManager.add_data_point_permanently(mgr, value)
-  catch
-    # fallback: push
-    push!(mgr.data, value)
+"""Copy a staged PCM manager back without changing the object identity held by callers."""
+function replace_manager_state!(dest::PolyphonicClusterManager.Manager, src::PolyphonicClusterManager.Manager)::Nothing
+  for field in fieldnames(PolyphonicClusterManager.Manager)
+    setfield!(dest, field, getfield(src, field))
   end
   return nothing
 end
 
-"""Simulate add and calculate (safe)."""
+"""Add a data point atomically; the original manager remains unchanged on failure."""
+function safe_add_data_point!(mgr::PolyphonicClusterManager.Manager, value::PolyphonicClusterManager.PolySet)::Nothing
+  staged = deepcopy(mgr)
+  PolyphonicClusterManager.add_data_point_permanently(staged, value)
+  replace_manager_state!(mgr, staged)
+  return nothing
+end
+
+"""Simulation errors propagate; the PCM simulation itself guarantees rollback in `finally`."""
 function safe_simulate_add_and_calculate(mgr::PolyphonicClusterManager.Manager, value::PolyphonicClusterManager.PolySet)
-  try
-    return PolyphonicClusterManager.simulate_add_and_calculate(mgr, value)
-  catch
-    return 0.0, 0.0, 0.0
-  end
+  return PolyphonicClusterManager.simulate_add_and_calculate(mgr, value)
 end
 
 """Finite number check."""
 @inline finite_number(x)::Bool = (x isa Real) && isfinite(float(x))
 
-"""Commit state (Rails commit_state)."""
+"""Commit state atomically across all currently active streams."""
 function commit_state!(
   m::Manager,
   best_chord_raw,
@@ -1232,45 +1225,74 @@ function commit_state!(
     end
   end
 
-  n = max(length(best_chord), 1)
+  n = length(best_chord)
+  n > 0 || error("commit_state! requires at least one stream value.")
+  length(m.active_ids) == n || error(
+    "commit_state! received $(n) values for $(length(m.active_ids)) active streams; apply the lifecycle plan before commit.",
+  )
+  absolute_bases === nothing || length(absolute_bases) == n || error(
+    "absolute_bases must contain one value for each active stream.",
+  )
 
-  if absolute_bases !== nothing
-    m.pending_absolute_bases = copy(absolute_bases)
+  actives = StreamContainer[]
+  sizehint!(actives, n)
+  for id in m.active_ids
+    stream = get(m.containers_by_id, id, nothing)
+    stream === nothing && error("Active stream ID $(id) has no container.")
+    push!(actives, stream)
   end
 
-  actives = active_stream_containers(m, n)
+  staged_managers = PolyphonicClusterManager.Manager[deepcopy(stream.manager) for stream in actives]
+  for i in 1:n
+    PolyphonicClusterManager.add_data_point_permanently(staged_managers[i], best_chord[i])
+  end
 
-  for (i, stream) in enumerate(actives)
+  staged_last_abs = Vector{Union{Nothing,AbsPitchSet}}(undef, n)
+  staged_presence_sum = Float64[stream.presence_sum for stream in actives]
+  staged_presence_count = Int[stream.presence_count for stream in actives]
+  staged_presence_avg = Float64[stream.presence_avg for stream in actives]
+
+  for i in 1:n
     v = best_chord[i]
-
-    safe_add_data_point!(stream.manager, v)
-    stream.last_value = copy(v)
-
-    if m.pending_absolute_bases !== nothing
-      base = m.pending_absolute_bases[i]
-      # Rails: pc.to_i (truncate)
-      stream.last_abs_pitch = [base + (trunc(Int, pc) % Config.STEPS_PER_OCTAVE) for pc in v]
+    staged_last_abs[i] = if absolute_bases === nothing
+      actives[i].last_abs_pitch === nothing ? nothing : copy(actives[i].last_abs_pitch)
+    else
+      base = absolute_bases[i]
+      [base + (trunc(Int, pc) % Config.STEPS_PER_OCTAVE) for pc in v]
     end
 
     if m.track_presence && length(v) == 1
       vv = scalar_to_strength01(m, v[1])
-      stream.presence_sum += vv
-      stream.presence_count += 1
-      stream.presence_avg = stream.presence_count > 0 ? clamp(stream.presence_sum / stream.presence_count, 0.0, 1.0) : vv
+      staged_presence_sum[i] += vv
+      staged_presence_count[i] += 1
+      staged_presence_avg[i] = staged_presence_count[i] > 0 ?
+        clamp(staged_presence_sum[i] / staged_presence_count[i], 0.0, 1.0) : vv
     end
   end
 
+  # Publish only after every stream append succeeded.
+  for i in 1:n
+    stream = actives[i]
+    replace_manager_state!(stream.manager, staged_managers[i])
+    stream.last_value = copy(best_chord[i])
+    stream.last_abs_pitch = staged_last_abs[i]
+    stream.presence_sum = staged_presence_sum[i]
+    stream.presence_count = staged_presence_count[i]
+    stream.presence_avg = staged_presence_avg[i]
+  end
+
+  m.pending_absolute_bases = absolute_bases === nothing ? nothing : copy(absolute_bases)
   return true
 end
 
-"""Update caches permanently for all streams."""
+"""Update caches atomically across all streams."""
 function update_caches_permanently!(m::Manager)::Nothing
-  for c in m.stream_pool
-    try
-      PolyphonicClusterManager.update_caches_permanently(c.manager)
-    catch
-      # noop
-    end
+  staged_managers = PolyphonicClusterManager.Manager[deepcopy(c.manager) for c in m.stream_pool]
+  for staged in staged_managers
+    PolyphonicClusterManager.update_caches_permanently(staged)
+  end
+  for i in eachindex(m.stream_pool)
+    replace_manager_state!(m.stream_pool[i].manager, staged_managers[i])
   end
   m.pending_absolute_bases = nothing
   return nothing

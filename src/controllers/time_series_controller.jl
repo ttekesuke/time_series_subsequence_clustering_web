@@ -2993,16 +2993,36 @@ function _safe_simulate_add_and_calculate_all_extended(
   mgr::PolyphonicClusterManager.Manager,
   value::PolyphonicClusterManager.PolySet,
 )::PolyphonicClusterManager.ExtendedClusterMetrics
-  try
-    return PolyphonicClusterManager.simulate_add_and_calculate_all_extended(mgr, value)
-  catch
-    return PolyphonicClusterManager.ExtendedClusterMetrics(
-      0.0,
-      0.0,
-      0.0,
-      PolyphonicClusterManager.EMPTY_OCCURRENCE_INTERVAL_METRICS,
-    )
-  end
+  return PolyphonicClusterManager.simulate_add_and_calculate_all_extended(mgr, value)
+end
+
+function _set_generation_failure_context!(
+  context::Dict{Symbol,Any};
+  operation::AbstractString,
+  dimension=nothing,
+  stream_id=nothing,
+  candidate=nothing,
+)::Dict{Symbol,Any}
+  context[:operation] = String(operation)
+  context[:dimension] = dimension
+  context[:stream_id] = stream_id
+  context[:candidate] = candidate
+  return context
+end
+
+function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, voice_state)
+  # Copy one graph so manager dictionaries keep the same staged StableStreamAxis.
+  return deepcopy((
+    managers=managers,
+    stm_mgr=stm_mgr,
+    stream_axis=stream_axis,
+    voice_state=voice_state,
+  ))
+end
+
+function _log_generate_polyphonic_step_failure(err, bt, step_idx::Int, context::Dict{Symbol,Any})::Nothing
+  @error "generate_polyphonic step failed; staged state discarded" step=step_idx operation=get(context, :operation, nothing) dimension=get(context, :dimension, nothing) stream_id=get(context, :stream_id, nothing) candidate=get(context, :candidate, nothing) exception=(err, bt)
+  return nothing
 end
 
 function _safe_corrcoef(xs::Vector{Float64}, ys::Vector{Float64})::Float64
@@ -3334,7 +3354,8 @@ function select_best_values_for_dimension_greedy(
   global_metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
   stream_metric_weights::NTuple{3,Float64} = (1.0, 1.0, 1.0),
   use_global_score::Bool = true,
-  priority_order::Union{Nothing,Vector{Int}} = nothing
+  priority_order::Union{Nothing,Vector{Int}} = nothing,
+  trace_context::Union{Nothing,Dict{Symbol,Any}} = nothing
 )::Vector{Float64}
   n = max(n, 1)
   isempty(range_vec) && return fill(0.0, n)
@@ -3384,6 +3405,16 @@ function select_best_values_for_dimension_greedy(
         push!(partial_ids, actives[index].id)
       end
       global_vals = _encode_streamwise_row(stream_axis, partial_ids, ordered_vals, g_offset)
+
+      if trace_context !== nothing
+        _set_generation_failure_context!(
+          trace_context;
+          operation="simulate_candidate",
+          dimension=get(trace_context, :dimension, nothing),
+          stream_id=(stream_idx <= length(actives) ? actives[stream_idx].id : nothing),
+          candidate=float(cand),
+        )
+      end
 
       global_metrics =
         _safe_simulate_add_and_calculate_all_extended(mgrs[:global], global_vals)
@@ -4678,6 +4709,30 @@ function generate_polyphonic()
   # Main generation loop
   # ----------------------------------------------------------
   for step_idx in 1:steps_to_generate
+    committed_step_state = (
+      managers=managers,
+      stm_mgr=stm_mgr,
+      stream_axis=stream_axis,
+      voice_state=voice_state,
+    )
+    staged_step_state = _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, voice_state)
+    managers = staged_step_state.managers
+    stm_mgr = staged_step_state.stm_mgr
+    stream_axis = staged_step_state.stream_axis
+    voice_state = staged_step_state.voice_state
+
+    results_len_before_step = length(results)
+    stream_ids_len_before_step = length(result_stream_ids)
+    voice_plan_len_before_step = length(voice_plan)
+    previous_step_by_id_before = deepcopy(previous_step_by_id)
+    failure_context = Dict{Symbol,Any}(
+      :operation => "step_setup",
+      :dimension => nothing,
+      :stream_id => nothing,
+      :candidate => nothing,
+    )
+
+    try
     desired_stream_count = max(stream_counts[step_idx], 1)
     desired_stream_count <= max_streams || error(
       "Requested $(desired_stream_count) streams exceeds global capacity $(max_streams).",
@@ -4687,6 +4742,7 @@ function generate_polyphonic()
     st_spread = step_idx <= length(strength_spreads) ? strength_spreads[step_idx] : Config.DEFAULT_SPREAD_01
 
     lifecycle_mgr = haskey(managers, "vol") ? managers["vol"][:stream] : managers["note"][:stream]
+    _set_generation_failure_context!(failure_context; operation="lifecycle_plan")
     plan = MultiStreamManager.build_stream_lifecycle_plan(lifecycle_mgr, desired_stream_count; target=st_target, spread=st_spread)
     length(plan.active_ids) == desired_stream_count || error(
       "Lifecycle planned $(length(plan.active_ids)) active streams; expected $(desired_stream_count).",
@@ -4701,6 +4757,11 @@ function generate_polyphonic()
     # active_stream_containers() may resize that list as part of its API.
     for (manager_key, mgrs) in managers
       stream_mgr = mgrs[:stream]
+      _set_generation_failure_context!(
+        failure_context;
+        operation="lifecycle_apply",
+        dimension=manager_key,
+      )
       MultiStreamManager.apply_stream_lifecycle_plan!(stream_mgr, plan)
       stream_mgr.active_ids == plan.active_ids || error(
         "$(manager_key) active stream IDs $(stream_mgr.active_ids) do not match lifecycle IDs $(plan.active_ids).",
@@ -4711,6 +4772,7 @@ function generate_polyphonic()
       )
     end
     idx0 = step_idx - 1
+    _set_generation_failure_context!(failure_context; operation="apply_recency")
     _apply_step_recency!(idx0, desired_stream_count)
     step_stream_order = stream_priority_order(lifecycle_mgr, desired_stream_count)
     requested_voice_count = voice_stream_counts[step_idx]
@@ -4766,6 +4828,11 @@ function generate_polyphonic()
     ]
 
     for (key, range_vec, out_idx) in dim_order
+      _set_generation_failure_context!(
+        failure_context;
+        operation="dimension_prepare",
+        dimension=key,
+      )
       if !get(dim_accept, key, true)
         fixed_vals = Float64[]
         sizehint!(fixed_vals, desired_stream_count)
@@ -4817,19 +4884,24 @@ function generate_polyphonic()
         stream_metric_weights=stream_metric_weights,
         use_global_score=use_global_score,
         priority_order=step_stream_order,
+        trace_context=failure_context,
       )
 
       # Commit the canonical stable-ID global row used by candidate evaluation.
       g_offset = get(mgrs, :global_offset, 0.0)
       global_vals = _encode_streamwise_row(stream_axis, plan.active_ids, best_vals, g_offset)
+      _set_generation_failure_context!(failure_context; operation="commit_global", dimension=key, candidate=copy(best_vals))
       PolyphonicClusterManager.add_data_point_permanently(mgrs[:global], global_vals)
+      _set_generation_failure_context!(failure_context; operation="commit_global_cache", dimension=key, candidate=copy(best_vals))
       PolyphonicClusterManager.update_caches_permanently(mgrs[:global])
 
+      _set_generation_failure_context!(failure_context; operation="commit_streams", dimension=key, candidate=copy(best_vals))
       if key == "vol"
         MultiStreamManager.commit_state!(mgrs[:stream], best_vals, (target=st_target, spread=st_spread))
       else
         MultiStreamManager.commit_state!(mgrs[:stream], best_vals)
       end
+      _set_generation_failure_context!(failure_context; operation="commit_stream_caches", dimension=key, candidate=copy(best_vals))
       MultiStreamManager.update_caches_permanently!(mgrs[:stream])
 
       step_decisions[key] = best_vals
@@ -4969,6 +5041,13 @@ for s in 1:desired_stream_count
   pa = prev_tmp_anchors[s]
 
   for a in anchors
+    _set_generation_failure_context!(
+      failure_context;
+      operation="simulate_candidate",
+      dimension="area",
+      stream_id=(s <= length(plan.active_ids) ? plan.active_ids[s] : nothing),
+      candidate=a,
+    )
     metrics =
       PolyphonicClusterManager.simulate_add_and_calculate_all_extended(sm, Float64[float(a)])
 
@@ -5064,6 +5143,13 @@ end
         enc = _encode_streamwise_row(area_axis, partial_ids, partial_values, area_offset)
         push!(global_candidates, enc)
 
+        _set_generation_failure_context!(
+          failure_context;
+          operation="simulate_candidate",
+          dimension="area",
+          stream_id=plan.active_ids[stream_idx],
+          candidate=cand_anchor,
+        )
         metrics = _safe_simulate_add_and_calculate_all_extended(area_gl, enc)
         push!(global_raw_d, isfinite(metrics.distance) ? metrics.distance : 0.0)
         push!(global_raw_q, isfinite(metrics.quantity) ? metrics.quantity : 0.0)
@@ -5147,12 +5233,16 @@ end
     # ---- Commit AREA(tmp_anchor) managers (NOW consistent with evaluation) ----
     # global: stable-ID stream-axis encoding
     enc_best = _encode_streamwise_row(area_axis, plan.active_ids, chosen_area, area_offset)
+    _set_generation_failure_context!(failure_context; operation="commit_global", dimension="area", candidate=copy(chosen_area))
     PolyphonicClusterManager.add_data_point_permanently(area_gl, enc_best)
+    _set_generation_failure_context!(failure_context; operation="commit_global_cache", dimension="area", candidate=copy(chosen_area))
     PolyphonicClusterManager.update_caches_permanently(area_gl)
 
     # stream: commit per-stream anchors
     chosen_area_f = Float64[float(chosen_area[s]) for s in 1:desired_stream_count]
+    _set_generation_failure_context!(failure_context; operation="commit_streams", dimension="area", candidate=copy(chosen_area))
     MultiStreamManager.commit_state!(area_mgrs[:stream], chosen_area_f)
+    _set_generation_failure_context!(failure_context; operation="commit_stream_caches", dimension="area", candidate=copy(chosen_area))
     MultiStreamManager.update_caches_permanently!(area_mgrs[:stream])
 
     # ---- Decide realized notes per stream (within band + chord_range, size by density, choose by dissonance LAST) ----
@@ -5262,6 +5352,13 @@ end
 
         for cand in chords
           cand_anchor = float(_anchor_from_abs(cand))
+        _set_generation_failure_context!(
+          failure_context;
+          operation="simulate_candidate",
+          dimension="note",
+          stream_id=(stream_idx <= length(plan.active_ids) ? plan.active_ids[stream_idx] : nothing),
+          candidate=copy(cand),
+        )
           partial_anchors = Float64[]
           for s in 1:desired_stream_count
             if chosen_note_flags[s]
@@ -5384,12 +5481,15 @@ end
         push!(amps_all, a_each)
       end
     end
+    _set_generation_failure_context!(failure_context; operation="commit_stm", dimension="note", candidate=copy(midi_notes_all))
     DissonanceStmManager.commit!(stm_mgr, midi_notes_all, amps_all, onset)
 
     # ---- Commit NOTE managers using realized anchors (global scalar + per-stream) ----
     global_anchor_note = _global_anchor_from_step(current_step_values)
 
+    _set_generation_failure_context!(failure_context; operation="commit_global", dimension="note", candidate=global_anchor_note)
     PolyphonicClusterManager.add_data_point_permanently(note_mgrs[:global], Float64[float(global_anchor_note)])
+    _set_generation_failure_context!(failure_context; operation="commit_global_cache", dimension="note", candidate=global_anchor_note)
     PolyphonicClusterManager.update_caches_permanently(note_mgrs[:global])
 
     stream_anchors = Float64[]
@@ -5397,7 +5497,9 @@ end
     for s in 1:desired_stream_count
       push!(stream_anchors, float(_anchor_from_abs(current_step_values[s][note_abs_idx])))
     end
+    _set_generation_failure_context!(failure_context; operation="commit_streams", dimension="note", candidate=copy(stream_anchors))
     MultiStreamManager.commit_state!(note_mgrs[:stream], stream_anchors)
+    _set_generation_failure_context!(failure_context; operation="commit_stream_caches", dimension="note", candidate=copy(stream_anchors))
     MultiStreamManager.update_caches_permanently!(note_mgrs[:stream])
 
     if clustered_tie_enabled
@@ -5441,6 +5543,13 @@ end
         global_metrics = PolyphonicClusterManager.ExtendedClusterMetrics[]
         stream_metrics = PolyphonicClusterManager.ExtendedClusterMetrics[]
         for bit in candidate_bits
+          _set_generation_failure_context!(
+            failure_context;
+            operation="simulate_candidate",
+            dimension="tie",
+            stream_id=stream_id,
+            candidate=bit,
+          )
           partial_bits = Float64[chosen_ties[s] for s in sort!(collect(keys(chosen_ties)))]
           push!(partial_bits, bit)
           projected_global = sum(partial_bits) / float(length(partial_bits))
@@ -5509,14 +5618,18 @@ end
       if !isempty(eligible_slots)
         committed_bits = Float64[current_step_values[slot][tie_idx] for slot in eligible_slots]
         global_tie_value = sum(committed_bits) / float(length(committed_bits))
+        _set_generation_failure_context!(failure_context; operation="commit_global", dimension="tie", candidate=global_tie_value)
         PolyphonicClusterManager.add_data_point_permanently(tie_global_mgr, Float64[global_tie_value])
+        _set_generation_failure_context!(failure_context; operation="commit_global_cache", dimension="tie", candidate=global_tie_value)
         PolyphonicClusterManager.update_caches_permanently!(tie_global_mgr)
 
         for slot in eligible_slots
           stream_id = plan.active_ids[slot]
           bit = Float64(current_step_values[slot][tie_idx])
           container = tie_stream_mgr.containers_by_id[stream_id]
+          _set_generation_failure_context!(failure_context; operation="commit_stream", dimension="tie", stream_id=stream_id, candidate=bit)
           PolyphonicClusterManager.add_data_point_permanently(container.manager, Float64[bit])
+          _set_generation_failure_context!(failure_context; operation="commit_stream_cache", dimension="tie", stream_id=stream_id, candidate=bit)
           PolyphonicClusterManager.update_caches_permanently!(container.manager)
           container.last_value = Float64[bit]
         end
@@ -5561,6 +5674,12 @@ end
         continuation = VoiceTokenGeneration.continuation_token(voice_state, stream_id)
         continuation === nothing || (forced_voice_tokens[stream_id] = continuation)
       end
+      _set_generation_failure_context!(
+        failure_context;
+        operation="generate_tokens",
+        dimension="voice_token",
+        candidate=copy(voice_ids),
+      )
       generated_voice_tokens = VoiceTokenGeneration.generate_tokens!(
         voice_state,
         voice_ids;
@@ -5617,6 +5736,18 @@ end
     elapsed = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
     println("[generate_polyphonic] step $(step_idx)/$(steps_to_generate) elapsed=$(elapsed)s")
     flush(stdout)
+    catch err
+      managers = committed_step_state.managers
+      stm_mgr = committed_step_state.stm_mgr
+      stream_axis = committed_step_state.stream_axis
+      voice_state = committed_step_state.voice_state
+      resize!(results, results_len_before_step)
+      resize!(result_stream_ids, stream_ids_len_before_step)
+      resize!(voice_plan, voice_plan_len_before_step)
+      previous_step_by_id = previous_step_by_id_before
+      _log_generate_polyphonic_step_failure(err, catch_backtrace(), step_idx, failure_context)
+      rethrow()
+    end
   end
 
   # ----------------------------------------------------------
