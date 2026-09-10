@@ -1,0 +1,198 @@
+name: issues16-23-apply-test-v2
+
+on:
+  push:
+    branches:
+      - fix/issues-16-23
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issues-16-23
+          fetch-depth: 0
+
+      - name: Apply guarded fixes
+        run: |
+          python3 .github/fix_issues16_23_patch_script.py
+          python3 .github/issues16_23_patch.py
+          python3 .github/issues16_23_postpatch.py
+          git diff --check
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.11.6'
+
+      - name: Instantiate Julia
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Run focused and existing regression suites
+        run: |
+          julia --project=. -e '
+            ENV["GENIE_ENV"] = "test"
+            push!(LOAD_PATH, abspath("src"))
+            using Genie
+            Genie.loadapp()
+            using Main.TimeseriesClusteringAPI, Test
+            include("test/issues_16_23_regressions.jl")
+            include("test/transaction_safety.jl")
+            include("test/generate_polyphonic_validation.jl")
+          '
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Verify HTTP contracts
+        env:
+          PORT: '9116'
+          HOST: '127.0.0.1'
+          GENIE_ENV: test
+          CLUSTERING_QUERY_ENABLED: 'false'
+          STARTUP_WARMUP_ENABLED: 'false'
+          VOICEVOX_ENABLED: 'false'
+          POLYPHONIC_MAX_DIMENSION_EVALUATIONS: '200000'
+          POLYPHONIC_MAX_NOTE_EVALUATIONS: '20000'
+        run: |
+          set -euo pipefail
+          julia --project=. scripts/start_server.jl >/tmp/issues16-23-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; tail -n 240 /tmp/issues16-23-server.log' EXIT
+
+          ready=0
+          for _ in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:9116/api/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+
+          status=$(curl -sS -o /tmp/generate-invalid.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data '{"generate":{"first_elements":"3,3","complexity_transition":"0.5","range_min":5,"range_max":4}}' \
+            http://127.0.0.1:9116/api/web/time_series/generate)
+          test "$status" = 422
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/generate-invalid.json'))
+          assert d['error']=='invalid_generate_request', d
+          assert d['code']=='invalid_range', d
+          PY
+
+          curl -fsS -H 'Content-Type: application/json' \
+            --data '{"generate":{"first_elements":"3,3","complexity_transition":"0.5","range_min":3,"range_max":3}}' \
+            http://127.0.0.1:9116/api/web/time_series/generate >/tmp/generate-single.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/generate-single.json'))
+          assert d['timeSeries'][-1] == 3, d
+          PY
+
+          for payload in \
+            '{"analyse":{"time_series":[]}}' \
+            '{"analyse":{"time_series":[7]}}'; do
+            curl -fsS -H 'Content-Type: application/json' --data "$payload" \
+              http://127.0.0.1:9116/api/web/time_series/analyse >/tmp/analyse-short.json
+            python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/analyse-short.json'))
+          assert d['clusteredSubsequences'] == [], d
+          assert d['clusters'] == {}, d
+          PY
+          done
+          curl -fsS -H 'Content-Type: application/json' \
+            --data '{"generate":{"first_elements":"7","complexity_transition":"","range_min":0,"range_max":10}}' \
+            http://127.0.0.1:9116/api/web/time_series/generate >/tmp/generate-short.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/generate-short.json'))
+          assert d['clusteredSubsequences'] == [], d
+          assert d['clusters'] == {}, d
+          PY
+
+          cat >/tmp/poly-snapshot.json <<'JSON'
+          {
+            "generate_polyphonic": {
+              "stream_counts": [1, 1],
+              "initial_context": [
+                [[[60], 0.73, 0.42, 0.31, 0.66, 0.12, 0.44, 0.55, 0, 0.0, 0.0]]
+              ],
+              "dimension_policy": {
+                "vol": {"accept_params": false, "fixed_value_source": "initial_context_last_step", "fixed_value": 0.1},
+                "area": {"accept_params": false, "fixed_value_source": "initial_context_last_step", "fixed_value": 0.0},
+                "chord_range": {"accept_params": false, "fixed_value_source": "manual_input", "fixed_value": 0},
+                "density": {"accept_params": false, "fixed_value_source": "manual_input", "fixed_value": 0.0},
+                "brightness": {"accept_params": false, "fixed_value_source": "initial_context_last_step", "fixed_value": 0.1},
+                "noise": {"accept_params": false, "fixed_value_source": "manual_input", "fixed_value": 0.2},
+                "harmonicity": {"accept_params": false, "fixed_value_source": "manual_input", "fixed_value": 0.5},
+                "attack": {"accept_params": false, "fixed_value_source": "manual_input", "fixed_value": 0.1},
+                "decay_sustain": {"accept_params": false, "fixed_value_source": "manual_input", "fixed_value": 0.4},
+                "release": {"accept_params": false, "fixed_value_source": "manual_input", "fixed_value": 0.5}
+              }
+            }
+          }
+          JSON
+          curl -fsS -H 'Content-Type: application/json' --data-binary @/tmp/poly-snapshot.json \
+            http://127.0.0.1:9116/api/web/time_series/generate_polyphonic >/tmp/poly-snapshot-response.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/poly-snapshot-response.json'))
+          ts=d['timeSeries']
+          assert len(ts)==3, len(ts)
+          assert all(abs(step[0][1]-0.73) < 1e-9 for step in ts[1:]), ts
+          assert all(abs(step[0][2]-0.42) < 1e-9 for step in ts[1:]), ts
+          assert all(len(step[0][0])==1 and 60 <= step[0][0][0] <= 63 for step in ts[1:]), ts
+          assert d['bpm']==480, d['bpm']
+          assert d['initialContextBpm']==[480], d['initialContextBpm']
+          assert d['futureBpm']==[480,480], d['futureBpm']
+          assert all(abs(x-0.125)<1e-12 for x in d['stepDurations']), d['stepDurations']
+          strengths=d['streamStrengths']
+          assert isinstance(strengths, dict) and strengths, strengths
+          assert all(0 <= v['presenceAvg'] <= 1 for v in strengths.values()), strengths
+          assert any(v['presenceCount'] >= 1 for v in strengths.values()), strengths
+          PY
+
+          python3 - <<'PY'
+          import json
+          p=json.load(open('/tmp/poly-snapshot.json'))
+          p['generate_polyphonic']['stream_counts']=[1]
+          p['generate_polyphonic']['dimension_policy']['vol']={
+            'accept_params': False,
+            'fixed_value_source': 'manual_input',
+            'fixed_value': 0.31,
+          }
+          json.dump(p, open('/tmp/poly-manual.json','w'))
+          PY
+          curl -fsS -H 'Content-Type: application/json' --data-binary @/tmp/poly-manual.json \
+            http://127.0.0.1:9116/api/web/time_series/generate_polyphonic >/tmp/poly-manual-response.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/poly-manual-response.json'))
+          assert abs(d['timeSeries'][-1][0][1]-0.31) < 1e-9, d['timeSeries']
+          PY
+
+      - name: Commit verified fixes and remove one-shot files
+        run: |
+          rm -f \
+            .github/fix_issues16_23_patch_script.py \
+            .github/issues16_23_patch.py \
+            .github/issues16_23_postpatch.py \
+            .github/workflows/issues16-23-inspect.yml \
+            .github/workflows/issues16-23-apply-test.yml \
+            .github/workflows/issues16-23-apply-test-v2.yml
+          git diff --check
+          git status --short
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix: resolve generation audit issues 16-23'
+          git push origin HEAD:fix/issues-16-23
