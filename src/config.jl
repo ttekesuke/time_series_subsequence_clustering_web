@@ -127,8 +127,23 @@ const INACTIVE_STRENGTH_DECAY::Float64 = 0.98
 
 # safety caps
 const MAX_NOTE_CANDIDATES::Int = 8_000
+const POLYPHONIC_MAX_FUTURE_STEPS_DEFAULT::Int = 256
+const POLYPHONIC_MAX_STREAMS_PER_STEP_DEFAULT::Int = 16
+const POLYPHONIC_MAX_INITIAL_CONTEXT_STEPS_DEFAULT::Int = 256
+const POLYPHONIC_MAX_NOTES_PER_STREAM_DEFAULT::Int = MIDI_NOTE_MAX - MIDI_NOTE_MIN + 1
+const POLYPHONIC_MAX_TOTAL_INITIAL_NOTES_DEFAULT::Int = 32_768
+const POLYPHONIC_MAX_DIMENSION_EVALUATIONS_DEFAULT::Int = 100_000
+const POLYPHONIC_MAX_NOTE_EVALUATIONS_DEFAULT::Int = MAX_NOTE_CANDIDATES
 const DEFAULT_DEBUG_TOP_N::Int = 10
 const DETAILED_DEBUG_TOP_N::Int = 20
+
+"""Read a positive integer resource limit from ENV, falling back on invalid/missing values."""
+function polyphonic_resource_limit(env_key::AbstractString, default::Integer)::Int
+  raw = strip(get(ENV, String(env_key), ""))
+  isempty(raw) && return Int(default)
+  parsed = tryparse(Int, raw)
+  return (parsed === nothing || parsed <= 0) ? Int(default) : parsed
+end
 
 # Current VOICEVOX Song singer is Zundamon (VOICEVOX_SINGER=3003).
 # Its usable singing range is A3-E5.
