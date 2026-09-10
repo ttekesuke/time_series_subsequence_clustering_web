@@ -2993,16 +2993,7 @@ function _safe_simulate_add_and_calculate_all_extended(
   mgr::PolyphonicClusterManager.Manager,
   value::PolyphonicClusterManager.PolySet,
 )::PolyphonicClusterManager.ExtendedClusterMetrics
-  try
-    return PolyphonicClusterManager.simulate_add_and_calculate_all_extended(mgr, value)
-  catch
-    return PolyphonicClusterManager.ExtendedClusterMetrics(
-      0.0,
-      0.0,
-      0.0,
-      PolyphonicClusterManager.EMPTY_OCCURRENCE_INTERVAL_METRICS,
-    )
-  end
+  return PolyphonicClusterManager.simulate_add_and_calculate_all_extended(mgr, value)
 end
 
 function _safe_corrcoef(xs::Vector{Float64}, ys::Vector{Float64})::Float64
