@@ -8,7 +8,16 @@ if old not in text:
 text = text.replace(old, 'using ..PolyphonicClusterManager\n', 1)
 
 marker = 'function _candidate_complexity_scores(\n'
-helper = '''# TimeSeriesController is included after this module. Resolve the canonical\n# generation-scoring module lazily at call time to preserve include order while\n# keeping one scoring implementation for ordinary dimensions and voice tokens.\nfunction _time_series_scoring_module()\n  parent = parentmodule(@__MODULE__)\n  isdefined(parent, :TimeSeriesController) || error("TimeSeriesController scoring module is not loaded.")\n  return getfield(parent, :TimeSeriesController)\nend\n\n'''
+helper = '''# TimeSeriesController is included after this module. Resolve the canonical
+# generation-scoring module lazily at call time to preserve include order while
+# keeping one scoring implementation for ordinary dimensions and voice tokens.
+function _time_series_scoring_module()
+  parent = parentmodule(@__MODULE__)
+  isdefined(parent, :TimeSeriesController) || error("TimeSeriesController scoring module is not loaded.")
+  return getfield(parent, :TimeSeriesController)
+end
+
+'''
 if text.count(marker) != 1:
     raise SystemExit('voice candidate scoring marker missing/duplicated')
 text = text.replace(marker, helper + marker, 1)
@@ -26,3 +35,8 @@ if 'TimeSeriesScoring' in text:
     raise SystemExit('temporary TimeSeriesScoring references remain')
 path.write_text(text)
 print('postpatch applied')
+
+# The finite-fallback patch is kept separate so it can assert the exact
+# common-score implementation. Execute it after the base controller patch and
+# after the generated regression file exists.
+exec(Path('.github/issues16_23_runtime_fix.py').read_text(), {'__name__': '__main__'})
