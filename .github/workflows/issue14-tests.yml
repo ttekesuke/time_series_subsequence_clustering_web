@@ -22,8 +22,14 @@ jobs:
       - uses: julia-actions/cache@v2
       - name: Instantiate app
         run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
-      - name: Instantiate test environment
-        run: julia --project=test -e 'using Pkg; Pkg.instantiate()'
       - name: Run transaction safety tests
-        working-directory: test
-        run: julia --project=. runtests.jl transaction_safety.jl
+        run: |
+          julia --project=. -e '
+            ENV["GENIE_ENV"] = "test"
+            push!(LOAD_PATH, abspath("src"))
+            using Genie
+            Genie.loadapp()
+            using Main.TimeseriesClusteringAPI, Test, Logging
+            Logging.global_logger(NullLogger())
+            include("test/transaction_safety.jl")
+          '
