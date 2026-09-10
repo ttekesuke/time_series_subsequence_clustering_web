@@ -3410,6 +3410,7 @@ function select_best_values_for_dimension_greedy(
         _set_generation_failure_context!(
           trace_context;
           operation="simulate_candidate",
+          dimension=get(trace_context, :dimension, nothing),
           stream_id=(stream_idx <= length(actives) ? actives[stream_idx].id : nothing),
           candidate=float(cand),
         )
