@@ -3834,13 +3834,6 @@ function generate_polyphonic()
     validated_request.limits.dimension_evaluations,
     validated_request.limits.note_evaluations,
   )
-  debug_poly = false
-  try
-    debug_poly = get(gp, "debug_poly", false) == true || get(gp, "debug_score", false) == true || get(ENV, "ZIP_DEBUG_POLY", "0") == "1"
-  catch
-    debug_poly = get(ENV, "ZIP_DEBUG_POLY", "0") == "1"
-  end
-
   # ----------------------------------------------------------
   # Params
   # ----------------------------------------------------------
