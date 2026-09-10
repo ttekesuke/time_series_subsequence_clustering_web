@@ -1,0 +1,65 @@
+name: issue14-controller-patch
+
+on:
+  push:
+    branches:
+      - fix/issue-14-transaction-safety
+
+permissions:
+  contents: write
+
+jobs:
+  patch-controller:
+    if: ${{ !contains(github.event.head_commit.message, '[issue14-patched]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-14-transaction-safety
+          fetch-depth: 0
+      - name: Replace fail-soft simulation wrapper
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/controllers/time_series_controller.jl')
+          text = path.read_text()
+          old = '''function _safe_simulate_add_and_calculate_all_extended(
+            mgr::PolyphonicClusterManager.Manager,
+            value::PolyphonicClusterManager.PolySet,
+          )::PolyphonicClusterManager.ExtendedClusterMetrics
+            try
+              return PolyphonicClusterManager.simulate_add_and_calculate_all_extended(mgr, value)
+            catch
+              return PolyphonicClusterManager.ExtendedClusterMetrics(
+                0.0,
+                0.0,
+                0.0,
+                PolyphonicClusterManager.EMPTY_OCCURRENCE_INTERVAL_METRICS,
+              )
+            end
+          end
+          '''
+          new = '''function _safe_simulate_add_and_calculate_all_extended(
+            mgr::PolyphonicClusterManager.Manager,
+            value::PolyphonicClusterManager.PolySet,
+          )::PolyphonicClusterManager.ExtendedClusterMetrics
+            return PolyphonicClusterManager.simulate_add_and_calculate_all_extended(mgr, value)
+          end
+          '''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'expected exactly one fail-soft wrapper, found {count}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          rm .github/workflows/issue14-controller-patch.yml
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/controllers/time_series_controller.jl .github/workflows/issue14-controller-patch.yml
+          git diff --cached --check
+          git commit -m "[issue14-patched] fail fast on controller simulation errors"
+          git push origin HEAD:fix/issue-14-transaction-safety
