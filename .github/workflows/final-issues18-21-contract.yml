@@ -17,84 +17,70 @@ jobs:
           ref: fix/issues-16-23
           fetch-depth: 0
 
-      - name: Apply final contract cleanup
+      - name: Remove inert debug parser
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          path = Path('src/controllers/time_series_controller.jl')
+          text = path.read_text()
+          start = text.index('  debug_poly = false\n', text.index('function generate_polyphonic()'))
+          end_marker = '  # ----------------------------------------------------------\n  # Params\n'
+          end = text.index(end_marker, start)
+          region = text[start:end]
+          if 'get(gp, "debug_poly", false)' not in region or 'get(gp, "debug_score", false)' not in region:
+              raise SystemExit('unexpected debug parser region')
+          path.write_text(text[:start] + text[end:])
+          PY
+          git diff --check
 
-          controller_path = Path('src/controllers/time_series_controller.jl')
-          controller = controller_path.read_text()
-          debug_block = '''  debug_poly = false
-          try
-            debug_poly = get(gp, "debug_poly", false) == true || get(gp, "debug_score", false) == true || get(ENV, "ZIP_DEBUG_POLY", "0") == "1"
-          catch
-            debug_poly = get(ENV, "ZIP_DEBUG_POLY", "0") == "1"
+      - name: Add lifecycle regression
+        run: |
+          cat > test/issues_18_lifecycle_regression.jl <<'JULIA'
+          using Test
+
+          const LifecycleMSM = Main.TimeseriesClusteringAPI.MultiStreamManager
+          const LifecycleConfig = Main.TimeseriesClusteringAPI.Config
+
+          function volume_lifecycle_manager()
+            manager = LifecycleMSM.Manager(
+              [[0.2, 0.8], [0.2, 0.8], [0.2, 0.8]],
+              0.3,
+              2;
+              value_range=LifecycleConfig.VOL_STEPS,
+              track_presence=true,
+            )
+            @test all(0.0 <= LifecycleMSM.get_stream_strength(manager, id) <= 1.0 for id in manager.active_ids)
+            return manager
           end
 
-          '''
-          if controller.count(debug_block) != 1:
-              raise SystemExit(f'expected one inert debug block, found {controller.count(debug_block)}')
-          controller_path.write_text(controller.replace(debug_block, '', 1))
-
-          test_path = Path('test/issues_16_23_regressions.jl')
-          test = test_path.read_text()
-          source_anchor = '  @test !occursin("debug_score_top_n:", dialog)\n'
-          if test.count(source_anchor) != 1:
-              raise SystemExit('source contract anchor missing')
-          test = test.replace(
-              source_anchor,
-              source_anchor + '  @test !occursin("debug_poly =", controller)\n  @test !occursin("get(gp, \\"debug_score\\"", controller)\n',
-              1,
-          )
-          lifecycle_test = r'''
-
-          @testset "#18 volume lifecycle supports deactivate/revive/fork for generated and fixed policies" begin
-            function volume_lifecycle_manager()
-              manager = IssuesMSM.Manager(
-                [[0.2, 0.8], [0.2, 0.8], [0.2, 0.8]],
-                0.3,
-                2;
-                value_range=IssuesConfig.VOL_STEPS,
-                track_presence=true,
-              )
-              @test all(0.0 <= IssuesMSM.get_stream_strength(manager, id) <= 1.0 for id in manager.active_ids)
-              return manager
-            end
-
+          @testset "#18 volume lifecycle remains presence-based for generated and fixed volume" begin
             for policy in (:generated, :fixed)
               manager = volume_lifecycle_manager()
 
-              decrease = IssuesMSM.build_stream_lifecycle_plan(manager, 1; target=0.2, spread=0.0)
-              @test length(decrease.deactivate_ids) == 1
+              decrease = LifecycleMSM.build_stream_lifecycle_plan(manager, 1; target=0.2, spread=0.0)
               @test decrease.deactivate_ids == [1]
-              IssuesMSM.apply_stream_lifecycle_plan!(manager, decrease)
               @test decrease.active_ids == [2]
+              LifecycleMSM.apply_stream_lifecycle_plan!(manager, decrease)
 
-              increase = IssuesMSM.build_stream_lifecycle_plan(manager, 2; target=0.2, spread=0.0)
+              increase = LifecycleMSM.build_stream_lifecycle_plan(manager, 2; target=0.2, spread=0.0)
               @test increase.revive_ids == [1]
               @test isempty(increase.fork_pairs)
-              IssuesMSM.apply_stream_lifecycle_plan!(manager, increase)
-              @test Set(increase.active_ids) == Set([1, 2])
+              LifecycleMSM.apply_stream_lifecycle_plan!(manager, increase)
+              @test Set(manager.active_ids) == Set([1, 2])
 
-              fork = IssuesMSM.build_stream_lifecycle_plan(manager, 3; target=0.8, spread=0.0)
-              @test isempty(fork.revive_ids)
-              @test length(fork.fork_pairs) == 1
-              @test fork.fork_pairs[1][2] > 2
-              IssuesMSM.apply_stream_lifecycle_plan!(manager, fork)
+              fork_plan = LifecycleMSM.build_stream_lifecycle_plan(manager, 3; target=0.8, spread=0.0)
+              @test isempty(fork_plan.revive_ids)
+              @test length(fork_plan.fork_pairs) == 1
+              @test fork_plan.fork_pairs[1][1] == 2
+              LifecycleMSM.apply_stream_lifecycle_plan!(manager, fork_plan)
               @test length(manager.active_ids) == 3
 
-              # The policy changes how volume values are selected, not the
-              # lifecycle coordinate system: both paths remain 0..1 presence.
               committed = policy == :generated ? [0.9, 0.2, 0.9] : [0.6, 0.6, 0.6]
-              IssuesMSM.commit_state!(manager, committed)
-              @test all(0.0 <= IssuesMSM.get_stream_strength(manager, id) <= 1.0 for id in manager.active_ids)
+              LifecycleMSM.commit_state!(manager, committed)
+              @test all(0.0 <= LifecycleMSM.get_stream_strength(manager, id) <= 1.0 for id in manager.active_ids)
             end
           end
-          '''
-          if '#18 volume lifecycle supports deactivate/revive/fork' in test:
-              raise SystemExit('lifecycle regression already exists')
-          test_path.write_text(test + lifecycle_test)
-          PY
+          JULIA
           git diff --check
 
       - uses: julia-actions/setup-julia@v2
@@ -104,7 +90,7 @@ jobs:
       - name: Instantiate Julia
         run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
-      - name: Run issue regression suite
+      - name: Run issue regression suites
         run: |
           julia --project=. -e '
             ENV["GENIE_ENV"] = "test"
@@ -113,7 +99,21 @@ jobs:
             Genie.loadapp()
             using Main.TimeseriesClusteringAPI, Test
             include("test/issues_16_23_regressions.jl")
+            include("test/issues_18_lifecycle_regression.jl")
           '
+
+      - name: Assert no-op parser is gone
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          controller = Path('src/controllers/time_series_controller.jl').read_text()
+          dialog = Path('frontend/src/components/dialog/MusicGenerateDialog.vue').read_text()
+          assert 'debug_poly =' not in controller
+          assert 'get(gp, "debug_score", false)' not in controller
+          assert 'use_recent_position_weight:' not in dialog
+          assert 'debug_score_key:' not in dialog
+          assert 'debug_score_top_n:' not in dialog
+          PY
 
       - name: Commit verified cleanup and remove one-shot workflow
         run: |
