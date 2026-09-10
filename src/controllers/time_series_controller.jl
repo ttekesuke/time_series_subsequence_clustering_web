@@ -109,13 +109,32 @@ function _request_finite_int(raw, path::AbstractString)::Int
   return Int(round(value))
 end
 
-function _reject_nonfinite_request_values!(raw, path::AbstractString="generate_polyphonic")::Nothing
+function _polyphonic_text_field(key)::Bool
+  normalized = lowercase(String(key))
+  return normalized in (
+    "text",
+    "mode",
+    "token",
+    "phones",
+    "voice_inventory_id",
+    "job_id",
+    "fixed_value_source",
+    "fixed_source",
+    "value_source",
+  ) || endswith(normalized, "_id") || occursin("source", normalized)
+end
+
+function _reject_nonfinite_request_values!(
+  raw,
+  path::AbstractString="generate_polyphonic";
+  allow_non_numeric_strings::Bool=false,
+)::Nothing
   if raw isa AbstractFloat
     isfinite(raw) || _invalid_generate_polyphonic_request(
       "non_finite_number",
       "$(path) must be finite.",
     )
-  elseif raw isa AbstractString
+  elseif raw isa AbstractString && !allow_non_numeric_strings
     sentinel = lowercase(strip(raw))
     if sentinel in ("nan", "+nan", "-nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity")
       _invalid_generate_polyphonic_request(
@@ -125,11 +144,19 @@ function _reject_nonfinite_request_values!(raw, path::AbstractString="generate_p
     end
   elseif raw isa AbstractVector
     for (index, value) in enumerate(raw)
-      _reject_nonfinite_request_values!(value, "$(path)[$(index)]")
+      _reject_nonfinite_request_values!(
+        value,
+        "$(path)[$(index)]";
+        allow_non_numeric_strings=allow_non_numeric_strings,
+      )
     end
   elseif raw isa AbstractDict
     for (key, value) in pairs(raw)
-      _reject_nonfinite_request_values!(value, "$(path).$(key)")
+      _reject_nonfinite_request_values!(
+        value,
+        "$(path).$(key)";
+        allow_non_numeric_strings=_polyphonic_text_field(key),
+      )
     end
   end
   return nothing

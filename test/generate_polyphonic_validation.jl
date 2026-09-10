@@ -46,6 +46,21 @@ end
   end
 end
 
+@testset "text fields may legitimately contain nonfinite-looking words" begin
+  payload = _valid_gp_payload()
+  payload["voice_inventory_id"] = "Inf"
+  payload["initial_context_voice_plan"] = Any[
+    Any[Dict("mode" => "voice", "token" => "NaN", "text" => "Inf", "phones" => Any["Inf"])],
+  ]
+  validated = _gpv_controller._validate_generate_polyphonic_request!(payload)
+  @test validated.stream_counts == [1, 2]
+
+  payload["recency_center"] = Any["Inf"]
+  err = _validation_error(payload)
+  @test err isa _gpv_controller.GeneratePolyphonicRequestError
+  @test err.code == "non_finite_number"
+end
+
 @testset "generate_polyphonic configured structural limits are enforced" begin
   withenv("POLYPHONIC_MAX_FUTURE_STEPS" => "2") do
     p = _valid_gp_payload()
