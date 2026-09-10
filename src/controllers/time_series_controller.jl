@@ -25,8 +25,19 @@ end
 
 Base.showerror(io::IO, err::GeneratePolyphonicRequestError) = print(io, err.message)
 
+struct GenerateRequestError <: Exception
+  code::String
+  message::String
+end
+
+Base.showerror(io::IO, err::GenerateRequestError) = print(io, err.message)
+
 @noinline function _invalid_generate_polyphonic_request(code::AbstractString, message::AbstractString)
   throw(GeneratePolyphonicRequestError(String(code), String(message)))
+end
+
+@noinline function _invalid_generate_request(code::AbstractString, message::AbstractString)
+  throw(GenerateRequestError(String(code), String(message)))
 end
 
 mutable struct PolyphonicEvaluationBudget
@@ -2886,7 +2897,13 @@ function combine_occurrence_interval_scores(
     diversity_ready ? max(Config.COMPLEXITY_DIVERSITY_WEIGHT, 0.0) : 0.0
   shape_weight = shape_ready ? max(Config.COMPLEXITY_SHAPE_WEIGHT, 0.0) : 0.0
   denominator = prediction_weight + diversity_weight + shape_weight
-  denominator <= 0.0 && return (copy(unavailable_fallback), false)
+  if denominator <= 0.0
+    fallback = Float64[
+      isfinite(value) ? clamp(value, 0.0, 1.0) : Config.DEFAULT_TARGET_01
+      for value in unavailable_fallback
+    ]
+    return (fallback, false)
+  end
 
   combined = Float64[
     (
@@ -2966,6 +2983,7 @@ function combine_predictive_structural_scores(
 end
 
 function select_candidate_by_complexity_score(scores::Vector{Float64}, target_val::Float64)::Int
+  isempty(scores) && throw(ArgumentError("candidate complexity scores must not be empty"))
   best_index = 0
   min_diff = Inf
   for (idx0, score) in enumerate(scores)
@@ -3072,6 +3090,10 @@ function generate()
 
   candidate_min_master = _parse_int(get(p, "range_min", Config.DEFAULT_RANGE_MIN))
   candidate_max_master = _parse_int(get(p, "range_max", Config.DEFAULT_RANGE_MAX))
+  candidate_min_master <= candidate_max_master || _invalid_generate_request(
+    "invalid_range",
+    "generate.range_min must be less than or equal to generate.range_max.",
+  )
 
   min_window_size = Config.SUBSEQUENCE_MIN_WINDOW_SIZE
   calculate_distance_when_added_subsequence_to_cluster = false
@@ -4120,9 +4142,11 @@ function generate_polyphonic()
     return Int(Config.abs_pitch_min())
   end
 
+  initial_last_step_snapshot = Any[]
+
   function _fixed_area_band_low_for_stream(stream_idx::Int)::Int
     if get(dim_fixed_source, "area", "manual_input") == "initial_context_last_step"
-      last_step = isempty(results) ? Vector{Vector{Any}}() : results[end]
+      last_step = initial_last_step_snapshot
       if 1 <= stream_idx <= length(last_step)
         anchor = _anchor_from_stream(last_step[stream_idx])
         return Config.area_band_low(anchor)
@@ -4163,7 +4187,7 @@ function generate_polyphonic()
       return dim_fixed[key]
     end
 
-    last_step = isempty(results) ? Vector{Vector{Any}}() : results[end]
+    last_step = initial_last_step_snapshot
     if !(1 <= stream_idx <= length(last_step))
       return dim_fixed[key]
     end
@@ -4358,6 +4382,8 @@ function generate_polyphonic()
       st[density_idx] = inferred_den
     end
   end
+
+  initial_last_step_snapshot = isempty(results) ? Any[] : deepcopy(results[end])
 
   merge_threshold_ratio = _parse_float(get(gp, "merge_threshold_ratio", Config.DEFAULT_POLYPHONIC_MERGE_THRESHOLD_RATIO))
   min_window = Config.POLYPHONIC_MIN_WINDOW_SIZE
@@ -4665,7 +4691,7 @@ function generate_polyphonic()
     ("decay_sustain", hist_decay_sustain, false),
     ("release", hist_release, false)
   )
-    if get(dim_accept, key, true)
+    if key == "vol" || get(dim_accept, key, true)
       _setup_dimension_manager!(
         key,
         history,
@@ -5051,7 +5077,7 @@ function generate_polyphonic()
     st_target = step_idx <= length(strength_targets) ? strength_targets[step_idx] : Config.DEFAULT_TARGET_01
     st_spread = step_idx <= length(strength_spreads) ? strength_spreads[step_idx] : Config.DEFAULT_SPREAD_01
 
-    lifecycle_mgr = haskey(managers, "vol") ? managers["vol"][:stream] : managers["note"][:stream]
+    lifecycle_mgr = managers["vol"][:stream]
     _set_generation_failure_context!(failure_context; operation="lifecycle_plan")
     plan = MultiStreamManager.build_stream_lifecycle_plan(lifecycle_mgr, desired_stream_count; target=st_target, spread=st_spread)
     length(plan.active_ids) == desired_stream_count || error(
@@ -5162,6 +5188,17 @@ function generate_polyphonic()
           else
             current_step_values[s_i][out_idx] = fixed_vals[s_i]
           end
+        end
+        if key == "vol"
+          mgrs = managers["vol"]
+          g_offset = get(mgrs, :global_offset, 0.0)
+          global_vals = _encode_streamwise_row(stream_axis, plan.active_ids, fixed_vals, g_offset)
+          _set_generation_failure_context!(failure_context; operation="commit_global", dimension="vol", candidate=copy(fixed_vals))
+          PolyphonicClusterManager.add_data_point_permanently(mgrs[:global], global_vals)
+          PolyphonicClusterManager.update_caches_permanently(mgrs[:global])
+          _set_generation_failure_context!(failure_context; operation="commit_streams", dimension="vol", candidate=copy(fixed_vals))
+          MultiStreamManager.commit_state!(mgrs[:stream], fixed_vals, (target=st_target, spread=st_spread))
+          MultiStreamManager.update_caches_permanently!(mgrs[:stream])
         end
         continue
       end
@@ -6142,6 +6179,17 @@ end
     cluster_payload["voice_token"] = VoiceTokenGeneration.clusters_payload(voice_state, min_window)
   end
 
+  strength_report = MultiStreamManager.stream_strengths_report(managers["vol"][:stream])
+  stream_strengths = Dict{String,Any}(
+    string(stream_id) => Dict(
+      "active" => entry.active,
+      "presenceAvg" => entry.presence_avg,
+      "presenceCount" => entry.presence_count,
+      "lastValue" => copy(entry.last_value),
+    )
+    for (stream_id, entry) in strength_report
+  )
+
   return Dict(
     "timeSeries" => results,
     "streamIds" => result_stream_ids,
@@ -6156,7 +6204,7 @@ end
     ),
     "clusters" => cluster_payload,
     "processingTime" => processing_time_s,
-    "streamStrengths" => nothing,
+    "streamStrengths" => stream_strengths,
     "timbreSeries" => timbre_series,
     "bpm" => isempty(future_bpm) ? bpm : future_bpm[1],
     "stepDuration" => isempty(future_step_durations) ? Config.step_duration_from_bpm(bpm) : future_step_durations[1],

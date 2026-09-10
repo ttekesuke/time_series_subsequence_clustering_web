@@ -224,19 +224,47 @@ function _normalize_scores(raw::Vector{Float64})::Vector{Float64}
   return Float64[isfinite(value) ? clamp((value - low) / (high - low), 0.0, 1.0) : 0.0 for value in raw]
 end
 
+# TimeSeriesController is included after this module. Resolve the canonical
+# generation-scoring module lazily at call time to preserve include order while
+# keeping one scoring implementation for ordinary dimensions and voice tokens.
+function _time_series_scoring_module()
+  parent = parentmodule(@__MODULE__)
+  isdefined(parent, :TimeSeriesController) || error("TimeSeriesController scoring module is not loaded.")
+  return getfield(parent, :TimeSeriesController)
+end
+
 function _candidate_complexity_scores(
   manager::PolyphonicClusterManager.Manager,
   candidates::Vector{Vector{Float64}},
 )::Vector{Float64}
+  isempty(candidates) && return Float64[]
+  scoring = _time_series_scoring_module()
   distribution = PolyphonicClusterManager.build_predictive_distribution(manager)
-  raw = Float64[]
+  calibrator = scoring.build_extended_metric_calibrator(manager)
+  predictive_scores = Float64[]
+  raw_distance = Float64[]
+  raw_quantity = Float64[]
+  raw_complexity = Float64[]
+  temporal_metrics = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
+
   for candidate in candidates
     metrics = PolyphonicClusterManager.simulate_add_and_calculate_all_extended(manager, candidate)
     predictive = PolyphonicClusterManager.predictive_surprise_score(manager, distribution, candidate)
-    prediction = predictive === nothing ? metrics.distance : predictive
-    push!(raw, (6.0 * prediction + metrics.distance + metrics.complexity) / 8.0)
+    push!(predictive_scores, predictive === nothing ? NaN : float(predictive))
+    push!(raw_distance, metrics.distance)
+    push!(raw_quantity, metrics.quantity)
+    push!(raw_complexity, metrics.complexity)
+    push!(temporal_metrics, metrics.occurrence_intervals)
   end
-  return _normalize_scores(raw)
+
+  return scoring.combine_predictive_structural_scores(
+    predictive_scores,
+    raw_distance,
+    raw_quantity,
+    raw_complexity,
+    temporal_metrics;
+    calibrator=calibrator,
+  )
 end
 
 const _KANA_VOWEL_GROUPS = Dict(

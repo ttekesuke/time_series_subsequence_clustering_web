@@ -46,20 +46,32 @@ function Manager(;
   return Manager(memory_span, memory_weight, n_partials, amp_profile, model, prune_threshold, MemoryEvent[])
 end
 
+# Dissonance STM uses a pitch-class-canonical coordinate system.  Absolute
+# register is intentionally ignored so seed, preview, commit, and memory
+# interference all measure the same interval structure.
+@inline canonical_midi_note(note::Integer)::Int =
+  Config.MIDI_C4 + mod(Int(note), Config.STEPS_PER_OCTAVE)
+
+function canonical_midi_notes(midi_notes::Vector{Int})::Vector{Int}
+  return Int[canonical_midi_note(note) for note in midi_notes]
+end
+
 # ---- public api ----
 
 function evaluate(mgr::Manager, midi_notes::Vector{Int}, amps::Vector{Float64}, onset::Float64)::Float64
-  d_current = dissonance_current(mgr, midi_notes, amps)
-  return d_current + memory_interference(mgr, midi_notes, amps, onset, d_current)
+  canonical_notes = canonical_midi_notes(midi_notes)
+  d_current = dissonance_current(mgr, canonical_notes, amps)
+  return d_current + memory_interference(mgr, canonical_notes, amps, onset, d_current)
 end
 
 function commit!(mgr::Manager, midi_notes::Vector{Int}, amps::Vector{Float64}, onset::Float64)::Float64
-  d_current = dissonance_current(mgr, midi_notes, amps)
-  d_total = d_current + memory_interference(mgr, midi_notes, amps, onset, d_current)
+  canonical_notes = canonical_midi_notes(midi_notes)
+  d_current = dissonance_current(mgr, canonical_notes, amps)
+  d_total = d_current + memory_interference(mgr, canonical_notes, amps, onset, d_current)
 
   prune!(mgr, onset)
 
-  push!(mgr.memory, MemoryEvent(float(onset), copy(midi_notes), copy(amps), d_current))
+  push!(mgr.memory, MemoryEvent(float(onset), copy(canonical_notes), copy(amps), d_current))
   return d_total
 end
 

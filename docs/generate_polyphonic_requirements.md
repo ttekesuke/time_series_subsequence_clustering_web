@@ -559,3 +559,8 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 7. FIX-010〜011で観測性と再現性を整える。
 
 この順序は、音楽的なscore調整より先に、失敗時に状態が壊れないこととAPI入力が安全な範囲に収まることを保証するためである。
+
+
+## 監査指摘 #16〜#21 の解消後contract
+
+この文書中のAUD-009〜AUD-012およびno-op surfaceに関する記述は調査時点の指摘です。現行実装では、`initial_context_last_step` は不変snapshot、dissonance STMはpitch-class canonical、lifecycle strengthは常時volume/presence、BPM defaultは480、voice token complexityは通常dimension共通score、`streamStrengths` は実値responseです。`use_recent_position_weight` と `debug_score*` / `debug_poly` は公開payloadから削除されています。

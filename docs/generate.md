@@ -428,3 +428,10 @@ PolyphonicClusterManager.update_caches_permanently!(manager)
 - quantityは大きいほど単純側としてcalibrateされます。
 - scoreの各軸はabsoluteな0..1尺度だけではなく、候補集合内で再正規化される部分があります。
 - 生成値は整数候補だけです。
+
+
+## 入力境界と短いseed
+
+`range_min <= range_max` は必須です。違反時は `invalid_generate_request / invalid_range` としてHTTP 422を返し、空candidate配列へ進みません。内部の `select_candidate_by_complexity_score` も空score配列を `ArgumentError` にして二重防御します。`range_min == range_max` は1候補として正常に生成します。
+
+`first_elements` が `Config.SUBSEQUENCE_MIN_WINDOW_SIZE` 未満でも入力自体は許可します。その時点では実在するsubsequenceがないためcluster treeは空です。future値の追加で初めてmin windowに到達した時点でroot clusterを作ります。

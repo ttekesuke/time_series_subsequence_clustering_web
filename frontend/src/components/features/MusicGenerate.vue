@@ -199,6 +199,7 @@
 </style>
 
 <script setup lang="ts">
+import { POLYPHONIC_BPM_DEFAULT } from '../../constants/musicDefaults'
 import { ref, nextTick, computed, onMounted, onUnmounted, watch } from 'vue'
 import axios from 'axios'
 import MusicGenerateDialog from '../dialog/MusicGenerateDialog.vue'
@@ -252,7 +253,7 @@ const playheadStep = ref(-1)
 let playheadAnimationFrame: number | null = null
 let playbackAudioEl: HTMLAudioElement | null = null
 const playheadStepForRoll = computed(() => (nowPlaying.value ? playheadStep.value : -1))
-const DEFAULT_BPM = 480
+const DEFAULT_BPM = POLYPHONIC_BPM_DEFAULT
 const currentPlaybackBpm = ref(DEFAULT_BPM)
 const normalizeBpm = (val: any): number => {
   const bpm = Number(val)
