@@ -84,24 +84,25 @@ POST /api/web/time_series/dispatch_generate_polyphonic
 steps_to_generate = length(stream_counts)
 ```
 
-`stream_counts` が空なら `[1]` が補われます。
+`stream_counts` 自体を省略した場合は `[1]` が補われます。ただし、明示的に空配列 `[]` を送ると422です。
 
-各stepで:
+backend入口では各値を `1..16`（default）として検証し、future step数もdefault 256以下に制限します。これらのlimitは環境変数で変更できます。
 
-```text
-desired_stream_count = max(stream_counts[step], 1)
-```
+各stepの `desired_stream_count` は検証済みの `stream_counts[step]` そのものです。
 
-となります。
+## 4. 初期contextの検証と正規化
 
-## 4. 初期contextの正規化
+高コストなmanager初期化より前に、`initial_context` をrequest境界で検証します。
 
-各recordは `_normalize_stream!` で正規化されます。
+- 各stepは非空のstream配列
+- 各streamは11要素固定
+- `abs_notes` は非空、整数、MIDI 36..120
+- vol/timbre/density/tieはfiniteな0..1
+- `chord_range` は整数0..24
+- defaultではinitial contextは256step以下、1stepは16stream以下、1streamは85note以下、全initial context合計は32768note以下
+- NaN / Inf（文字列sentinelを含む）は拒否
 
-- noteは整数化・36..120へclamp・sort
-- timbre/volume/densityは0..1へclamp
-- chord_rangeは0以上
-- tieは0..1へclamp
+違反はdirect API/dispatch APIとも422になります。検証通過後も `_normalize_stream!` は防御的な正規化として残ります。
 
 その後、初期contextの `chord_range` と `density` は入力placeholderをそのまま使わず、`abs_notes` から再推定されます。
 
@@ -126,6 +127,20 @@ chord_range = max(
 ```text
 density = note_count / slot_count
 ```
+
+### resource budget
+
+候補評価にはrequest単位のhard budgetがあります。defaultはdimension候補100,000、note候補8,000です。超過時は現在stepのstaged stateを破棄して422を返します。
+
+上限は以下の環境変数で正の整数へ上書きできます。
+
+- `POLYPHONIC_MAX_FUTURE_STEPS`
+- `POLYPHONIC_MAX_STREAMS_PER_STEP`
+- `POLYPHONIC_MAX_INITIAL_CONTEXT_STEPS`
+- `POLYPHONIC_MAX_NOTES_PER_STREAM`
+- `POLYPHONIC_MAX_TOTAL_INITIAL_NOTES`
+- `POLYPHONIC_MAX_DIMENSION_EVALUATIONS`
+- `POLYPHONIC_MAX_NOTE_EVALUATIONS`
 
 ## 5. dimension policy
 

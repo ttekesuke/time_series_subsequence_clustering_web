@@ -7,6 +7,22 @@ using TimeseriesClusteringAPI
 using TimeseriesClusteringAPI.TimeSeriesController
 using TimeseriesClusteringAPI.SupercollidersController
 
+function _with_polyphonic_request_errors(f::Function)
+  try
+    return f()
+  catch err
+    if err isa TimeSeriesController.GeneratePolyphonicRequestError
+      return json(Dict(
+        "ok" => false,
+        "error" => "invalid_generate_polyphonic_request",
+        "code" => err.code,
+        "message" => err.message,
+      ); status=422)
+    end
+    rethrow()
+  end
+end
+
 # ------------------------------------------------------------
 # Health check (frontend proxy / readiness check)
 # ------------------------------------------------------------
@@ -65,7 +81,9 @@ route("/api/web/time_series/generate", method=POST) do
 end
 
 route("/api/web/time_series/generate_polyphonic", method=POST) do
-  TimeSeriesController.generate_polyphonic() |> json
+  _with_polyphonic_request_errors() do
+    TimeSeriesController.generate_polyphonic() |> json
+  end
 end
 
 route("/api/web/time_series/query_db", method=POST) do
@@ -73,7 +91,9 @@ route("/api/web/time_series/query_db", method=POST) do
 end
 
 route("/api/web/time_series/dispatch_generate_polyphonic", method = POST) do
-  TimeSeriesController.dispatch_generate_polyphonic()
+  _with_polyphonic_request_errors() do
+    TimeSeriesController.dispatch_generate_polyphonic()
+  end
 end
 
 # ------------------------------------------------------------
