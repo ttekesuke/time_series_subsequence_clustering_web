@@ -1,0 +1,29 @@
+name: issue14-transaction-safety-tests
+
+on:
+  push:
+    branches:
+      - fix/issue-14-transaction-safety
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-14-transaction-safety
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate app
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Instantiate test environment
+        run: julia --project=test -e 'using Pkg; Pkg.instantiate()'
+      - name: Run transaction safety tests
+        working-directory: test
+        run: julia --project=. runtests.jl transaction_safety.jl
