@@ -1,79 +1,124 @@
 # `generate` アクション詳細
 
-このドキュメントは、サーバサイドの `TimeSeriesController.generate()` が行う単音系列生成を、現在の実装に沿って整理したものです。
+このドキュメントは、`TimeSeriesController.generate()` が行う単音時系列生成を、現在の Julia 実装と、その先で呼ばれる `PolyphonicClusterManager` の処理まで含めて整理したものです。
 
-`generate()` は、既存の初期系列をクラスタリングした上で、候補値を 1 つずつ仮追加し、候補ごとの単純/複雑スコアが `complexity_transition` の目標値に近いものを選びます。
+`generate()` は初期系列を部分列クラスタリングした後、各生成 step で候補値を1つずつ**仮追加**し、候補追加後の構造がユーザー指定の `complexity_transition` に最も近くなる値を選びます。
 
-現在の単純/複雑スコアは、prediction、diversity、shape、occurrence、mass の5軸を合成します。`mass` は候補追加後のクラスタ量（quantity）を表します。後続例がない場合は prediction 軸を除外し、残り4軸だけで重みを再正規化します。
+現在の複雑度 score は、次の5軸を候補集合内で正規化して合成します。
+
+- prediction: 現在文脈から予測される後続値に対する surprise
+- diversity: クラスタ代表間距離
+- shape: クラスタ代表系列内部の変化量
+- occurrence: クラスタの出現間隔系列の構造
+- mass: 反復クラスタ量（quantity）
+
+基本重みは `prediction:diversity:shape:occurrence:mass = 6:1:1:1:1` です。候補間で変化しない軸や、まだ計算できない軸は除外し、残った重みだけで再正規化します。
 
 ## 1. エンドポイント
 
 - ルート: `POST /api/web/time_series/generate`
 - ルーティング先: `TimeSeriesController.generate()`
 - 主な実装:
-  - [src/controllers/time_series_controller.jl]
-  - [src/polyphonic/polyphonic_cluster_manager.jl]
+  - [`src/controllers/time_series_controller.jl`](../src/controllers/time_series_controller.jl)
+  - [`src/polyphonic/polyphonic_cluster_manager.jl`](../src/polyphonic/polyphonic_cluster_manager.jl)
+  - [`src/config.jl`](../src/config.jl)
 
 ## 2. 入力ペイロード
 
-`generate` は `generate` キー配下を読みます。
+`generate` キー配下を読みます。
 
 ```json
 {
   "generate": {
     "first_elements": "0,0,0",
     "complexity_transition": "0.0,0.25,0.5,0.75,1.0",
+    "recency_center": "0.0,0.5,1.0,0.5,0.0",
     "merge_threshold_ratio": 0.3,
+    "contextual_min_width": 1.0,
     "range_min": 0,
-    "range_max": 9,
-    "recency_center": "0.0,0.5,1.0,0.5,0.0"
+    "range_max": 9
   }
 }
 ```
 
-- `generate.first_elements`
-  - CSV 文字列です。
-  - `_parse_csv_ints` で `Int[]` に変換されます。
-- `generate.complexity_transition`
-  - CSV 文字列です。
-  - `_parse_csv_floats` で `Float64[]` に変換されます。
-  - 各値は 0.0 から 1.0 の目標複雑度として使われます。
-- `generate.merge_threshold_ratio`
-  - クラスタ統合閾値です。
-  - デフォルトは `Config.DEFAULT_MERGE_THRESHOLD_RATIO`。
-- `generate.range_min`, `generate.range_max`
-  - 候補値の範囲です。
-  - 例えば `0..9` なら各ステップで候補 `0,1,2,...,9` を全て試算します。
-- `generate.recency_center`
-  - CSV 文字列または配列です。
-  - 各 step で直近の履歴をどれくらい強く見るかを 0.0 から 1.0 で指定します。
-  - 未指定なら全 step で `0.0` です。
+### `first_elements`
 
-`contextual_min_width` も読み込まれますが、現在の `generate()` は `scale_mode = :range_fixed` なので、距離スケールには `range_min/range_max` が使われます。
+CSV文字列を `_parse_csv_ints` で `Int[]` にします。これが生成前の初期文脈です。
 
-## 3. 全体の流れ
+### `complexity_transition`
 
-`generate()` の処理順は次です。
+CSV文字列を `_parse_csv_floats` で `Float64[]` にします。配列長が生成 step 数です。各値は通常 0..1 の複雑度目標として使いますが、サーバ側で明示的 clamp はしていません。
 
-1. `first_elements` と `complexity_transition` を CSV から配列へ変換する。
-2. 候補範囲 `range_min:range_max` を決める。
-3. `PolyphonicClusterManager.Manager` を作る。
-   - 単音値は `Float64[value]` に変換される。
-   - `scale_mode = :range_fixed`
-   - `range_min/range_max` を manager に渡す。
-4. 初期系列 `first_elements` を `process_data!` でクラスタリングする。
-5. 初期クラスタから距離・量・複雑度キャッシュを作る。
-6. 各 window size の最新クラスタから過去の後続値を集め、予測分布を作る。
-7. `complexity_transition` の各 target について、候補値の predictive surprise を計算する。
-8. target に最も近い候補を選ぶ。
-9. 選ばれた値を本当に manager に追加し、キャッシュを更新する。
-10. 生成終了後、timeline と cluster tree を返す。
+### `recency_center`
 
-仮追加は `simulate_add_and_calculate(manager, Float64[candidate])` で行います。この関数は rollback transaction を使うため、候補試算後に manager の状態は元に戻ります。
+CSV文字列を `_parse_csv_floats` で読みます。stepごとに manager の `recency` に設定され、0..1へ clamp されます。配列が生成stepより短い場合、残りは `0.0` です。
 
-## 4. 初期クラスタリングと `range_fixed`
+### `merge_threshold_ratio`
 
-現在の `generate()` は `range_fixed` です。
+部分列を既存クラスタへ統合する距離比閾値です。未指定時は `Config.DEFAULT_MERGE_THRESHOLD_RATIO = 0.3` です。
+
+### `range_min` / `range_max`
+
+候補値の整数範囲で、同時に `scale_mode=:range_fixed` の距離正規化幅も決めます。未指定時は `0..24` です。
+
+各 step で候補集合はそのまま次です。
+
+```text
+range_min:range_max
+```
+
+### `contextual_min_width`
+
+値は manager に渡されますが、`generate()` は `scale_mode=:range_fixed` なので通常の距離スケール決定には使われません。
+
+## 3. 全体処理
+
+`generate()` は次の順で動きます。
+
+1. payloadから各入力を読み込む。
+2. 初期値を `Float64[value]` という1要素 `PolySet` に変換する。
+3. `PolyphonicClusterManager.Manager` を `scale_mode=:range_fixed` で作る。
+4. `process_data!` で初期系列を部分列クラスタリングする。
+5. `transform_clusters` と `initial_calc_values!` で距離・quantity・shape complexity の初期キャッシュを作る。
+6. 各生成 step で `recency` を設定する。
+7. commit済み状態から metric calibrator と predictive distribution を構築する。
+8. `range_min:range_max` の各候補について `simulate_add_and_calculate_all_extended` を実行する。
+9. 候補ごとに prediction / diversity / shape / occurrence / mass を合成する。
+10. `abs(score-target)` が最小の候補を選ぶ。
+11. 選ばれた候補だけを `add_data_point_permanently!` で本当に追加する。
+12. `update_caches_permanently!` で永続キャッシュと occurrence interval 状態を更新する。
+13. 全step終了後、timeline、cluster tree、生成系列を返す。
+
+重要なのは、候補評価に現在使われている関数が **`simulate_add_and_calculate_all_extended`** であることです。これは通常の3 metricだけでなく `OccurrenceIntervalMetrics` も返します。
+
+## 4. 初期クラスタリング
+
+単音値も `PolyphonicClusterManager` では集合として扱います。
+
+```text
+0 -> [0.0]
+3 -> [3.0]
+```
+
+`PolySet = Vector{Float64}`、部分列は `PolySeq = Vector{PolySet}` です。
+
+最小 window は `Config.SUBSEQUENCE_MIN_WINDOW_SIZE = 2` です。`process_data!` は時系列を先頭から走査し、`clustering_subsequences_incremental!` へ渡します。
+
+クラスタ木は root が window=2、その子が window=3、さらにその子が window=4 ... という構造です。
+
+クラスタ統合判定は概ね次です。
+
+```text
+distance = euclidean_distance(candidate_seq, representative)
+ratio = distance / sqrt(window_size)
+ratio <= merge_threshold_ratio -> merge
+```
+
+既存クラスタへ統合された部分列だけが `tasks` を介して次の長さへ伸長されます。
+
+## 5. `range_fixed` の距離
+
+`generate()` は次の manager を作ります。
 
 ```julia
 PolyphonicClusterManager.Manager(
@@ -84,155 +129,266 @@ PolyphonicClusterManager.Manager(
   scale_mode = :range_fixed,
   range_min = candidate_min_master,
   range_max = candidate_max_master,
-  ...
+  contextual_min_width = contextual_min_width,
+  recency = 0.0
 )
 ```
 
-`range_fixed` では `value_width = abs(range_max - range_min)` になります。例えば `range_min=0`, `range_max=9` なら `value_width=9` です。
-
-単音候補 `3` と既存代表 `0` の 1 ステップ距離は概ね次です。
+`range_fixed` では
 
 ```text
-abs(3 - 0) / 9 = 0.333...
+value_width = abs(range_max - range_min)
 ```
 
-この正規化距離は、過去に観測した後続値の周辺へ確率を滑らかに広げるときに使います。
+で、0なら内部的に1へ補正されます。
 
-## 5. 複数 window の予測分布
-
-候補を追加する前に、各 window size の最新部分列が属するクラスタを調べます。そのクラスタの過去の start index ごとに、部分列の直後に実際に現れた値を後続例として集めます。
-
-各 window は後続例の合計が 1 になるように正規化し、次の積で window 間の重みを決めます。
+単音同士では `min_avg_distance` は実質
 
 ```text
-window_weight = window_size * support_reliability * context_cohesion
-support_reliability = support / (support + 2)
+abs(a-b) / value_width
 ```
 
-長い文脈、後続例が多い文脈、現在末尾と過去文脈がよく似るクラスタほど強くなります。最大 context length は32、各contextの履歴は直近64件です。
+です。
 
-## 6. 候補の predictive surprise
+## 6. キャッシュ
 
-各後続値の周辺へ Gaussian kernel で確率を広げ、全 window の分布を合成します。候補と後続値の距離は manager と同じ `range_fixed` 距離を使い、bandwidth は0.22です。
-
-```text
-likelihood(candidate) = Σ mass * exp(-0.5 * (distance / 0.22)^2)
-surprise(candidate) = 1 - likelihood(candidate) / peak_likelihood
-```
-
-最も典型的な既知の後続は surprise 0、予測分布から遠い候補ほど1へ近づきます。複数の後続パターンがあれば分布は複数の山を持ちます。
-
-予測に使える過去の後続例が一件もない場合は prediction 軸を除外し、diversity、shape、occurrence、mass の4軸でスコアを再計算します。
-
-## 7. target へのマッチング
-
-predictive surpriseに3つの構造軸を合成します。
-
-```text
-combined = (
-  6 * predictive_surprise
-  + 1 * cluster_diversity
-  + 1 * cluster_shape_complexity
-  + 1 * occurrence_interval_complexity
-) / active_weights
-```
-
-`cluster_diversity`は候補追加後のクラスタ代表間距離、`cluster_shape_complexity`はクラスタ代表系列内の変化量です。各構造軸は候補集合内で0..1化し、候補間に差がない軸は合成から外します。
-
-`occurrence_interval_complexity`も、出現間隔を正規化した時系列に同じ方式を適用して計算します。
-
-```text
-occurrence_interval_complexity = (
-  6 * interval_predictive_surprise
-  + 1 * interval_cluster_diversity
-  + 1 * interval_cluster_shape_complexity
-) / active_weights
-```
-
-区間の後続分布をまだ作れない段階ではoccurrence軸全体を合成から外します。候補ごとにoccurrence intervalが未準備の場合はpredictive surpriseをその軸の値として使い、未準備自体を単純・複雑のどちらにも決めつけません。合成後も候補集合内で0..1へ揃えます。
-
-全候補について次を最小化します。
-
-```text
-abs(combined_complexity(candidate) - target_val)
-```
-
-`complexity_transition=0`は最も典型的な反復の継続、`1`は予測分布から最も外れた候補を意味します。
-
-## 8. 直近性ウェイト
-
-`recency_center > 0` の場合、各windowの後続分布を作る際に、最近観測した後続例ほど強く投票します。
-
-ユーザ入力 `x` はそのまま直線では使わず、次の smoothstep カーブで内部値 `r` に変換します。
-
-```text
-r = x * x * (3 - 2 * x)
-```
-
-`r` からそのまま直近性ウェイトを作ります。
-
-```text
-span = exp((1 - r) * log(64))
-weight = (1 - r) + r * exp(-age / span)
-```
-
-開始 index `start_index` の重みは次です。
-
-```text
-age = now_index - start_index
-weight = (1 - r) + r * exp(-age / span)
-```
-
-例:
-
-```text
-recency_center = 0.0
-r = 0.0
-age がいくつでも weight = 1.0
-
-recency_center = 0.5
-r = 0.5
-span = 8
-age = 0  -> weight = 1.0
-age = 8  -> weight = 0.5 + 0.5 * exp(-1) = 0.6839
-age = 16 -> weight = 0.5 + 0.5 * exp(-2) = 0.5677
-
-recency_center = 1.0
-r = 1.0
-span = 1
-age = 0 -> weight = 1.0
-age = 1 -> weight = exp(-1) = 0.3679
-age = 2 -> weight = exp(-2) = 0.1353
-```
-
-`recency_center=0.0` なら常に重み `1.0` になり、古い後続例と新しい後続例が同じ強さで投票します。
-
-直近性は prune ではありません。古いクラスタを消すのではなく、予測分布を作る際の投票ウェイトを下げます。
-
-## 9. キャッシュと rollback
-
-`generate()` は候補数だけ `simulate_add_and_calculate` を呼ぶため、毎回全クラスタを完全再計算すると重くなります。そのため manager は次のキャッシュを持ちます。
+manager は window size ごとに次を保持します。
 
 - `cluster_distance_cache`
 - `cluster_quantity_cache`
 - `cluster_complexity_cache`
 
-初期系列のクラスタリング後、`initial_calc_values!` がキャッシュを seed します。
+`initial_calc_values!` は初期クラスタについてこれらを全seedします。
 
-候補試算では次の流れになります。
+quantityは
 
-1. transaction 開始。
-2. 候補を一時的に `mgr.data` へ追加。
-3. 追加分だけクラスタリング。
-4. 更新されたクラスタのキャッシュを更新。
-5. `dist/quantity/complexity` を集計して返す。
-6. rollback して試算前の状態へ戻す。
+```text
+cluster_size * window_size
+```
 
-候補が選ばれた後だけ、`add_data_point_permanently!` と `update_caches_permanently!` で本当に状態を進めます。
+shape complexity はクラスタ代表系列 `as` の隣接step間距離の平均です。
 
-## 10. レスポンス形式
+生成中は、実際に変化したクラスタのIDだけを更新対象として追跡し、全クラスタを毎候補で再計算しない構成です。
 
-`generate()` は次のキーを返します。
+## 7. 候補仮追加と rollback
+
+候補評価は `simulate_add_and_calculate_all_extended(manager, candidate)` です。
+
+内部では:
+
+1. `start_transaction!`
+2. 更新ID集合をsimulation用にreset
+3. candidateを `mgr.data` に仮push
+4. `clustering_subsequences_incremental!`
+5. 変更クラスタの距離・quantity・shape cacheだけ更新
+6.全windowの metric を集計
+7. occurrence interval metric を計算
+8. `finally` で `rollback!`
+
+という流れです。
+
+rollback journalには、data push、`si`追加、代表系列更新、root/child cluster追加、各cache書換えが記録されます。そのため候補試算後は、候補追加前の manager 状態へ戻ります。
+
+## 8. commit済み状態から metric calibrator を固定する
+
+各生成stepの候補比較前に `build_extended_metric_calibrator(manager)` を1回作ります。
+
+基準値には現在のcommit済みmanagerの
+
+- distance
+- quantity
+- complexity
+- occurrence interval側のdistance/quantity/complexity
+
+を使います。
+
+各raw metricは `atan` ベースで0..1へ写像されます。
+
+```text
+z = direction * (raw-center) / scale
+score = 0.5 + atan(z)/pi
+```
+
+distance と shape complexity は大きいほど複雑側、quantityは大きいほど反復が多いので `direction=-1` です。
+
+calibratorは候補ごとに作り直さず、同じstepの全候補比較で固定します。
+
+## 9. predictive distribution
+
+`build_predictive_distribution` は現在末尾を含む複数window sizeのクラスタを使います。
+
+各windowについて:
+
+1. 現在末尾の context が属するクラスタを見つける。
+2. 同じクラスタに属した過去 context の開始位置を取る。
+3. その直後に実際に現れた値を successor として集める。
+4. 過去contextと現在contextの距離を Gaussian similarity にする。
+5. recency weight と掛けて各 occurrence の票にする。
+6. そのwindow内で票を合計1へ正規化する。
+7. window長、support reliability、context cohesionからwindow自体の重みを決める。
+8. 全windowの successor distribution を合成する。
+
+主要定数は次です。
+
+```text
+PREDICTIVE_MAX_CONTEXT_LENGTH = 32
+PREDICTIVE_HISTORY_LIMIT_PER_CONTEXT = 64
+PREDICTIVE_SUPPORT_PRIOR = 2.0
+PREDICTIVE_CONTEXT_DISTANCE_BANDWIDTH = 0.10
+PREDICTIVE_SUCCESSOR_DISTANCE_BANDWIDTH = 0.22
+```
+
+window重みは
+
+```text
+reliability = support / (support + 2)
+cohesion = mean(context_similarity)
+scale_weight = window_size * reliability * cohesion
+```
+
+です。
+
+## 10. predictive surprise
+
+候補と各successorの距離へGaussian kernelをかけます。
+
+```text
+likelihood(candidate)
+  = sum(successor_mass * exp(-0.5*(distance/0.22)^2))
+
+surprise
+  = 1 - likelihood(candidate) / peak_likelihood
+```
+
+既知の典型的な後続に近いほど0、予測分布から外れるほど1へ近づきます。
+
+predictive distributionを構築できない場合、prediction軸は利用不可です。
+
+## 11. recency
+
+`manager.recency` は各stepの `recency_center` から設定されます。
+
+内部カーブは:
+
+```text
+r = x*x*(3-2*x)
+```
+
+その後:
+
+```text
+age = now_index - start_index
+span = exp((1-r) * log(64))
+weight = (1-r) + r*exp(-age/span)
+```
+
+となります。
+
+`recency=0` では全 occurrence が等重みです。
+
+recency は predictive distribution の投票だけでなく、`recency>0` 時の distance / quantity / shape metric 集計にも反映されます。
+
+- distance: クラスタ同士のrecency weightの幾何平均で重み付け
+- quantity: 各 occurrence のrecency weightを加算
+- complexity: クラスタの最終出現位置に基づいて重み付け
+
+したがって「recencyはpredictionだけに作用する」わけではありません。
+
+## 12. occurrence interval complexity
+
+現在末尾を含み、出現回数が `OCCURRENCE_INTERVAL_MIN_OCCURRENCES = 3` 以上のクラスタについて、開始index列から出現間隔を作ります。
+
+```text
+starts = [2, 7, 11, 18]
+gaps   = [5, 4, 7]
+```
+
+これを初期間隔scaleで正規化し、最大 `OCCURRENCE_INTERVAL_RATIO_MAX = 4.0` へclampして、別の `PolyphonicClusterManager` に投入します。
+
+interval manager自身は再帰的にoccurrence intervalを作らないよう `enable_occurrence_intervals=false` です。
+
+候補追加によって新しい出現間隔が生じる場合、その間隔についても
+
+- prediction
+- diversity
+- shape
+
+を評価します。interval quantityは診断値として計算されますが、`combine_occurrence_interval_scores` の最終3軸合成には直接入りません。
+
+利用可能なbase windowが多い場合は最大 `OCCURRENCE_INTERVAL_MAX_BASE_SCALES = 4` スケールへ間引いて平均します。
+
+## 13. 5軸score合成
+
+各候補について得たraw値は:
+
+- `metrics.distance`
+- `metrics.quantity`
+- `metrics.complexity`
+- `metrics.occurrence_intervals`
+- `predictive_surprise`
+
+です。
+
+`combine_predictive_structural_scores` は候補集合内で各軸を0..1化します。
+
+基本重み:
+
+```text
+prediction = 6
+diversity  = 1
+shape      = 1
+occurrence = 1
+mass       = 1
+```
+
+概念的には:
+
+```text
+combined = (
+  6 * prediction
+  + 1 * diversity
+  + 1 * shape
+  + 1 * occurrence
+  + 1 * mass
+) / active_weight_sum
+```
+
+です。
+
+ただし実装では候補間にspanがない軸は無効になります。またpredictionが全候補で利用できないとprediction weightは0です。occurrenceが準備できない場合もその軸は0 weightになります。
+
+occurrence内部は概念的に:
+
+```text
+6 * interval_prediction
++ 1 * interval_diversity
++ 1 * interval_shape
+```
+
+を利用可能軸だけで再正規化します。
+
+## 14. targetに最も近い候補を選ぶ
+
+`select_candidate_by_complexity_score` は候補順に走査し、
+
+```text
+abs(score[candidate] - target_val)
+```
+
+が最小の候補indexを返します。
+
+strictに小さいときだけbestを更新するため、完全同点なら先に列挙された小さい候補値が残ります。
+
+選ばれた値は:
+
+```julia
+PolyphonicClusterManager.add_data_point_permanently!(manager, Float64[result_value])
+PolyphonicClusterManager.update_caches_permanently!(manager)
+```
+
+でcommitされ、次stepの履歴になります。
+
+## 15. レスポンス
 
 ```json
 {
@@ -256,19 +412,19 @@ age = 2 -> weight = exp(-2) = 0.1353
 }
 ```
 
-- `timeSeries`
-  - `first_elements` と生成結果を結合した系列です。
-- `complexityTransition`
-  - 初期値部分は `missing`、JSON では通常 `null` 相当です。
-  - 生成部分に target 値が入ります。
-- `clusteredSubsequences`
-  - `clusters_to_timeline` の結果です。
-- `clusters`
-  - `clusters_to_dict` の結果です。
+- `timeSeries`: 初期系列 + 生成値
+- `complexityTransition`: 初期系列の長さ分は `missing`（JSONではnull相当）、生成部分は入力target
+- `clusteredSubsequences`: `clusters_to_timeline`
+- `clusters`: `clusters_to_dict`
+- `processingTime`: `Config.PROCESSING_TIME_DIGITS=2` 桁へroundした秒数
 
-## 11. 実装上の注意
+## 16. 実装上の注意
 
-- `generate()` は `range_fixed` なので、候補範囲が距離スケールを決めます。
-- `complexity_transition` は候補値そのものではなく、候補追加後の構造スコアの目標です。
-- 初期値が完全反復の場合、低 target では既存反復に乗る候補が強く選ばれやすくなります。
-- `recency_center=0.0` で直近性ウェイトは無効、`1.0` で直近性を最大反映します。
+- `generate()` は単音生成ですが、内部は `PolyphonicClusterManager` を使います。
+- 候補試算は `simulate_add_and_calculate_all_extended` で、occurrence intervalまで含みます。
+- `range_min/range_max` は候補集合と距離scaleの両方を決めます。
+- recencyはpredictive successor票だけでなく、通常のdistance/quantity/shape集計にも作用します。
+- predictionが作れない初期段階でも、残りの構造軸で候補比較できます。
+- quantityは大きいほど単純側としてcalibrateされます。
+- scoreの各軸はabsoluteな0..1尺度だけではなく、候補集合内で再正規化される部分があります。
+- 生成値は整数候補だけです。
