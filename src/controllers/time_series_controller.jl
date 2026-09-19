@@ -5004,34 +5004,14 @@ function generate_polyphonic()
   end
 
   function _metric_weights_for_dimension(
-    key::String,
-    idx0::Int,
+    _key::String,
+    _idx0::Int,
     scope::String
   )::NTuple{3,Float64}
     scope_l = lowercase(scope)
-    scope_l in ("global", "stream") || error("scope must be global or stream")
-
-    d_raw = array_param(gp, "$(key)_$(scope_l)_dist_weight", idx0)
-    q_raw = array_param(gp, "$(key)_$(scope_l)_qty_weight", idx0)
-    c_raw = array_param(gp, "$(key)_$(scope_l)_comp_weight", idx0)
-
-    d_raw === nothing && (d_raw = array_param(gp, "$(key)_$(scope_l)_distance_weight", idx0))
-    q_raw === nothing && (q_raw = array_param(gp, "$(key)_$(scope_l)_quantity_weight", idx0))
-    c_raw === nothing && (c_raw = array_param(gp, "$(key)_$(scope_l)_complexity_weight", idx0))
-
-    d_raw === nothing && (d_raw = array_param(gp, "$(scope_l)_dist_weight", idx0))
-    q_raw === nothing && (q_raw = array_param(gp, "$(scope_l)_qty_weight", idx0))
-    c_raw === nothing && (c_raw = array_param(gp, "$(scope_l)_comp_weight", idx0))
-
-    d_raw === nothing && (d_raw = array_param(gp, "$(scope_l)_distance_weight", idx0))
-    q_raw === nothing && (q_raw = array_param(gp, "$(scope_l)_quantity_weight", idx0))
-    c_raw === nothing && (c_raw = array_param(gp, "$(scope_l)_complexity_weight", idx0))
-
-    d = d_raw === nothing ? 1.0 : _parse_float(d_raw)
-    q = q_raw === nothing ? 1.0 : _parse_float(q_raw)
-    c = c_raw === nothing ? 1.0 : _parse_float(c_raw)
-
-    return _normalize_metric_weights(d, q, c)
+    scope_l == "global" && return Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS
+    scope_l == "stream" && return Config.POLYPHONIC_STREAM_METRIC_WEIGHTS
+    error("scope must be global or stream")
   end
 
   # ----------------------------------------------------------

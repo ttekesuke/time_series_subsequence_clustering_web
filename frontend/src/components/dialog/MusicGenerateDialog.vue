@@ -1528,64 +1528,6 @@ const genRowMetas: GenRowMeta[] = [
   },
 
   // =========================================================
-  // scoring weights (global / stream ; dist / qty / comp)
-  // =========================================================
-  {
-    shortName: "G-D W",
-    name: "Global Distance Weight",
-    key: "global_dist_weight",
-    min: 0,
-    max: 5,
-    step: 0.01,
-    defaultFactory: (len) => constant(0.2, len),
-  },
-  {
-    shortName: "G-Q W",
-    name: "Global Quantity Weight",
-    key: "global_qty_weight",
-    min: 0,
-    max: 5,
-    step: 0.01,
-    defaultFactory: (len) => constant(2, len),
-  },
-  {
-    shortName: "G-C W",
-    name: "Global Complexity Weight",
-    key: "global_comp_weight",
-    min: 0,
-    max: 5,
-    step: 0.01,
-    defaultFactory: (len) => constant(2, len),
-  },
-  {
-    shortName: "S-D W",
-    name: "Stream Distance Weight",
-    key: "stream_dist_weight",
-    min: 0,
-    max: 5,
-    step: 0.01,
-    defaultFactory: (len) => constant(0.2, len),
-  },
-  {
-    shortName: "S-Q W",
-    name: "Stream Quantity Weight",
-    key: "stream_qty_weight",
-    min: 0,
-    max: 5,
-    step: 0.01,
-    defaultFactory: (len) => constant(2, len),
-  },
-  {
-    shortName: "S-C W",
-    name: "Stream Complexity Weight",
-    key: "stream_comp_weight",
-    min: 0,
-    max: 5,
-    step: 0.01,
-    defaultFactory: (len) => constant(2, len),
-  },
-
-  // =========================================================
   // dissonance target (0..1)
   // =========================================================
   {
@@ -2296,12 +2238,6 @@ const buildGenParamsFromRows = () => {
 
   result.stream_strength_target = get('stream_strength_target')
   result.stream_strength_spread = get('stream_strength_spread')
-  result.global_dist_weight = get('global_dist_weight')
-  result.global_qty_weight = get('global_qty_weight')
-  result.global_comp_weight = get('global_comp_weight')
-  result.stream_dist_weight = get('stream_dist_weight')
-  result.stream_qty_weight = get('stream_qty_weight')
-  result.stream_comp_weight = get('stream_comp_weight')
   result.note_register_freedom  = get('note_register_freedom')
   result.dissonance_target      = get('dissonance_target')
   result.future_bpm             = get('future_bpm')
@@ -2535,12 +2471,6 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       merge_threshold_ratio: mergeThresholdRatio.value,
       stream_strength_target: genParams.stream_strength_target,
       stream_strength_spread: genParams.stream_strength_spread,
-      global_dist_weight: genParams.global_dist_weight,
-      global_qty_weight: genParams.global_qty_weight,
-      global_comp_weight: genParams.global_comp_weight,
-      stream_dist_weight: genParams.stream_dist_weight,
-      stream_qty_weight: genParams.stream_qty_weight,
-      stream_comp_weight: genParams.stream_comp_weight,
       note_register_freedom: genParams.note_register_freedom,
       dissonance_target: genParams.dissonance_target
     }

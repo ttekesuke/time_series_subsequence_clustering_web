@@ -420,31 +420,27 @@ prediction : diversity : shape : occurrence : mass
 
 各軸は候補集合内で正規化され、候補間に差がない軸は除外されます。
 
-### metric weight parameter
+### D/Q/C weightはserver-owned
 
-通常dimensionはglobal/streamそれぞれについて:
+通常dimensionのglobal/stream scoreで使う distance / quantity / complexity の追加倍率は、request parameterではなく `Config` が保持します。
 
-```text
-{dim}_{scope}_dist_weight
-{dim}_{scope}_qty_weight
-{dim}_{scope}_comp_weight
-```
-
-を読みます。
-
-なければgeneric:
+現在値:
 
 ```text
-{scope}_dist_weight
-{scope}_qty_weight
-{scope}_comp_weight
+global (distance, quantity, complexity) = (0.2, 2.0, 2.0)
+stream (distance, quantity, complexity) = (0.2, 2.0, 2.0)
 ```
 
-へfallbackします。
+したがって通常の5軸の基本重み `6 : 1 : 1 : 1 : 1` に対して、D/Q/C倍率適用後は概念的に:
 
-`distance` / `quantity` / `complexity` の長いaliasも受理します。
+```text
+prediction : diversity : shape : occurrence : mass
+= 6 : 0.2 : 2 : 1 : 2
+```
 
-これらは5軸のうち diversity / mass / shape の倍率に使われ、predictionとoccurrenceの基本重みは別のConfig定数です。
+です。候補間に差がない軸は従来どおり除外され、残った軸で再正規化されます。
+
+旧 `*_dist_weight` / `*_qty_weight` / `*_comp_weight` request fields（dimension固有aliasを含む）は生成時に参照しません。
 
 ## 15. predictive distribution
 
