@@ -1,0 +1,90 @@
+name: verify-server-owned-complexity-weights
+
+on:
+  push:
+    branches:
+      - fix/server-owned-complexity-weights
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/server-owned-complexity-weights
+          fetch-depth: 0
+
+      - name: Verify obsolete request fields are gone
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          obsolete = [
+              "global_dist_weight", "global_qty_weight", "global_comp_weight",
+              "stream_dist_weight", "stream_qty_weight", "stream_comp_weight",
+              "_global_distance_weight", "_global_quantity_weight", "_global_complexity_weight",
+              "_stream_distance_weight", "_stream_quantity_weight", "_stream_complexity_weight",
+          ]
+          checked = [
+              Path("frontend/src/components/dialog/MusicGenerateDialog.vue"),
+              Path("frontend/src/components/features/MusicGenerate.vue"),
+              Path("config/warmup_generate_polyphonic.json"),
+              Path("src/controllers/time_series_controller.jl"),
+          ]
+          for p in checked:
+              text = p.read_text()
+              remaining = [name for name in obsolete if name in text]
+              assert not remaining, f"{p}: obsolete fields remain: {remaining}"
+
+          config = Path("src/config.jl").read_text()
+          assert "POLYPHONIC_GLOBAL_METRIC_WEIGHTS::NTuple{3,Float64} = (0.2, 2.0, 2.0)" in config
+          assert "POLYPHONIC_STREAM_METRIC_WEIGHTS::NTuple{3,Float64} = (0.2, 2.0, 2.0)" in config
+
+          controller = Path("src/controllers/time_series_controller.jl").read_text()
+          assert 'scope_l == "global" && return Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS' in controller
+          assert 'scope_l == "stream" && return Config.POLYPHONIC_STREAM_METRIC_WEIGHTS' in controller
+          PY
+          git diff --check
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.11.6'
+
+      - name: Instantiate Julia
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Run generation regressions
+        run: |
+          julia --project=. -e '
+            ENV["GENIE_ENV"] = "test"
+            push!(LOAD_PATH, abspath("src"))
+            using Genie
+            Genie.loadapp()
+            using Main.TimeseriesClusteringAPI, Test
+            include("test/issues_16_23_regressions.jl")
+            include("test/generate_polyphonic_validation.jl")
+            include("test/transaction_safety.jl")
+          '
+
+      - name: Remove one-shot workflow
+        run: |
+          rm -f .github/workflows/verify-server-owned-complexity-weights.yml
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'chore: remove one-shot weight verification'
+          git push origin HEAD:fix/server-owned-complexity-weights
