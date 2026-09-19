@@ -1014,14 +1014,6 @@ const parameterSections = computed<ParameterSection[]>(() => {
       { label: 'register freedom', keys: ['note_register_freedom'] },
       { label: 'dissonance', keys: ['dissonance_target'] },
     ]),
-    makeParameterSection('weights', 'SCORING WEIGHT Params', [
-      { label: 'global distance', keys: ['global_dist_weight'] },
-      { label: 'global quantity', keys: ['global_qty_weight'] },
-      { label: 'global complexity', keys: ['global_comp_weight'] },
-      { label: 'stream distance', keys: ['stream_dist_weight'] },
-      { label: 'stream quantity', keys: ['stream_qty_weight'] },
-      { label: 'stream complexity', keys: ['stream_comp_weight'] },
-    ], 0, 5, 0.01),
     makeParameterSection('area-complexity', 'AREA Complexity Params', [
       { label: 'global', keys: ['area_global'] },
       { label: 'center', keys: ['area_center'] },
