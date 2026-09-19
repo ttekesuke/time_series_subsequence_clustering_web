@@ -2471,12 +2471,6 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       merge_threshold_ratio: mergeThresholdRatio.value,
       stream_strength_target: genParams.stream_strength_target,
       stream_strength_spread: genParams.stream_strength_spread,
-      global_dist_weight: genParams.global_dist_weight,
-      global_qty_weight: genParams.global_qty_weight,
-      global_comp_weight: genParams.global_comp_weight,
-      stream_dist_weight: genParams.stream_dist_weight,
-      stream_qty_weight: genParams.stream_qty_weight,
-      stream_comp_weight: genParams.stream_comp_weight,
       note_register_freedom: genParams.note_register_freedom,
       dissonance_target: genParams.dissonance_target
     }
