@@ -102,6 +102,12 @@ const COMPLEXITY_SHAPE_WEIGHT::Float64 = 1.0
 const COMPLEXITY_OCCURRENCE_WEIGHT::Float64 = 1.0
 const COMPLEXITY_MASS_WEIGHT::Float64 = 1.0
 
+# Server-owned D/Q/C multipliers for generate_polyphonic scoring.
+# Order: (distance/diversity, quantity/mass, complexity/shape).
+# These preserve the former frontend defaults while keeping scoring policy out of request payloads.
+const POLYPHONIC_GLOBAL_METRIC_WEIGHTS::NTuple{3,Float64} = (0.2, 2.0, 2.0)
+const POLYPHONIC_STREAM_METRIC_WEIGHTS::NTuple{3,Float64} = (0.2, 2.0, 2.0)
+
 const DISSONANCE_STM_MEMORY_SPAN::Float64 = 1.5
 const DISSONANCE_STM_MEMORY_WEIGHT::Float64 = 1.0
 const DISSONANCE_STM_N_PARTIALS::Int = 8
