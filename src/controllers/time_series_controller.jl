@@ -3044,6 +3044,111 @@ end
 # Actions
 # ------------------------------------------------------------
 
+function _analyse_music_dataset_dir()
+  dataset_dir = normpath(get(
+    ENV,
+    "ASAP_DATASET_DIR",
+    joinpath(@__DIR__, "..", "..", "data", "asap-dataset"),
+  ))
+  if !isdir(dataset_dir)
+    fallback = normpath(joinpath(@__DIR__, "..", "..", "data", "asap-dataset"))
+    isdir(fallback) && return fallback
+  end
+  return dataset_dir
+end
+
+function asap_musicxml_sources()
+  try
+    return Dict(
+      "sources" => MusicAnalysis.list_asap_sources(_analyse_music_dataset_dir()),
+    )
+  catch err
+    if err isa MusicAnalysis.RequestError
+      throw(AnalyseMusicRequestError(err.code, err.message))
+    end
+    rethrow()
+  end
+end
+
+function analyse_music()
+  t0 = time()
+  payload = _payload()
+  p = _subhash(payload, "analyse_music")
+  source_type = lowercase(strip(string(get(p, "source_type", "upload"))))
+  params = Dict{String,Any}(string(k) => v for (k, v) in pairs(p))
+
+  try
+    if source_type == "asap"
+      composer = string(get(params, "composer", ""))
+      folder = string(get(params, "folder", ""))
+      xml_score = string(get(params, "xml_score", ""))
+      isempty(composer) && throw(MusicAnalysis.RequestError(
+        "missing_source",
+        "ASAP composer is required.",
+      ))
+      isempty(folder) && throw(MusicAnalysis.RequestError(
+        "missing_source",
+        "ASAP folder is required.",
+      ))
+      isempty(xml_score) && throw(MusicAnalysis.RequestError(
+        "missing_source",
+        "ASAP xml_score is required.",
+      ))
+      lowercase(splitext(xml_score)[2]) in (".xml", ".musicxml") || throw(
+        MusicAnalysis.RequestError(
+          "unsupported_file_type",
+          "Only .xml and .musicxml are supported. Compressed .mxl is not supported.",
+        ),
+      )
+
+      file_path = _xml_file_path(composer, folder, xml_score)
+      dataset_dir = _analyse_music_dataset_dir()
+      normalized_file = normpath(file_path)
+      normalized_dataset = normpath(dataset_dir)
+      startswith(normalized_file, normalized_dataset) || throw(
+        MusicAnalysis.RequestError("invalid_path", "Invalid ASAP MusicXML path."),
+      )
+      isfile(normalized_file) || throw(MusicAnalysis.RequestError(
+        "file_not_found",
+        "ASAP MusicXML file was not found.",
+      ))
+      params["musicxml_text"] = read(normalized_file, String)
+    elseif source_type == "upload"
+      filename = lowercase(strip(string(get(params, "filename", ""))))
+      if !isempty(filename) &&
+         !(endswith(filename, ".xml") || endswith(filename, ".musicxml"))
+        throw(MusicAnalysis.RequestError(
+          "unsupported_file_type",
+          "Only .xml and .musicxml are supported. Compressed .mxl is not supported.",
+        ))
+      end
+      haskey(params, "musicxml_text") || throw(MusicAnalysis.RequestError(
+        "missing_source",
+        "Uploaded MusicXML text is required.",
+      ))
+    else
+      throw(MusicAnalysis.RequestError(
+        "invalid_source_type",
+        "source_type must be upload or asap.",
+      ))
+    end
+
+    params["source_type"] = source_type
+    result = MusicAnalysis.analyse_music_payload(params, @__MODULE__)
+    result["processingTime"] = round(
+      time() - t0;
+      digits=Config.PROCESSING_TIME_DIGITS,
+    )
+    return result
+  catch err
+    if err isa MusicAnalysis.RequestError
+      throw(AnalyseMusicRequestError(err.code, err.message))
+    end
+    rethrow()
+  end
+end
+
+
 function analyse()
   t0 = time()
 
