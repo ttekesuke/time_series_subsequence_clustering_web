@@ -91,3 +91,16 @@ end
   @test err isa MA.RequestError
   @test err.code == "rhythm_resolution_exceeded"
 end
+
+
+@testset "ASAP metadata text can be listed without local submodule" begin
+  csv = """
+composer,title,folder,xml_score
+Bach,Fugue_bwv_846,Bach/Fugue/bwv_846,Bach/Fugue/bwv_846/xml_score.musicxml
+Bach,Fugue_bwv_846,Bach/Fugue/bwv_846,Bach/Fugue/bwv_846/xml_score.musicxml
+"""
+  sources = MA.list_asap_sources_from_csv_text(csv)
+  @test length(sources) == 1
+  @test sources[1]["composer"] == "Bach"
+  @test sources[1]["xml_score"] == "Bach/Fugue/bwv_846/xml_score.musicxml"
+end
