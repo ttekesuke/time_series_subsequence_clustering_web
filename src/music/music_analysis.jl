@@ -323,7 +323,7 @@ function _checked_lcm(current::Int, value::Int)::Int
 end
 
 function rhythm_denominator(parsed::ParsedScore)::Int
-  den = 1
+  den = _checked_lcm(1, denominator(parsed.total_q))
   for event in parsed.notes
     den = _checked_lcm(den, denominator(event.start_q))
     den = _checked_lcm(den, denominator(event.end_q))
