@@ -211,7 +211,7 @@ const stepCount = computed(() => result.value?.timing?.stepCount ?? 0)
 const plotAreaWidth = computed(() => Math.max(1, containerWidth.value - 80))
 const computedStepWidth = computed(() => {
   const count = Math.max(stepCount.value, 1)
-  return Math.max(0.25, Math.min(8, plotAreaWidth.value / count, 30000 / count))
+  return Math.max(1, Math.min(8, plotAreaWidth.value / count, 30000 / count))
 })
 const globalScrollTrackWidth = computed(() =>
   Math.max(containerWidth.value, Math.max(stepCount.value, 1) * computedStepWidth.value)
