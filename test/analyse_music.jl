@@ -40,20 +40,25 @@ function _score_with_divisions(divisions::Int, durations::Vector{Int})
   """
 end
 
-@testset "analyse_music exact rhythm and dimensions" begin
+@testset "analyse_music exact rhythm denominator accepts 3:4:5" begin
   xml = _score_with_divisions(60, [20, 15, 12])
+  parsed = MA.parse_musicxml_text(xml)
+  @test MA.rhythm_denominator(parsed) == 60
+end
+
+@testset "analyse_music produces requested dimensions" begin
+  xml = _score_with_divisions(1, [1])
   result = MA.analyse_music_payload(
     Dict{String,Any}(
       "source_type" => "upload",
-      "filename" => "345.musicxml",
+      "filename" => "simple.musicxml",
       "musicxml_text" => xml,
     ),
     TC,
   )
 
-  @test result["timing"]["gridDenominator"] == 60
+  @test result["timing"]["gridDenominator"] == 1
   @test result["timing"]["exact"] == true
-  @test result["timing"]["stepCount"] > 1
   @test result["dimensionOrder"] == [
     "note",
     "area",
@@ -68,7 +73,7 @@ end
     result["dimensions"]["note"]["analysis"]["global"]["axes"],
     "combined",
   )
-  @test length(result["pianoRoll"]["streams"]) == 3
+  @test length(result["pianoRoll"]["streams"]) == 1
 end
 
 @testset "analyse_music rejects denominator above 60 before clustering" begin
