@@ -3827,6 +3827,142 @@ function select_best_values_for_dimension_greedy(
   return Float64[isfinite(v) ? v : range_vec[1] for v in chosen]
 end
 
+
+function infer_chord_range_and_density_controls(abs_notes_raw)::Tuple{Int,Float64}
+  notes = sort(unique(Int[
+    clamp(_parse_int(v), Config.MIDI_NOTE_MIN, Config.MIDI_NOTE_MAX)
+    for v in abs_notes_raw
+  ]))
+  isempty(notes) && return (0, 0.0)
+
+  band_size = Config.AREA_BAND_SIZE
+  band_low = Config.area_band_low(notes[cld(length(notes), 2)])
+  band_high = min(band_low + band_size - 1, Config.MIDI_NOTE_MAX)
+  chord_range = clamp(
+    max(band_low - first(notes), last(notes) - band_high, 0),
+    Config.CHORD_RANGE_VALUE_MIN,
+    Config.CHORD_RANGE_VALUE_MAX,
+  )
+  low = clamp(band_low - chord_range, Config.MIDI_NOTE_MIN, Config.MIDI_NOTE_MAX)
+  high = clamp(band_high + chord_range, Config.MIDI_NOTE_MIN, Config.MIDI_NOTE_MAX)
+  slot_count = max(high - low + 1, 1)
+  density = clamp(
+    float(clamp(length(notes), 1, slot_count)) / float(slot_count),
+    0.0,
+    1.0,
+  )
+  return (chord_range, density)
+end
+
+function _observed_occurrence_complexity(
+  temporal::PolyphonicClusterManager.OccurrenceIntervalMetrics,
+  calibrator::ComplexityMetricCalibrator,
+  predictive,
+)
+  temporal.ready || return predictive
+
+  total = 0.0
+  denominator = 0.0
+
+  if isfinite(temporal.prediction)
+    w = max(Config.COMPLEXITY_PREDICTION_WEIGHT, 0.0)
+    total += w * clamp(temporal.prediction, 0.0, 1.0)
+    denominator += w
+  elseif predictive !== nothing
+    w = max(Config.COMPLEXITY_PREDICTION_WEIGHT, 0.0)
+    total += w * clamp(float(predictive), 0.0, 1.0)
+    denominator += w
+  end
+
+  w_div = max(Config.COMPLEXITY_DIVERSITY_WEIGHT, 0.0)
+  w_shape = max(Config.COMPLEXITY_SHAPE_WEIGHT, 0.0)
+  total += w_div * calibrate_metric(temporal.distance, calibrator.distance)
+  total += w_shape * calibrate_metric(temporal.complexity, calibrator.complexity)
+  denominator += w_div + w_shape
+
+  denominator <= 0.0 && return predictive
+  return clamp(total / denominator, 0.0, 1.0)
+end
+
+"""Evaluate one observed value against committed history and then commit it.
+
+This is the analysis counterpart of candidate scoring in generate/generate_polyphonic:
+the same predictive distribution, structural metrics, calibrators and server-owned
+weights are used, but there is no candidate-set normalization because an existing
+score supplies exactly one observed next value.
+"""
+function evaluate_observed_complexity!(
+  manager::PolyphonicClusterManager.Manager,
+  value::PolyphonicClusterManager.PolySet;
+  metric_weights::NTuple{3,Float64}=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
+)::Dict{String,Any}
+  calibrator = build_extended_metric_calibrator(manager)
+  distribution = PolyphonicClusterManager.build_predictive_distribution(manager)
+  predictive = PolyphonicClusterManager.predictive_surprise_score(
+    manager,
+    distribution,
+    value,
+  )
+  metrics = PolyphonicClusterManager.simulate_add_and_calculate_all_extended(
+    manager,
+    value,
+  )
+
+  diversity = calibrate_metric(metrics.distance, calibrator.base.distance)
+  shape = calibrate_metric(metrics.complexity, calibrator.base.complexity)
+  mass = calibrate_metric(metrics.quantity, calibrator.base.quantity)
+  occurrence = _observed_occurrence_complexity(
+    metrics.occurrence_intervals,
+    calibrator.occurrence_intervals,
+    predictive,
+  )
+
+  total = 0.0
+  denominator = 0.0
+  if predictive !== nothing
+    w = max(Config.COMPLEXITY_PREDICTION_WEIGHT, 0.0)
+    total += w * clamp(float(predictive), 0.0, 1.0)
+    denominator += w
+  end
+
+  w_div = max(Config.COMPLEXITY_DIVERSITY_WEIGHT * metric_weights[1], 0.0)
+  w_shape = max(Config.COMPLEXITY_SHAPE_WEIGHT * metric_weights[3], 0.0)
+  w_mass = max(Config.COMPLEXITY_MASS_WEIGHT * metric_weights[2], 0.0)
+  total += w_div * diversity + w_shape * shape + w_mass * mass
+  denominator += w_div + w_shape + w_mass
+
+  if occurrence !== nothing
+    w_occ = max(Config.COMPLEXITY_OCCURRENCE_WEIGHT, 0.0)
+    total += w_occ * clamp(float(occurrence), 0.0, 1.0)
+    denominator += w_occ
+  end
+
+  combined = denominator > 0.0 ?
+    clamp(total / denominator, 0.0, 1.0) :
+    Config.DEFAULT_TARGET_01
+
+  PolyphonicClusterManager.add_data_point_permanently!(manager, copy(value))
+  PolyphonicClusterManager.update_caches_permanently!(manager)
+
+  temporal = metrics.occurrence_intervals
+  return Dict(
+    "prediction" => predictive,
+    "diversity" => diversity,
+    "shape" => shape,
+    "occurrence" => occurrence,
+    "mass" => mass,
+    "combined" => combined,
+    "raw" => Dict(
+      "distance" => metrics.distance,
+      "quantity" => metrics.quantity,
+      "complexity" => metrics.complexity,
+      "occurrenceDistance" => temporal.ready ? temporal.distance : nothing,
+      "occurrenceQuantity" => temporal.ready ? temporal.quantity : nothing,
+      "occurrenceComplexity" => temporal.ready ? temporal.complexity : nothing,
+    ),
+  )
+end
+
 # ------------------------------------------------------------
 # generate_polyphonic (main)
 # ------------------------------------------------------------
