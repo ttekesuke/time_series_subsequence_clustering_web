@@ -309,7 +309,7 @@ const loadAsapSources = async () => {
 const openMusicXmlDialog = () => {
   dialogError.value = ''
   dialogOpen.value = true
-  void loadAsapSources()
+  if (sourceType.value === 'asap') void loadAsapSources()
 }
 
 const onFileChange = (event: Event) => {
@@ -380,6 +380,10 @@ const setAnalysedViewMode = (mode: string) => {
   analysedViewMode.value = mode === 'Cluster' ? 'Cluster' : 'Complexity'
   analysisRollRefs.value = []
 }
+
+watch(sourceType, value => {
+  if (value === 'asap') void loadAsapSources()
+})
 
 watch(() => result.value?.streams, streams => {
   if (analysisScope.value === 'global') return
