@@ -300,7 +300,21 @@ const loadAsapSources = async () => {
     const { data } = await axios.post('/api/web/time_series/asap_musicxml_sources', {})
     asapSourcesRaw.value = Array.isArray(data?.sources) ? data.sources : []
   } catch (error: any) {
-    dialogError.value = error?.response?.data?.message ?? 'ASAP dataset list could not be loaded.'
+    const status = error?.response?.status
+    const data = error?.response?.data
+    const backendMessage = typeof data?.message === 'string' ? data.message : ''
+    const backendCode = typeof data?.code === 'string' ? data.code : ''
+    if (backendMessage) {
+      dialogError.value = backendCode
+        ? backendMessage + ' (' + backendCode + ')'
+        : backendMessage
+    } else if (status === 404) {
+      dialogError.value = 'ASAP API endpoint was not found (HTTP 404). Restart or redeploy the backend so the new route is loaded.'
+    } else if (status) {
+      dialogError.value = 'ASAP dataset list could not be loaded (HTTP ' + status + ').'
+    } else {
+      dialogError.value = 'ASAP dataset list could not be loaded. The backend may not be reachable.'
+    }
   } finally {
     loadingAsap.value = false
   }
