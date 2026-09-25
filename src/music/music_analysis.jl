@@ -508,9 +508,12 @@ function _analyse_manager(
   streamwise::Bool=false,
   stream_axis_offset::Float64=1.0,
   stream_axis_capacity::Int=1,
+  log_label::AbstractString="",
 )
   n = length(series)
   min_window = Config.POLYPHONIC_MIN_WINDOW_SIZE
+  log_started_at = time()
+  !isempty(log_label) && @info "[analyse_music] clustering start" label=String(log_label) steps=n min_window=min_window
   axes = Dict(
     "prediction" => Any[nothing for _ in 1:n],
     "diversity" => Any[nothing for _ in 1:n],
@@ -527,7 +530,10 @@ function _analyse_manager(
     "occurrenceQuantity" => Any[nothing for _ in 1:n],
     "occurrenceComplexity" => Any[nothing for _ in 1:n],
   )
-  n < min_window && return Dict("axes"=>axes, "raw"=>raw, "clusters"=>Any[])
+  if n < min_window
+    !isempty(log_label) && @info "[analyse_music] clustering skipped" label=String(log_label) reason="series shorter than min window" steps=n
+    return Dict("axes"=>axes, "raw"=>raw, "clusters"=>Any[])
+  end
 
   seed = Vector{Float64}[copy(series[i]) for i in 1:min_window]
   manager = PolyphonicClusterManager.Manager(
@@ -548,6 +554,8 @@ function _analyse_manager(
   empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
 
   if n > min_window
+    total_observed_steps = n - min_window
+    progress_interval = max(cld(total_observed_steps, 10), 1)
     for index in (min_window + 1):n
       observed = scoring.evaluate_observed_complexity!(manager, series[index]; metric_weights=metric_weights)
       for key in keys(axes)
@@ -560,9 +568,16 @@ function _analyse_manager(
       raw["occurrenceDistance"][index] = get(raw_metrics, "occurrenceDistance", nothing)
       raw["occurrenceQuantity"][index] = get(raw_metrics, "occurrenceQuantity", nothing)
       raw["occurrenceComplexity"][index] = get(raw_metrics, "occurrenceComplexity", nothing)
+
+      processed = index - min_window
+      if !isempty(log_label) && (processed == total_observed_steps || processed % progress_interval == 0)
+        percent = round(Int, 100 * processed / total_observed_steps)
+        @info "[analyse_music] clustering progress" label=String(log_label) progress="$(percent)%" processed=processed total=total_observed_steps elapsed_s=round(time() - log_started_at; digits=2)
+      end
     end
   end
 
+  !isempty(log_label) && @info "[analyse_music] clustering done" label=String(log_label) elapsed_s=round(time() - log_started_at; digits=2)
   return Dict(
     "axes" => axes,
     "raw" => raw,
@@ -571,7 +586,11 @@ function _analyse_manager(
 end
 
 function analyse_music_payload(params, scoring)
-  parsed = parse_musicxml_text(string(get(params, "musicxml_text", "")))
+  analysis_started_at = time()
+  xml_text = string(get(params, "musicxml_text", ""))
+  @info "[analyse_music] parsing MusicXML" source_type=string(get(params, "source_type", "upload")) xml_bytes=sizeof(xml_text)
+  parsed = parse_musicxml_text(xml_text)
+  @info "[analyse_music] MusicXML parsed" note_events=length(parsed.notes) total_quarters=float(parsed.total_q) parts=length(parsed.part_names)
 
   grid_den = rhythm_denominator(parsed)
   total_steps_r = parsed.total_q * grid_den
@@ -595,6 +614,7 @@ function analyse_music_payload(params, scoring)
     end
   end
   stream_ids = collect(1:length(stream_keys))
+  @info "[analyse_music] exact grid ready" grid_denominator=grid_den step_count=step_count streams=length(stream_ids)
   id_by_key = Dict(key => idx for (idx, key) in enumerate(stream_keys))
   key_by_id = Dict(idx => key for (idx, key) in enumerate(stream_keys))
 
@@ -646,6 +666,9 @@ function analyse_music_payload(params, scoring)
   sounding_note_count = Int[]
   tempo_series = Float64[]
 
+  @info "[analyse_music] extracting score dimensions" steps=step_count streams=length(stream_ids)
+  extraction_started_at = time()
+  extraction_progress_interval = max(cld(step_count, 10), 1)
   for step in 1:step_count
     t_q = (step - 1) // grid_den
     onset_seconds = seconds_at(parsed, t_q)
@@ -711,7 +734,13 @@ function analyse_music_payload(params, scoring)
       raw_global_dissonance = DissonanceStmManager.commit!(global_dissonance_mgr, global_notes, global_amps, onset_seconds)
       global_dissonance[step] = scoring.calibrate_dissonance(raw_global_dissonance, global_calibrator)
     end
+
+    if step == step_count || step % extraction_progress_interval == 0
+      percent = round(Int, 100 * step / step_count)
+      @info "[analyse_music] dimension extraction progress" progress="$(percent)%" processed=step total=step_count elapsed_s=round(time() - extraction_started_at; digits=2)
+    end
   end
+  @info "[analyse_music] score dimensions extracted" elapsed_s=round(time() - extraction_started_at; digits=2)
 
   scalar_streams = Dict(
     "note" => notes_anchor,
@@ -745,7 +774,9 @@ function analyse_music_payload(params, scoring)
     for step in 1:step_count
   ]
 
-  for dim in dimension_order
+  for (dim_index, dim) in enumerate(dimension_order)
+    dimension_started_at = time()
+    @info "[analyse_music] dimension analysis start" dimension=dim position="$(dim_index)/$(length(dimension_order))"
     range_min, range_max = dimension_ranges[dim]
     global_display = Any[nothing for _ in 1:step_count]
     concordance = Any[nothing for _ in 1:step_count]
@@ -759,11 +790,13 @@ function analyse_music_payload(params, scoring)
       analysed_global = _analyse_manager(global_series, scoring;
         range_min=range_min, range_max=range_max,
         merge_threshold_ratio=merge_threshold_ratio,
-        metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS)
+        metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
+        log_label="$(dim)/global")
       dimensions[dim] = Dict(
         "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance),
         "analysis"=>Dict("global"=>Dict("axes"=>analysed_global["axes"], "raw"=>analysed_global["raw"]), "streams"=>stream_analysis_payload),
         "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload))
+      @info "[analyse_music] dimension analysis done" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
       continue
     end
 
@@ -773,7 +806,8 @@ function analyse_music_payload(params, scoring)
       analysed_stream = _analyse_manager(_make_poly_series(stream_source[id]), scoring;
         range_min=range_min, range_max=range_max,
         merge_threshold_ratio=merge_threshold_ratio,
-        metric_weights=Config.POLYPHONIC_STREAM_METRIC_WEIGHTS)
+        metric_weights=Config.POLYPHONIC_STREAM_METRIC_WEIGHTS,
+        log_label="$(dim)/stream=$(id):$(stream_labels[id])")
       stream_analysis_payload[string(id)] = Dict("axes"=>analysed_stream["axes"], "raw"=>analysed_stream["raw"])
       stream_clusters_payload[string(id)] = analysed_stream["clusters"]
     end
@@ -787,11 +821,13 @@ function analyse_music_payload(params, scoring)
       analysed_global = _analyse_manager(_make_poly_series(global_display), scoring;
         range_min=range_min, range_max=range_max,
         merge_threshold_ratio=merge_threshold_ratio,
-        metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS)
+        metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
+        log_label="$(dim)/global")
       dimensions[dim] = Dict(
         "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance),
         "analysis"=>Dict("global"=>Dict("axes"=>analysed_global["axes"], "raw"=>analysed_global["raw"]), "streams"=>stream_analysis_payload),
         "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload))
+      @info "[analyse_music] dimension analysis done" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
       continue
     end
 
@@ -809,11 +845,13 @@ function analyse_music_payload(params, scoring)
       analysed_global = _analyse_manager(_make_poly_series(global_display), scoring;
         range_min=0.0, range_max=1.0,
         merge_threshold_ratio=merge_threshold_ratio,
-        metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS)
+        metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
+        log_label="$(dim)/global")
       dimensions[dim] = Dict(
         "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance),
         "analysis"=>Dict("global"=>Dict("axes"=>analysed_global["axes"], "raw"=>analysed_global["raw"]), "streams"=>stream_analysis_payload),
         "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload))
+      @info "[analyse_music] dimension analysis done" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
       continue
     end
 
@@ -845,13 +883,16 @@ function analyse_music_payload(params, scoring)
       max_set_size=max(length(stream_ids), 1),
       streamwise=true,
       stream_axis_offset=offset,
-      stream_axis_capacity=max(length(stream_ids), 1))
+      stream_axis_capacity=max(length(stream_ids), 1),
+      log_label="$(dim)/global")
     dimensions[dim] = Dict(
       "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance),
       "analysis"=>Dict("global"=>Dict("axes"=>analysed_global["axes"], "raw"=>analysed_global["raw"]), "streams"=>stream_analysis_payload),
       "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload))
+    @info "[analyse_music] dimension analysis done" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
   end
 
+  @info "[analyse_music] all dimensions analysed" elapsed_s=round(time() - analysis_started_at; digits=2)
   piano_streams = Any[
     Any[isempty(notes_by_stream[id][step]) ? nothing : copy(notes_by_stream[id][step]) for step in 1:step_count]
     for id in stream_ids
