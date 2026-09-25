@@ -16,10 +16,12 @@ jobs:
           version: "1.11.6"
       - name: Julia cache
         uses: julia-actions/cache@v2
-      - name: Instantiate backend
+      - name: Instantiate backend and test environments
         env:
           JULIA_PKG_PRECOMPILE_AUTO: "0"
-        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.instantiate()'
+          julia --project=test -e 'using Pkg; Pkg.instantiate()'
       - name: Run analyse_music tests
         run: |
           cd test
