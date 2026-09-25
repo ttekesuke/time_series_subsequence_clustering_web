@@ -1,0 +1,42 @@
+name: Verify Analyse Music
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  backend-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+      - name: Julia cache
+        uses: julia-actions/cache@v2
+      - name: Instantiate backend
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+      - name: Run analyse_music tests
+        run: |
+          cd test
+          julia --project=. runtests.jl analyse_music.jl
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Strict frontend build
+        working-directory: frontend
+        run: npm run build:strict
