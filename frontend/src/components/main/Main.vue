@@ -17,10 +17,22 @@
         <v-col class="v-col-auto">
           <div class="header-actions d-flex align-center">
             <v-btn
+              v-if="selectedMode !== 'MusicAnalyse'"
               color="primary"
               :disabled="!hasOpenParams"
               @click="openParamsFromHeader"
             >SET PARAMS</v-btn>
+            <v-btn
+              v-if="selectedMode === 'MusicAnalyse'"
+              color="primary"
+              @click="openMusicXmlFromHeader"
+            >SET MusicXML</v-btn>
+            <v-btn
+              v-if="selectedMode === 'MusicAnalyse'"
+              color="secondary"
+              variant="outlined"
+              @click="downloadMusicAnalysisJson"
+            >DOWNLOAD JSON</v-btn>
             <v-btn
               v-if="selectedMode === 'MusicGenerate'"
               color="primary"
@@ -68,10 +80,14 @@
           </v-row>
         </v-col>
 
-        <v-col class="v-col-auto" v-if="selectedMode === 'MusicGenerate'">
+        <v-col class="v-col-auto" v-if="selectedMode === 'MusicGenerate' || selectedMode === 'MusicAnalyse'">
           <div class="d-flex align-center">
-            <!-- Sound Player Control -->
-            <v-btn @click='switchStartOrStopSound()' :disabled="!canPlay" :color="isNowPlaying ? 'error' : 'primary'">
+            <v-btn
+              v-if="selectedMode === 'MusicGenerate'"
+              @click='switchStartOrStopSound()'
+              :disabled="!canPlay"
+              :color="isNowPlaying ? 'error' : 'primary'"
+            >
               <v-icon v-if='isNowPlaying'>mdi-stop</v-icon>
               <v-icon v-else>mdi-play</v-icon>
               <span>{{ isNowPlaying ? 'STOP' : 'PLAY' }}</span>
@@ -84,6 +100,7 @@
               class="hide-details"
             />
             <v-select
+              v-if="selectedMode === 'MusicGenerate'"
               label="ResultViewMode"
               :items="resultViewModes"
               :model-value="resultViewMode"
@@ -126,10 +143,11 @@ import ClusteringAnalyse from '../../components/features/ClusteringAnalyse.vue'
 import ClusteringGenerate from '../../components/features/ClusteringGenerate.vue'
 import ClusteringQuery from '../../components/features/ClusteringQuery.vue'
 import MusicGenerate from '../../components/features/MusicGenerate.vue'
+import MusicAnalyse from '../../components/features/MusicAnalyse.vue'
 import InfoDialog from './InfoDialog.vue'
 import TransferDialog from './TransferDialog.vue'
 const infoDialog = ref(false)
-const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'MusicGenerate'])
+const modes = ref(['ClusteringAnalyse', 'ClusteringGenerate', 'MusicGenerate', 'MusicAnalyse'])
 void axios.get('/api/features')
   .then(({ data }) => {
     if (data?.clustering_query === true) {
@@ -202,6 +220,7 @@ const selectedComponent = computed(() => {
   if (selectedMode.value === 'ClusteringGenerate') return ClusteringGenerate
   if (selectedMode.value === 'ClusteringQuery') return ClusteringQuery
   if (selectedMode.value === 'MusicGenerate') return MusicGenerate
+  if (selectedMode.value === 'MusicAnalyse') return MusicAnalyse
   return ClusteringAnalyse
 })
 
@@ -220,6 +239,14 @@ const hasOpenParams = computed(() => !!(activeFeatureRef.value && (activeFeature
 const openParamsFromHeader = () => {
   if (!activeFeatureRef.value) return
   ;(activeFeatureRef.value as any).openParams?.()
+}
+
+const openMusicXmlFromHeader = () => {
+  ;(activeFeatureRef.value as any)?.openMusicXmlDialog?.()
+}
+
+const downloadMusicAnalysisJson = () => {
+  ;(activeFeatureRef.value as any)?.downloadAnalysisJson?.()
 }
 
 const downloadResultJson = () => {
@@ -367,10 +394,12 @@ onUnmounted(() => {
 })
 
 watch(activeFeatureRef, () => {
-  if (selectedMode.value !== 'MusicGenerate') return
+  if (selectedMode.value !== 'MusicGenerate' && selectedMode.value !== 'MusicAnalyse') return
   const inst = activeFeatureRef.value as any
   inst?.setAnalysedViewMode?.(analysedViewMode.value)
-  inst?.setResultViewMode?.(resultViewMode.value)
+  if (selectedMode.value === 'MusicGenerate') {
+    inst?.setResultViewMode?.(resultViewMode.value)
+  }
 })
 
 watch(selectedMode, (mode) => {
