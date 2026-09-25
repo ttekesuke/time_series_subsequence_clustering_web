@@ -3114,8 +3114,10 @@ function asap_musicxml_sources()
     return Dict("sources" => sources)
   catch err
     if err isa MusicAnalysis.RequestError
+      @warn "[analyse_music] request rejected" code=err.code message=err.message elapsed_s=round(time() - t0; digits=2)
       throw(AnalyseMusicRequestError(err.code, err.message))
     end
+    @error "[analyse_music] request failed" exception=(err, catch_backtrace()) elapsed_s=round(time() - t0; digits=2)
     rethrow()
   end
 end
@@ -3126,6 +3128,7 @@ function analyse_music()
   p = _subhash(payload, "analyse_music")
   source_type = lowercase(strip(string(get(p, "source_type", "upload"))))
   params = Dict{String,Any}(string(k) => v for (k, v) in pairs(p))
+  @info "[analyse_music] request received" source_type=source_type filename=string(get(params, "filename", "")) composer=string(get(params, "composer", "")) title=string(get(params, "title", ""))
 
   try
     if source_type == "asap"
@@ -3159,11 +3162,13 @@ function analyse_music()
         MusicAnalysis.RequestError("invalid_path", "Invalid ASAP MusicXML path."),
       )
       if isfile(normalized_file)
+        @info "[analyse_music] reading ASAP MusicXML from local dataset" path=normalized_file
         params["musicxml_text"] = read(normalized_file, String)
       else
         # Local development checkouts do not always initialize the ASAP
         # submodule. The metadata entry already provides a repository-relative
         # path, so fall back to the official public ASAP repository.
+        @info "[analyse_music] local ASAP MusicXML missing; fetching fallback" xml_score=xml_score
         params["musicxml_text"] = _fetch_asap_raw(xml_score)
       end
     elseif source_type == "upload"
@@ -3179,6 +3184,7 @@ function analyse_music()
         "missing_source",
         "Uploaded MusicXML text is required.",
       ))
+      @info "[analyse_music] uploaded MusicXML accepted" filename=filename xml_bytes=sizeof(string(params["musicxml_text"]))
     else
       throw(MusicAnalysis.RequestError(
         "invalid_source_type",
@@ -3192,6 +3198,7 @@ function analyse_music()
       time() - t0;
       digits=Config.PROCESSING_TIME_DIGITS,
     )
+    @info "[analyse_music] request completed" processing_time_s=result["processingTime"] step_count=get(get(result, "timing", Dict{String,Any}()), "stepCount", nothing) streams=length(get(result, "streams", Any[]))
     return result
   catch err
     if err isa MusicAnalysis.RequestError
