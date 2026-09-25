@@ -1,0 +1,55 @@
+name: Verify ASAP Fallback
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Run MusicAnalyse tests
+        run: julia --project=. -e 'ENV["GENIE_ENV"]="test"; using Genie; Genie.loadapp(); include("test/analyse_music.jl")'
+      - name: Smoke test ASAP remote fallback
+        run: |
+          julia --project=. -e '
+            ENV["GENIE_ENV"]="test";
+            using Genie;
+            Genie.loadapp();
+            TC = Main.TimeseriesClusteringAPI.TimeSeriesController;
+            MA = Main.TimeseriesClusteringAPI.MusicAnalysis;
+            result = TC.asap_musicxml_sources();
+            @assert length(result["sources"]) > 0;
+            source = result["sources"][1];
+            xml = TC._fetch_asap_raw(source["xml_score"]);
+            parsed = MA.parse_musicxml_text(xml);
+            @assert !isempty(parsed.notes);
+            println("ASAP remote fallback ok: ", source["xml_score"]);
+          '
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run build
