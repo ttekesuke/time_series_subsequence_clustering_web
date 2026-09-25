@@ -4488,24 +4488,6 @@ function generate_polyphonic()
     return clamp(Int(round(density * float(slots))), 1, slots)
   end
 
-  function _infer_chord_range_and_density_controls(abs_notes_raw)::Tuple{Int,Float64}
-    notes = sort(unique(_normalize_abs_notes(abs_notes_raw)))
-    isempty(notes) && return (0, 0.0)
-
-    anchor = notes[cld(length(notes), 2)]
-    band_low = Config.area_band_low(anchor)
-    band_high = min(band_low + (BAND_SIZE - 1), ABS_MAX)
-    chord_range = clamp(
-      max(band_low - first(notes), last(notes) - band_high, 0),
-      CHORD_RANGE_MIN,
-      CHORD_RANGE_MAX,
-    )
-    _low, _high, slot_count = _note_pool_geometry(band_low, chord_range)
-    target_note_count = clamp(length(notes), 1, slot_count)
-    density = clamp(float(target_note_count) / float(slot_count), 0.0, 1.0)
-    return (chord_range, density)
-  end
-
   # CR/DEN are canonical per-stream generation controls. The frontend does not
   # expose them in initial-context rows, so infer compatible seed controls from
   # the notes while preserving the strict 11-element record contract.
@@ -4514,7 +4496,7 @@ function generate_polyphonic()
     for st in step
       abs_notes = _normalize_abs_notes(st[note_abs_idx])
       st[note_abs_idx] = abs_notes
-      inferred_cr, inferred_den = _infer_chord_range_and_density_controls(abs_notes)
+      inferred_cr, inferred_den = infer_chord_range_and_density_controls(abs_notes)
       st[chord_range_idx] = inferred_cr
       st[density_idx] = inferred_den
     end
