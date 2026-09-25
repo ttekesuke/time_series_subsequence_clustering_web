@@ -3044,6 +3044,50 @@ end
 # Actions
 # ------------------------------------------------------------
 
+const ASAP_RAW_BASE_URL = "https://raw.githubusercontent.com/fosfrancesco/asap-dataset/master"
+
+function _safe_asap_relative_path(raw::AbstractString)::String
+  path = replace(strip(String(raw)), '\\' => '/')
+  isempty(path) && throw(MusicAnalysis.RequestError(
+    "invalid_asap_path",
+    "ASAP path is empty.",
+  ))
+  startswith(path, "/") && throw(MusicAnalysis.RequestError(
+    "invalid_asap_path",
+    "ASAP path must be relative.",
+  ))
+  any(part -> part == "..", split(path, '/')) && throw(MusicAnalysis.RequestError(
+    "invalid_asap_path",
+    "ASAP path must not contain '..'.",
+  ))
+  return path
+end
+
+function _fetch_asap_raw(path::AbstractString)::String
+  safe_path = _safe_asap_relative_path(path)
+  url = ASAP_RAW_BASE_URL * "/" * HTTP.URIs.escapepath(safe_path)
+  response = try
+    HTTP.get(
+      url;
+      status_exception=false,
+      connect_timeout=10,
+      readtimeout=30,
+      headers=["User-Agent" => "time-series-subsequence-clustering-web"],
+    )
+  catch err
+    throw(MusicAnalysis.RequestError(
+      "asap_remote_unavailable",
+      "ASAP dataset could not be fetched from GitHub: $(err)",
+    ))
+  end
+
+  response.status == 200 || throw(MusicAnalysis.RequestError(
+    "asap_remote_fetch_failed",
+    "ASAP dataset GitHub request failed with HTTP $(response.status).",
+  ))
+  return String(response.body)
+end
+
 function _analyse_music_dataset_dir()
   dataset_dir = normpath(get(
     ENV,
@@ -3059,9 +3103,15 @@ end
 
 function asap_musicxml_sources()
   try
-    return Dict(
-      "sources" => MusicAnalysis.list_asap_sources(_analyse_music_dataset_dir()),
-    )
+    dataset_dir = _analyse_music_dataset_dir()
+    metadata_path = joinpath(dataset_dir, "metadata.csv")
+    sources = if isfile(metadata_path)
+      MusicAnalysis.list_asap_sources(dataset_dir)
+    else
+      metadata_csv = _fetch_asap_raw("metadata.csv")
+      MusicAnalysis.list_asap_sources_from_csv_text(metadata_csv)
+    end
+    return Dict("sources" => sources)
   catch err
     if err isa MusicAnalysis.RequestError
       throw(AnalyseMusicRequestError(err.code, err.message))
@@ -3108,11 +3158,14 @@ function analyse_music()
       startswith(normalized_file, normalized_dataset) || throw(
         MusicAnalysis.RequestError("invalid_path", "Invalid ASAP MusicXML path."),
       )
-      isfile(normalized_file) || throw(MusicAnalysis.RequestError(
-        "file_not_found",
-        "ASAP MusicXML file was not found.",
-      ))
-      params["musicxml_text"] = read(normalized_file, String)
+      if isfile(normalized_file)
+        params["musicxml_text"] = read(normalized_file, String)
+      else
+        # Local development checkouts do not always initialize the ASAP
+        # submodule. The metadata entry already provides a repository-relative
+        # path, so fall back to the official public ASAP repository.
+        params["musicxml_text"] = _fetch_asap_raw(xml_score)
+      end
     elseif source_type == "upload"
       filename = lowercase(strip(string(get(params, "filename", ""))))
       if !isempty(filename) &&
