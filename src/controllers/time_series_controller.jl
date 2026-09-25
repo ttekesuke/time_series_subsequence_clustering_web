@@ -17,6 +17,7 @@ import ..PolyphonicClusterManager
 import ..MultiStreamManager
 import ..DissonanceStmManager
 import ..VoiceTokenGeneration
+import ..MusicAnalysis
 
 struct GeneratePolyphonicRequestError <: Exception
   code::String
@@ -31,6 +32,13 @@ struct GenerateRequestError <: Exception
 end
 
 Base.showerror(io::IO, err::GenerateRequestError) = print(io, err.message)
+
+struct AnalyseMusicRequestError <: Exception
+  code::String
+  message::String
+end
+
+Base.showerror(io::IO, err::AnalyseMusicRequestError) = print(io, err.message)
 
 @noinline function _invalid_generate_polyphonic_request(code::AbstractString, message::AbstractString)
   throw(GeneratePolyphonicRequestError(String(code), String(message)))
