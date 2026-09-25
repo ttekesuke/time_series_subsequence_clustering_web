@@ -427,9 +427,9 @@ function _concordance(values::Vector{Float64}, width::Float64)
   return clamp(1.0 - total / float(count), 0.0, 1.0)
 end
 
-function _csv_rows(path::AbstractString)
+function _csv_rows_from_text(csv_text::AbstractString)
   rows = Vector{Vector{String}}()
-  for raw in eachline(path)
+  for raw in eachline(IOBuffer(csv_text))
     fields = String[]
     buf = IOBuffer()
     quoted = false
@@ -456,15 +456,10 @@ function _csv_rows(path::AbstractString)
   return rows
 end
 
-function list_asap_sources(dataset_dir::AbstractString)
-  metadata_path = joinpath(dataset_dir, "metadata.csv")
-  isfile(metadata_path) || throw(RequestError(
-    "asap_dataset_missing",
-    "ASAP metadata.csv was not found. Run git submodule update --init --recursive.",
-  ))
-  rows = _csv_rows(metadata_path)
+function list_asap_sources_from_csv_text(csv_text::AbstractString)
+  rows = _csv_rows_from_text(csv_text)
   isempty(rows) && return Any[]
-  header = Dict(name => idx for (idx, name) in enumerate(rows[1]))
+  header = Dict(strip(name) => idx for (idx, name) in enumerate(rows[1]))
   required = ["composer", "title", "folder", "xml_score"]
   all(haskey(header, key) for key in required) || throw(RequestError(
     "asap_metadata_invalid",
@@ -487,6 +482,15 @@ function list_asap_sources(dataset_dir::AbstractString)
     ))
   end
   return out
+end
+
+function list_asap_sources(dataset_dir::AbstractString)
+  metadata_path = joinpath(dataset_dir, "metadata.csv")
+  isfile(metadata_path) || throw(RequestError(
+    "asap_dataset_missing",
+    "ASAP metadata.csv was not found locally.",
+  ))
+  return list_asap_sources_from_csv_text(read(metadata_path, String))
 end
 
 function _make_poly_series(values)::Vector{Vector{Float64}}
