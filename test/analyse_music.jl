@@ -20,7 +20,6 @@ function _score_with_divisions(divisions::Int, durations::Vector{Int})
   end
 
   return """
-  <?xml version="1.0" encoding="UTF-8"?>
   <score-partwise version="4.0">
     <part-list>
       <score-part id="P1"><part-name>Piano</part-name></score-part>
