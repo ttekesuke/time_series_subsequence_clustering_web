@@ -23,6 +23,22 @@ function _with_polyphonic_request_errors(f::Function)
   end
 end
 
+function _with_analyse_music_request_errors(f::Function)
+  try
+    return f()
+  catch err
+    if err isa TimeSeriesController.AnalyseMusicRequestError
+      return json(Dict(
+        "ok" => false,
+        "error" => "invalid_analyse_music_request",
+        "code" => err.code,
+        "message" => err.message,
+      ); status=422)
+    end
+    rethrow()
+  end
+end
+
 function _with_generate_request_errors(f::Function)
   try
     return f()
@@ -90,6 +106,18 @@ end
 # ------------------------------------------------------------
 route("/api/web/time_series/analyse", method=POST) do
   TimeSeriesController.analyse() |> json
+end
+
+route("/api/web/time_series/analyse_music", method=POST) do
+  _with_analyse_music_request_errors() do
+    TimeSeriesController.analyse_music() |> json
+  end
+end
+
+route("/api/web/time_series/asap_musicxml_sources", method=POST) do
+  _with_analyse_music_request_errors() do
+    TimeSeriesController.asap_musicxml_sources() |> json
+  end
 end
 
 route("/api/web/time_series/generate", method=POST) do
