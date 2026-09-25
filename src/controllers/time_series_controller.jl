@@ -3202,8 +3202,10 @@ function analyse_music()
     return result
   catch err
     if err isa MusicAnalysis.RequestError
+      @warn "[analyse_music] request rejected" code=err.code message=err.message elapsed_s=round(time() - t0; digits=2)
       throw(AnalyseMusicRequestError(err.code, err.message))
     end
+    @error "[analyse_music] request failed" exception=(err, catch_backtrace()) elapsed_s=round(time() - t0; digits=2)
     rethrow()
   end
 end
