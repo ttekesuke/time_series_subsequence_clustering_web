@@ -109,7 +109,7 @@ jobs:
               end
               total
             end
-            logical = length(P.logical_virtual_nodes(pm.working_clusters, pm.min_window_size))
+            logical = length(P.logical_virtual_nodes(pm))
             compressed = span_count(spans)
             println(label, "_LOGICAL_NODES=", logical)
             println(label, "_COMPRESSED_SPANS=", compressed)
@@ -129,5 +129,5 @@ jobs:
           prod_long = scalar_periodic(256)
           pt, pm = time_observed(P, prod_long)
           println("PERIODIC256_PROD_OBSERVED_S=", round(pt; digits=4))
-          println("PERIODIC256_PROD_LOGICAL_NODES=", length(P.logical_virtual_nodes(pm.working_clusters, pm.min_window_size)))
+          println("PERIODIC256_PROD_LOGICAL_NODES=", length(P.logical_virtual_nodes(pm)))
           JULIA
