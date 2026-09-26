@@ -1,0 +1,134 @@
+name: Benchmark Lossless Clustering
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Benchmark legacy vs optimized manager
+        run: |
+          julia --project=. <<'JULIA'
+          ENV["GENIE_ENV"]="test"
+          using Genie
+          Genie.loadapp()
+
+          P = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
+          if !isdefined(Main.TimeseriesClusteringAPI, :LegacyPolyphonicClusterManager)
+            Base.include(
+              Main.TimeseriesClusteringAPI,
+              joinpath("test", "reference", "polyphonic_cluster_manager_legacy.jl"),
+            )
+          end
+          L = Main.TimeseriesClusteringAPI.LegacyPolyphonicClusterManager
+
+          scalar_periodic(n) = [Float64[mod(div(i - 1, 4), 5)] for i in 1:n]
+          scalar_embedded(n) = begin
+            motif = Float64[0,1,2,3,4,5,6,7]
+            [Float64[motif[mod1(i, length(motif))]] for i in 1:n]
+          end
+
+          function manager(M, data; occurrence=false)
+            M.Manager(
+              deepcopy(data),
+              0.0,
+              2,
+              false;
+              range_min=0.0,
+              range_max=8.0,
+              max_set_size=1,
+              enable_occurrence_intervals=occurrence,
+            )
+          end
+
+          function time_bulk(M, data; occurrence=false)
+            mgr = manager(M, data; occurrence=occurrence)
+            GC.gc()
+            elapsed = @elapsed begin
+              M.process_data!(mgr)
+              M.update_caches_permanently!(mgr)
+            end
+            return elapsed, mgr
+          end
+
+          function time_observed(M, data; occurrence=false)
+            mgr = manager(M, data[1:2]; occurrence=occurrence)
+            M.process_data!(mgr)
+            M.update_caches_permanently!(mgr)
+            GC.gc()
+            elapsed = @elapsed begin
+              for value in data[3:end]
+                M.simulate_add_and_calculate_all_extended(mgr, copy(value))
+                M.add_data_point_permanently!(mgr, copy(value))
+                M.update_caches_permanently!(mgr)
+              end
+            end
+            return elapsed, mgr
+          end
+
+          # JIT warmup outside timings.
+          warm = scalar_periodic(20)
+          time_bulk(P, warm)
+          time_bulk(L, warm)
+          time_observed(P, warm)
+          time_observed(L, warm)
+
+          function print_ratio(label, legacy, prod)
+            ratio = prod > 0 ? legacy / prod : Inf
+            println(label, "_LEGACY_S=", round(legacy; digits=4))
+            println(label, "_PROD_S=", round(prod; digits=4))
+            println(label, "_SPEEDUP_X=", round(ratio; digits=2))
+          end
+
+          for (label, data) in [
+            ("PERIODIC400", scalar_periodic(400)),
+            ("EMBEDDED400", scalar_embedded(400)),
+          ]
+            lt, lm = time_bulk(L, data)
+            pt, pm = time_bulk(P, data)
+            print_ratio(label * "_BULK", lt, pt)
+
+            spans = P.compress_cluster_tree(pm)
+            function span_count(xs)
+              total = length(xs)
+              for x in xs
+                total += span_count(x.children)
+              end
+              total
+            end
+            logical = length(P.logical_virtual_nodes(pm.clusters, pm.min_window_size))
+            compressed = span_count(spans)
+            println(label, "_LOGICAL_NODES=", logical)
+            println(label, "_COMPRESSED_SPANS=", compressed)
+            println(label, "_SPAN_RATIO=", round(compressed / max(logical, 1); digits=4))
+          end
+
+          observed = scalar_periodic(180)
+          lt, _ = time_observed(L, observed)
+          pt, _ = time_observed(P, observed)
+          print_ratio("PERIODIC180_OBSERVED", lt, pt)
+
+          observed_occ = scalar_periodic(100)
+          lt, _ = time_observed(L, observed_occ; occurrence=true)
+          pt, _ = time_observed(P, observed_occ; occurrence=true)
+          print_ratio("PERIODIC100_OBSERVED_OCC", lt, pt)
+
+          prod_long = scalar_periodic(512)
+          pt, pm = time_observed(P, prod_long)
+          println("PERIODIC512_PROD_OBSERVED_S=", round(pt; digits=4))
+          println("PERIODIC512_PROD_LOGICAL_NODES=", length(P.logical_virtual_nodes(pm.clusters, pm.min_window_size)))
+          JULIA
