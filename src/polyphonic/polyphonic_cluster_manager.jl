@@ -1828,6 +1828,182 @@ function update_value_width!(mgr::Manager, upto_index::Int)
   mgr.value_width = delta <= 0.0 ? 1.0 : delta
 end
 
+# ------------------------------------------------------------------
+# Lossless path-compressed cluster view
+#
+# A span may collapse only a single-child chain when extending the parent
+# loses no occurrence except those that cannot fit at the right boundary of
+# the currently available data, and the child representative extends the
+# parent representative exactly. Every virtual window node remains exactly
+# reconstructable.
+# ------------------------------------------------------------------
+
+struct CompressedClusterSpan
+  window_min::Int
+  window_max::Int
+  cluster_ids::Vector{Int}
+  si_min::Vector{Int}
+  as_max::PolySeq
+  data_length::Int
+  children::Vector{CompressedClusterSpan}
+end
+
+@inline function _representative_extends_exactly(
+  parent::PolyClusterNode,
+  child::PolyClusterNode,
+)::Bool
+  length(child.as) == length(parent.as) + 1 || return false
+  @inbounds for i in eachindex(parent.as)
+    parent.as[i] == child.as[i] || return false
+  end
+  return true
+end
+
+function _starts_extend_without_semantic_loss(
+  parent::PolyClusterNode,
+  child::PolyClusterNode,
+  child_window_size::Int,
+  data_length::Int,
+)::Bool
+  expected = Int[
+    s for s in parent.si
+    if s + child_window_size <= data_length
+  ]
+  sort!(expected)
+  actual = sort(copy(child.si))
+  return expected == actual
+end
+
+function _compress_cluster_span(
+  cluster_id::Int,
+  node::PolyClusterNode,
+  window_size::Int,
+  data_length::Int,
+)::CompressedClusterSpan
+  ids = Int[cluster_id]
+  first_starts = copy(node.si)
+  current = node
+  current_window = window_size
+
+  while length(current.cc) == 1
+    child_id, child = first(current.cc)
+    _starts_extend_without_semantic_loss(
+      current,
+      child,
+      current_window + 1,
+      data_length,
+    ) || break
+    _representative_extends_exactly(current, child) || break
+    push!(ids, child_id)
+    current = child
+    current_window += 1
+  end
+
+  children = CompressedClusterSpan[]
+  for child_id in sort!(collect(keys(current.cc)))
+    push!(children, _compress_cluster_span(
+      child_id,
+      current.cc[child_id],
+      current_window + 1,
+      data_length,
+    ))
+  end
+
+  return CompressedClusterSpan(
+    window_size,
+    current_window,
+    ids,
+    first_starts,
+    deep_copy_seq(current.as),
+    data_length,
+    children,
+  )
+end
+
+function compress_cluster_tree(
+  clusters::Dict{Int,PolyClusterNode},
+  min_window_size::Int,
+  data_length::Int,
+)::Vector{CompressedClusterSpan}
+  spans = CompressedClusterSpan[]
+  for cluster_id in sort!(collect(keys(clusters)))
+    push!(spans, _compress_cluster_span(
+      cluster_id,
+      clusters[cluster_id],
+      min_window_size,
+      data_length,
+    ))
+  end
+  return spans
+end
+
+compress_cluster_tree(mgr::Manager)::Vector{CompressedClusterSpan} =
+  compress_cluster_tree(mgr.clusters, mgr.min_window_size, length(mgr.data))
+
+function compressed_virtual_nodes(
+  spans::Vector{CompressedClusterSpan},
+)::Vector{NamedTuple}
+  rows = NamedTuple[]
+  stack = Tuple{CompressedClusterSpan,Union{Nothing,Int}}[
+    (span, nothing) for span in reverse(spans)
+  ]
+
+  while !isempty(stack)
+    span, parent_id = pop!(stack)
+    previous_id = parent_id
+    for (offset, cluster_id) in enumerate(span.cluster_ids)
+      window_size = span.window_min + offset - 1
+      representative = deep_copy_seq(span.as_max[1:window_size])
+      starts = sort(Int[
+        s for s in span.si_min
+        if s + window_size <= span.data_length
+      ])
+      push!(rows, (
+        window_size=window_size,
+        cluster_id=cluster_id,
+        parent_id=previous_id,
+        si=starts,
+        as=representative,
+      ))
+      previous_id = cluster_id
+    end
+    for child in reverse(span.children)
+      push!(stack, (child, previous_id))
+    end
+  end
+
+  sort!(rows; by=row -> (row.window_size, row.cluster_id))
+  return rows
+end
+
+function logical_virtual_nodes(
+  clusters::Dict{Int,PolyClusterNode},
+  min_window_size::Int,
+)::Vector{NamedTuple}
+  rows = NamedTuple[]
+  stack = Tuple{Int,Int,PolyClusterNode,Union{Nothing,Int}}[]
+  for cluster_id in sort!(collect(keys(clusters)); rev=true)
+    push!(stack, (min_window_size, cluster_id, clusters[cluster_id], nothing))
+  end
+
+  while !isempty(stack)
+    window_size, cluster_id, node, parent_id = pop!(stack)
+    push!(rows, (
+      window_size=window_size,
+      cluster_id=cluster_id,
+      parent_id=parent_id,
+      si=sort(copy(node.si)),
+      as=deep_copy_seq(node.as),
+    ))
+    for child_id in sort!(collect(keys(node.cc)); rev=true)
+      push!(stack, (window_size + 1, child_id, node.cc[child_id], cluster_id))
+    end
+  end
+
+  sort!(rows; by=row -> (row.window_size, row.cluster_id))
+  return rows
+end
+
 # Incremental clustering core (polyphonic override)
 @inline max_distance_for_length(len::Int)::Float64 = sqrt(float(max(len, 1)))
 
