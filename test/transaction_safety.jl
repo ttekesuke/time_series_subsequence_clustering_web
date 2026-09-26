@@ -25,7 +25,7 @@ end
 function _pcm_snapshot(manager)
   return (
     data=deepcopy(manager.data),
-    clusters=_tx_pcm.clusters_to_dict(manager.working_clusters),
+    clusters=_tx_pcm.clusters_to_dict(manager),
     cluster_id_counter=manager.cluster_id_counter,
     tasks=deepcopy(manager.tasks),
     updated_distance=deepcopy(manager.updated_cluster_ids_per_window_for_calculate_distance),
@@ -67,28 +67,28 @@ end
 @testset "simulation failures propagate and roll back" begin
   manager = _invalid_streamwise_manager()
   before_data = deepcopy(manager.data)
-  before_clusters = _tx_pcm.clusters_to_dict(manager.clusters)
+  before_clusters = _tx_pcm.clusters_to_dict(manager)
 
   @test_throws ErrorException _tx_controller._safe_simulate_add_and_calculate_all_extended(
     manager,
     Float64[4.0],
   )
   @test manager.data == before_data
-  @test _tx_pcm.clusters_to_dict(manager.clusters) == before_clusters
+  @test _tx_pcm.clusters_to_dict(manager) == before_clusters
 
   @test_throws ErrorException _tx_msm.safe_simulate_add_and_calculate(manager, Float64[4.0])
   @test manager.data == before_data
-  @test _tx_pcm.clusters_to_dict(manager.clusters) == before_clusters
+  @test _tx_pcm.clusters_to_dict(manager) == before_clusters
 end
 
 @testset "safe permanent append does not fall back to a raw push" begin
   manager = _invalid_streamwise_manager()
   before_data = deepcopy(manager.data)
-  before_clusters = _tx_pcm.clusters_to_dict(manager.clusters)
+  before_clusters = _tx_pcm.clusters_to_dict(manager)
 
   @test_throws ErrorException _tx_msm.safe_add_data_point!(manager, Float64[4.0])
   @test manager.data == before_data
-  @test _tx_pcm.clusters_to_dict(manager.clusters) == before_clusters
+  @test _tx_pcm.clusters_to_dict(manager) == before_clusters
 end
 
 @testset "multi-stream commit publishes only after all stream appends succeed" begin
