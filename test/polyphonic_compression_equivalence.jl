@@ -102,8 +102,15 @@ function _logical_snapshot(M, mgr)
   )
 end
 
+function _assert_lossless_compression(prod)
+  spans = _ProdPCM.compress_cluster_tree(prod.clusters, prod.min_window_size)
+  @test _ProdPCM.compressed_virtual_nodes(spans) ==
+        _ProdPCM.logical_virtual_nodes(prod.clusters, prod.min_window_size)
+end
+
 function _assert_equivalent(prod, legacy)
   @test _logical_snapshot(_ProdPCM, prod) == _logical_snapshot(_LegacyPCM, legacy)
+  _assert_lossless_compression(prod)
 end
 
 function _make_managers(scenario; initial_count=nothing)
@@ -326,4 +333,27 @@ const _compression_equivalence_scenarios = [
       _run_incremental_case(scenario)
     end
   end
+end
+
+
+function _count_compressed_spans(spans)
+  total = length(spans)
+  for span in spans
+    total += _count_compressed_spans(span.children)
+  end
+  return total
+end
+
+@testset "lossless view actually compresses repeated chains" begin
+  data = [Float64[mod(i - 1, 2)] for i in 1:24]
+  mgr = _ProdPCM.Manager(data, 0.0, 2; range_min=0.0, range_max=1.0, max_set_size=1)
+  _ProdPCM.process_data!(mgr)
+  spans = _ProdPCM.compress_cluster_tree(mgr.clusters, mgr.min_window_size)
+  logical_count = length(_ProdPCM.logical_virtual_nodes(mgr.clusters, mgr.min_window_size))
+  compressed_count = _count_compressed_spans(spans)
+  @test compressed_count <= logical_count
+  @test any(span -> span.window_max > span.window_min, spans) ||
+        compressed_count < logical_count
+  @test _ProdPCM.compressed_virtual_nodes(spans) ==
+        _ProdPCM.logical_virtual_nodes(mgr.clusters, mgr.min_window_size)
 end
