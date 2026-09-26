@@ -2301,8 +2301,20 @@ function process_new_clusters!(
 
   if !isempty(valid_group)
     starts = vcat(valid_group, [latest_start])
-    sequences = [mgr.data[(s + 1):(s + new_length)] for s in starts]
-    new_cluster = _new_cluster_node(starts, average_sequences(mgr, sequences))
+    scalar_exact_repeat =
+      mgr.max_set_size == 1 &&
+      mgr.point_distance_mode == :set &&
+      !mgr.use_streamwise_surface_average &&
+      all(get(extended_member_distances, s, Inf) == 0.0 for s in valid_group)
+
+    representative =
+      if scalar_exact_repeat
+        deep_copy_seq(latest_seq)
+      else
+        sequences = [mgr.data[(s + 1):(s + new_length)] for s in starts]
+        average_sequences(mgr, sequences)
+      end
+    new_cluster = _new_cluster_node(starts, representative)
     new_cluster_id = mgr.cluster_id_counter
     parent.cc[new_cluster_id] = new_cluster
     record!(mgr, PJCcAdd(parent.cc, new_cluster_id))
