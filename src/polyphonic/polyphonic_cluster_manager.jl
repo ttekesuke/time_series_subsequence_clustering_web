@@ -27,6 +27,10 @@ const PolySet = Vector{Float64}
 const PolySeq = Vector{PolySet}
 
 const RECENCY_MEMORY_SPAN::Float64 = 64.0
+# Physical span compaction is storage maintenance, not clustering semantics.
+# Batch it during incremental ingestion to avoid repeatedly re-walking the
+# entire compressed topology after every logical append.
+const CLUSTER_STORAGE_COMPACTION_INTERVAL::Int = 16
 
 """Cluster node."""
 mutable struct PolyClusterNode
@@ -1139,6 +1143,24 @@ function add_data_point_permanently!(mgr::Manager, val::PolySet)
   _initialize_root_cluster_if_ready!(mgr) && return nothing
   mgr.cluster_horizon = length(mgr.data)
   clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
+
+  # Delaying physical re-compaction does not change any virtual node, ID, si,
+  # representative, cache, or task. It only allows a few adjacent singleton
+  # spans to remain temporarily unmerged. This is especially important for
+  # occurrence-interval managers, which are updated very frequently.
+  if length(mgr.data) % CLUSTER_STORAGE_COMPACTION_INTERVAL == 0
+    _normalize_cluster_store!(mgr)
+  end
+  return nothing
+end
+
+"""Force the canonical cluster store into maximally compressed form.
+
+Callers that need the physical compressed representation (rather than the
+logical compatibility view) may finalize it explicitly. This operation is
+semantics-preserving.
+"""
+function finalize_cluster_storage!(mgr::Manager)::Nothing
   _normalize_cluster_store!(mgr)
   return nothing
 end
