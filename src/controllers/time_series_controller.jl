@@ -3102,7 +3102,6 @@ function _analyse_music_dataset_dir()
 end
 
 function asap_musicxml_sources()
-  t0 = time()
   try
     dataset_dir = _analyse_music_dataset_dir()
     metadata_path = joinpath(dataset_dir, "metadata.csv")
@@ -3112,14 +3111,13 @@ function asap_musicxml_sources()
       metadata_csv = _fetch_asap_raw("metadata.csv")
       MusicAnalysis.list_asap_sources_from_csv_text(metadata_csv)
     end
-    @info "[analyse_music] ASAP source list loaded" sources=length(sources) elapsed_s=round(time() - t0; digits=2)
     return Dict("sources" => sources)
   catch err
     if err isa MusicAnalysis.RequestError
-      @warn "[analyse_music] ASAP source list rejected" code=err.code message=err.message elapsed_s=round(time() - t0; digits=2)
+      @warn "[analyse_music] request rejected" code=err.code message=err.message elapsed_s=round(time() - t0; digits=2)
       throw(AnalyseMusicRequestError(err.code, err.message))
     end
-    @error "[analyse_music] ASAP source list failed" exception=(err, catch_backtrace()) elapsed_s=round(time() - t0; digits=2)
+    @error "[analyse_music] request failed" exception=(err, catch_backtrace()) elapsed_s=round(time() - t0; digits=2)
     rethrow()
   end
 end
@@ -4064,15 +4062,7 @@ function evaluate_observed_complexity!(
   manager::PolyphonicClusterManager.Manager,
   value::PolyphonicClusterManager.PolySet;
   metric_weights::NTuple{3,Float64}=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
-  max_window_size::Union{Nothing,Int}=nothing,
 )::Dict{String,Any}
-  if max_window_size !== nothing
-    cap = max(Int(max_window_size), manager.min_window_size)
-    # Tasks extend an existing subsequence cluster to the next window size.
-    # Keep tasks strictly below the cap so cap itself can be created, but not cap + 1.
-    filter!(task -> task[2] < cap, manager.tasks)
-  end
-
   calibrator = build_extended_metric_calibrator(manager)
   distribution = PolyphonicClusterManager.build_predictive_distribution(manager)
   predictive = PolyphonicClusterManager.predictive_surprise_score(
@@ -4080,13 +4070,10 @@ function evaluate_observed_complexity!(
     distribution,
     value,
   )
-  PolyphonicClusterManager.add_data_point_permanently!(manager, copy(value))
-  if max_window_size !== nothing
-    cap = max(Int(max_window_size), manager.min_window_size)
-    filter!(task -> task[2] < cap, manager.tasks)
-  end
-  PolyphonicClusterManager.update_caches_permanently!(manager)
-  metrics = PolyphonicClusterManager.calculate_all_extended_current_state(manager)
+  metrics = PolyphonicClusterManager.simulate_add_and_calculate_all_extended(
+    manager,
+    value,
+  )
 
   diversity = calibrate_metric(metrics.distance, calibrator.base.distance)
   shape = calibrate_metric(metrics.complexity, calibrator.base.complexity)
@@ -4120,6 +4107,9 @@ function evaluate_observed_complexity!(
   combined = denominator > 0.0 ?
     clamp(total / denominator, 0.0, 1.0) :
     Config.DEFAULT_TARGET_01
+
+  PolyphonicClusterManager.add_data_point_permanently!(manager, copy(value))
+  PolyphonicClusterManager.update_caches_permanently!(manager)
 
   temporal = metrics.occurrence_intervals
   return Dict(
