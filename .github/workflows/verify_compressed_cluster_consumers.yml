@@ -13,6 +13,7 @@ jobs:
       matrix:
         test_file:
           - analyse_music.jl
+          - cluster_storage_encapsulation.jl
           - generate_polyphonic_validation.jl
           - issues_16_23_regressions.jl
           - issues_18_lifecycle_regression.jl
