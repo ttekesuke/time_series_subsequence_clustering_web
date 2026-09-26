@@ -1226,11 +1226,7 @@ function weighted_complexity_score(
   return weight_sum > 0.0 ? (weighted / weight_sum) : 0.0
 end
 
-function update_caches_permanently!(
-  mgr::Manager;
-  sync_occurrence::Bool=true,
-  clear_updated::Bool=true,
-)
+function update_caches_permanently!(mgr::Manager)
   # Cache writes are incremental. Materialize logical refs only for window
   # sizes that actually changed on this append instead of expanding the full
   # compressed cluster store.
@@ -1303,19 +1299,17 @@ function update_caches_permanently!(
     end
   end
 
-  if sync_occurrence && mgr.enable_occurrence_intervals
+  if mgr.enable_occurrence_intervals
     now_index = length(mgr.data) - 1
     for (window_size, cluster_id, node) in _selected_latest_occurrence_targets(clusters_each, now_index)
       _sync_occurrence_interval_state!(mgr, window_size, cluster_id, node)
     end
   end
 
-  if clear_updated
-    # reset updated ids (Rails behavior)
-    empty!(mgr.updated_cluster_ids_per_window_for_calculate_distance)
-    empty!(mgr.updated_cluster_ids_per_window_for_calculate_quantities)
-  end
-  return clusters_each
+  # reset updated ids (Rails behavior)
+  empty!(mgr.updated_cluster_ids_per_window_for_calculate_distance)
+  empty!(mgr.updated_cluster_ids_per_window_for_calculate_quantities)
+  return nothing
 end
 
 # Cluster complexity
@@ -2198,82 +2192,6 @@ function calculate_all_extended_current_state(mgr::Manager)::ExtendedClusterMetr
     else
       EMPTY_OCCURRENCE_INTERVAL_METRICS
     end
-
-  return ExtendedClusterMetrics(
-    sum_distances,
-    sum_quantities,
-    sum_complexities,
-    occurrence_intervals,
-  )
-end
-
-"""Append a known observed value once and return the same candidate metrics that
-`simulate_add_and_calculate_all_extended` would have returned before rollback.
-
-This is for analysis of already-observed series. It avoids clustering the same
-value once speculatively and again permanently. Occurrence metrics are previewed
-against the pre-append occurrence state, then that state is advanced only after
-the metric snapshot has been taken.
-"""
-function add_and_calculate_all_extended_permanently!(
-  mgr::Manager,
-  value::PolySet,
-)::ExtendedClusterMetrics
-  add_data_point_permanently!(mgr, value)
-
-  updated_clusters_each = update_caches_permanently!(
-    mgr;
-    sync_occurrence=false,
-    clear_updated=false,
-  )
-
-  sum_distances = 0.0
-  sum_quantities = 0.0
-  sum_complexities = 0.0
-
-  if mgr.recency <= 0.0
-    for (window_size, cache) in mgr.cluster_distance_cache
-      isempty(cache) || (sum_distances += sum(values(cache)) / float(window_size))
-    end
-    for (_, cache) in mgr.cluster_quantity_cache
-      isempty(cache) || (sum_quantities += sum(values(cache)))
-    end
-    for (_, cache) in mgr.cluster_complexity_cache
-      isempty(cache) || (sum_complexities += sum(values(cache)))
-    end
-  else
-    clusters_each = collect_clusters_each(mgr)
-    now_index = length(mgr.data) - 1
-    for (window_size, same_ws) in clusters_each
-      d_cache = get(mgr.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
-      c_cache = get(mgr.cluster_complexity_cache, window_size, Dict{Int,Float64}())
-      isempty(d_cache) || (
-        sum_distances += weighted_distance_score(mgr, d_cache, same_ws, now_index)
-      )
-      sum_quantities += weighted_quantity_score(mgr, same_ws, window_size, now_index)
-      isempty(c_cache) || (
-        sum_complexities += weighted_complexity_score(mgr, c_cache, same_ws, now_index)
-      )
-    end
-  end
-
-  now_index = length(mgr.data) - 1
-  occurrence_intervals =
-    if mgr.enable_occurrence_intervals
-      latest_occurrence_interval_metrics(mgr, updated_clusters_each, now_index)
-    else
-      EMPTY_OCCURRENCE_INTERVAL_METRICS
-    end
-
-  if mgr.enable_occurrence_intervals
-    for (window_size, cluster_id, node) in
-        _selected_latest_occurrence_targets(updated_clusters_each, now_index)
-      _sync_occurrence_interval_state!(mgr, window_size, cluster_id, node)
-    end
-  end
-
-  empty!(mgr.updated_cluster_ids_per_window_for_calculate_distance)
-  empty!(mgr.updated_cluster_ids_per_window_for_calculate_quantities)
 
   return ExtendedClusterMetrics(
     sum_distances,
