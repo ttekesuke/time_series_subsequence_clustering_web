@@ -45,6 +45,49 @@ jobs:
               include(file);
             end
           '
+      - name: Benchmark MusicAnalyse-like 1728-step stream
+        run: |
+          julia --project=. <<'JULIA'
+          ENV["GENIE_ENV"]="test"
+          using Genie
+          Genie.loadapp()
+          P = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
+          TC = Main.TimeseriesClusteringAPI.TimeSeriesController
+
+          data = [Float64[60 + mod(div(i - 1, 8), 12)] for i in 1:1728]
+          mgr = P.Manager(
+            deepcopy(data[1:2]),
+            0.02,
+            2,
+            false;
+            range_min=0.0,
+            range_max=127.0,
+            max_set_size=1,
+            enable_occurrence_intervals=true,
+          )
+          P.process_data!(mgr)
+          P.update_caches_permanently!(mgr)
+
+          GC.gc()
+          elapsed = @elapsed begin
+            for value in data[3:end]
+              TC.evaluate_observed_complexity!(mgr, copy(value))
+            end
+          end
+          P.finalize_cluster_storage!(mgr)
+
+          function span_count(spans)
+            total = length(spans)
+            for span in spans
+              total += span_count(span.children)
+            end
+            total
+          end
+
+          println("MUSIC_ANALYSE_1728_ELAPSED_S=", round(elapsed; digits=3))
+          println("MUSIC_ANALYSE_1728_LOGICAL_NODES=", length(P.logical_virtual_nodes(mgr)))
+          println("MUSIC_ANALYSE_1728_PHYSICAL_SPANS=", span_count(mgr.cluster_spans))
+          JULIA
 
   frontend:
     runs-on: ubuntu-latest
