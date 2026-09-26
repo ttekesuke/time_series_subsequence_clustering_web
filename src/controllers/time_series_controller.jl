@@ -3102,6 +3102,7 @@ function _analyse_music_dataset_dir()
 end
 
 function asap_musicxml_sources()
+  t0 = time()
   try
     dataset_dir = _analyse_music_dataset_dir()
     metadata_path = joinpath(dataset_dir, "metadata.csv")
@@ -3111,13 +3112,14 @@ function asap_musicxml_sources()
       metadata_csv = _fetch_asap_raw("metadata.csv")
       MusicAnalysis.list_asap_sources_from_csv_text(metadata_csv)
     end
+    @info "[analyse_music] ASAP source list loaded" sources=length(sources) elapsed_s=round(time() - t0; digits=2)
     return Dict("sources" => sources)
   catch err
     if err isa MusicAnalysis.RequestError
-      @warn "[analyse_music] request rejected" code=err.code message=err.message elapsed_s=round(time() - t0; digits=2)
+      @warn "[analyse_music] ASAP source list rejected" code=err.code message=err.message elapsed_s=round(time() - t0; digits=2)
       throw(AnalyseMusicRequestError(err.code, err.message))
     end
-    @error "[analyse_music] request failed" exception=(err, catch_backtrace()) elapsed_s=round(time() - t0; digits=2)
+    @error "[analyse_music] ASAP source list failed" exception=(err, catch_backtrace()) elapsed_s=round(time() - t0; digits=2)
     rethrow()
   end
 end
