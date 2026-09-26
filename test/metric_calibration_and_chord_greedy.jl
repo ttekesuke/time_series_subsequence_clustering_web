@@ -10,24 +10,12 @@ const _pcm = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
 @testset "metric calibrator is fixed before candidate evaluation" begin
   dist = _controller.ScalarMetricCalibrator(10.0, 2.0, 1.0)
   inverse = _controller.ScalarMetricCalibrator(10.0, 2.0, -1.0)
-  fixed = _controller.ComplexityMetricCalibrator(dist, inverse, dist)
 
-  scores_a = _controller.combine_complexity_metric_scores(
-    [10.0, 12.0],
-    [0.0, 0.0],
-    [0.0, 0.0],
-    [0.0, 0.0];
-    metric_weights=(1.0, 0.0, 0.0, 0.0),
-    calibrator=fixed,
-  )
-  scores_b = _controller.combine_complexity_metric_scores(
-    [-100.0, 10.0, 12.0, 100.0],
-    zeros(4),
-    zeros(4),
-    zeros(4);
-    metric_weights=(1.0, 0.0, 0.0, 0.0),
-    calibrator=fixed,
-  )
+  # Calibration itself is determined entirely by the committed-state
+  # calibrator. Candidate-set normalization happens later in
+  # combine_predictive_structural_scores and is intentionally a separate step.
+  scores_a = [_controller.calibrate_metric(x, dist) for x in [10.0, 12.0]]
+  scores_b = [_controller.calibrate_metric(x, dist) for x in [-100.0, 10.0, 12.0, 100.0]]
 
   @test scores_a[1] == scores_b[2]
   @test scores_a[2] == scores_b[3]
