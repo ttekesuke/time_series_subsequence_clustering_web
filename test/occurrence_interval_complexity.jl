@@ -109,7 +109,7 @@ end
     pcm.process_data!(manager)
     controller.initial_calc_values!(
       manager,
-      pcm.transform_clusters(manager.clusters, config.SUBSEQUENCE_MIN_WINDOW_SIZE),
+      pcm.transform_clusters(manager),
     )
     empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
 
