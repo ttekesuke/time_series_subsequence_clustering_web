@@ -314,61 +314,195 @@ normalize_set(x::PolySet)::PolySet = x
 end
 
 
-function _find_cluster_ref(mgr::Manager, keys::Vector{Int})::Union{Nothing,TreeClusterRef}
+function _find_cluster_ref(
+  mgr::Manager,
+  keys::Vector{Int},
+)::Union{Nothing,SpanClusterRef}
   isempty(keys) && return nothing
-  current_dict = mgr.working_clusters
-  current::Union{Nothing,PolyClusterNode} = nothing
-  current_id = -1
-  for key in keys
-    node = get(current_dict, key, nothing)
-    node === nothing && return nothing
-    current = node
-    current_id = key
-    current_dict = node.cc
+
+  spans = mgr.cluster_spans
+  span::Union{Nothing,CompressedClusterSpan} = nothing
+  offset = 0
+
+  for (key_index, key) in enumerate(keys)
+    if key_index == 1
+      for candidate in spans
+        if !isempty(candidate.cluster_ids) && candidate.cluster_ids[1] == key
+          span = candidate
+          offset = 1
+          break
+        end
+      end
+      span === nothing && return nothing
+      continue
+    end
+
+    current = span::CompressedClusterSpan
+    if offset < length(current.cluster_ids)
+      current.cluster_ids[offset + 1] == key || return nothing
+      offset += 1
+      continue
+    end
+
+    next_span = nothing
+    for child in current.children
+      if !isempty(child.cluster_ids) && child.cluster_ids[1] == key
+        next_span = child
+        break
+      end
+    end
+    next_span === nothing && return nothing
+    span = next_span
+    offset = 1
   end
-  return TreeClusterRef(current_id, current::PolyClusterNode)
+
+  return SpanClusterRef(span::CompressedClusterSpan, offset)
 end
 
-function _root_cluster_refs(mgr::Manager)::Vector{TreeClusterRef}
-  TreeClusterRef[
-    TreeClusterRef(cid, mgr.working_clusters[cid])
-    for cid in sort!(collect(keys(mgr.working_clusters)))
+function _root_cluster_refs(mgr::Manager)::Vector{SpanClusterRef}
+  return SpanClusterRef[
+    SpanClusterRef(span, 1)
+    for span in sort(copy(mgr.cluster_spans); by=span -> span.cluster_ids[1])
   ]
 end
 
-function _append_cluster_start!(mgr::Manager, ref::TreeClusterRef, start::Int)::Nothing
-  push!(ref.node.si, start)
-  record!(mgr, PJSiPush(ref.node))
-  mgr.compressed_dirty = true
+@inline function _new_singleton_span(
+  window_size::Int,
+  cluster_id::Int,
+  starts::Vector{Int},
+  representative::PolySeq,
+  version::Int,
+  fit_limit::Int,
+)::CompressedClusterSpan
+  return CompressedClusterSpan(
+    window_size,
+    window_size,
+    Int[cluster_id],
+    copy(starts),
+    deep_copy_seq(representative),
+    Int[version],
+    Int[fit_limit],
+    CompressedClusterSpan[],
+  )
+end
+
+function _find_span_container(
+  roots::Vector{CompressedClusterSpan},
+  target::CompressedClusterSpan,
+)::Union{Nothing,Tuple{Vector{CompressedClusterSpan},Int}}
+  for i in eachindex(roots)
+    roots[i] === target && return (roots, i)
+    nested = _find_span_container(roots[i].children, target)
+    nested === nothing || return nested
+  end
+  return nothing
+end
+
+@inline function _span_starts_at(span::CompressedClusterSpan, offset::Int)::Vector{Int}
+  window_size = span.window_min + offset - 1
+  fit_limit = span.fit_limits[offset]
+  return Int[s for s in span.si_min if s + window_size <= fit_limit]
+end
+
+function _slice_span(
+  span::CompressedClusterSpan,
+  first_offset::Int,
+  last_offset::Int,
+  children::Vector{CompressedClusterSpan},
+)::CompressedClusterSpan
+  window_min = span.window_min + first_offset - 1
+  window_max = span.window_min + last_offset - 1
+  starts = _span_starts_at(span, first_offset)
+  return CompressedClusterSpan(
+    window_min,
+    window_max,
+    copy(span.cluster_ids[first_offset:last_offset]),
+    starts,
+    deep_copy_seq(span.as_max[1:window_max]),
+    copy(span.versions[first_offset:last_offset]),
+    copy(span.fit_limits[first_offset:last_offset]),
+    children,
+  )
+end
+
+"""Split a physical span so `ref` becomes a one-node span.
+
+The logical node is unchanged.  This is the only structural operation required
+before mutating one virtual node; unchanged prefix/suffix pieces remain
+compressed and are eligible for lossless re-merge after the committed step.
+"""
+function _isolate_cluster_ref!(
+  mgr::Manager,
+  ref::SpanClusterRef,
+)::SpanClusterRef
+  span = ref.span
+  n = length(span.cluster_ids)
+  n == 1 && return ref
+
+  offset = ref.offset
+  found = _find_span_container(mgr.cluster_spans, span)
+  found === nothing && error("Compressed cluster span is detached from manager storage.")
+  container, container_index = found
+
+  original_children = span.children
+  current = _slice_span(span, offset, offset, CompressedClusterSpan[])
+
+  if offset < n
+    suffix = _slice_span(span, offset + 1, n, original_children)
+    current.children = CompressedClusterSpan[suffix]
+  else
+    current.children = original_children
+  end
+
+  replacement = current
+  if offset > 1
+    prefix = _slice_span(span, 1, offset - 1, CompressedClusterSpan[current])
+    replacement = prefix
+  end
+
+  container[container_index] = replacement
+  ref.span = current
+  ref.offset = 1
+  return ref
+end
+
+function _append_cluster_start!(mgr::Manager, ref::SpanClusterRef, start::Int)::Nothing
+  _isolate_cluster_ref!(mgr, ref)
+  push!(ref.span.si_min, start)
+  ref.span.fit_limits[1] = max(ref.span.fit_limits[1], length(mgr.data))
   return nothing
 end
 
 function _replace_cluster_representative!(
   mgr::Manager,
-  ref::TreeClusterRef,
+  ref::SpanClusterRef,
   representative::PolySeq,
 )::Nothing
-  old_as = deep_copy_seq(ref.node.as)
-  old_version = ref.node.version
-  ref.node.as = representative
-  ref.node.version += 1
-  record!(mgr, PJAsUpdate(ref.node, old_as, old_version))
-  mgr.compressed_dirty = true
+  _isolate_cluster_ref!(mgr, ref)
+  ref.span.as_max = deep_copy_seq(representative)
+  ref.span.versions[1] += 1
   return nothing
 end
 
 function _add_child_cluster!(
   mgr::Manager,
-  parent::TreeClusterRef,
+  parent::SpanClusterRef,
   cluster_id::Int,
   starts::Vector{Int},
   representative::PolySeq,
-)::TreeClusterRef
-  node = _new_cluster_node(starts, representative)
-  parent.node.cc[cluster_id] = node
-  record!(mgr, PJCcAdd(parent.node.cc, cluster_id))
-  mgr.compressed_dirty = true
-  return TreeClusterRef(cluster_id, node)
+)::SpanClusterRef
+  _isolate_cluster_ref!(mgr, parent)
+  child = _new_singleton_span(
+    _cluster_window(parent) + 1,
+    cluster_id,
+    starts,
+    representative,
+    0,
+    length(mgr.data),
+  )
+  push!(parent.span.children, child)
+  sort!(parent.span.children; by=span -> span.cluster_ids[1])
+  return SpanClusterRef(child, 1)
 end
 
 function _add_root_cluster!(
@@ -376,12 +510,79 @@ function _add_root_cluster!(
   cluster_id::Int,
   starts::Vector{Int},
   representative::PolySeq,
-)::TreeClusterRef
-  node = _new_cluster_node(starts, representative)
-  mgr.working_clusters[cluster_id] = node
-  record!(mgr, PJRootAdd(cluster_id))
-  mgr.compressed_dirty = true
-  return TreeClusterRef(cluster_id, node)
+)::SpanClusterRef
+  root = _new_singleton_span(
+    mgr.min_window_size,
+    cluster_id,
+    starts,
+    representative,
+    0,
+    length(mgr.data),
+  )
+  push!(mgr.cluster_spans, root)
+  sort!(mgr.cluster_spans; by=span -> span.cluster_ids[1])
+  return SpanClusterRef(root, 1)
+end
+
+function _span_extends_representative_exactly(
+  parent::CompressedClusterSpan,
+  child::CompressedClusterSpan,
+)::Bool
+  length(child.as_max) >= length(parent.as_max) || return false
+  @inbounds for i in eachindex(parent.as_max)
+    parent.as_max[i] == child.as_max[i] || return false
+  end
+  return true
+end
+
+function _can_merge_spans(
+  parent::CompressedClusterSpan,
+  child::CompressedClusterSpan,
+)::Bool
+  parent.window_max + 1 == child.window_min || return false
+  _span_extends_representative_exactly(parent, child) || return false
+
+  # Every child virtual node must remain exactly reconstructable from the
+  # parent's first start set with that node's own historical fit limit.
+  for child_offset in eachindex(child.cluster_ids)
+    window_size = child.window_min + child_offset - 1
+    fit_limit = child.fit_limits[child_offset]
+    expected = sort(Int[
+      s for s in parent.si_min
+      if s + window_size <= fit_limit
+    ])
+    actual = sort(_span_starts_at(child, child_offset))
+    expected == actual || return false
+  end
+  return true
+end
+
+function _normalize_span!(span::CompressedClusterSpan)::Nothing
+  for child in span.children
+    _normalize_span!(child)
+  end
+  sort!(span.children; by=child -> child.cluster_ids[1])
+
+  while length(span.children) == 1
+    child = span.children[1]
+    _can_merge_spans(span, child) || break
+    span.window_max = child.window_max
+    append!(span.cluster_ids, child.cluster_ids)
+    append!(span.versions, child.versions)
+    append!(span.fit_limits, child.fit_limits)
+    span.as_max = deep_copy_seq(child.as_max)
+    span.children = child.children
+    sort!(span.children; by=grandchild -> grandchild.cluster_ids[1])
+  end
+  return nothing
+end
+
+function _normalize_cluster_store!(mgr::Manager)::Nothing
+  for span in mgr.cluster_spans
+    _normalize_span!(span)
+  end
+  sort!(mgr.cluster_spans; by=span -> span.cluster_ids[1])
+  return nothing
 end
 
 """Create manager. `data` must be Vector{Vector{Float64}}."""
