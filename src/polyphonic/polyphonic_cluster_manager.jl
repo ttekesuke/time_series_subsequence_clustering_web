@@ -3081,10 +3081,10 @@ update_caches_permanently(mgr::Manager) = update_caches_permanently!(mgr)
 # implementation detail so it can be replaced by path-compressed spans without
 # changing controllers, generators, MusicXML analysis, or UI payload builders.
 #
-# For now the manager still mutates the legacy tree internally, but all read
-# APIs below round-trip through the lossless compressed representation.  This
-# continuously exercises the compressed representation while preserving the
-# exact legacy logical result.
+# The manager now stores clusters canonically as lossless compressed spans.
+# Public read APIs below expose the same logical per-window tree/payloads as
+# the legacy explicit-node implementation, so higher-level callers remain
+# storage-independent.
 function logical_virtual_nodes(mgr::Manager)::Vector{NamedTuple}
   return compressed_virtual_nodes(compress_cluster_tree(mgr))
 end
