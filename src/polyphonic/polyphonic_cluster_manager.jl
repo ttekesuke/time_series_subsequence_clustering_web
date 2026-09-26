@@ -1580,6 +1580,61 @@ end
 
 # Simulation with rollback
 
+"""Return the extended metrics for the manager's already-committed current state.
+
+The caller must have updated the permanent caches after the latest append.  This
+is the observed-data counterpart of simulate_add_and_calculate_all_extended:
+it avoids a transactional append/rollback when the next value is already known
+and has been permanently committed.
+"""
+function calculate_all_extended_current_state(mgr::Manager)::ExtendedClusterMetrics
+  clusters_each = collect_clusters_each(mgr)
+  sum_distances = 0.0
+  sum_quantities = 0.0
+  sum_complexities = 0.0
+  now_index = length(mgr.data) - 1
+
+  for (window_size, same_ws) in clusters_each
+    cache = get(mgr.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
+    q_cache = get(mgr.cluster_quantity_cache, window_size, Dict{Int,Float64}())
+    c_cache = get(mgr.cluster_complexity_cache, window_size, Dict{Int,Float64}())
+
+    if mgr.recency <= 0.0
+      if !isempty(cache)
+        sum_distances += sum(values(cache)) / float(window_size)
+      end
+      if !isempty(q_cache)
+        sum_quantities += sum(values(q_cache))
+      end
+      if !isempty(c_cache)
+        sum_complexities += sum(values(c_cache))
+      end
+    else
+      if !isempty(cache)
+        sum_distances += weighted_distance_score(mgr, cache, same_ws, now_index)
+      end
+      sum_quantities += weighted_quantity_score(mgr, same_ws, window_size, now_index)
+      if !isempty(c_cache)
+        sum_complexities += weighted_complexity_score(mgr, c_cache, same_ws, now_index)
+      end
+    end
+  end
+
+  occurrence_intervals =
+    if mgr.enable_occurrence_intervals
+      latest_occurrence_interval_metrics(mgr, clusters_each, now_index)
+    else
+      EMPTY_OCCURRENCE_INTERVAL_METRICS
+    end
+
+  return ExtendedClusterMetrics(
+    sum_distances,
+    sum_quantities,
+    sum_complexities,
+    occurrence_intervals,
+  )
+end
+
 function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySet)::ExtendedClusterMetrics
   start_transaction!(mgr)
   reset_updated_ids_for_simulation!(mgr)
