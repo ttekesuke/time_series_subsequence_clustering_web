@@ -2743,7 +2743,7 @@ function build_predictive_distribution(
     same_window = clusters_each[window_size]
     target = nothing
     for node in values(same_window)
-      if latest_start in node.si
+      if latest_start in PolyphonicClusterManager.cluster_starts(node)
         target = node
         break
       end
@@ -2751,7 +2751,7 @@ function build_predictive_distribution(
     target === nothing && continue
 
     historical_starts = sort!(unique(Int[
-      start for start in target.si
+      start for start in PolyphonicClusterManager.cluster_starts(target)
       if start < latest_start && start + window_size < data_length
     ]))
     isempty(historical_starts) && continue
