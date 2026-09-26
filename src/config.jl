@@ -92,10 +92,6 @@ const OCCURRENCE_INTERVAL_HISTORY_LIMIT::Int = 64
 # Predictive complexity: combine successor distributions from recent suffix
 # clusters, then convert candidate likelihood into a 0..1 surprise score.
 const PREDICTIVE_MAX_CONTEXT_LENGTH::Int = 32
-# MusicXML analysis must stay bounded for full-score time series.  The generic
-# cluster manager can otherwise grow subsequence windows almost to the entire
-# score, making later observed steps dramatically slower.
-const MUSIC_ANALYSIS_MAX_CLUSTER_WINDOW_SIZE::Int = 32
 const PREDICTIVE_HISTORY_LIMIT_PER_CONTEXT::Int = 64
 const PREDICTIVE_SUPPORT_PRIOR::Float64 = 2.0
 const PREDICTIVE_CONTEXT_DISTANCE_BANDWIDTH::Float64 = 0.10
