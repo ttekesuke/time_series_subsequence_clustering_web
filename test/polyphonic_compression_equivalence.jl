@@ -418,3 +418,38 @@ end
   @test mgr.compressed_cache === committed_cache
   @test _ProdPCM.compressed_virtual_nodes(mgr.compressed_cache) == committed_rows
 end
+
+
+@testset "production code does not depend on physical cluster storage" begin
+  repo_root = normpath(joinpath(@__DIR__, ".."))
+  source_roots = [
+    joinpath(repo_root, "src", "controllers"),
+    joinpath(repo_root, "src", "music"),
+    joinpath(repo_root, "src", "polyphonic", "multi_stream_manager.jl"),
+    joinpath(repo_root, "src", "voice"),
+  ]
+
+  offenders = String[]
+  for root in source_roots
+    paths = if isfile(root)
+      String[root]
+    elseif isdir(root)
+      String[
+        joinpath(dir, file)
+        for (dir, _, files) in walkdir(root)
+        for file in files
+        if endswith(file, ".jl")
+      ]
+    else
+      String[]
+    end
+
+    for path in paths
+      text = read(path, String)
+      occursin("working_clusters", text) || continue
+      push!(offenders, relpath(path, repo_root))
+    end
+  end
+
+  @test isempty(offenders)
+end
