@@ -157,10 +157,20 @@ function _run_incremental_case(scenario)
   _assert_equivalent(prod, legacy)
 
   for value in scenario.data[3:end]
+    simulated_prod = _ProdPCM.simulate_add_and_calculate_all_extended(prod, copy(value))
+    simulated_legacy = _LegacyPCM.simulate_add_and_calculate_all_extended(legacy, copy(value))
+    @test _norm_metrics(simulated_prod) == _norm_metrics(simulated_legacy)
+
     _ProdPCM.add_data_point_permanently!(prod, copy(value))
     _LegacyPCM.add_data_point_permanently!(legacy, copy(value))
     _ProdPCM.update_caches_permanently!(prod)
     _LegacyPCM.update_caches_permanently!(legacy)
+
+    # Observed-data analysis can commit once and read the current metrics rather
+    # than simulating and then repeating the same append, but only if this
+    # remains exactly equivalent to the legacy simulation result.
+    @test _norm_metrics(_ProdPCM.calculate_all_extended_current_state(prod)) ==
+          _norm_metrics(simulated_prod)
     _assert_equivalent(prod, legacy)
   end
 end
