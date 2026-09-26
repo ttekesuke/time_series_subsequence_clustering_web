@@ -3098,15 +3098,30 @@ function transform_clusters(mgr::Manager)
 end
 
 function clusters_to_timeline(mgr::Manager)
+  # Timeline/UI consumers need only logical window/id/start positions. Avoid
+  # materializing (and deep-copying) every virtual representative sequence,
+  # which becomes very expensive for long repeated windows.
   result = Vector{Dict{String,Any}}()
-  for row in logical_virtual_nodes(mgr)
-    isempty(row.si) && continue
-    push!(result, Dict(
-      "window_size" => row.window_size,
-      "cluster_id" => string(row.cluster_id),
-      "indices" => sort(copy(row.si)),
-    ))
+  stack = CompressedClusterSpan[reverse(mgr.cluster_spans)...]
+
+  while !isempty(stack)
+    span = pop!(stack)
+    for offset in eachindex(span.cluster_ids)
+      window_size = span.window_min + offset - 1
+      starts = _span_starts_at(span, offset)
+      isempty(starts) && continue
+      push!(result, Dict(
+        "window_size" => window_size,
+        "cluster_id" => string(span.cluster_ids[offset]),
+        "indices" => starts,
+      ))
+    end
+    for child in reverse(span.children)
+      push!(stack, child)
+    end
   end
+
+  sort!(result; by=row -> (Int(row["window_size"]), parse(Int, String(row["cluster_id"]))))
   return result
 end
 
@@ -3117,6 +3132,9 @@ function compressed_clusters_payload(mgr::Manager)
       "window_max" => span.window_max,
       "cluster_ids" => copy(span.cluster_ids),
       "indices" => sort(copy(span.si_min)),
+      # Required to reconstruct each virtual window's exact occurrence set:
+      # starts(w) = indices filtered by s + w <= fit_limits[offset].
+      "fit_limits" => copy(span.fit_limits),
       "children" => Any[span_payload(child) for child in span.children],
     )
   end
