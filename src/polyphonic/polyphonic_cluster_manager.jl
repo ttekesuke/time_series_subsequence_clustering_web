@@ -945,9 +945,17 @@ function start_transaction!(mgr::Manager)
   mgr.recording_mode = true
   empty!(mgr.journal)
 
-  # Rails uses shallow dup. We copy only the key vectors to keep rollback safe
-  # without the overhead of a full deepcopy on every simulation.
-  snapshot_tasks = Tuple{Vector{Int},Int}[(copy(t[1]), t[2]) for t in mgr.tasks]
+  # Keep rollback independent from simulation-owned task dictionaries.
+  snapshot_tasks = ClusterTask[
+    ClusterTask(
+      copy(t.keys),
+      t.length,
+      copy(t.member_squared_distances),
+      t.representative_squared_distance,
+      t.representative_version,
+    )
+    for t in mgr.tasks
+  ]
 
   mgr.snapshot_state = PolySnapshot(
     snapshot_tasks,
@@ -974,6 +982,7 @@ function rollback!(mgr::Manager)
 
     elseif entry isa PJAsUpdate
       entry.node.as = entry.old_as
+      entry.node.version = entry.old_version
 
     elseif entry isa PJCcAdd
       delete!(entry.parent_cc, entry.key)
