@@ -509,13 +509,11 @@ function _analyse_manager(
   stream_axis_offset::Float64=1.0,
   stream_axis_capacity::Int=1,
   log_label::AbstractString="",
-  max_window_size::Int=Config.MUSIC_ANALYSIS_MAX_CLUSTER_WINDOW_SIZE,
 )
   n = length(series)
   min_window = Config.POLYPHONIC_MIN_WINDOW_SIZE
   log_started_at = time()
-  effective_max_window = max(max_window_size, min_window)
-  !isempty(log_label) && @info "[analyse_music] clustering start" label=String(log_label) steps=n min_window=min_window max_window=effective_max_window
+  !isempty(log_label) && @info "[analyse_music] clustering start" label=String(log_label) steps=n min_window=min_window
   axes = Dict(
     "prediction" => Any[nothing for _ in 1:n],
     "diversity" => Any[nothing for _ in 1:n],
@@ -559,7 +557,7 @@ function _analyse_manager(
     total_observed_steps = n - min_window
     progress_interval = max(cld(total_observed_steps, 10), 1)
     for index in (min_window + 1):n
-      observed = scoring.evaluate_observed_complexity!(manager, series[index]; metric_weights=metric_weights, max_window_size=effective_max_window)
+      observed = scoring.evaluate_observed_complexity!(manager, series[index]; metric_weights=metric_weights)
       for key in keys(axes)
         axes[key][index] = get(observed, key, nothing)
       end
