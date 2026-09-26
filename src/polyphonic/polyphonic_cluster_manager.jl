@@ -132,14 +132,6 @@ mutable struct OccurrenceIntervalState
   manager::Union{Nothing,AbstractClusterManager}
 end
 
-"""Rollback snapshot (typed)."""
-struct PolySnapshot
-  tasks::Vector{ClusterTask}
-  cluster_id_counter::Int
-  updated_dist_ids::Dict{Int,Set{Int}}
-  updated_quant_ids::Dict{Int,Set{Int}}
-end
-
 abstract type PolyJournalEntry end
 
 struct PJDataPush <: PolyJournalEntry end
@@ -196,15 +188,71 @@ struct PJCacheWriteComp <: PolyJournalEntry
   old_value::Union{Nothing,Float64}
 end
 
-"""Lossless physical span used by the manager's compressed read store."""
-struct CompressedClusterSpan
+"""Lossless physical path-compressed cluster storage.
+
+A span stores a chain of logical window nodes.  `si_min` and `as_max` hold
+the heavy repeated data once; each logical node keeps only its id, version and
+the historical fit limit needed to reconstruct its exact start indices even
+after the time series later grows.
+"""
+mutable struct CompressedClusterSpan
   window_min::Int
   window_max::Int
   cluster_ids::Vector{Int}
   si_min::Vector{Int}
   as_max::PolySeq
-  data_length::Int
+  versions::Vector{Int}
+  fit_limits::Vector{Int}
   children::Vector{CompressedClusterSpan}
+end
+
+"""Mutable logical reference into one virtual node of a compressed span."""
+mutable struct SpanClusterRef <: AbstractClusterRef
+  span::CompressedClusterSpan
+  offset::Int
+end
+
+@inline _cluster_id(ref::SpanClusterRef)::Int = ref.span.cluster_ids[ref.offset]
+@inline _cluster_window(ref::SpanClusterRef)::Int = ref.span.window_min + ref.offset - 1
+@inline _cluster_version(ref::SpanClusterRef)::Int = ref.span.versions[ref.offset]
+
+@inline function _cluster_si(ref::SpanClusterRef)::Vector{Int}
+  window_size = _cluster_window(ref)
+  fit_limit = ref.span.fit_limits[ref.offset]
+  return Int[s for s in ref.span.si_min if s + window_size <= fit_limit]
+end
+
+@inline function _cluster_as(ref::SpanClusterRef)::PolySeq
+  window_size = _cluster_window(ref)
+  return ref.span.as_max[1:window_size]
+end
+
+@inline function _cluster_has_children(ref::SpanClusterRef)::Bool
+  return ref.offset < length(ref.span.cluster_ids) || !isempty(ref.span.children)
+end
+
+function _cluster_children(ref::SpanClusterRef)::Vector{SpanClusterRef}
+  if ref.offset < length(ref.span.cluster_ids)
+    return SpanClusterRef[SpanClusterRef(ref.span, ref.offset + 1)]
+  end
+  return SpanClusterRef[
+    SpanClusterRef(child, 1)
+    for child in sort(copy(ref.span.children); by=child -> child.cluster_ids[1])
+  ]
+end
+
+"""Rollback snapshot.
+
+Cluster storage itself is path-compressed.  Simulation snapshots preserve the
+root span vector so rollback restores the exact physical structure as well as
+the exact logical result.
+"""
+struct PolySnapshot
+  tasks::Vector{ClusterTask}
+  cluster_id_counter::Int
+  updated_dist_ids::Dict{Int,Set{Int}}
+  updated_quant_ids::Dict{Int,Set{Int}}
+  cluster_spans::Vector{CompressedClusterSpan}
 end
 
 """Read-only logical node reconstructed from compressed storage."""
@@ -233,9 +281,7 @@ mutable struct Manager <: AbstractClusterManager
   scale_mode::Symbol
   contextual_min_width::Float64
 
-  working_clusters::Dict{Int,PolyClusterNode} # mutable hot-path tree; internal only
-  compressed_cache::Vector{CompressedClusterSpan} # lossless path-compressed read store
-  compressed_dirty::Bool
+  cluster_spans::Vector{CompressedClusterSpan} # canonical physical cluster storage
   cluster_id_counter::Int
   tasks::Vector{ClusterTask}
 
