@@ -88,6 +88,11 @@ jobs:
           time_bulk(L, warm)
           time_observed(P, warm)
           time_observed(L, warm)
+          # Warm occurrence-specific code paths as well; otherwise the first
+          # timed occurrence case includes Julia JIT compilation.
+          time_observed(P, warm; occurrence=true, physical=true)
+          time_observed(P, warm; occurrence=true, physical=false)
+          time_observed(L, warm; occurrence=true)
 
           function print_ratio(label, legacy, prod)
             ratio = prod > 0 ? legacy / prod : Inf
