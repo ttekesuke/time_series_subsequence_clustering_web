@@ -7522,4 +7522,8 @@ function map_note_positions_to_db_points()
         "mapped_notes" => mapped_notes,
         "total_notes_in_phrase" => length(phrase_notes),
         "phrase_index" => phrase_index,
-  
+        "num_phrases" => length(phrases)
+    )
+end
+
+end # module
