@@ -1632,7 +1632,7 @@ function build_predictive_distribution(mgr::Manager)::PredictiveDistribution
     target === nothing && continue
 
     historical_starts = sort!(unique(Int[
-      start for start in _cluster_si(target)
+      start for start in _cluster_si_view(target)
       if start < latest_start && start + window_size < data_length
     ]))
     isempty(historical_starts) && continue
