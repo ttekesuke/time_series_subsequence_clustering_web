@@ -4070,9 +4070,9 @@ function evaluate_observed_complexity!(
     distribution,
     value,
   )
-  metrics = PolyphonicClusterManager.simulate_add_and_calculate_all_extended(
+  metrics = PolyphonicClusterManager.add_and_calculate_all_extended_permanently!(
     manager,
-    value,
+    copy(value),
   )
 
   diversity = calibrate_metric(metrics.distance, calibrator.base.distance)
@@ -4107,9 +4107,6 @@ function evaluate_observed_complexity!(
   combined = denominator > 0.0 ?
     clamp(total / denominator, 0.0, 1.0) :
     Config.DEFAULT_TARGET_01
-
-  PolyphonicClusterManager.add_data_point_permanently!(manager, copy(value))
-  PolyphonicClusterManager.update_caches_permanently!(manager)
 
   temporal = metrics.occurrence_intervals
   return Dict(
