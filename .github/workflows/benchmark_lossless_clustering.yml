@@ -1,8 +1,7 @@
 name: Benchmark Lossless Clustering
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   benchmark:
