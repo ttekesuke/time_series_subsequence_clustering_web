@@ -215,6 +215,32 @@ mutable struct CompressedClusterSpan
   children::Vector{CompressedClusterSpan}
 end
 
+"""Rollback record for one physically mutated compressed span.
+
+Simulation uses copy-on-write for heavy arrays.  Therefore preserving the old
+field references (plus a shallow copy of the child vector, which is mutated
+in-place by push!/sort!) is enough to restore the exact physical and logical
+state without cloning the whole cluster topology at transaction start.
+"""
+struct PJCompressedSpanState <: PolyJournalEntry
+  span::CompressedClusterSpan
+  window_min::Int
+  window_max::Int
+  cluster_ids::Vector{Int}
+  si_min::Vector{Int}
+  as_max::PolySeq
+  versions::Vector{Int}
+  fit_limits::Vector{Int}
+  children::Vector{CompressedClusterSpan}
+end
+
+"""Rollback record for replacing one span inside a root/child container."""
+struct PJCompressedSpanReplace <: PolyJournalEntry
+  container::Vector{CompressedClusterSpan}
+  index::Int
+  old_span::CompressedClusterSpan
+end
+
 """Mutable logical reference into one virtual node of a compressed span."""
 mutable struct SpanClusterRef <: AbstractClusterRef
   span::CompressedClusterSpan
@@ -486,6 +512,36 @@ The logical node is unchanged.  This is the only structural operation required
 before mutating one virtual node; unchanged prefix/suffix pieces remain
 compressed and are eligible for lossless re-merge after the committed step.
 """
+@inline function _record_compressed_span_state!(
+  mgr::Manager,
+  span::CompressedClusterSpan,
+)::Nothing
+  mgr.recording_mode || return nothing
+  push!(mgr.journal, PJCompressedSpanState(
+    span,
+    span.window_min,
+    span.window_max,
+    copy(span.cluster_ids),
+    span.si_min,
+    span.as_max,
+    span.versions,
+    span.fit_limits,
+    copy(span.children),
+  ))
+  return nothing
+end
+
+@inline function _record_compressed_span_replace!(
+  mgr::Manager,
+  container::Vector{CompressedClusterSpan},
+  index::Int,
+  old_span::CompressedClusterSpan,
+)::Nothing
+  mgr.recording_mode || return nothing
+  push!(mgr.journal, PJCompressedSpanReplace(container, index, old_span))
+  return nothing
+end
+
 function _isolate_cluster_ref!(
   mgr::Manager,
   ref::SpanClusterRef,
@@ -515,6 +571,7 @@ function _isolate_cluster_ref!(
     replacement = prefix
   end
 
+  _record_compressed_span_replace!(mgr, container, container_index, span)
   container[container_index] = replacement
   ref.span = current
   ref.offset = 1
@@ -540,6 +597,7 @@ function _append_cluster_start!(mgr::Manager, ref::SpanClusterRef, start::Int)::
     ]
     expected_starts = vcat(current_starts, Int[start])
     if candidate_starts == expected_starts
+      _record_compressed_span_state!(mgr, span)
       fit_limits = copy(span.fit_limits)
       fit_limits[offset] = candidate_limit
       span.fit_limits = fit_limits
@@ -551,6 +609,7 @@ function _append_cluster_start!(mgr::Manager, ref::SpanClusterRef, start::Int)::
   # snapshots safe, while longer nodes remain unchanged behind their own fit
   # limits until they independently match.
   if offset == 1
+    _record_compressed_span_state!(mgr, span)
     span.si_min = vcat(span.si_min, Int[start])
     fit_limits = copy(span.fit_limits)
     fit_limits[1] = max(fit_limits[1], mgr.cluster_horizon)
@@ -561,6 +620,7 @@ function _append_cluster_start!(mgr::Manager, ref::SpanClusterRef, start::Int)::
   # Genuine non-prefix divergence: isolate only this logical node and preserve
   # the exact legacy tree semantics.
   _isolate_cluster_ref!(mgr, ref)
+  _record_compressed_span_state!(mgr, ref.span)
   ref.span.si_min = vcat(ref.span.si_min, Int[start])
   fit_limits = copy(ref.span.fit_limits)
   fit_limits[1] = max(fit_limits[1], mgr.cluster_horizon)
@@ -574,6 +634,7 @@ function _replace_cluster_representative!(
   representative::PolySeq,
 )::Nothing
   _isolate_cluster_ref!(mgr, ref)
+  _record_compressed_span_state!(mgr, ref.span)
   ref.span.as_max = deep_copy_seq(representative)
   versions = copy(ref.span.versions)
   versions[1] += 1
@@ -602,6 +663,7 @@ function _add_child_cluster!(
     0,
     mgr.cluster_horizon,
   )
+  _record_compressed_span_state!(mgr, parent.span)
   push!(parent.span.children, child)
   sort!(parent.span.children; by=span -> span.cluster_ids[1])
   return SpanClusterRef(child, 1)
@@ -1489,7 +1551,7 @@ function start_transaction!(mgr::Manager)
     mgr.cluster_id_counter,
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_distance),
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_quantities),
-    _snapshot_cluster_spans(mgr.cluster_spans),
+    copy(mgr.cluster_spans),
     mgr.cluster_horizon,
   )
 end
@@ -1505,6 +1567,19 @@ function rollback!(mgr::Manager)
   for entry in reverse(mgr.journal)
     if entry isa PJDataPush
       pop!(mgr.data)
+
+    elseif entry isa PJCompressedSpanState
+      entry.span.window_min = entry.window_min
+      entry.span.window_max = entry.window_max
+      entry.span.cluster_ids = entry.cluster_ids
+      entry.span.si_min = entry.si_min
+      entry.span.as_max = entry.as_max
+      entry.span.versions = entry.versions
+      entry.span.fit_limits = entry.fit_limits
+      entry.span.children = entry.children
+
+    elseif entry isa PJCompressedSpanReplace
+      entry.container[entry.index] = entry.old_span
 
     elseif entry isa PJHashSetKeyDist
       if entry.old_value === nothing
