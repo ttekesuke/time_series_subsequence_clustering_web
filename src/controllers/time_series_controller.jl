@@ -4071,18 +4071,31 @@ function evaluate_observed_complexity!(
   manager::PolyphonicClusterManager.Manager,
   value::PolyphonicClusterManager.PolySet;
   metric_weights::NTuple{3,Float64}=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
+  phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
 )::Dict{String,Any}
+  phase_started = phase_timings === nothing ? 0 : time_ns()
   calibrator = build_extended_metric_calibrator(manager)
+  if phase_timings !== nothing
+    phase_timings[:calibrator] += (time_ns() - phase_started) / 1.0e9
+    phase_started = time_ns()
+  end
   distribution = PolyphonicClusterManager.build_predictive_distribution(manager)
   predictive = PolyphonicClusterManager.predictive_surprise_score(
     manager,
     distribution,
     value,
   )
+  if phase_timings !== nothing
+    phase_timings[:prediction] += (time_ns() - phase_started) / 1.0e9
+    phase_started = time_ns()
+  end
   metrics = PolyphonicClusterManager.simulate_add_and_calculate_all_extended(
     manager,
     value,
   )
+  if phase_timings !== nothing
+    phase_timings[:simulation] += (time_ns() - phase_started) / 1.0e9
+  end
 
   diversity = calibrate_metric(metrics.distance, calibrator.base.distance)
   shape = calibrate_metric(metrics.complexity, calibrator.base.complexity)
@@ -4117,8 +4130,16 @@ function evaluate_observed_complexity!(
     clamp(total / denominator, 0.0, 1.0) :
     Config.DEFAULT_TARGET_01
 
+  phase_started = phase_timings === nothing ? 0 : time_ns()
   PolyphonicClusterManager.add_data_point_permanently!(manager, copy(value))
+  if phase_timings !== nothing
+    phase_timings[:commit] += (time_ns() - phase_started) / 1.0e9
+    phase_started = time_ns()
+  end
   PolyphonicClusterManager.update_caches_permanently!(manager)
+  if phase_timings !== nothing
+    phase_timings[:cache] += (time_ns() - phase_started) / 1.0e9
+  end
 
   temporal = metrics.occurrence_intervals
   return Dict(

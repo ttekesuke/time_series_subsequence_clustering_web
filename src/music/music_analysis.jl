@@ -514,7 +514,11 @@ function _analyse_manager(
   n = length(series)
   min_window = Config.POLYPHONIC_MIN_WINDOW_SIZE
   log_started_at = time()
-  !isempty(log_label) && @info "[analyse_music] clustering start" label=String(log_label) steps=n min_window=min_window
+  if !isempty(log_label)
+    empty_steps = count(isempty, series)
+    zero_steps = count(row -> !isempty(row) && all(iszero, row), series)
+    @info "[analyse_music] clustering start" label=String(log_label) steps=n min_window=min_window empty_steps=empty_steps zero_steps=zero_steps
+  end
   axes = Dict(
     "prediction" => Any[nothing for _ in 1:n],
     "diversity" => Any[nothing for _ in 1:n],
@@ -557,8 +561,18 @@ function _analyse_manager(
   if n > min_window
     total_observed_steps = n - min_window
     progress_interval = max(cld(total_observed_steps, 10), 1)
+    phase_timings = Dict{Symbol,Float64}(
+      :calibrator => 0.0,
+      :prediction => 0.0,
+      :simulation => 0.0,
+      :commit => 0.0,
+      :cache => 0.0,
+    )
+    last_progress_time = time()
+    last_progress_steps = 0
     for index in (min_window + 1):n
-      observed = scoring.evaluate_observed_complexity!(manager, series[index]; metric_weights=metric_weights)
+      observed = scoring.evaluate_observed_complexity!(manager, series[index];
+        metric_weights=metric_weights, phase_timings=phase_timings)
       for key in keys(axes)
         axes[key][index] = get(observed, key, nothing)
       end
@@ -573,17 +587,33 @@ function _analyse_manager(
       processed = index - min_window
       if !isempty(log_label) && (processed == total_observed_steps || processed % progress_interval == 0)
         percent = round(Int, 100 * processed / total_observed_steps)
-        @info "[analyse_music] clustering progress" label=String(log_label) progress="$(percent)%" processed=processed total=total_observed_steps elapsed_s=round(time() - log_started_at; digits=2)
+        now = time()
+        interval_s = now - last_progress_time
+        interval_steps = processed - last_progress_steps
+        measured_s = sum(values(phase_timings))
+        @info "[analyse_music] clustering progress" label=String(log_label) progress="$(percent)%" processed=processed total=total_observed_steps elapsed_s=round(now - log_started_at; digits=2) interval_s=round(interval_s; digits=2) ms_per_step=round(1000 * interval_s / interval_steps; digits=1) calibrator_s=round(phase_timings[:calibrator]; digits=2) prediction_s=round(phase_timings[:prediction]; digits=2) simulation_s=round(phase_timings[:simulation]; digits=2) commit_s=round(phase_timings[:commit]; digits=2) cache_s=round(phase_timings[:cache]; digits=2) other_s=round(max(interval_s - measured_s, 0.0); digits=2) active_tasks=length(manager.tasks)
+        for phase in keys(phase_timings)
+          phase_timings[phase] = 0.0
+        end
+        last_progress_time = now
+        last_progress_steps = processed
       end
     end
   end
 
   !isempty(log_label) && @info "[analyse_music] clustering done" label=String(log_label) elapsed_s=round(time() - log_started_at; digits=2)
+  payload_started_at = time()
+  clusters_payload = compact_cluster_view ? Any[] : PolyphonicClusterManager.clusters_to_timeline(manager)
+  timeline_s = time() - payload_started_at
+  compressed_payload = PolyphonicClusterManager.compressed_clusters_payload(manager)
+  if !isempty(log_label)
+    @info "[analyse_music] cluster payload ready" label=String(log_label) timeline_s=round(timeline_s; digits=2) compressed_s=round(time() - payload_started_at - timeline_s; digits=2)
+  end
   return Dict(
     "axes" => axes,
     "raw" => raw,
-    "clusters" => compact_cluster_view ? Any[] : PolyphonicClusterManager.clusters_to_timeline(manager),
-    "compressedClusters" => PolyphonicClusterManager.compressed_clusters_payload(manager),
+    "clusters" => clusters_payload,
+    "compressedClusters" => compressed_payload,
   )
 end
 
