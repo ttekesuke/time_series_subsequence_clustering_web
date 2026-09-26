@@ -114,19 +114,25 @@ end
     empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
 
     calibrator = controller.build_extended_metric_calibrator(manager)
+    distribution = controller.build_predictive_distribution(manager)
+    predictive_scores = Float64[]
     raw_dist = Float64[]
     raw_quantity = Float64[]
     raw_complexity = Float64[]
     temporal_metrics = pcm.OccurrenceIntervalMetrics[]
     for candidate in 0:5
-      metrics = pcm.simulate_add_and_calculate_all_extended(manager, Float64[candidate])
+      value = Float64[candidate]
+      metrics = pcm.simulate_add_and_calculate_all_extended(manager, value)
+      predictive = controller.predictive_surprise_score(manager, distribution, value)
+      push!(predictive_scores, predictive === nothing ? NaN : float(predictive))
       push!(raw_dist, metrics.distance)
       push!(raw_quantity, metrics.quantity)
       push!(raw_complexity, metrics.complexity)
       push!(temporal_metrics, metrics.occurrence_intervals)
     end
 
-    return controller.combine_complexity_metric_scores_with_occurrence_intervals(
+    return controller.combine_predictive_structural_scores(
+      predictive_scores,
       raw_dist,
       raw_quantity,
       raw_complexity,
