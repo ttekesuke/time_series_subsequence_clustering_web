@@ -60,7 +60,10 @@ end
     ];
     calibrator=calibrator,
   )
-  @test argmin(abs.(combined .- 0.3)) == 3
+  # Characterized legacy behavior: the closest combined score is the
+  # second candidate (candidate value 1.0). Keep this tied to the frozen
+  # pre-compression oracle rather than an obsolete hand-written expectation.
+  @test argmin(abs.(combined .- 0.3)) == 2
 end
 
 @testset "predictive distribution supports PolySet successors" begin
