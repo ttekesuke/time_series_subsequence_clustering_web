@@ -111,6 +111,21 @@ function _assert_lossless_compression(prod)
   spans = _ProdPCM.compress_cluster_tree(prod)
   @test _ProdPCM.compressed_virtual_nodes(spans) ==
         _ProdPCM.logical_virtual_nodes(prod.clusters, prod.min_window_size)
+
+  # Manager-level public reads already go through the compressed logical view.
+  # They must remain byte-for-byte/logically equivalent to the legacy tree
+  # helpers before physical storage can be changed.
+  @test _ProdPCM.transform_clusters(prod) ==
+        _ProdPCM.transform_clusters(prod.clusters, prod.min_window_size)
+
+  timeline_from_manager = _ProdPCM.clusters_to_timeline(prod)
+  timeline_from_tree = _ProdPCM.clusters_to_timeline(prod.clusters, prod.min_window_size)
+  sort!(timeline_from_manager; by=x -> (x["window_size"], parse(Int, x["cluster_id"]), Tuple(x["indices"])))
+  sort!(timeline_from_tree; by=x -> (x["window_size"], parse(Int, x["cluster_id"]), Tuple(x["indices"])))
+  @test timeline_from_manager == timeline_from_tree
+
+  @test _ProdPCM.clusters_to_dict(prod) ==
+        _ProdPCM.clusters_to_dict(prod.clusters)
 end
 
 function _assert_equivalent(prod, legacy)
