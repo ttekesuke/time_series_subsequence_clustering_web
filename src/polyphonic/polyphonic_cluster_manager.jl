@@ -475,8 +475,10 @@ end
 
 function _append_cluster_start!(mgr::Manager, ref::SpanClusterRef, start::Int)::Nothing
   _isolate_cluster_ref!(mgr, ref)
-  push!(ref.span.si_min, start)
-  ref.span.fit_limits[1] = max(ref.span.fit_limits[1], mgr.cluster_horizon)
+  ref.span.si_min = vcat(ref.span.si_min, Int[start])
+  fit_limits = copy(ref.span.fit_limits)
+  fit_limits[1] = max(fit_limits[1], mgr.cluster_horizon)
+  ref.span.fit_limits = fit_limits
   return nothing
 end
 
@@ -487,7 +489,9 @@ function _replace_cluster_representative!(
 )::Nothing
   _isolate_cluster_ref!(mgr, ref)
   ref.span.as_max = deep_copy_seq(representative)
-  ref.span.versions[1] += 1
+  versions = copy(ref.span.versions)
+  versions[1] += 1
+  ref.span.versions = versions
   return nothing
 end
 
@@ -1319,6 +1323,27 @@ end
 
 # Rollback journal
 
+function _snapshot_cluster_span(span::CompressedClusterSpan)::CompressedClusterSpan
+  # Snapshot only the small span topology. Heavy payload arrays are shared
+  # read-only; speculative writes replace their arrays copy-on-write.
+  return CompressedClusterSpan(
+    span.window_min,
+    span.window_max,
+    span.cluster_ids,
+    span.si_min,
+    span.as_max,
+    span.versions,
+    span.fit_limits,
+    CompressedClusterSpan[_snapshot_cluster_span(child) for child in span.children],
+  )
+end
+
+function _snapshot_cluster_spans(
+  spans::Vector{CompressedClusterSpan},
+)::Vector{CompressedClusterSpan}
+  return CompressedClusterSpan[_snapshot_cluster_span(span) for span in spans]
+end
+
 function start_transaction!(mgr::Manager)
   mgr.recording_mode = true
   empty!(mgr.journal)
@@ -1340,7 +1365,7 @@ function start_transaction!(mgr::Manager)
     mgr.cluster_id_counter,
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_distance),
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_quantities),
-    deepcopy(mgr.cluster_spans),
+    _snapshot_cluster_spans(mgr.cluster_spans),
     mgr.cluster_horizon,
   )
 end
