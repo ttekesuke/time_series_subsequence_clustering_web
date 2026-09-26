@@ -374,3 +374,43 @@ end
   @test _ProdPCM.compressed_virtual_nodes(spans) ==
         _ProdPCM.logical_virtual_nodes(mgr.working_clusters, mgr.min_window_size)
 end
+
+
+@testset "compressed cache invalidation is lossless" begin
+  data = [Float64[mod(i - 1, 3)] for i in 1:18]
+  mgr = _ProdPCM.Manager(data, 0.0, 2; range_min=0.0, range_max=2.0, max_set_size=1)
+  _ProdPCM.process_data!(mgr)
+
+  first_cache = _ProdPCM.compress_cluster_tree(mgr)
+  @test !mgr.compressed_dirty
+  second_cache = _ProdPCM.compress_cluster_tree(mgr)
+  @test first_cache === second_cache
+  @test _ProdPCM.compressed_virtual_nodes(first_cache) ==
+        _ProdPCM.logical_virtual_nodes(mgr.working_clusters, mgr.min_window_size)
+
+  public_each = _ProdPCM.collect_clusters_each(mgr)
+  raw_rows = _ProdPCM.logical_virtual_nodes(mgr.working_clusters, mgr.min_window_size)
+  raw_map = Dict(
+    (row.window_size, row.cluster_id) => (sort(copy(row.si)), _norm_polyseq(row.as))
+    for row in raw_rows
+  )
+  public_map = Dict(
+    (ws, cid) => (sort(copy(node.si)), _norm_polyseq(node.as))
+    for (ws, same_ws) in public_each for (cid, node) in same_ws
+  )
+  @test public_map == raw_map
+
+  _ProdPCM.add_data_point_permanently!(mgr, Float64[0.0])
+  @test mgr.compressed_dirty
+  refreshed = _ProdPCM.compress_cluster_tree(mgr)
+  @test !mgr.compressed_dirty
+  @test refreshed !== first_cache
+  @test _ProdPCM.compressed_virtual_nodes(refreshed) ==
+        _ProdPCM.logical_virtual_nodes(mgr.working_clusters, mgr.min_window_size)
+
+  committed_cache = mgr.compressed_cache
+  committed_rows = _ProdPCM.compressed_virtual_nodes(committed_cache)
+  _ProdPCM.simulate_add_and_calculate_all_extended(mgr, Float64[1.0])
+  @test mgr.compressed_cache === committed_cache
+  @test _ProdPCM.compressed_virtual_nodes(mgr.compressed_cache) == committed_rows
+end
