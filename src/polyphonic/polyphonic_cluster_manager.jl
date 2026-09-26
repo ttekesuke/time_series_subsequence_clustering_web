@@ -221,7 +221,7 @@ mutable struct Manager <: AbstractClusterManager
 
   recency::Float64
   enable_occurrence_intervals::Bool
-  occurrence_interval_states::IdDict{PolyClusterNode,OccurrenceIntervalState}
+  occurrence_interval_states::Dict{Tuple{Int,Int},OccurrenceIntervalState}
 
   recording_mode::Bool
   journal::Vector{PolyJournalEntry}
@@ -321,7 +321,7 @@ function Manager(
     comp_cache,
     clamp(float(recency), 0.0, 1.0),
     Bool(enable_occurrence_intervals),
-    IdDict{PolyClusterNode,OccurrenceIntervalState}(),
+    Dict{Tuple{Int,Int},OccurrenceIntervalState}(),
     false,
     PolyJournalEntry[],
     nothing
@@ -705,16 +705,16 @@ end
   return (1.0 - r) + (r * exp(-float(age) / span))
 end
 
-@inline function cluster_last_occurrence(node::PolyClusterNode)::Int
+@inline function cluster_last_occurrence(node)::Int
   isempty(node.si) && return 0
   return maximum(node.si)
 end
 
-@inline function cluster_recency_weight(mgr::Manager, node::PolyClusterNode, now_index::Int)::Float64
+@inline function cluster_recency_weight(mgr::Manager, node, now_index::Int)::Float64
   return recency_weight(mgr, now_index, cluster_last_occurrence(node))
 end
 
-function recent_quantity_score(mgr::Manager, node::PolyClusterNode, window_size::Int, now_index::Int)::Float64
+function recent_quantity_score(mgr::Manager, node, window_size::Int, now_index::Int)::Float64
   total = 0.0
   @inbounds for s in node.si
     total += recency_weight(mgr, now_index, s)
@@ -725,7 +725,7 @@ end
 function weighted_distance_score(
   mgr::Manager,
   cache::Dict{Tuple{Int,Int},Float64},
-  same_ws::Dict{Int,PolyClusterNode},
+  same_ws,
   now_index::Int
 )::Float64
   weighted = 0.0
@@ -741,7 +741,7 @@ function weighted_distance_score(
   return weight_sum > 0.0 ? (weighted / weight_sum) : 0.0
 end
 
-function weighted_quantity_score(mgr::Manager, same_ws::Dict{Int,PolyClusterNode}, window_size::Int, now_index::Int)::Float64
+function weighted_quantity_score(mgr::Manager, same_ws, window_size::Int, now_index::Int)::Float64
   total = 0.0
   for (_, node) in same_ws
     length(node.si) <= 1 && continue
@@ -753,7 +753,7 @@ end
 function weighted_complexity_score(
   mgr::Manager,
   c_cache::Dict{Int,Float64},
-  same_ws::Dict{Int,PolyClusterNode},
+  same_ws,
   now_index::Int
 )::Float64
   weighted = 0.0
@@ -770,21 +770,7 @@ end
 
 function update_caches_permanently!(mgr::Manager)
   # Avoid Dict{String,Any} transforms: traverse typed nodes and update caches.
-  clusters_each = Dict{Int,Dict{Int,PolyClusterNode}}()
-  stack = Vector{Tuple{Int,Int,PolyClusterNode}}()
-  sizehint!(stack, length(mgr.working_clusters))
-  for (cid, cl) in mgr.working_clusters
-    push!(stack, (mgr.min_window_size, cid, cl))
-  end
-
-  while !isempty(stack)
-    (window_size, cluster_id, node) = pop!(stack)
-    same_ws = get!(clusters_each, window_size, Dict{Int,PolyClusterNode}())
-    same_ws[cluster_id] = node
-    for (child_id, child) in node.cc
-      push!(stack, (window_size + 1, child_id, child))
-    end
-  end
+  clusters_each = collect_clusters_each(mgr)
 
   for (window_size, same_ws) in clusters_each
     all_ids = collect(keys(same_ws))
@@ -851,8 +837,8 @@ function update_caches_permanently!(mgr::Manager)
 
   if mgr.enable_occurrence_intervals
     now_index = length(mgr.data) - 1
-    for (_, node) in _selected_latest_occurrence_targets(clusters_each, now_index)
-      _sync_occurrence_interval_state!(mgr, node)
+    for (window_size, cluster_id, node) in _selected_latest_occurrence_targets(clusters_each, now_index)
+      _sync_occurrence_interval_state!(mgr, window_size, cluster_id, node)
     end
   end
 
@@ -1138,7 +1124,7 @@ function build_predictive_distribution(mgr::Manager)::PredictiveDistribution
   data_length = length(mgr.data)
   data_length <= mgr.min_window_size && return EMPTY_PREDICTIVE_DISTRIBUTION
 
-  clusters_each = _collect_working_clusters_each(mgr)
+  clusters_each = collect_clusters_each(mgr)
   max_context = min(
     data_length - 1,
     max(Config.PREDICTIVE_MAX_CONTEXT_LENGTH, mgr.min_window_size),
@@ -1246,7 +1232,7 @@ end
 
 function _aggregate_current_metrics(
   mgr::Manager,
-  clusters_each::Dict{Int,Dict{Int,PolyClusterNode}};
+  clusters_each;
   include_singleton_complexity::Bool=false,
 )::NTuple{3,Float64}
   sum_distances = 0.0
@@ -1355,17 +1341,23 @@ function _build_occurrence_interval_manager(
   return manager
 end
 
-function _sync_occurrence_interval_state!(mgr::Manager, node::PolyClusterNode)::Nothing
+function _sync_occurrence_interval_state!(
+  mgr::Manager,
+  window_size::Int,
+  cluster_id::Int,
+  node,
+)::Nothing
   starts = sort!(unique(copy(node.si)))
   occurrence_count = length(starts)
   occurrence_count >= 2 || return nothing
 
-  existing = get(mgr.occurrence_interval_states, node, nothing)
+  state_key = (window_size, cluster_id)
+  existing = get(mgr.occurrence_interval_states, state_key, nothing)
   gaps = _occurrence_gaps(starts)
 
   if occurrence_count < Config.OCCURRENCE_INTERVAL_MIN_OCCURRENCES
     if existing === nothing
-      mgr.occurrence_interval_states[node] =
+      mgr.occurrence_interval_states[state_key] =
         OccurrenceIntervalState(occurrence_count, 1.0, nothing)
     else
       existing.source_occurrence_count = occurrence_count
@@ -1382,7 +1374,7 @@ function _sync_occurrence_interval_state!(mgr::Manager, node::PolyClusterNode)::
       mgr.merge_threshold_ratio,
       mgr.min_window_size,
     )
-    mgr.occurrence_interval_states[node] =
+    mgr.occurrence_interval_states[state_key] =
       OccurrenceIntervalState(occurrence_count, scale, interval_manager)
     return nothing
   end
@@ -1472,7 +1464,9 @@ end
 
 function _preview_occurrence_interval_metrics(
   mgr::Manager,
-  node::PolyClusterNode,
+  window_size::Int,
+  cluster_id::Int,
+  node,
 )::OccurrenceIntervalMetrics
   starts = sort!(unique(copy(node.si)))
   occurrence_count = length(starts)
@@ -1480,7 +1474,7 @@ function _preview_occurrence_interval_metrics(
     return EMPTY_OCCURRENCE_INTERVAL_METRICS
 
   committed_count = occurrence_count - 1
-  state = get(mgr.occurrence_interval_states, node, nothing)
+  state = get(mgr.occurrence_interval_states, (window_size, cluster_id), nothing)
   if state !== nothing &&
       state.manager !== nothing &&
       state.source_occurrence_count == committed_count
@@ -1507,26 +1501,26 @@ function _preview_occurrence_interval_metrics(
 end
 
 function _selected_latest_occurrence_targets(
-  clusters_each::Dict{Int,Dict{Int,PolyClusterNode}},
+  clusters_each,
   now_index::Int,
-)::Vector{Tuple{Int,PolyClusterNode}}
-  targets = Tuple{Int,PolyClusterNode}[]
+)
+  targets = Tuple{Int,Int,Any}[]
   for (window_size, same_ws) in clusters_each
     latest_start = now_index - window_size + 1
     latest_start < 0 && continue
-    for (_, node) in same_ws
+    for (cluster_id, node) in same_ws
       latest_start in node.si || continue
       length(node.si) >= Config.OCCURRENCE_INTERVAL_MIN_OCCURRENCES &&
-        push!(targets, (window_size, node))
+        push!(targets, (window_size, cluster_id, node))
       break
     end
   end
   isempty(targets) && return targets
-  sort!(targets; by=first)
+  sort!(targets; by=x -> x[1])
 
   max_scales = max(Config.OCCURRENCE_INTERVAL_MAX_BASE_SCALES, 1)
   if length(targets) > max_scales
-    selected = Tuple{Int,PolyClusterNode}[]
+    selected = Tuple{Int,Int,Any}[]
     selected_indices = Set{Int}()
     log_min = log(float(targets[1][1]))
     log_max = log(float(targets[end][1]))
@@ -1554,7 +1548,7 @@ end
 
 function latest_occurrence_interval_metrics(
   mgr::Manager,
-  clusters_each::Dict{Int,Dict{Int,PolyClusterNode}},
+  clusters_each,
   now_index::Int,
 )::OccurrenceIntervalMetrics
   targets = _selected_latest_occurrence_targets(clusters_each, now_index)
@@ -1567,8 +1561,8 @@ function latest_occurrence_interval_metrics(
   prediction_count = 0
   ready_count = 0
 
-  for (_, target) in targets
-    temporal = _preview_occurrence_interval_metrics(mgr, target)
+  for (window_size, cluster_id, target) in targets
+    temporal = _preview_occurrence_interval_metrics(mgr, window_size, cluster_id, target)
     temporal.ready || continue
 
     sum_distance += temporal.distance
@@ -1594,7 +1588,7 @@ end
 
 function current_occurrence_interval_metrics(
   mgr::Manager,
-  clusters_each::Dict{Int,Dict{Int,PolyClusterNode}},
+  clusters_each,
   now_index::Int,
 )::OccurrenceIntervalMetrics
   targets = _selected_latest_occurrence_targets(clusters_each, now_index)
@@ -1607,7 +1601,7 @@ function current_occurrence_interval_metrics(
   prediction_count = 0
   ready_count = 0
 
-  for (_, target) in targets
+  for (_, _, target) in targets
     temporal = _occurrence_interval_metrics_for_starts(
       target.si,
       mgr.merge_threshold_ratio,
@@ -1638,7 +1632,7 @@ end
 
 """Read the committed metric state without adding or simulating a candidate."""
 function current_extended_metrics(mgr::Manager)::ExtendedClusterMetrics
-  clusters_each = _collect_working_clusters_each(mgr)
+  clusters_each = collect_clusters_each(mgr)
   d, q, c = _aggregate_current_metrics(mgr, clusters_each)
   temporal =
     if mgr.enable_occurrence_intervals
@@ -1659,7 +1653,7 @@ it avoids a transactional append/rollback when the next value is already known
 and has been permanently committed.
 """
 function calculate_all_extended_current_state(mgr::Manager)::ExtendedClusterMetrics
-  clusters_each = _collect_working_clusters_each(mgr)
+  clusters_each = collect_clusters_each(mgr)
   sum_distances = 0.0
   sum_quantities = 0.0
   sum_complexities = 0.0
@@ -1718,7 +1712,7 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
     record!(mgr, PJDataPush())
 
     clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
-    clusters_each = _collect_working_clusters_each(mgr)
+    clusters_each = collect_clusters_each(mgr)
 
     sum_distances = 0.0
     sum_quantities = 0.0
