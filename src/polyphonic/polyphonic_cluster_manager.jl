@@ -1061,9 +1061,10 @@ end
   return (1.0 - r) + (r * exp(-float(age) / span))
 end
 
-@inline function cluster_last_occurrence(node)::Int
-  isempty(node.si) && return 0
-  return maximum(node.si)
+@inline function cluster_last_occurrence(node::AbstractClusterRef)::Int
+  starts = _cluster_si(node)
+  isempty(starts) && return 0
+  return maximum(starts)
 end
 
 @inline function cluster_recency_weight(mgr::Manager, node, now_index::Int)::Float64
@@ -1072,7 +1073,7 @@ end
 
 function recent_quantity_score(mgr::Manager, node, window_size::Int, now_index::Int)::Float64
   total = 0.0
-  @inbounds for s in node.si
+  @inbounds for s in _cluster_si(node)
     total += recency_weight(mgr, now_index, s)
   end
   return total * float(window_size)
@@ -1100,7 +1101,7 @@ end
 function weighted_quantity_score(mgr::Manager, same_ws, window_size::Int, now_index::Int)::Float64
   total = 0.0
   for (_, node) in same_ws
-    length(node.si) <= 1 && continue
+    length(_cluster_si(node)) <= 1 && continue
     total += recent_quantity_score(mgr, node, window_size, now_index)
   end
   return total
@@ -1146,7 +1147,7 @@ function update_caches_permanently!(mgr::Manager)
           cid2 = all_ids[j]
           node2 = same_ws[cid2]
           key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
-          cache[key] = euclidean_distance(mgr, node1.as, node2.as)
+          cache[key] = euclidean_distance(mgr, _cluster_as(node1), _cluster_as(node2))
         end
       end
     elseif updated_ids_set !== nothing && !isempty(updated_ids_set)
@@ -1158,7 +1159,7 @@ function update_caches_permanently!(mgr::Manager)
           cid1 == cid2 && continue
           node2 = same_ws[cid2]
           key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
-          cache[key] = euclidean_distance(mgr, node1.as, node2.as)
+          cache[key] = euclidean_distance(mgr, _cluster_as(node1), _cluster_as(node2))
         end
       end
     end
@@ -1172,21 +1173,21 @@ function update_caches_permanently!(mgr::Manager)
 
     if isempty(q_cache) || isempty(c_cache)
       for (cid, node) in same_ws
-        length(node.si) <= 1 && continue
+        length(_cluster_si(node)) <= 1 && continue
 
-        q = cluster_quantity_score(length(node.si), window_size)
+        q = cluster_quantity_score(length(_cluster_si(node)), window_size)
         q_cache[cid] = q
-        c_cache[cid] = calculate_cluster_complexity(mgr, node)
+        c_cache[cid] = calculate_cluster_complexity(mgr, _cluster_as(node))
       end
     elseif updated_quant_set !== nothing && !isempty(updated_quant_set)
       for cid in updated_quant_set
         node = get(same_ws, cid, nothing)
         node === nothing && continue
-        length(node.si) > 1 || continue
+        length(_cluster_si(node)) > 1 || continue
 
-        q = cluster_quantity_score(length(node.si), window_size)
+        q = cluster_quantity_score(length(_cluster_si(node)), window_size)
         q_cache[cid] = q
-        c_cache[cid] = calculate_cluster_complexity(mgr, node)
+        c_cache[cid] = calculate_cluster_complexity(mgr, _cluster_as(node))
       end
     end
   end
@@ -1217,7 +1218,6 @@ end
 end
 
 @inline calculate_cluster_complexity(mgr::Manager, node::PolyClusterNode)::Float64 = calculate_cluster_complexity(mgr, node.as)
-@inline calculate_cluster_complexity(mgr::Manager, node::LogicalClusterView)::Float64 = calculate_cluster_complexity(mgr, node.as)
 
 # JSON-facing overload (kept for Rails-compatible Dict payloads)
 function calculate_cluster_complexity(mgr::Manager, cluster::Dict{String,Any})::Float64
@@ -1414,35 +1414,20 @@ end
 
 Production callers must use this read view instead of the mutable working tree.
 """
-function collect_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,LogicalClusterView}}
-  # Hot-path logical view: traverse the compressed physical store directly.
-  # Do NOT route through logical_virtual_nodes(), which is intentionally a
-  # fully detached/JSON-safe expansion and therefore deep-copies every
-  # representative sequence.
-  clusters_each = Dict{Int,Dict{Int,LogicalClusterView}}()
+function collect_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,SpanClusterRef}}
+  # Hot-path index over the canonical compressed store. Values are lightweight
+  # references into physical spans; no si/as payload is copied here.
+  clusters_each = Dict{Int,Dict{Int,SpanClusterRef}}()
   stack = CompressedClusterSpan[reverse(mgr.cluster_spans)...]
 
   while !isempty(stack)
     span = pop!(stack)
-
     for offset in eachindex(span.cluster_ids)
       window_size = span.window_min + offset - 1
       cluster_id = span.cluster_ids[offset]
-      fit_limit = span.fit_limits[offset]
-      starts = Int[
-        s for s in span.si_min
-        if s + window_size <= fit_limit
-      ]
-      sort!(starts)
-
-      # A shallow prefix copy is sufficient: metric code never mutates the
-      # PolySet rows in a representative.  The old path deep-copied every row
-      # for every virtual node, which defeated physical compression.
-      representative = span.as_max[1:window_size]
-      same_ws = get!(clusters_each, window_size, Dict{Int,LogicalClusterView}())
-      same_ws[cluster_id] = LogicalClusterView(starts, representative)
+      same_ws = get!(clusters_each, window_size, Dict{Int,SpanClusterRef}())
+      same_ws[cluster_id] = SpanClusterRef(span, offset)
     end
-
     for child in reverse(span.children)
       push!(stack, child)
     end
@@ -1495,7 +1480,7 @@ function build_predictive_distribution(mgr::Manager)::PredictiveDistribution
     current_context = mgr.data[(latest_start + 1):data_length]
     target = nothing
     for node in values(clusters_each[window_size])
-      if latest_start in node.si
+      if latest_start in _cluster_si(node)
         target = node
         break
       end
@@ -1503,7 +1488,7 @@ function build_predictive_distribution(mgr::Manager)::PredictiveDistribution
     target === nothing && continue
 
     historical_starts = sort!(unique(Int[
-      start for start in target.si
+      start for start in _cluster_si(target)
       if start < latest_start && start + window_size < data_length
     ]))
     isempty(historical_starts) && continue
@@ -1611,8 +1596,8 @@ function _aggregate_current_metrics(
       end
       if include_singleton_complexity
         for (_, node) in same_ws
-          length(node.si) == 1 || continue
-          sum_complexities += calculate_cluster_complexity(mgr, node)
+          length(_cluster_si(node)) == 1 || continue
+          sum_complexities += calculate_cluster_complexity(mgr, _cluster_as(node))
         end
       end
     else
@@ -1627,9 +1612,9 @@ function _aggregate_current_metrics(
         singleton_sum = 0.0
         singleton_weight = 0.0
         for (_, node) in same_ws
-          length(node.si) == 1 || continue
+          length(_cluster_si(node)) == 1 || continue
           w = cluster_recency_weight(mgr, node, now_index)
-          singleton_sum += calculate_cluster_complexity(mgr, node) * w
+          singleton_sum += calculate_cluster_complexity(mgr, _cluster_as(node)) * w
           singleton_weight += w
         end
         singleton_weight > 0.0 && (sum_complexities += singleton_sum / singleton_weight)
@@ -1701,7 +1686,7 @@ function _sync_occurrence_interval_state!(
   cluster_id::Int,
   node,
 )::Nothing
-  starts = sort!(unique(copy(node.si)))
+  starts = sort!(unique(copy(_cluster_si(node))))
   occurrence_count = length(starts)
   occurrence_count >= 2 || return nothing
 
@@ -1822,7 +1807,7 @@ function _preview_occurrence_interval_metrics(
   cluster_id::Int,
   node,
 )::OccurrenceIntervalMetrics
-  starts = sort!(unique(copy(node.si)))
+  starts = sort!(unique(copy(_cluster_si(node))))
   occurrence_count = length(starts)
   occurrence_count < Config.OCCURRENCE_INTERVAL_MIN_OCCURRENCES &&
     return EMPTY_OCCURRENCE_INTERVAL_METRICS
@@ -1863,8 +1848,8 @@ function _selected_latest_occurrence_targets(
     latest_start = now_index - window_size + 1
     latest_start < 0 && continue
     for (cluster_id, node) in same_ws
-      latest_start in node.si || continue
-      length(node.si) >= Config.OCCURRENCE_INTERVAL_MIN_OCCURRENCES &&
+      latest_start in _cluster_si(node) || continue
+      length(_cluster_si(node)) >= Config.OCCURRENCE_INTERVAL_MIN_OCCURRENCES &&
         push!(targets, (window_size, cluster_id, node))
       break
     end
@@ -1957,7 +1942,7 @@ function current_occurrence_interval_metrics(
 
   for (_, _, target) in targets
     temporal = _occurrence_interval_metrics_for_starts(
-      target.si,
+      _cluster_si(target),
       mgr.merge_threshold_ratio,
       mgr.min_window_size,
     )
@@ -2091,7 +2076,7 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
           cid1 == cid2 && continue
           key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
           node2 = same_ws[cid2]
-          dist = euclidean_distance(mgr, node1.as, node2.as)
+          dist = euclidean_distance(mgr, _cluster_as(node1), _cluster_as(node2))
           old_val = haskey(cache, key) ? cache[key] : nothing
           cache[key] = dist
           record!(mgr, PJCacheWriteDist(cache, key, old_val))
@@ -2116,15 +2101,15 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
       for cid in updated_quant_ids
         node = get(same_ws, cid, nothing)
         node === nothing && continue
-        length(node.si) > 1 || continue
+        length(_cluster_si(node)) > 1 || continue
 
-        q = cluster_quantity_score(length(node.si), window_size)
+        q = cluster_quantity_score(length(_cluster_si(node)), window_size)
 
         old_q = haskey(q_cache, cid) ? q_cache[cid] : nothing
         q_cache[cid] = q
         record!(mgr, PJCacheWriteQty(q_cache, cid, old_q))
 
-        comp = calculate_cluster_complexity(mgr, node)
+        comp = calculate_cluster_complexity(mgr, _cluster_as(node))
         old_c = haskey(c_cache, cid) ? c_cache[cid] : nothing
         c_cache[cid] = comp
         record!(mgr, PJCacheWriteComp(c_cache, cid, old_c))
@@ -2268,7 +2253,7 @@ function _compress_cluster_span(
 )::CompressedClusterSpan
   ids = Int[cluster_id]
   versions = Int[node.version]
-  first_starts = copy(node.si)
+  first_starts = copy(_cluster_si(node))
   current = node
   current_window = window_size
 
@@ -2383,7 +2368,7 @@ function logical_virtual_nodes(
       window_size=window_size,
       cluster_id=cluster_id,
       parent_id=parent_id,
-      si=sort(copy(node.si)),
+      si=sort(copy(_cluster_si(node))),
       as=deep_copy_seq(node.as),
     ))
     for child_id in sort!(collect(keys(node.cc)); rev=true)
@@ -2955,7 +2940,7 @@ clusters_to_timeline(mgr::Manager, clusters::Dict{Int,PolyClusterNode}, min_wind
 
 function cluster_to_dict(node::PolyClusterNode)
   Dict(
-    "si" => sort(copy(node.si)),
+    "si" => sort(copy(_cluster_si(node))),
     "as" => node.as,
     "cc" => Dict(string(cid) => cluster_to_dict(child) for (cid, child) in node.cc)
   )
