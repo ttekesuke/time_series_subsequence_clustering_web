@@ -2000,6 +2000,153 @@ function process_root_clusters!(mgr::Manager, data_index::Int, max_distance::Flo
 end
 
 
+
+# ------------------------------------------------------------------
+# Lossless path-compressed cluster view
+#
+# This is deliberately a representation layer over the canonical cluster tree.
+# A span may collapse only a single-child chain whose start-index set is
+# identical at every virtual window and whose representative is an exact
+# prefix of the next representative.  Therefore every original virtual node
+# (window size, cluster id, starts, representative, parent relation) can be
+# reconstructed exactly.
+# ------------------------------------------------------------------
+
+struct CompressedClusterSpan
+  window_min::Int
+  window_max::Int
+  cluster_ids::Vector{Int}
+  si::Vector{Int}
+  as_max::PolySeq
+  children::Vector{CompressedClusterSpan}
+end
+
+@inline function _representative_extends_exactly(parent::PolyClusterNode, child::PolyClusterNode)::Bool
+  length(child.as) == length(parent.as) + 1 || return false
+  @inbounds for i in eachindex(parent.as)
+    parent.as[i] == child.as[i] || return false
+  end
+  return true
+end
+
+function _compress_cluster_span(
+  cluster_id::Int,
+  node::PolyClusterNode,
+  window_size::Int,
+)::CompressedClusterSpan
+  ids = Int[cluster_id]
+  first_starts = copy(node.si)
+  current = node
+  current_window = window_size
+
+  while length(current.cc) == 1
+    child_id, child = first(current.cc)
+    current.si == child.si || break
+    _representative_extends_exactly(current, child) || break
+    push!(ids, child_id)
+    current = child
+    current_window += 1
+  end
+
+  children = CompressedClusterSpan[]
+  for child_id in sort!(collect(keys(current.cc)))
+    push!(children, _compress_cluster_span(
+      child_id,
+      current.cc[child_id],
+      current_window + 1,
+    ))
+  end
+
+  return CompressedClusterSpan(
+    window_size,
+    current_window,
+    ids,
+    first_starts,
+    deep_copy_seq(current.as),
+    children,
+  )
+end
+
+function compress_cluster_tree(
+  clusters::Dict{Int,PolyClusterNode},
+  min_window_size::Int,
+)::Vector{CompressedClusterSpan}
+  spans = CompressedClusterSpan[]
+  for cluster_id in sort!(collect(keys(clusters)))
+    push!(spans, _compress_cluster_span(
+      cluster_id,
+      clusters[cluster_id],
+      min_window_size,
+    ))
+  end
+  return spans
+end
+
+"""Return a canonical virtual-node snapshot from a compressed tree.
+
+This is used both by regression tests and by callers that need to prove that
+path compression did not remove any logical cluster information.
+"""
+function compressed_virtual_nodes(
+  spans::Vector{CompressedClusterSpan},
+)::Vector{NamedTuple}
+  rows = NamedTuple[]
+  stack = Tuple{CompressedClusterSpan,Union{Nothing,Int}}[
+    (span, nothing) for span in reverse(spans)
+  ]
+
+  while !isempty(stack)
+    span, parent_id = pop!(stack)
+    previous_id = parent_id
+    for (offset, cluster_id) in enumerate(span.cluster_ids)
+      window_size = span.window_min + offset - 1
+      representative = deep_copy_seq(span.as_max[1:window_size])
+      push!(rows, (
+        window_size=window_size,
+        cluster_id=cluster_id,
+        parent_id=previous_id,
+        si=sort(copy(span.si)),
+        as=representative,
+      ))
+      previous_id = cluster_id
+    end
+    for child in reverse(span.children)
+      push!(stack, (child, previous_id))
+    end
+  end
+
+  sort!(rows; by=row -> (row.window_size, row.cluster_id))
+  return rows
+end
+
+function logical_virtual_nodes(
+  clusters::Dict{Int,PolyClusterNode},
+  min_window_size::Int,
+)::Vector{NamedTuple}
+  rows = NamedTuple[]
+  stack = Tuple{Int,Int,PolyClusterNode,Union{Nothing,Int}}[]
+  for cluster_id in sort!(collect(keys(clusters)); rev=true)
+    push!(stack, (min_window_size, cluster_id, clusters[cluster_id], nothing))
+  end
+
+  while !isempty(stack)
+    window_size, cluster_id, node, parent_id = pop!(stack)
+    push!(rows, (
+      window_size=window_size,
+      cluster_id=cluster_id,
+      parent_id=parent_id,
+      si=sort(copy(node.si)),
+      as=deep_copy_seq(node.as),
+    ))
+    for child_id in sort!(collect(keys(node.cc)); rev=true)
+      push!(stack, (window_size + 1, child_id, node.cc[child_id], cluster_id))
+    end
+  end
+
+  sort!(rows; by=row -> (row.window_size, row.cluster_id))
+  return rows
+end
+
 # Rails-compatible wrapper APIs
 #
 # Rails version exposes non-bang method names and instance-style calls.
