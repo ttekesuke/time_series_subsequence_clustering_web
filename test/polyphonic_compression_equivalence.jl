@@ -196,14 +196,14 @@ const _compression_equivalence_scenarios = [
   ),
   (
     name="branching-extensions",
-    data=Float64[[0],[1],[0],[2],[0],[1],[0],[3],[0],[1],[0],[2],[0],[1]],
+    data=[Float64[0],Float64[1],Float64[0],Float64[2],Float64[0],Float64[1],Float64[0],Float64[3],Float64[0],Float64[1],Float64[0],Float64[2],Float64[0],Float64[1]],
     threshold=0.0,
     kwargs=(range_min=0.0, range_max=3.0, max_set_size=1),
     candidates=[Float64[0.0], Float64[3.0]],
   ),
   (
     name="embedded-long-repeat",
-    data=Float64[[1],[2],[3],[4],[5],[9],[1],[2],[3],[4],[5],[8],[1],[2],[3],[4],[5]],
+    data=[Float64[1],Float64[2],Float64[3],Float64[4],Float64[5],Float64[9],Float64[1],Float64[2],Float64[3],Float64[4],Float64[5],Float64[8],Float64[1],Float64[2],Float64[3],Float64[4],Float64[5]],
     threshold=0.0,
     kwargs=(range_min=0.0, range_max=9.0, max_set_size=1),
     candidates=[Float64[6.0], Float64[1.0]],
@@ -240,16 +240,16 @@ const _compression_equivalence_scenarios = [
   ),
   (
     name="approximate-merge",
-    data=Float64[[0.00],[0.10],[0.01],[0.11],[0.02],[0.12],[0.03],[0.13],[0.04],[0.14]],
+    data=[Float64[0.00],Float64[0.10],Float64[0.01],Float64[0.11],Float64[0.02],Float64[0.12],Float64[0.03],Float64[0.13],Float64[0.04],Float64[0.14]],
     threshold=0.08,
     kwargs=(range_min=0.0, range_max=1.0, max_set_size=1),
     candidates=[Float64[0.05], Float64[0.15]],
   ),
   (
     name="ordered-vector",
-    data=Float64[
-      [60,0.5],[62,0.8],[60,0.5],[62,0.8],[60,0.5],[64,0.3],
-      [60,0.5],[62,0.8],[60,0.5],[62,0.8],
+    data=[
+      Float64[60,0.5],Float64[62,0.8],Float64[60,0.5],Float64[62,0.8],Float64[60,0.5],Float64[64,0.3],
+      Float64[60,0.5],Float64[62,0.8],Float64[60,0.5],Float64[62,0.8],
     ],
     threshold=0.03,
     kwargs=(
