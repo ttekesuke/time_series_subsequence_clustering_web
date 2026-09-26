@@ -247,6 +247,13 @@ function Base.propertynames(::SpanClusterRef, private::Bool=false)
   return base
 end
 
+# Public logical accessors.  Production code outside this module should use
+# these rather than depending on the physical compressed representation or
+# compatibility getproperty hooks.
+cluster_starts(ref::AbstractClusterRef)::Vector{Int} = copy(_cluster_si(ref))
+cluster_representative(ref::AbstractClusterRef)::PolySeq = deep_copy_seq(_cluster_as(ref))
+cluster_version(ref::AbstractClusterRef)::Int = _cluster_version(ref)
+
 @inline function _cluster_has_children(ref::SpanClusterRef)::Bool
   return ref.offset < length(ref.span.cluster_ids) || !isempty(ref.span.children)
 end
