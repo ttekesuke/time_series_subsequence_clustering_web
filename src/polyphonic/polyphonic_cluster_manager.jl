@@ -253,6 +253,7 @@ struct PolySnapshot
   updated_dist_ids::Dict{Int,Set{Int}}
   updated_quant_ids::Dict{Int,Set{Int}}
   cluster_spans::Vector{CompressedClusterSpan}
+  cluster_horizon::Int
 end
 
 """Read-only logical node reconstructed from compressed storage."""
@@ -282,6 +283,7 @@ mutable struct Manager <: AbstractClusterManager
   contextual_min_width::Float64
 
   cluster_spans::Vector{CompressedClusterSpan} # canonical physical cluster storage
+  cluster_horizon::Int # number of time points incorporated into cluster state
   cluster_id_counter::Int
   tasks::Vector{ClusterTask}
 
@@ -469,7 +471,7 @@ end
 function _append_cluster_start!(mgr::Manager, ref::SpanClusterRef, start::Int)::Nothing
   _isolate_cluster_ref!(mgr, ref)
   push!(ref.span.si_min, start)
-  ref.span.fit_limits[1] = max(ref.span.fit_limits[1], length(mgr.data))
+  ref.span.fit_limits[1] = max(ref.span.fit_limits[1], mgr.cluster_horizon)
   return nothing
 end
 
@@ -498,7 +500,7 @@ function _add_child_cluster!(
     starts,
     representative,
     0,
-    length(mgr.data),
+    mgr.cluster_horizon,
   )
   push!(parent.span.children, child)
   sort!(parent.span.children; by=span -> span.cluster_ids[1])
@@ -517,7 +519,7 @@ function _add_root_cluster!(
     starts,
     representative,
     0,
-    length(mgr.data),
+    mgr.cluster_horizon,
   )
   push!(mgr.cluster_spans, root)
   sort!(mgr.cluster_spans; by=span -> span.cluster_ids[1])
@@ -633,7 +635,7 @@ function Manager(
       Int[0],
       seed_as,
       0,
-      length(data),
+      min(length(data), min_window_size),
     ))
   end
 
@@ -662,6 +664,7 @@ function Manager(
     scale_mode,
     float(contextual_min_width),
     cluster_spans,
+    min(length(data), min_window_size),
     cluster_id_counter,
     ClusterTask[],
     updated_dist,
@@ -688,8 +691,9 @@ function _initialize_root_cluster_if_ready!(mgr::Manager)::Bool
     Int[0],
     seed_as,
     0,
-    length(mgr.data),
+    mgr.min_window_size,
   ))
+  mgr.cluster_horizon = mgr.min_window_size
   mgr.cluster_id_counter = max(mgr.cluster_id_counter, 1)
   mgr.updated_cluster_ids_per_window_for_calculate_distance[mgr.min_window_size] = Set([0])
   mgr.updated_cluster_ids_per_window_for_calculate_quantities[mgr.min_window_size] = Set([0])
@@ -1021,6 +1025,7 @@ function process_data!(mgr::Manager)
     if data_index <= mgr.min_window_size - 1
       continue
     end
+    mgr.cluster_horizon = data_index + 1
     clustering_subsequences_incremental!(mgr, data_index)
     _normalize_cluster_store!(mgr)
   end
@@ -1031,6 +1036,7 @@ function add_data_point_permanently!(mgr::Manager, val::PolySet)
   push!(mgr.data, val)
   length(mgr.data) < mgr.min_window_size && return nothing
   _initialize_root_cluster_if_ready!(mgr) && return nothing
+  mgr.cluster_horizon = length(mgr.data)
   clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
   _normalize_cluster_store!(mgr)
   return nothing
@@ -1330,6 +1336,7 @@ function start_transaction!(mgr::Manager)
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_distance),
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_quantities),
     deepcopy(mgr.cluster_spans),
+    mgr.cluster_horizon,
   )
 end
 
@@ -1395,6 +1402,7 @@ function rollback!(mgr::Manager)
     mgr.updated_cluster_ids_per_window_for_calculate_distance = mgr.snapshot_state.updated_dist_ids
     mgr.updated_cluster_ids_per_window_for_calculate_quantities = mgr.snapshot_state.updated_quant_ids
     mgr.cluster_spans = mgr.snapshot_state.cluster_spans
+    mgr.cluster_horizon = mgr.snapshot_state.cluster_horizon
   end
 
   mgr.recording_mode = false
@@ -2031,6 +2039,7 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
   try
     push!(mgr.data, candidate)
     record!(mgr, PJDataPush())
+    mgr.cluster_horizon = length(mgr.data)
 
     clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
     clusters_each = collect_clusters_each(mgr)
