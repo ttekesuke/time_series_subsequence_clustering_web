@@ -104,3 +104,19 @@ Bach,Fugue_bwv_846,Bach/Fugue/bwv_846,Bach/Fugue/bwv_846/xml_score.musicxml
   @test sources[1]["composer"] == "Bach"
   @test sources[1]["xml_score"] == "Bach/Fugue/bwv_846/xml_score.musicxml"
 end
+
+
+@testset "analyse_music caps subsequence window growth" begin
+  series = [Float64[mod(i, 5)] for i in 1:40]
+  analysed = MA._analyse_manager(
+    series,
+    TC;
+    range_min=0.0,
+    range_max=4.0,
+    merge_threshold_ratio=0.02,
+    metric_weights=Main.TimeseriesClusteringAPI.Config.POLYPHONIC_STREAM_METRIC_WEIGHTS,
+    max_window_size=4,
+  )
+  windows = Int[Int(cluster["window_size"]) for cluster in analysed["clusters"]]
+  @test isempty(windows) || maximum(windows) <= 4
+end
