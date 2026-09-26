@@ -78,21 +78,21 @@ end
 @testset "#22 short series has no phantom root and initializes when ready" begin
   empty_mgr = IssuesPCM.Manager(Vector{Float64}[], 0.3, 2)
   IssuesPCM.process_data!(empty_mgr)
-  @test isempty(empty_mgr.clusters)
-  @test isempty(IssuesPCM.clusters_to_timeline(empty_mgr.clusters, 2))
+  @test isempty(empty_mgr.working_clusters)
+  @test isempty(IssuesPCM.clusters_to_timeline(empty_mgr.working_clusters, 2))
 
   one_mgr = IssuesPCM.Manager(Vector{Float64}[[3.0]], 0.3, 2)
   IssuesPCM.process_data!(one_mgr)
-  @test isempty(one_mgr.clusters)
+  @test isempty(one_mgr.working_clusters)
   IssuesPCM.add_data_point_permanently!(one_mgr, [4.0])
-  @test haskey(one_mgr.clusters, 0)
-  @test one_mgr.clusters[0].si == [0]
-  @test one_mgr.clusters[0].as == [[3.0], [4.0]]
+  @test haskey(one_mgr.working_clusters, 0)
+  @test one_mgr.working_clusters[0].si == [0]
+  @test one_mgr.working_clusters[0].as == [[3.0], [4.0]]
 
   normal_mgr = IssuesPCM.Manager(Vector{Float64}[[3.0], [4.0]], 0.3, 2)
   IssuesPCM.process_data!(normal_mgr)
-  @test haskey(normal_mgr.clusters, 0)
-  @test normal_mgr.clusters[0].si == [0]
+  @test haskey(normal_mgr.working_clusters, 0)
+  @test normal_mgr.working_clusters[0].si == [0]
 end
 
 @testset "#23 candidate selector rejects empty scores and accepts singleton" begin
