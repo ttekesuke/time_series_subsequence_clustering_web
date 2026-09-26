@@ -126,7 +126,7 @@
         </v-card-text>
         <v-card-actions class="justify-end">
           <v-btn variant="text" @click="dialogOpen = false">CANCEL</v-btn>
-          <v-btn color="primary" :loading="submitting" @click="submitMusicXml">SUBMIT</v-btn>
+          <v-btn color="primary" :loading="submitting" :disabled="submitting" @click="submitMusicXml">SUBMIT</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -333,7 +333,9 @@ const onFileChange = (event: Event) => {
 }
 
 const submitMusicXml = async () => {
+  if (submitting.value) return
   dialogError.value = ''
+  errorMessage.value = ''
   submitting.value = true
   try {
     const payload: any = {
