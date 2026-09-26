@@ -1510,16 +1510,20 @@ end
 # Rollback journal
 
 function _snapshot_cluster_span(span::CompressedClusterSpan)::CompressedClusterSpan
-  # Snapshot only the small span topology. Heavy payload arrays are shared
-  # read-only; speculative writes replace their arrays copy-on-write.
+  # Snapshot the small mutable metadata vectors independently.  Speculative
+  # clustering can advance per-window fit limits while sharing the same
+  # si_min/as_max payload; rollback must never observe those metadata writes.
+  #
+  # The potentially large occurrence/representative payloads remain shared:
+  # all speculative writes to si_min/as_max are copy-on-write assignments.
   return CompressedClusterSpan(
     span.window_min,
     span.window_max,
-    span.cluster_ids,
+    copy(span.cluster_ids),
     span.si_min,
     span.as_max,
-    span.versions,
-    span.fit_limits,
+    copy(span.versions),
+    copy(span.fit_limits),
     CompressedClusterSpan[_snapshot_cluster_span(child) for child in span.children],
   )
 end
