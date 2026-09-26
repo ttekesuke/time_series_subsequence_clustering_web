@@ -2311,7 +2311,7 @@ end
 
 function process_existing_clusters!(
   mgr::Manager,
-  parent::PolyClusterNode,
+  parent::AbstractClusterRef,
   valid_si::Vector{Int},
   latest_seq::PolySeq,
   max_distance::Float64,
@@ -2427,7 +2427,7 @@ end
 
 function process_new_clusters!(
   mgr::Manager,
-  parent::PolyClusterNode,
+  parent::AbstractClusterRef,
   valid_si::Vector{Int},
   latest_seq::PolySeq,
   max_distance::Float64,
