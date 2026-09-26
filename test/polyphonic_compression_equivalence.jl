@@ -78,13 +78,17 @@ function _logical_snapshot(M, mgr)
     end
   end
 
+  timeline_payload =
+    hasproperty(mgr, :working_clusters) ?
+      M.clusters_to_timeline(mgr) :
+      M.clusters_to_timeline(mgr.clusters, mgr.min_window_size)
   timeline = [
     (
       window=Int(item["window_size"]),
       id=String(item["cluster_id"]),
       starts=Int[x for x in item["indices"]],
     )
-    for item in M.clusters_to_timeline(mgr.clusters, mgr.min_window_size)
+    for item in timeline_payload
   ]
   sort!(timeline; by=item -> (item.window, parse(Int, item.id), Tuple(item.starts)))
 
