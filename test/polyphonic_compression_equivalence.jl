@@ -103,7 +103,7 @@ function _logical_snapshot(M, mgr)
 end
 
 function _assert_lossless_compression(prod)
-  spans = _ProdPCM.compress_cluster_tree(prod.clusters, prod.min_window_size)
+  spans = _ProdPCM.compress_cluster_tree(prod)
   @test _ProdPCM.compressed_virtual_nodes(spans) ==
         _ProdPCM.logical_virtual_nodes(prod.clusters, prod.min_window_size)
 end
@@ -348,7 +348,7 @@ end
   data = [Float64[mod(i - 1, 2)] for i in 1:24]
   mgr = _ProdPCM.Manager(data, 0.0, 2; range_min=0.0, range_max=1.0, max_set_size=1)
   _ProdPCM.process_data!(mgr)
-  spans = _ProdPCM.compress_cluster_tree(mgr.clusters, mgr.min_window_size)
+  spans = _ProdPCM.compress_cluster_tree(mgr)
   logical_count = length(_ProdPCM.logical_virtual_nodes(mgr.clusters, mgr.min_window_size))
   compressed_count = _count_compressed_spans(spans)
   @test compressed_count <= logical_count
