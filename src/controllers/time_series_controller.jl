@@ -4080,10 +4080,13 @@ function evaluate_observed_complexity!(
     distribution,
     value,
   )
-  metrics = PolyphonicClusterManager.simulate_add_and_calculate_all_extended(
-    manager,
-    value,
-  )
+  PolyphonicClusterManager.add_data_point_permanently!(manager, copy(value))
+  if max_window_size !== nothing
+    cap = max(Int(max_window_size), manager.min_window_size)
+    filter!(task -> task[2] < cap, manager.tasks)
+  end
+  PolyphonicClusterManager.update_caches_permanently!(manager)
+  metrics = PolyphonicClusterManager.calculate_all_extended_current_state(manager)
 
   diversity = calibrate_metric(metrics.distance, calibrator.base.distance)
   shape = calibrate_metric(metrics.complexity, calibrator.base.complexity)
@@ -4117,13 +4120,6 @@ function evaluate_observed_complexity!(
   combined = denominator > 0.0 ?
     clamp(total / denominator, 0.0, 1.0) :
     Config.DEFAULT_TARGET_01
-
-  PolyphonicClusterManager.add_data_point_permanently!(manager, copy(value))
-  if max_window_size !== nothing
-    cap = max(Int(max_window_size), manager.min_window_size)
-    filter!(task -> task[2] < cap, manager.tasks)
-  end
-  PolyphonicClusterManager.update_caches_permanently!(manager)
 
   temporal = metrics.occurrence_intervals
   return Dict(
