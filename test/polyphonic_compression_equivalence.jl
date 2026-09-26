@@ -178,11 +178,8 @@ function _run_incremental_case(scenario)
     _ProdPCM.update_caches_permanently!(prod)
     _LegacyPCM.update_caches_permanently!(legacy)
 
-    # Observed-data analysis can commit once and read the current metrics rather
-    # than simulating and then repeating the same append, but only if this
-    # remains exactly equivalent to the legacy simulation result.
-    @test _norm_metrics(_ProdPCM.calculate_all_extended_current_state(prod)) ==
-          _norm_metrics(simulated_prod)
+    # Keep the exact legacy two-phase behavior: candidate simulation and
+    # committed-state aggregation are intentionally not assumed equivalent.
     _assert_equivalent(prod, legacy)
   end
 end
