@@ -1,0 +1,61 @@
+name: Verify Compressed Cluster Integration
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Run compressed cluster integration suite
+        run: |
+          julia --project=. -e '
+            ENV["GENIE_ENV"]="test";
+            using Genie;
+            Genie.loadapp();
+            for file in [
+              "test/polyphonic_compression_equivalence.jl",
+              "test/predictive_complexity.jl",
+              "test/occurrence_interval_complexity.jl",
+              "test/metric_calibration_and_chord_greedy.jl",
+              "test/transaction_safety.jl",
+              "test/issues_16_23_regressions.jl",
+              "test/issues_18_lifecycle_regression.jl",
+              "test/generate_polyphonic_validation.jl",
+              "test/voice_token_generation.jl",
+              "test/analyse_music.jl",
+              "test/tie_rendering.jl",
+              "test/normalize_octave_invariance.jl",
+            ]
+              println("=== ", file, " ===");
+              include(file);
+            end
+          '
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run build
