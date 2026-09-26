@@ -2725,10 +2725,13 @@ function build_predictive_distribution(
   data_length = length(mgr.data)
   data_length <= mgr.min_window_size && return EMPTY_PREDICTIVE_DISTRIBUTION
 
-  clusters_each = PolyphonicClusterManager.collect_clusters_each(mgr)
   max_context = min(
     data_length - 1,
     max(Config.PREDICTIVE_MAX_CONTEXT_LENGTH, mgr.min_window_size),
+  )
+  clusters_each = PolyphonicClusterManager.collect_clusters_each(
+    mgr,
+    Set(mgr.min_window_size:max_context),
   )
   now_index = data_length - 1
   scale_rows = Tuple{Float64,Vector{PolyphonicClusterManager.PolySet},Vector{Float64}}[]
