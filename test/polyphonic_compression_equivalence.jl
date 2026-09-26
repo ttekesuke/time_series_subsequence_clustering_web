@@ -83,6 +83,37 @@ function _norm_transform_payload(M, mgr)
   return rows
 end
 
+function _norm_cluster_dict_payload(M, mgr)
+  payload =
+    M === _ProdPCM ?
+      M.clusters_to_dict(mgr) :
+      M.clusters_to_dict(mgr.clusters)
+
+  function walk(node)
+    children = node["cc"]
+    normalized_children = [
+      (
+        id=String(cid),
+        node=walk(children[cid]),
+      )
+      for cid in sort!(collect(keys(children)); by=x -> parse(Int, String(x)))
+    ]
+    return (
+      starts=sort(Int[x for x in node["si"]]),
+      representative=_norm_polyseq(node["as"]),
+      children=normalized_children,
+    )
+  end
+
+  return [
+    (
+      id=String(cid),
+      node=walk(payload[cid]),
+    )
+    for cid in sort!(collect(keys(payload)); by=x -> parse(Int, String(x)))
+  ]
+end
+
 function _logical_snapshot(M, mgr)
   clusters_each = M.collect_clusters_each(mgr)
   nodes = Any[]
@@ -125,6 +156,7 @@ function _logical_snapshot(M, mgr)
     nodes=nodes,
     timeline=timeline,
     transformed=_norm_transform_payload(M, mgr),
+    cluster_dict=_norm_cluster_dict_payload(M, mgr),
     distance_cache=_norm_cache(mgr.cluster_distance_cache),
     quantity_cache=_norm_cache(mgr.cluster_quantity_cache),
     complexity_cache=_norm_cache(mgr.cluster_complexity_cache),
