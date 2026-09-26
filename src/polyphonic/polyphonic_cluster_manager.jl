@@ -1980,7 +1980,7 @@ end
 
 
 @inline function _representative_extends_exactly(
-  parent::AbstractClusterRef,
+  parent::PolyClusterNode,
   child::PolyClusterNode,
 )::Bool
   length(child.as) == length(parent.as) + 1 || return false
