@@ -79,7 +79,7 @@ function _logical_snapshot(M, mgr)
   end
 
   timeline_payload =
-    hasproperty(mgr, :working_clusters) ?
+    M === _ProdPCM ?
       M.clusters_to_timeline(mgr) :
       M.clusters_to_timeline(mgr.clusters, mgr.min_window_size)
   timeline = [
@@ -113,23 +113,15 @@ end
 
 function _assert_lossless_compression(prod)
   spans = _ProdPCM.compress_cluster_tree(prod)
-  @test _ProdPCM.compressed_virtual_nodes(spans) ==
-        _ProdPCM.logical_virtual_nodes(prod.working_clusters, prod.min_window_size)
+  @test spans === prod.cluster_spans
+  @test _ProdPCM.compressed_virtual_nodes(spans) == _ProdPCM.logical_virtual_nodes(prod)
 
-  # Manager-level public reads already go through the compressed logical view.
-  # They must remain byte-for-byte/logically equivalent to the legacy tree
-  # helpers before physical storage can be changed.
-  @test _ProdPCM.transform_clusters(prod) ==
-        _ProdPCM.transform_clusters(prod.working_clusters, prod.min_window_size)
-
-  timeline_from_manager = _ProdPCM.clusters_to_timeline(prod)
-  timeline_from_tree = _ProdPCM.clusters_to_timeline(prod.working_clusters, prod.min_window_size)
-  sort!(timeline_from_manager; by=x -> (x["window_size"], parse(Int, x["cluster_id"]), Tuple(x["indices"])))
-  sort!(timeline_from_tree; by=x -> (x["window_size"], parse(Int, x["cluster_id"]), Tuple(x["indices"])))
-  @test timeline_from_manager == timeline_from_tree
-
-  @test _ProdPCM.clusters_to_dict(prod) ==
-        _ProdPCM.clusters_to_dict(prod.working_clusters)
+  # Every physical span must be internally consistent and reconstruct all
+  # logical ids/windows without duplicates.
+  rows = _ProdPCM.logical_virtual_nodes(prod)
+  ids = [row.cluster_id for row in rows]
+  @test length(ids) == length(unique(ids))
+  @test all(span -> length(span.cluster_ids) == length(span.versions) == length(span.fit_limits), spans)
 end
 
 function _assert_equivalent(prod, legacy)
@@ -370,53 +362,33 @@ end
   mgr = _ProdPCM.Manager(data, 0.0, 2; range_min=0.0, range_max=1.0, max_set_size=1)
   _ProdPCM.process_data!(mgr)
   spans = _ProdPCM.compress_cluster_tree(mgr)
-  logical_count = length(_ProdPCM.logical_virtual_nodes(mgr.working_clusters, mgr.min_window_size))
+  logical_count = length(_ProdPCM.logical_virtual_nodes(mgr))
   compressed_count = _count_compressed_spans(spans)
   @test compressed_count <= logical_count
   @test any(span -> span.window_max > span.window_min, spans) ||
         compressed_count < logical_count
   @test _ProdPCM.compressed_virtual_nodes(spans) ==
-        _ProdPCM.logical_virtual_nodes(mgr.working_clusters, mgr.min_window_size)
+        _ProdPCM.logical_virtual_nodes(mgr)
 end
 
 
-@testset "compressed cache invalidation is lossless" begin
+@testset "physical compressed storage survives append and simulation rollback" begin
   data = [Float64[mod(i - 1, 3)] for i in 1:18]
   mgr = _ProdPCM.Manager(data, 0.0, 2; range_min=0.0, range_max=2.0, max_set_size=1)
   _ProdPCM.process_data!(mgr)
 
-  first_cache = _ProdPCM.compress_cluster_tree(mgr)
-  @test !mgr.compressed_dirty
-  second_cache = _ProdPCM.compress_cluster_tree(mgr)
-  @test first_cache === second_cache
-  @test _ProdPCM.compressed_virtual_nodes(first_cache) ==
-        _ProdPCM.logical_virtual_nodes(mgr.working_clusters, mgr.min_window_size)
+  committed_rows = deepcopy(_ProdPCM.logical_virtual_nodes(mgr))
+  committed_physical = deepcopy(mgr.cluster_spans)
 
-  public_each = _ProdPCM.collect_clusters_each(mgr)
-  raw_rows = _ProdPCM.logical_virtual_nodes(mgr.working_clusters, mgr.min_window_size)
-  raw_map = Dict(
-    (row.window_size, row.cluster_id) => (sort(copy(row.si)), _norm_polyseq(row.as))
-    for row in raw_rows
-  )
-  public_map = Dict(
-    (ws, cid) => (sort(copy(node.si)), _norm_polyseq(node.as))
-    for (ws, same_ws) in public_each for (cid, node) in same_ws
-  )
-  @test public_map == raw_map
+  _ProdPCM.simulate_add_and_calculate_all_extended(mgr, Float64[1.0])
+  @test _ProdPCM.logical_virtual_nodes(mgr) == committed_rows
+  @test _ProdPCM.compressed_virtual_nodes(mgr.cluster_spans) ==
+        _ProdPCM.compressed_virtual_nodes(committed_physical)
 
   _ProdPCM.add_data_point_permanently!(mgr, Float64[0.0])
-  @test mgr.compressed_dirty
-  refreshed = _ProdPCM.compress_cluster_tree(mgr)
-  @test !mgr.compressed_dirty
-  @test refreshed !== first_cache
-  @test _ProdPCM.compressed_virtual_nodes(refreshed) ==
-        _ProdPCM.logical_virtual_nodes(mgr.working_clusters, mgr.min_window_size)
-
-  committed_cache = mgr.compressed_cache
-  committed_rows = _ProdPCM.compressed_virtual_nodes(committed_cache)
-  _ProdPCM.simulate_add_and_calculate_all_extended(mgr, Float64[1.0])
-  @test mgr.compressed_cache === committed_cache
-  @test _ProdPCM.compressed_virtual_nodes(mgr.compressed_cache) == committed_rows
+  @test !isempty(mgr.cluster_spans)
+  @test _ProdPCM.compressed_virtual_nodes(mgr.cluster_spans) ==
+        _ProdPCM.logical_virtual_nodes(mgr)
 end
 
 
@@ -446,8 +418,9 @@ end
 
     for path in paths
       text = read(path, String)
-      occursin("working_clusters", text) || continue
-      push!(offenders, relpath(path, repo_root))
+      if occursin("working_clusters", text) || occursin("cluster_spans", text)
+        push!(offenders, relpath(path, repo_root))
+      end
     end
   end
 
