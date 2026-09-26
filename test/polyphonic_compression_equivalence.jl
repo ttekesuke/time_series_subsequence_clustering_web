@@ -185,7 +185,7 @@ function _run_incremental_case(scenario)
 end
 
 Random.seed!(0x51A7)
-random_scalar = [Float64[rand(0:4)] for _ in 1:18]
+random_scalar = [Float64[float(rand(0:4))] for _ in 1:18]
 random_poly = [
   sort!(unique(Float64[rand(58:66) for _ in 1:rand(0:3)]))
   for _ in 1:18
