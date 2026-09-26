@@ -519,20 +519,32 @@ end
 function _append_cluster_start!(mgr::Manager, ref::SpanClusterRef, start::Int)::Nothing
   span = ref.span
   offset = ref.offset
+  window_size = _cluster_window(ref)
 
-  # A compressed span shares the shortest node's starts. Extending one virtual
-  # node at the current horizon only needs to advance that node's fit limit.
-  # Later virtual nodes stay unchanged because their historical fit limits
-  # still exclude the new right-boundary occurrence.
-  if !isempty(span.si_min) && span.si_min[end] == start
-    fit_limits = copy(span.fit_limits)
-    fit_limits[offset] = max(fit_limits[offset], mgr.cluster_horizon)
-    span.fit_limits = fit_limits
-    return nothing
+  # A longer virtual window often receives a start that is already present in
+  # the shortest node's shared si_min. In that case no span split is required:
+  # advancing this virtual node's historical fit limit may reveal the new
+  # occurrence. Take the fast path only when the resulting logical starts are
+  # *exactly* legacy's old starts plus this one start.
+  if offset > 1 && start in span.si_min
+    current_starts = _span_starts_at(span, offset)
+    candidate_limit = max(span.fit_limits[offset], mgr.cluster_horizon)
+    candidate_starts = Int[
+      s for s in span.si_min
+      if s + window_size <= candidate_limit
+    ]
+    expected_starts = vcat(current_starts, Int[start])
+    if candidate_starts == expected_starts
+      fit_limits = copy(span.fit_limits)
+      fit_limits[offset] = candidate_limit
+      span.fit_limits = fit_limits
+      return nothing
+    end
   end
 
-  # The first virtual node owns si_min, so appending to it is directly
-  # representable without splitting the physical span.
+  # The first virtual node owns si_min. Copy-on-write append keeps simulation
+  # snapshots safe, while longer nodes remain unchanged behind their own fit
+  # limits until they independently match.
   if offset == 1
     span.si_min = vcat(span.si_min, Int[start])
     fit_limits = copy(span.fit_limits)
@@ -541,8 +553,8 @@ function _append_cluster_start!(mgr::Manager, ref::SpanClusterRef, start::Int)::
     return nothing
   end
 
-  # Defensive fallback for a non-prefix occurrence. This is not expected on
-  # the normal suffix-extension path, but isolation preserves legacy semantics.
+  # Genuine non-prefix divergence: isolate only this logical node and preserve
+  # the exact legacy tree semantics.
   _isolate_cluster_ref!(mgr, ref)
   ref.span.si_min = vcat(ref.span.si_min, Int[start])
   fit_limits = copy(ref.span.fit_limits)
