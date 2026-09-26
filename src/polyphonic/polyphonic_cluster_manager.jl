@@ -169,6 +169,23 @@ struct PJCacheWriteComp <: PolyJournalEntry
   old_value::Union{Nothing,Float64}
 end
 
+"""Lossless physical span used by the manager's compressed read store."""
+struct CompressedClusterSpan
+  window_min::Int
+  window_max::Int
+  cluster_ids::Vector{Int}
+  si_min::Vector{Int}
+  as_max::PolySeq
+  data_length::Int
+  children::Vector{CompressedClusterSpan}
+end
+
+"""Read-only logical node reconstructed from compressed storage."""
+struct LogicalClusterView
+  si::Vector{Int}
+  as::PolySeq
+end
+
 """Main manager."""
 mutable struct Manager <: AbstractClusterManager
   data::Vector{PolySet}
@@ -189,7 +206,9 @@ mutable struct Manager <: AbstractClusterManager
   scale_mode::Symbol
   contextual_min_width::Float64
 
-  clusters::Dict{Int,PolyClusterNode}
+  working_clusters::Dict{Int,PolyClusterNode} # mutable hot-path tree; internal only
+  compressed_cache::Vector{CompressedClusterSpan} # lossless path-compressed read store
+  compressed_dirty::Bool
   cluster_id_counter::Int
   tasks::Vector{ClusterTask}
 
@@ -291,6 +310,8 @@ function Manager(
     scale_mode,
     float(contextual_min_width),
     clusters,
+    CompressedClusterSpan[],
+    true,
     cluster_id_counter,
     ClusterTask[],
     updated_dist,
@@ -308,16 +329,17 @@ function Manager(
 end
 
 function _initialize_root_cluster_if_ready!(mgr::Manager)::Bool
-  !isempty(mgr.clusters) && return false
+  !isempty(mgr.working_clusters) && return false
   length(mgr.data) >= mgr.min_window_size || return false
   seed_as = deep_copy_seq(mgr.data[1:mgr.min_window_size])
-  mgr.clusters[0] = PolyClusterNode([0], Dict{Int,PolyClusterNode}(), seed_as, 0)
+  mgr.working_clusters[0] = PolyClusterNode([0], Dict{Int,PolyClusterNode}(), seed_as, 0)
   mgr.cluster_id_counter = max(mgr.cluster_id_counter, 1)
   mgr.updated_cluster_ids_per_window_for_calculate_distance[mgr.min_window_size] = Set([0])
   mgr.updated_cluster_ids_per_window_for_calculate_quantities[mgr.min_window_size] = Set([0])
   get!(mgr.cluster_distance_cache, mgr.min_window_size, Dict{Tuple{Int,Int},Float64}())
   get!(mgr.cluster_quantity_cache, mgr.min_window_size, Dict{Int,Float64}())
   get!(mgr.cluster_complexity_cache, mgr.min_window_size, Dict{Int,Float64}())
+  mgr.compressed_dirty = true
   return true
 end
 
@@ -637,7 +659,7 @@ end
 
 function process_data!(mgr::Manager)
   _initialize_root_cluster_if_ready!(mgr)
-  isempty(mgr.clusters) && return nothing
+  isempty(mgr.working_clusters) && return nothing
   for i in 1:length(mgr.data)
     data_index = i - 1
     if data_index <= mgr.min_window_size - 1
@@ -645,14 +667,22 @@ function process_data!(mgr::Manager)
     end
     clustering_subsequences_incremental!(mgr, data_index)
   end
+  mgr.compressed_dirty = true
   return nothing
 end
 
 function add_data_point_permanently!(mgr::Manager, val::PolySet)
   push!(mgr.data, val)
-  length(mgr.data) < mgr.min_window_size && return nothing
-  _initialize_root_cluster_if_ready!(mgr) && return nothing
+  if length(mgr.data) < mgr.min_window_size
+    mgr.compressed_dirty = true
+    return nothing
+  end
+  if _initialize_root_cluster_if_ready!(mgr)
+    mgr.compressed_dirty = true
+    return nothing
+  end
   clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
+  mgr.compressed_dirty = true
   return nothing
 end
 
@@ -742,8 +772,8 @@ function update_caches_permanently!(mgr::Manager)
   # Avoid Dict{String,Any} transforms: traverse typed nodes and update caches.
   clusters_each = Dict{Int,Dict{Int,PolyClusterNode}}()
   stack = Vector{Tuple{Int,Int,PolyClusterNode}}()
-  sizehint!(stack, length(mgr.clusters))
-  for (cid, cl) in mgr.clusters
+  sizehint!(stack, length(mgr.working_clusters))
+  for (cid, cl) in mgr.working_clusters
     push!(stack, (mgr.min_window_size, cid, cl))
   end
 
@@ -988,7 +1018,7 @@ function rollback!(mgr::Manager)
       delete!(entry.parent_cc, entry.key)
 
     elseif entry isa PJRootAdd
-      delete!(mgr.clusters, entry.key)
+      delete!(mgr.working_clusters, entry.key)
 
     elseif entry isa PJHashSetKeyDist
       if entry.old_value === nothing
@@ -1046,11 +1076,11 @@ function rollback!(mgr::Manager)
   mgr.snapshot_state = nothing
 end
 
-function collect_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,PolyClusterNode}}
+function _collect_working_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,PolyClusterNode}}
   clusters_each = Dict{Int,Dict{Int,PolyClusterNode}}()
   stack = Vector{Tuple{Int,Int,PolyClusterNode}}()
-  sizehint!(stack, length(mgr.clusters))
-  for (cid, cl) in mgr.clusters
+  sizehint!(stack, length(mgr.working_clusters))
+  for (cid, cl) in mgr.working_clusters
     push!(stack, (mgr.min_window_size, cid, cl))
   end
 
@@ -1061,6 +1091,22 @@ function collect_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,PolyClusterNode}
     for (child_id, child_cluster) in node.cc
       push!(stack, (depth + 1, child_id, child_cluster))
     end
+  end
+  return clusters_each
+end
+
+"""Return window-indexed logical clusters reconstructed from compressed storage.
+
+Production callers must use this read view instead of the mutable working tree.
+"""
+function collect_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,LogicalClusterView}}
+  clusters_each = Dict{Int,Dict{Int,LogicalClusterView}}()
+  for row in logical_virtual_nodes(mgr)
+    same_ws = get!(clusters_each, row.window_size, Dict{Int,LogicalClusterView}())
+    same_ws[row.cluster_id] = LogicalClusterView(
+      sort(copy(row.si)),
+      deep_copy_seq(row.as),
+    )
   end
   return clusters_each
 end
@@ -1092,7 +1138,7 @@ function build_predictive_distribution(mgr::Manager)::PredictiveDistribution
   data_length = length(mgr.data)
   data_length <= mgr.min_window_size && return EMPTY_PREDICTIVE_DISTRIBUTION
 
-  clusters_each = collect_clusters_each(mgr)
+  clusters_each = _collect_working_clusters_each(mgr)
   max_context = min(
     data_length - 1,
     max(Config.PREDICTIVE_MAX_CONTEXT_LENGTH, mgr.min_window_size),
@@ -1395,7 +1441,7 @@ function _occurrence_interval_metrics_for_starts(
       merge_threshold_ratio,
       min_window_size,
     )
-    interval_clusters = collect_clusters_each(interval_mgr)
+    interval_clusters = _collect_working_clusters_each(interval_mgr)
     d, q, c = _aggregate_current_metrics(
       interval_mgr,
       interval_clusters;
@@ -1592,7 +1638,7 @@ end
 
 """Read the committed metric state without adding or simulating a candidate."""
 function current_extended_metrics(mgr::Manager)::ExtendedClusterMetrics
-  clusters_each = collect_clusters_each(mgr)
+  clusters_each = _collect_working_clusters_each(mgr)
   d, q, c = _aggregate_current_metrics(mgr, clusters_each)
   temporal =
     if mgr.enable_occurrence_intervals
@@ -1613,7 +1659,7 @@ it avoids a transactional append/rollback when the next value is already known
 and has been permanently committed.
 """
 function calculate_all_extended_current_state(mgr::Manager)::ExtendedClusterMetrics
-  clusters_each = collect_clusters_each(mgr)
+  clusters_each = _collect_working_clusters_each(mgr)
   sum_distances = 0.0
   sum_quantities = 0.0
   sum_complexities = 0.0
@@ -1672,7 +1718,7 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
     record!(mgr, PJDataPush())
 
     clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
-    clusters_each = collect_clusters_each(mgr)
+    clusters_each = _collect_working_clusters_each(mgr)
 
     sum_distances = 0.0
     sum_quantities = 0.0
@@ -1838,15 +1884,6 @@ end
 # reconstructable.
 # ------------------------------------------------------------------
 
-struct CompressedClusterSpan
-  window_min::Int
-  window_max::Int
-  cluster_ids::Vector{Int}
-  si_min::Vector{Int}
-  as_max::PolySeq
-  data_length::Int
-  children::Vector{CompressedClusterSpan}
-end
 
 @inline function _representative_extends_exactly(
   parent::PolyClusterNode,
@@ -1937,8 +1974,26 @@ function compress_cluster_tree(
   return spans
 end
 
-compress_cluster_tree(mgr::Manager)::Vector{CompressedClusterSpan} =
-  compress_cluster_tree(mgr.clusters, mgr.min_window_size, length(mgr.data))
+function compress_cluster_tree(mgr::Manager)::Vector{CompressedClusterSpan}
+  # Simulation mutates the working tree transactionally. Never poison the
+  # committed compressed cache with a speculative state.
+  if mgr.recording_mode
+    return compress_cluster_tree(
+      mgr.working_clusters,
+      mgr.min_window_size,
+      length(mgr.data),
+    )
+  end
+  if mgr.compressed_dirty
+    mgr.compressed_cache = compress_cluster_tree(
+      mgr.working_clusters,
+      mgr.min_window_size,
+      length(mgr.data),
+    )
+    mgr.compressed_dirty = false
+  end
+  return mgr.compressed_cache
+end
 
 function compressed_virtual_nodes(
   spans::Vector{CompressedClusterSpan},
@@ -2106,7 +2161,7 @@ function clustering_subsequences_incremental!(mgr::Manager, data_index::Int)
   for task in current_tasks
     keys_to_parent = copy(task.keys)
     length0 = task.length
-    parent = dig_cluster_by_keys(mgr.clusters, keys_to_parent)
+    parent = dig_cluster_by_keys(mgr.working_clusters, keys_to_parent)
     parent === nothing && continue
 
     new_length = length0 + 1
@@ -2387,7 +2442,7 @@ function process_root_clusters!(mgr::Manager, data_index::Int, max_distance::Flo
   best_cluster::Union{Nothing,PolyClusterNode} = nothing
   min_distance = Inf
 
-  for (cluster_id, cluster) in mgr.clusters
+  for (cluster_id, cluster) in mgr.working_clusters
     latest_start in cluster.si && continue
 
     distance = euclidean_distance(mgr, cluster.as, latest_seq)
@@ -2448,7 +2503,7 @@ function process_root_clusters!(mgr::Manager, data_index::Int, max_distance::Flo
     ))
   else
     new_cluster = _new_cluster_node([latest_start], deep_copy_seq(latest_seq))
-    mgr.clusters[mgr.cluster_id_counter] = new_cluster
+    mgr.working_clusters[mgr.cluster_id_counter] = new_cluster
     record!(mgr, PJRootAdd(mgr.cluster_id_counter))
 
     add_updated_id!(
@@ -2477,7 +2532,7 @@ update_caches_permanently(mgr::Manager) = update_caches_permanently!(mgr)
 # Manager-level logical view API.
 #
 # Production callers should use these methods rather than reaching into
-# `mgr.clusters` directly.  The physical cluster storage is intentionally an
+# `mgr.working_clusters` directly.  The physical cluster storage is intentionally an
 # implementation detail so it can be replaced by path-compressed spans without
 # changing controllers, generators, MusicXML analysis, or UI payload builders.
 #
