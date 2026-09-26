@@ -2233,6 +2233,7 @@ function _compress_cluster_span(
   data_length::Int,
 )::CompressedClusterSpan
   ids = Int[cluster_id]
+  versions = Int[node.version]
   first_starts = copy(node.si)
   current = node
   current_window = window_size
@@ -2247,6 +2248,7 @@ function _compress_cluster_span(
     ) || break
     _representative_extends_exactly(current, child) || break
     push!(ids, child_id)
+    push!(versions, child.version)
     current = child
     current_window += 1
   end
@@ -2267,11 +2269,13 @@ function _compress_cluster_span(
     ids,
     first_starts,
     deep_copy_seq(current.as),
-    data_length,
+    versions,
+    fill(data_length, length(ids)),
     children,
   )
 end
 
+"""Legacy-tree adapter kept only for oracle/backward-compatibility tests."""
 function compress_cluster_tree(
   clusters::Dict{Int,PolyClusterNode},
   min_window_size::Int,
@@ -2289,26 +2293,8 @@ function compress_cluster_tree(
   return spans
 end
 
-function compress_cluster_tree(mgr::Manager)::Vector{CompressedClusterSpan}
-  # Simulation mutates the working tree transactionally. Never poison the
-  # committed compressed cache with a speculative state.
-  if mgr.recording_mode
-    return compress_cluster_tree(
-      mgr.working_clusters,
-      mgr.min_window_size,
-      length(mgr.data),
-    )
-  end
-  if mgr.compressed_dirty
-    mgr.compressed_cache = compress_cluster_tree(
-      mgr.working_clusters,
-      mgr.min_window_size,
-      length(mgr.data),
-    )
-    mgr.compressed_dirty = false
-  end
-  return mgr.compressed_cache
-end
+"""Return the canonical physical cluster storage."""
+compress_cluster_tree(mgr::Manager)::Vector{CompressedClusterSpan} = mgr.cluster_spans
 
 function compressed_virtual_nodes(
   spans::Vector{CompressedClusterSpan},
@@ -2324,9 +2310,10 @@ function compressed_virtual_nodes(
     for (offset, cluster_id) in enumerate(span.cluster_ids)
       window_size = span.window_min + offset - 1
       representative = deep_copy_seq(span.as_max[1:window_size])
+      fit_limit = span.fit_limits[offset]
       starts = sort(Int[
         s for s in span.si_min
-        if s + window_size <= span.data_length
+        if s + window_size <= fit_limit
       ])
       push!(rows, (
         window_size=window_size,
