@@ -336,6 +336,7 @@ mutable struct Manager <: AbstractClusterManager
 
   cluster_spans::Vector{CompressedClusterSpan} # canonical physical cluster storage
   cluster_horizon::Int # number of time points incorporated into cluster state
+  physical_compression::Bool
   cluster_id_counter::Int
   tasks::Vector{ClusterTask}
 
@@ -702,6 +703,7 @@ function Manager(
   point_axis_ranges::Vector{Float64} = Float64[],
   recency::Real = 0.0,
   enable_occurrence_intervals::Bool = true,
+  physical_compression::Bool = true,
   scale_mode::Symbol = :range_fixed,
   contextual_min_width::Real = Config.DEFAULT_CONTEXTUAL_MIN_WIDTH,
   range_min::Real = Config.DEFAULT_RANGE_MIN,
@@ -764,6 +766,7 @@ function Manager(
     float(contextual_min_width),
     cluster_spans,
     min(length(data), min_window_size),
+    Bool(physical_compression),
     cluster_id_counter,
     ClusterTask[],
     updated_dist,
@@ -1133,7 +1136,7 @@ function process_data!(mgr::Manager)
     mgr.cluster_horizon = data_index + 1
     clustering_subsequences_incremental!(mgr, data_index)
   end
-  _normalize_cluster_store!(mgr)
+  mgr.physical_compression && _normalize_cluster_store!(mgr)
   return nothing
 end
 
@@ -1148,7 +1151,8 @@ function add_data_point_permanently!(mgr::Manager, val::PolySet)
   # representative, cache, or task. It only allows a few adjacent singleton
   # spans to remain temporarily unmerged. This is especially important for
   # occurrence-interval managers, which are updated very frequently.
-  if length(mgr.data) % CLUSTER_STORAGE_COMPACTION_INTERVAL == 0
+  if mgr.physical_compression &&
+      length(mgr.data) % CLUSTER_STORAGE_COMPACTION_INTERVAL == 0
     _normalize_cluster_store!(mgr)
   end
   return nothing
@@ -1161,7 +1165,7 @@ logical compatibility view) may finalize it explicitly. This operation is
 semantics-preserving.
 """
 function finalize_cluster_storage!(mgr::Manager)::Nothing
-  _normalize_cluster_store!(mgr)
+  mgr.physical_compression && _normalize_cluster_store!(mgr)
   return nothing
 end
 
@@ -1858,6 +1862,7 @@ function _build_occurrence_interval_manager(
     max_set_size=1,
     recency=0.0,
     enable_occurrence_intervals=false,
+    physical_compression=false,
   )
   process_data!(manager)
   update_caches_permanently!(manager)
