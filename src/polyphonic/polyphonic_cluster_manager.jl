@@ -517,6 +517,32 @@ function _isolate_cluster_ref!(
 end
 
 function _append_cluster_start!(mgr::Manager, ref::SpanClusterRef, start::Int)::Nothing
+  span = ref.span
+  offset = ref.offset
+
+  # A compressed span shares the shortest node's starts. Extending one virtual
+  # node at the current horizon only needs to advance that node's fit limit.
+  # Later virtual nodes stay unchanged because their historical fit limits
+  # still exclude the new right-boundary occurrence.
+  if !isempty(span.si_min) && span.si_min[end] == start
+    fit_limits = copy(span.fit_limits)
+    fit_limits[offset] = max(fit_limits[offset], mgr.cluster_horizon)
+    span.fit_limits = fit_limits
+    return nothing
+  end
+
+  # The first virtual node owns si_min, so appending to it is directly
+  # representable without splitting the physical span.
+  if offset == 1
+    span.si_min = vcat(span.si_min, Int[start])
+    fit_limits = copy(span.fit_limits)
+    fit_limits[1] = max(fit_limits[1], mgr.cluster_horizon)
+    span.fit_limits = fit_limits
+    return nothing
+  end
+
+  # Defensive fallback for a non-prefix occurrence. This is not expected on
+  # the normal suffix-extension path, but isolation preserves legacy semantics.
   _isolate_cluster_ref!(mgr, ref)
   ref.span.si_min = vcat(ref.span.si_min, Int[start])
   fit_limits = copy(ref.span.fit_limits)
@@ -545,7 +571,12 @@ function _add_child_cluster!(
   starts::Vector{Int},
   representative::PolySeq,
 )::SpanClusterRef
-  _isolate_cluster_ref!(mgr, parent)
+  # A node can acquire a new explicit child without splitting only when it is
+  # already the end of its compressed span. A middle virtual node has the
+  # implicit next node as its child and therefore must be isolated first.
+  if parent.offset < length(parent.span.cluster_ids)
+    _isolate_cluster_ref!(mgr, parent)
+  end
   child = _new_singleton_span(
     _cluster_window(parent) + 1,
     cluster_id,
