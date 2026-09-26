@@ -1114,9 +1114,9 @@ end
 end
 
 @inline function cluster_last_occurrence(node::AbstractClusterRef)::Int
-  starts = _cluster_si(node)
+  starts = _cluster_si_view(node)
   isempty(starts) && return 0
-  return maximum(starts)
+  return starts[end]
 end
 
 @inline function cluster_recency_weight(mgr::Manager, node, now_index::Int)::Float64
@@ -2015,7 +2015,7 @@ function current_occurrence_interval_metrics(
 
   for (_, _, target) in targets
     temporal = _occurrence_interval_metrics_for_starts(
-      _cluster_si(target),
+      collect(_cluster_si_view(target)),
       mgr.merge_threshold_ratio,
       mgr.min_window_size,
     )
