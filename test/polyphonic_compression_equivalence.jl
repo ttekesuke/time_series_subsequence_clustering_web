@@ -178,6 +178,22 @@ function _assert_lossless_compression(prod)
   @test all(span -> length(span.cluster_ids) == length(span.versions) == length(span.fit_limits), spans)
 end
 
+function _physical_span_signature(mgr)
+  function signature(span)
+    return (
+      window_min=span.window_min,
+      window_max=span.window_max,
+      cluster_ids=copy(span.cluster_ids),
+      si_min=copy(span.si_min),
+      representative=_norm_polyseq(span.as_max),
+      versions=copy(span.versions),
+      fit_limits=copy(span.fit_limits),
+      children=[signature(child) for child in span.children],
+    )
+  end
+  return [signature(span) for span in mgr.cluster_spans]
+end
+
 function _assert_equivalent(prod, legacy)
   @test _logical_snapshot(_ProdPCM, prod) == _logical_snapshot(_LegacyPCM, legacy)
   _assert_lossless_compression(prod)
@@ -214,12 +230,14 @@ function _run_bulk_case(scenario)
   _assert_equivalent(prod, legacy)
 
   before_prod = _logical_snapshot(_ProdPCM, prod)
+  before_physical = _physical_span_signature(prod)
   before_legacy = _logical_snapshot(_LegacyPCM, legacy)
   for candidate in scenario.candidates
     pm = _ProdPCM.simulate_add_and_calculate_all_extended(prod, copy(candidate))
     lm = _LegacyPCM.simulate_add_and_calculate_all_extended(legacy, copy(candidate))
     @test _norm_metrics(pm) == _norm_metrics(lm)
     @test _logical_snapshot(_ProdPCM, prod) == before_prod
+    @test _physical_span_signature(prod) == before_physical
     @test _logical_snapshot(_LegacyPCM, legacy) == before_legacy
   end
 end
