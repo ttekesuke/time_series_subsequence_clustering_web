@@ -1209,8 +1209,14 @@ function weighted_complexity_score(
 end
 
 function update_caches_permanently!(mgr::Manager)
-  # Avoid Dict{String,Any} transforms: traverse typed nodes and update caches.
-  clusters_each = collect_clusters_each(mgr)
+  # Cache writes are incremental. Materialize logical refs only for window
+  # sizes that actually changed on this append instead of expanding the full
+  # compressed cluster store.
+  touched_windows = union(
+    Set(keys(mgr.updated_cluster_ids_per_window_for_calculate_distance)),
+    Set(keys(mgr.updated_cluster_ids_per_window_for_calculate_quantities)),
+  )
+  clusters_each = collect_clusters_each(mgr, touched_windows)
 
   for (window_size, same_ws) in clusters_each
     all_ids = collect(keys(same_ws))
@@ -1518,6 +1524,37 @@ end
 
 Production callers must use this read view instead of the mutable working tree.
 """
+function collect_clusters_each(
+  mgr::Manager,
+  requested_windows::AbstractSet{Int},
+)::Dict{Int,Dict{Int,SpanClusterRef}}
+  clusters_each = Dict{Int,Dict{Int,SpanClusterRef}}()
+  isempty(requested_windows) && return clusters_each
+
+  requested = sort!(collect(requested_windows))
+  stack = CompressedClusterSpan[reverse(mgr.cluster_spans)...]
+
+  while !isempty(stack)
+    span = pop!(stack)
+    lo = searchsortedfirst(requested, span.window_min)
+    hi = searchsortedlast(requested, span.window_max)
+    if lo <= hi
+      for request_index in lo:hi
+        window_size = requested[request_index]
+        offset = window_size - span.window_min + 1
+        cluster_id = span.cluster_ids[offset]
+        same_ws = get!(clusters_each, window_size, Dict{Int,SpanClusterRef}())
+        same_ws[cluster_id] = SpanClusterRef(span, offset)
+      end
+    end
+    for child in reverse(span.children)
+      push!(stack, child)
+    end
+  end
+
+  return clusters_each
+end
+
 function collect_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,SpanClusterRef}}
   # Hot-path index over the canonical compressed store. Values are lightweight
   # references into physical spans; no si/as payload is copied here.
@@ -1567,10 +1604,13 @@ function build_predictive_distribution(mgr::Manager)::PredictiveDistribution
   data_length = length(mgr.data)
   data_length <= mgr.min_window_size && return EMPTY_PREDICTIVE_DISTRIBUTION
 
-  clusters_each = collect_clusters_each(mgr)
   max_context = min(
     data_length - 1,
     max(Config.PREDICTIVE_MAX_CONTEXT_LENGTH, mgr.min_window_size),
+  )
+  clusters_each = collect_clusters_each(
+    mgr,
+    Set(mgr.min_window_size:max_context),
   )
   now_index = data_length - 1
   scale_rows = Tuple{Float64,Vector{PolySet},Vector{Float64}}[]
@@ -2156,13 +2196,17 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
     mgr.cluster_horizon = length(mgr.data)
 
     clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
-    clusters_each = collect_clusters_each(mgr)
+    touched_windows = union(
+      Set(keys(mgr.updated_cluster_ids_per_window_for_calculate_distance)),
+      Set(keys(mgr.updated_cluster_ids_per_window_for_calculate_quantities)),
+    )
+    updated_clusters_each = collect_clusters_each(mgr, touched_windows)
 
     sum_distances = 0.0
     sum_quantities = 0.0
     sum_complexities = 0.0
 
-    for (window_size, same_ws) in clusters_each
+    for (window_size, same_ws) in updated_clusters_each
       all_ids = collect(keys(same_ws))
       updated_ids = collect(get(mgr.updated_cluster_ids_per_window_for_calculate_distance, window_size, Set{Int}()))
 
@@ -2219,30 +2263,36 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
         record!(mgr, PJCacheWriteComp(c_cache, cid, old_c))
       end
 
-      if mgr.recency <= 0.0
-        if !isempty(cache)
-          sum_distances += (sum(values(cache)) / float(window_size))
-        end
-        if !isempty(q_cache)
-          sum_quantities += sum(values(q_cache))
-        end
-        if !isempty(c_cache)
-          sum_complexities += sum(values(c_cache))
-        end
-      else
-        if !isempty(cache)
-          sum_distances += weighted_distance_score(mgr, cache, same_ws, length(mgr.data) - 1)
-        end
-        sum_quantities += weighted_quantity_score(mgr, same_ws, window_size, length(mgr.data) - 1)
-        if !isempty(c_cache)
-          sum_complexities += weighted_complexity_score(mgr, c_cache, same_ws, length(mgr.data) - 1)
-        end
+    end
+
+    if mgr.recency <= 0.0
+      for (window_size, cache) in mgr.cluster_distance_cache
+        isempty(cache) || (sum_distances += sum(values(cache)) / float(window_size))
+      end
+      for (_, cache) in mgr.cluster_quantity_cache
+        isempty(cache) || (sum_quantities += sum(values(cache)))
+      end
+      for (_, cache) in mgr.cluster_complexity_cache
+        isempty(cache) || (sum_complexities += sum(values(cache)))
+      end
+    else
+      # Recency weighting depends on cluster start positions, so preserve the
+      # full logical view only for recency-enabled managers.
+      clusters_each = collect_clusters_each(mgr)
+      now_index = length(mgr.data) - 1
+      for (window_size, same_ws) in clusters_each
+        cache = get(mgr.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
+        q_cache = get(mgr.cluster_quantity_cache, window_size, Dict{Int,Float64}())
+        c_cache = get(mgr.cluster_complexity_cache, window_size, Dict{Int,Float64}())
+        isempty(cache) || (sum_distances += weighted_distance_score(mgr, cache, same_ws, now_index))
+        sum_quantities += weighted_quantity_score(mgr, same_ws, window_size, now_index)
+        isempty(c_cache) || (sum_complexities += weighted_complexity_score(mgr, c_cache, same_ws, now_index))
       end
     end
 
     occurrence_intervals =
       if mgr.enable_occurrence_intervals
-        latest_occurrence_interval_metrics(mgr, clusters_each, length(mgr.data) - 1)
+        latest_occurrence_interval_metrics(mgr, updated_clusters_each, length(mgr.data) - 1)
       else
         EMPTY_OCCURRENCE_INTERVAL_METRICS
       end
