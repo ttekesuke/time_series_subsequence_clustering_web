@@ -4062,7 +4062,15 @@ function evaluate_observed_complexity!(
   manager::PolyphonicClusterManager.Manager,
   value::PolyphonicClusterManager.PolySet;
   metric_weights::NTuple{3,Float64}=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
+  max_window_size::Union{Nothing,Int}=nothing,
 )::Dict{String,Any}
+  if max_window_size !== nothing
+    cap = max(Int(max_window_size), manager.min_window_size)
+    # Tasks extend an existing subsequence cluster to the next window size.
+    # Keep tasks strictly below the cap so cap itself can be created, but not cap + 1.
+    filter!(task -> task[2] < cap, manager.tasks)
+  end
+
   calibrator = build_extended_metric_calibrator(manager)
   distribution = PolyphonicClusterManager.build_predictive_distribution(manager)
   predictive = PolyphonicClusterManager.predictive_surprise_score(
@@ -4109,6 +4117,10 @@ function evaluate_observed_complexity!(
     Config.DEFAULT_TARGET_01
 
   PolyphonicClusterManager.add_data_point_permanently!(manager, copy(value))
+  if max_window_size !== nothing
+    cap = max(Int(max_window_size), manager.min_window_size)
+    filter!(task -> task[2] < cap, manager.tasks)
+  end
   PolyphonicClusterManager.update_caches_permanently!(manager)
 
   temporal = metrics.occurrence_intervals
