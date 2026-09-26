@@ -33,6 +33,21 @@ mutable struct PolyClusterNode
   si::Vector{Int}                     # start indices (0-based)
   cc::Dict{Int,PolyClusterNode}       # child clusters
   as::PolySeq                         # representative sequence
+  version::Int                        # increments whenever representative changes
+end
+
+"""Incremental extension task.
+
+The two distance fields are exact reusable state for the suffix occurrence that
+created this task. They do not alter clustering semantics; if the referenced
+representative changed before the task is consumed, the fast path is disabled.
+"""
+struct ClusterTask
+  keys::Vector{Int}
+  length::Int
+  member_squared_distances::Dict{Int,Float64}
+  representative_squared_distance::Float64
+  representative_version::Int
 end
 
 """Complexity metrics of the interval series derived from a cluster's starts."""
@@ -92,7 +107,7 @@ end
 
 """Rollback snapshot (typed)."""
 struct PolySnapshot
-  tasks::Vector{Tuple{Vector{Int},Int}}
+  tasks::Vector{ClusterTask}
   cluster_id_counter::Int
   updated_dist_ids::Dict{Int,Set{Int}}
   updated_quant_ids::Dict{Int,Set{Int}}
@@ -109,6 +124,7 @@ end
 struct PJAsUpdate <: PolyJournalEntry
   node::PolyClusterNode
   old_as::PolySeq
+  old_version::Int
 end
 
 struct PJCcAdd <: PolyJournalEntry
@@ -175,7 +191,7 @@ mutable struct Manager <: AbstractClusterManager
 
   clusters::Dict{Int,PolyClusterNode}
   cluster_id_counter::Int
-  tasks::Vector{Tuple{Vector{Int},Int}}
+  tasks::Vector{ClusterTask}
 
   updated_cluster_ids_per_window_for_calculate_distance::Dict{Int,Set{Int}}
   updated_cluster_ids_per_window_for_calculate_quantities::Dict{Int,Set{Int}}
@@ -202,7 +218,7 @@ deep_copy_seq(seq::PolySeq)::PolySeq = [copy(s) for s in seq]
 normalize_set(x::PolySet)::PolySet = x
 
 @inline function _new_cluster_node(starts::Vector{Int}, as::PolySeq)::PolyClusterNode
-  return PolyClusterNode(starts, Dict{Int,PolyClusterNode}(), as)
+  return PolyClusterNode(starts, Dict{Int,PolyClusterNode}(), as, 0)
 end
 
 """Create manager. `data` must be Vector{Vector{Float64}}."""
@@ -247,7 +263,7 @@ function Manager(
   clusters = Dict{Int,PolyClusterNode}()
   if has_root
     seed_as = deep_copy_seq(data[1:min_window_size])
-    clusters[0] = PolyClusterNode([0], Dict{Int,PolyClusterNode}(), seed_as)
+    clusters[0] = PolyClusterNode([0], Dict{Int,PolyClusterNode}(), seed_as, 0)
   end
 
   updated_dist = has_root ? Dict{Int,Set{Int}}(min_window_size => Set([0])) : Dict{Int,Set{Int}}()
@@ -276,7 +292,7 @@ function Manager(
     float(contextual_min_width),
     clusters,
     cluster_id_counter,
-    Tuple{Vector{Int},Int}[],
+    ClusterTask[],
     updated_dist,
     updated_qty,
     dist_cache,
@@ -295,7 +311,7 @@ function _initialize_root_cluster_if_ready!(mgr::Manager)::Bool
   !isempty(mgr.clusters) && return false
   length(mgr.data) >= mgr.min_window_size || return false
   seed_as = deep_copy_seq(mgr.data[1:mgr.min_window_size])
-  mgr.clusters[0] = PolyClusterNode([0], Dict{Int,PolyClusterNode}(), seed_as)
+  mgr.clusters[0] = PolyClusterNode([0], Dict{Int,PolyClusterNode}(), seed_as, 0)
   mgr.cluster_id_counter = max(mgr.cluster_id_counter, 1)
   mgr.updated_cluster_ids_per_window_for_calculate_distance[mgr.min_window_size] = Set([0])
   mgr.updated_cluster_ids_per_window_for_calculate_quantities[mgr.min_window_size] = Set([0])
