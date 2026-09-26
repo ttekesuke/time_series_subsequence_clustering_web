@@ -1015,30 +1015,24 @@ end
 
 function process_data!(mgr::Manager)
   _initialize_root_cluster_if_ready!(mgr)
-  isempty(mgr.working_clusters) && return nothing
+  isempty(mgr.cluster_spans) && return nothing
   for i in 1:length(mgr.data)
     data_index = i - 1
     if data_index <= mgr.min_window_size - 1
       continue
     end
     clustering_subsequences_incremental!(mgr, data_index)
+    _normalize_cluster_store!(mgr)
   end
-  mgr.compressed_dirty = true
   return nothing
 end
 
 function add_data_point_permanently!(mgr::Manager, val::PolySet)
   push!(mgr.data, val)
-  if length(mgr.data) < mgr.min_window_size
-    mgr.compressed_dirty = true
-    return nothing
-  end
-  if _initialize_root_cluster_if_ready!(mgr)
-    mgr.compressed_dirty = true
-    return nothing
-  end
+  length(mgr.data) < mgr.min_window_size && return nothing
+  _initialize_root_cluster_if_ready!(mgr) && return nothing
   clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
-  mgr.compressed_dirty = true
+  _normalize_cluster_store!(mgr)
   return nothing
 end
 
@@ -1335,6 +1329,7 @@ function start_transaction!(mgr::Manager)
     mgr.cluster_id_counter,
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_distance),
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_quantities),
+    deepcopy(mgr.cluster_spans),
   )
 end
 
@@ -1349,19 +1344,6 @@ function rollback!(mgr::Manager)
   for entry in reverse(mgr.journal)
     if entry isa PJDataPush
       pop!(mgr.data)
-
-    elseif entry isa PJSiPush
-      pop!(entry.node.si)
-
-    elseif entry isa PJAsUpdate
-      entry.node.as = entry.old_as
-      entry.node.version = entry.old_version
-
-    elseif entry isa PJCcAdd
-      delete!(entry.parent_cc, entry.key)
-
-    elseif entry isa PJRootAdd
-      delete!(mgr.working_clusters, entry.key)
 
     elseif entry isa PJHashSetKeyDist
       if entry.old_value === nothing
@@ -1412,31 +1394,12 @@ function rollback!(mgr::Manager)
     mgr.cluster_id_counter = mgr.snapshot_state.cluster_id_counter
     mgr.updated_cluster_ids_per_window_for_calculate_distance = mgr.snapshot_state.updated_dist_ids
     mgr.updated_cluster_ids_per_window_for_calculate_quantities = mgr.snapshot_state.updated_quant_ids
+    mgr.cluster_spans = mgr.snapshot_state.cluster_spans
   end
 
   mgr.recording_mode = false
   empty!(mgr.journal)
   mgr.snapshot_state = nothing
-end
-
-"""Internal mutable-tree view. Write-path implementation only; production readers must use collect_clusters_each."""
-function _collect_working_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,PolyClusterNode}}
-  clusters_each = Dict{Int,Dict{Int,PolyClusterNode}}()
-  stack = Vector{Tuple{Int,Int,PolyClusterNode}}()
-  sizehint!(stack, length(mgr.working_clusters))
-  for (cid, cl) in mgr.working_clusters
-    push!(stack, (mgr.min_window_size, cid, cl))
-  end
-
-  while !isempty(stack)
-    (depth, cluster_id, node) = pop!(stack)
-    same_ws = get!(clusters_each, depth, Dict{Int,PolyClusterNode}())
-    same_ws[cluster_id] = node
-    for (child_id, child_cluster) in node.cc
-      push!(stack, (depth + 1, child_id, child_cluster))
-    end
-  end
-  return clusters_each
 end
 
 """Return window-indexed logical clusters reconstructed from compressed storage.
