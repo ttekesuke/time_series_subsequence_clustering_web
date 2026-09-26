@@ -54,6 +54,11 @@ end
 @inline _cluster_si(ref::TreeClusterRef)::Vector{Int} = ref.node.si
 @inline _cluster_as(ref::TreeClusterRef)::PolySeq = ref.node.as
 @inline _cluster_version(ref::TreeClusterRef)::Int = ref.node.version
+
+# Legacy explicit-tree helpers remain available for frozen-oracle tests.
+@inline _cluster_si(node::PolyClusterNode)::Vector{Int} = node.si
+@inline _cluster_as(node::PolyClusterNode)::PolySeq = node.as
+@inline _cluster_version(node::PolyClusterNode)::Int = node.version
 @inline _cluster_has_children(ref::TreeClusterRef)::Bool = !isempty(ref.node.cc)
 
 function _cluster_children(ref::TreeClusterRef)::Vector{TreeClusterRef}
