@@ -492,3 +492,28 @@ end
     for cluster in values(same_window)
   )
 end
+
+
+@testset "single-pass observed append matches legacy simulate then commit" begin
+  for scenario in _compression_equivalence_scenarios
+    prod, legacy = _make_managers(scenario; initial_count=2)
+    _ProdPCM.process_data!(prod)
+    _LegacyPCM.process_data!(legacy)
+    _ProdPCM.update_caches_permanently!(prod)
+    _LegacyPCM.update_caches_permanently!(legacy)
+    _assert_equivalent(prod, legacy)
+
+    for value in scenario.data[3:end]
+      legacy_metrics =
+        _LegacyPCM.simulate_add_and_calculate_all_extended(legacy, copy(value))
+      prod_metrics =
+        _ProdPCM.add_and_calculate_all_extended_permanently!(prod, copy(value))
+
+      @test _norm_metrics(prod_metrics) == _norm_metrics(legacy_metrics)
+
+      _LegacyPCM.add_data_point_permanently!(legacy, copy(value))
+      _LegacyPCM.update_caches_permanently!(legacy)
+      _assert_equivalent(prod, legacy)
+    end
+  end
+end
