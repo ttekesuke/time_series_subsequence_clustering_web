@@ -24,12 +24,28 @@ function _invalid_streamwise_manager()
   return manager
 end
 
+function _normalized_cluster_tasks(tasks)
+  return [
+    (
+      keys=copy(task.keys),
+      length=task.length,
+      member_squared_distances=sort(
+        collect(task.member_squared_distances);
+        by=first,
+      ),
+      representative_squared_distance=task.representative_squared_distance,
+      representative_version=task.representative_version,
+    )
+    for task in tasks
+  ]
+end
+
 function _pcm_snapshot(manager)
   return (
     data=deepcopy(manager.data),
     clusters=_tx_pcm.clusters_to_dict(manager),
     cluster_id_counter=manager.cluster_id_counter,
-    tasks=deepcopy(manager.tasks),
+    tasks=_normalized_cluster_tasks(manager.tasks),
     updated_distance=deepcopy(manager.updated_cluster_ids_per_window_for_calculate_distance),
     updated_quantity=deepcopy(manager.updated_cluster_ids_per_window_for_calculate_quantities),
     distance_cache=deepcopy(manager.cluster_distance_cache),
