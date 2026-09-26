@@ -95,8 +95,8 @@ jobs:
           end
 
           for (label, data) in [
-            ("PERIODIC400", scalar_periodic(400)),
-            ("EMBEDDED400", scalar_embedded(400)),
+            ("PERIODIC160", scalar_periodic(160)),
+            ("EMBEDDED160", scalar_embedded(160)),
           ]
             lt, lm = time_bulk(L, data)
             pt, pm = time_bulk(P, data)
@@ -117,18 +117,18 @@ jobs:
             println(label, "_SPAN_RATIO=", round(compressed / max(logical, 1); digits=4))
           end
 
-          observed = scalar_periodic(180)
+          observed = scalar_periodic(80)
           lt, _ = time_observed(L, observed)
           pt, _ = time_observed(P, observed)
-          print_ratio("PERIODIC180_OBSERVED", lt, pt)
+          print_ratio("PERIODIC80_OBSERVED", lt, pt)
 
-          observed_occ = scalar_periodic(100)
+          observed_occ = scalar_periodic(60)
           lt, _ = time_observed(L, observed_occ; occurrence=true)
           pt, _ = time_observed(P, observed_occ; occurrence=true)
-          print_ratio("PERIODIC100_OBSERVED_OCC", lt, pt)
+          print_ratio("PERIODIC60_OBSERVED_OCC", lt, pt)
 
-          prod_long = scalar_periodic(512)
+          prod_long = scalar_periodic(256)
           pt, pm = time_observed(P, prod_long)
-          println("PERIODIC512_PROD_OBSERVED_S=", round(pt; digits=4))
-          println("PERIODIC512_PROD_LOGICAL_NODES=", length(P.logical_virtual_nodes(pm.clusters, pm.min_window_size)))
+          println("PERIODIC256_PROD_OBSERVED_S=", round(pt; digits=4))
+          println("PERIODIC256_PROD_LOGICAL_NODES=", length(P.logical_virtual_nodes(pm.clusters, pm.min_window_size)))
           JULIA
