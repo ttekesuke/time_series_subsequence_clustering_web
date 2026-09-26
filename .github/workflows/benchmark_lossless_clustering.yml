@@ -72,9 +72,13 @@ jobs:
             GC.gc()
             elapsed = @elapsed begin
               for value in data[3:end]
-                M.simulate_add_and_calculate_all_extended(mgr, copy(value))
-                M.add_data_point_permanently!(mgr, copy(value))
-                M.update_caches_permanently!(mgr)
+                if M === P
+                  P.add_and_calculate_all_extended_permanently!(mgr, copy(value))
+                else
+                  M.simulate_add_and_calculate_all_extended(mgr, copy(value))
+                  M.add_data_point_permanently!(mgr, copy(value))
+                  M.update_caches_permanently!(mgr)
+                end
               end
             end
             return elapsed, mgr
