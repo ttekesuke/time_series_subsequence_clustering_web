@@ -25,7 +25,7 @@ end
 function _pcm_snapshot(manager)
   return (
     data=deepcopy(manager.data),
-    clusters=_tx_pcm.clusters_to_dict(manager.clusters),
+    clusters=_tx_pcm.clusters_to_dict(manager.working_clusters),
     cluster_id_counter=manager.cluster_id_counter,
     tasks=deepcopy(manager.tasks),
     updated_distance=deepcopy(manager.updated_cluster_ids_per_window_for_calculate_distance),
