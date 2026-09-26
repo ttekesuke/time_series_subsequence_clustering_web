@@ -1,0 +1,24 @@
+name: Verify Compression Oracle
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Run equivalence oracle
+        run: julia --project=. -e 'ENV["GENIE_ENV"]="test"; using Genie; Genie.loadapp(); include("test/polyphonic_compression_equivalence.jl")'
