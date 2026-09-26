@@ -2016,8 +2016,9 @@ struct CompressedClusterSpan
   window_min::Int
   window_max::Int
   cluster_ids::Vector{Int}
-  si::Vector{Int}
+  si_min::Vector{Int}
   as_max::PolySeq
+  data_length::Int
   children::Vector{CompressedClusterSpan}
 end
 
@@ -2029,10 +2030,26 @@ end
   return true
 end
 
+function _starts_extend_without_semantic_loss(
+  parent::PolyClusterNode,
+  child::PolyClusterNode,
+  child_window_size::Int,
+  data_length::Int,
+)::Bool
+  expected = Int[
+    s for s in parent.si
+    if s + child_window_size <= data_length
+  ]
+  sort!(expected)
+  actual = sort(copy(child.si))
+  return expected == actual
+end
+
 function _compress_cluster_span(
   cluster_id::Int,
   node::PolyClusterNode,
   window_size::Int,
+  data_length::Int,
 )::CompressedClusterSpan
   ids = Int[cluster_id]
   first_starts = copy(node.si)
@@ -2041,7 +2058,12 @@ function _compress_cluster_span(
 
   while length(current.cc) == 1
     child_id, child = first(current.cc)
-    current.si == child.si || break
+    _starts_extend_without_semantic_loss(
+      current,
+      child,
+      current_window + 1,
+      data_length,
+    ) || break
     _representative_extends_exactly(current, child) || break
     push!(ids, child_id)
     current = child
@@ -2054,6 +2076,7 @@ function _compress_cluster_span(
       child_id,
       current.cc[child_id],
       current_window + 1,
+      data_length,
     ))
   end
 
@@ -2063,6 +2086,7 @@ function _compress_cluster_span(
     ids,
     first_starts,
     deep_copy_seq(current.as),
+    data_length,
     children,
   )
 end
@@ -2070,6 +2094,7 @@ end
 function compress_cluster_tree(
   clusters::Dict{Int,PolyClusterNode},
   min_window_size::Int,
+  data_length::Int,
 )::Vector{CompressedClusterSpan}
   spans = CompressedClusterSpan[]
   for cluster_id in sort!(collect(keys(clusters)))
@@ -2077,10 +2102,14 @@ function compress_cluster_tree(
       cluster_id,
       clusters[cluster_id],
       min_window_size,
+      data_length,
     ))
   end
   return spans
 end
+
+compress_cluster_tree(mgr::Manager)::Vector{CompressedClusterSpan} =
+  compress_cluster_tree(mgr.clusters, mgr.min_window_size, length(mgr.data))
 
 """Return a canonical virtual-node snapshot from a compressed tree.
 
@@ -2105,7 +2134,10 @@ function compressed_virtual_nodes(
         window_size=window_size,
         cluster_id=cluster_id,
         parent_id=previous_id,
-        si=sort(copy(span.si)),
+        si=sort(Int[
+          s for s in span.si_min
+          if s + window_size <= span.data_length
+        ]),
         as=representative,
       ))
       previous_id = cluster_id
