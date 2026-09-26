@@ -25,3 +25,18 @@ For each dimension, global and per-stream managers are analysed incrementally. T
 Concordance is an observed 0..1 agreement series derived from pairwise normalized distances between simultaneously sounding stream values. It is reported with each dimension but is not a composition target.
 
 The response also includes cluster timelines for global and per-stream scopes, a MIDI-number piano-roll representation, exact timing metadata, raw structural metrics, and score metadata. The MusicAnalyse UI can switch between Complexity and Cluster modes; cluster hover highlights all matching score ranges in the piano roll. The complete response can be downloaded as music-analysis.json.
+
+
+## Performance bound for subsequence clustering
+
+Full MusicXML scores can contain thousands of exact-grid steps. The generic
+subsequence cluster manager normally allows a repeated window to grow almost
+to the full series length, which makes later observed steps increasingly
+expensive.
+
+MusicXML analysis therefore caps clustering windows at
+`MUSIC_ANALYSIS_MAX_CLUSTER_WINDOW_SIZE = 32` steps. Prediction already uses
+`PREDICTIVE_MAX_CONTEXT_LENGTH = 32`, so observed complexity and cluster
+visualization use the same bounded context scale. The exact rhythmic grid and
+all displayed score values are still retained; only the maximum subsequence
+window considered by clustering is bounded.
