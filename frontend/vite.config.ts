@@ -7,7 +7,7 @@ import path from "path";
 // このファイルのディレクトリを取得（/app/frontend になるはず）
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
-// Host-side `npm run dev` reaches the published Genie port via localhost.\n// Docker Compose explicitly overrides this with http://api:${PORT}.\nconst apiTarget = process.env.VITE_API_TARGET ?? "http://localhost:9111";
+const apiTarget = process.env.VITE_API_TARGET ?? "http://api:9111";
 
 export default defineConfig({
   plugins: [vue(), vuetify({ autoImport: true })],
