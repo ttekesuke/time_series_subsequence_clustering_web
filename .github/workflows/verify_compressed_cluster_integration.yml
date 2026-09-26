@@ -28,6 +28,7 @@ jobs:
             Genie.loadapp();
             for file in [
               "test/polyphonic_compression_equivalence.jl",
+              "test/cluster_storage_encapsulation.jl",
               "test/predictive_complexity.jl",
               "test/occurrence_interval_complexity.jl",
               "test/metric_calibration_and_chord_greedy.jl",
