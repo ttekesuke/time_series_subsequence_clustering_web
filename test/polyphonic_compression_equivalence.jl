@@ -110,22 +110,22 @@ end
 function _assert_lossless_compression(prod)
   spans = _ProdPCM.compress_cluster_tree(prod)
   @test _ProdPCM.compressed_virtual_nodes(spans) ==
-        _ProdPCM.logical_virtual_nodes(prod.clusters, prod.min_window_size)
+        _ProdPCM.logical_virtual_nodes(prod.working_clusters, prod.min_window_size)
 
   # Manager-level public reads already go through the compressed logical view.
   # They must remain byte-for-byte/logically equivalent to the legacy tree
   # helpers before physical storage can be changed.
   @test _ProdPCM.transform_clusters(prod) ==
-        _ProdPCM.transform_clusters(prod.clusters, prod.min_window_size)
+        _ProdPCM.transform_clusters(prod.working_clusters, prod.min_window_size)
 
   timeline_from_manager = _ProdPCM.clusters_to_timeline(prod)
-  timeline_from_tree = _ProdPCM.clusters_to_timeline(prod.clusters, prod.min_window_size)
+  timeline_from_tree = _ProdPCM.clusters_to_timeline(prod.working_clusters, prod.min_window_size)
   sort!(timeline_from_manager; by=x -> (x["window_size"], parse(Int, x["cluster_id"]), Tuple(x["indices"])))
   sort!(timeline_from_tree; by=x -> (x["window_size"], parse(Int, x["cluster_id"]), Tuple(x["indices"])))
   @test timeline_from_manager == timeline_from_tree
 
   @test _ProdPCM.clusters_to_dict(prod) ==
-        _ProdPCM.clusters_to_dict(prod.clusters)
+        _ProdPCM.clusters_to_dict(prod.working_clusters)
 end
 
 function _assert_equivalent(prod, legacy)
@@ -366,11 +366,11 @@ end
   mgr = _ProdPCM.Manager(data, 0.0, 2; range_min=0.0, range_max=1.0, max_set_size=1)
   _ProdPCM.process_data!(mgr)
   spans = _ProdPCM.compress_cluster_tree(mgr)
-  logical_count = length(_ProdPCM.logical_virtual_nodes(mgr.clusters, mgr.min_window_size))
+  logical_count = length(_ProdPCM.logical_virtual_nodes(mgr.working_clusters, mgr.min_window_size))
   compressed_count = _count_compressed_spans(spans)
   @test compressed_count <= logical_count
   @test any(span -> span.window_max > span.window_min, spans) ||
         compressed_count < logical_count
   @test _ProdPCM.compressed_virtual_nodes(spans) ==
-        _ProdPCM.logical_virtual_nodes(mgr.clusters, mgr.min_window_size)
+        _ProdPCM.logical_virtual_nodes(mgr.working_clusters, mgr.min_window_size)
 end
