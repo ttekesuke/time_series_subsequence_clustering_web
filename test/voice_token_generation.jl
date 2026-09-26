@@ -3,17 +3,18 @@ using Main.TimeseriesClusteringAPI
 
 const VTG = Main.TimeseriesClusteringAPI.VoiceTokenGeneration
 
+const VOICE_TEST_INVENTORY = VTG.load_inventory(normpath(joinpath(@__DIR__, "..", "config", "voice_inventories", "ja_voicevox_all.json")))
+
 @testset "voice token inventory and clustered generation" begin
-  inventory_path = normpath(joinpath(@__DIR__, "..", "config", "voice_inventories", "ja_voicevox_all.json"))
-  inventory = VTG.load_inventory(inventory_path)
+  inventory = VOICE_TEST_INVENTORY
 
   @test inventory.id == "ja_voicevox_all"
   @test inventory.dimensions == 12
   @test length(inventory.tokens) == 107
   @test all(length(token.embedding) == inventory.dimensions for token in inventory.tokens)
 
-  token_a = only(filter(token -> token.id == "a", inventory.tokens))
-  token_ka = only(filter(token -> token.id == "ka", inventory.tokens))
+  token_a = only(filter(token -> token.id == "a", VOICE_TEST_INVENTORY.tokens))
+  token_ka = only(filter(token -> token.id == "ka", VOICE_TEST_INVENTORY.tokens))
   @test VTG.embedding_distance(token_a.embedding, token_a.embedding) == 0.0
   @test VTG.embedding_distance(token_a.embedding, token_ka.embedding) > 0.0
 
@@ -50,7 +51,7 @@ const VTG = Main.TimeseriesClusteringAPI.VoiceTokenGeneration
   )
   @test discordant[1].text != discordant[2].text
 
-  target_state = VTG.VoiceTokenState(inventory, [1], 0.02, 2)
+  target_state = VTG.VoiceTokenState(VOICE_TEST_INVENTORY, [1], 0.02, 2)
   candidates = Vector{Float64}[token.embedding for token in inventory.tokens]
   scores = VTG._candidate_complexity_scores(target_state.stream_managers[1], candidates)
   target = 0.37
@@ -67,9 +68,9 @@ const VTG = Main.TimeseriesClusteringAPI.VoiceTokenGeneration
 end
 
 @testset "full tie forces the previous token vowel" begin
-  state = VTG.VoiceTokenState(inventory, [1], 0.02, 2)
-  token_ha = only(filter(token -> token.text == "は", inventory.tokens))
-  token_a = only(filter(token -> token.text == "あ", inventory.tokens))
+  state = VTG.VoiceTokenState(VOICE_TEST_INVENTORY, [1], 0.02, 2)
+  token_ha = only(filter(token -> token.text == "は", VOICE_TEST_INVENTORY.tokens))
+  token_a = only(filter(token -> token.text == "あ", VOICE_TEST_INVENTORY.tokens))
   state.last_token_by_stream[1] = token_ha
 
   continuation = VTG.continuation_token(state, 1)
