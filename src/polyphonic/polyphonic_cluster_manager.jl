@@ -2202,13 +2202,20 @@ function process_existing_clusters!(
     push!(best_child.si, latest_start)
     record!(mgr, PJSiPush(best_child))
 
-    old_as = deep_copy_seq(best_child.as)
-    old_version = best_child.version
-    starts = best_child.si
-    sequences = [mgr.data[(s + 1):(s + new_length)] for s in starts]
-    best_child.as = average_sequences(mgr, sequences)
-    best_child.version += 1
-    record!(mgr, PJAsUpdate(best_child, old_as, old_version))
+    # Adding the current representative itself cannot change the representative:
+    # arithmetic means stay unchanged, the ragged-cardinality fallback chooses
+    # the latest (identical) value, and streamwise means also stay unchanged.
+    # This exact equality shortcut removes the dominant O(support * window)
+    # rebuild on long exact repeats without changing any logical result.
+    if best_child.as != latest_seq
+      old_as = deep_copy_seq(best_child.as)
+      old_version = best_child.version
+      starts = best_child.si
+      sequences = [mgr.data[(s + 1):(s + new_length)] for s in starts]
+      best_child.as = average_sequences(mgr, sequences)
+      best_child.version += 1
+      record!(mgr, PJAsUpdate(best_child, old_as, old_version))
+    end
 
     add_updated_id!(
       mgr.updated_cluster_ids_per_window_for_calculate_quantities,
@@ -2386,15 +2393,17 @@ function process_root_clusters!(mgr::Manager, data_index::Int, max_distance::Flo
     push!(best_cluster.si, latest_start)
     record!(mgr, PJSiPush(best_cluster))
 
-    old_as = deep_copy_seq(best_cluster.as)
-    old_version = best_cluster.version
-    sequences = [
-      mgr.data[(s + 1):(s + mgr.min_window_size)]
-      for s in best_cluster.si
-    ]
-    best_cluster.as = average_sequences(mgr, sequences)
-    best_cluster.version += 1
-    record!(mgr, PJAsUpdate(best_cluster, old_as, old_version))
+    if best_cluster.as != latest_seq
+      old_as = deep_copy_seq(best_cluster.as)
+      old_version = best_cluster.version
+      sequences = [
+        mgr.data[(s + 1):(s + mgr.min_window_size)]
+        for s in best_cluster.si
+      ]
+      best_cluster.as = average_sequences(mgr, sequences)
+      best_cluster.version += 1
+      record!(mgr, PJAsUpdate(best_cluster, old_as, old_version))
+    end
 
     add_updated_id!(
       mgr.updated_cluster_ids_per_window_for_calculate_quantities,
