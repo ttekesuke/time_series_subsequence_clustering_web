@@ -86,7 +86,8 @@
             <div v-for="(section, index) in clusterSections" :key="section.key" class="row-in-quadrant">
               <ClustersRoll
                 :ref="el => setAnalysisRollRef(el, index)"
-                :clustersData="section.clusters"
+                :compressedData="section.compressed"
+                :stepMap="section.stepMap"
                 :stepWidth="computedStepWidth"
                 :maxSteps="stepCount"
                 :title="`${section.title} Clusters (${clusterScopeLabel})`"
@@ -517,11 +518,11 @@ onUnmounted(() => {
 })
 
 // ===== types =====
-type ClusterData = {
-  window_size: number
-  cluster_id: string
-  indices: number[]
+type CompressedSpan = {
+  window_min: number; window_max: number; cluster_ids: number[]
+  indices: number[]; fit_limits: number[]; children: CompressedSpan[]
 }
+type CompressedScope = { global: CompressedSpan[]; streams: Record<string, CompressedSpan[]> }
 // strict server: [abs_notes(Int[]), vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range(Int), density, tie]
 type StepVecStrict = [number[], number, number, number, number, number, number, number, number, number, number]
 type StepVec = StepVecStrict
@@ -537,7 +538,7 @@ type PolyphonicResponse = {
     carrierNote: number | null
     notes: number[]
   }>>;
-  clusters: Record<string, { global: ClusterData[]; streams: Record<string, ClusterData[]> }>;
+  compressedClusterSpans?: Record<string, CompressedScope>;
   timbreSeries?: {
     brightness?: number[][]
     noise?: number[][]
@@ -568,20 +569,7 @@ const generate = ref({
   density: [] as (number | null)[][],
   tie: [] as (number | null)[][],
 
-  clusters: {
-    area: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    chord_range: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    density: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    note:   { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    vol:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    brightness: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    noise: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    harmonicity: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    attack: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    decay_sustain: { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    release:{ global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-    tie:    { global: [] as ClusterData[], streams: {} as Record<string, ClusterData[]> },
-  },
+  compressedClusterSpans: {} as Record<string, CompressedScope>,
 })
 
 // ===== handle response =====
@@ -606,19 +594,7 @@ const applyPolyphonicResponse = (data: PolyphonicResponse) => {
   generate.value.density = expanded.densities
   generate.value.tie = expanded.ties
 
-  const clusters = ((data as any).clusters ?? {}) as any
-  generate.value.clusters.vol         = clusters.vol         ?? { global: [], streams: {} }
-  generate.value.clusters.area        = clusters.area        ?? { global: [], streams: {} }
-  generate.value.clusters.chord_range = clusters.chord_range ?? { global: [], streams: {} }
-  generate.value.clusters.density     = clusters.density     ?? { global: [], streams: {} }
-  generate.value.clusters.note        = clusters.note        ?? { global: [], streams: {} }
-  generate.value.clusters.brightness  = clusters.brightness  ?? { global: [], streams: {} }
-  generate.value.clusters.noise       = clusters.noise       ?? { global: [], streams: {} }
-  generate.value.clusters.harmonicity = clusters.harmonicity ?? { global: [], streams: {} }
-  generate.value.clusters.attack      = clusters.attack      ?? { global: [], streams: {} }
-  generate.value.clusters.decay_sustain = clusters.decay_sustain ?? { global: [], streams: {} }
-  generate.value.clusters.release     = clusters.release     ?? { global: [], streams: {} }
-  generate.value.clusters.tie         = clusters.tie         ?? { global: [], streams: {} }
+  generate.value.compressedClusterSpans = data.compressedClusterSpans ?? {}
 }
 
 const handleGenerated = (data: PolyphonicResponse) => {
@@ -1106,30 +1082,6 @@ const volResultStreams = computed(() =>
   )
 )
 
-// Global cluster timelines returned by the latest response. All server dimensions
-// are listed so Result/Analysed modes cannot silently omit NOTE or TIE.
-const remapClusterTimeline = (clusters: ClusterData[], timelineSteps: number[]): ClusterData[] => {
-  const grouped = new Map<string, ClusterData>()
-  clusters.forEach(cluster => {
-    cluster.indices.forEach(localStart => {
-      const localEnd = localStart + cluster.window_size - 1
-      const actualStart = timelineSteps[localStart]
-      const actualEnd = timelineSteps[localEnd]
-      if (actualStart == null || actualEnd == null) return
-      const actualWindow = actualEnd - actualStart + 1
-      const key = `${cluster.cluster_id}:${actualWindow}`
-      const existing = grouped.get(key)
-      if (existing) existing.indices.push(actualStart)
-      else grouped.set(key, {
-        cluster_id: cluster.cluster_id,
-        window_size: actualWindow,
-        indices: [actualStart],
-      })
-    })
-  })
-  return Array.from(grouped.values())
-}
-
 const sameTieControls = (previous: any, current: any) => {
   if (!Array.isArray(previous) || !Array.isArray(current)) return false
   const previousNotes = Array.isArray(previous[0]) ? previous[0].map(Number) : []
@@ -1166,37 +1118,39 @@ const tieTimelineSteps = computed(() => {
   return { global, byStream }
 })
 
-const clustersForScope = (
-  source: { global: ClusterData[]; streams: Record<string, ClusterData[]> },
-  dimension: string
-) => {
+const clusterStepMap = (dimension: string): number[] | undefined => {
   if (clusterScope.value === 'global') {
-    return dimension === 'tie'
-      ? remapClusterTimeline(source.global, tieTimelineSteps.value.global)
-      : source.global
+    return dimension === 'tie' ? tieTimelineSteps.value.global : undefined
   }
-  const localClusters = source.streams[clusterScope.value] ?? []
-  const timeline = dimension === 'tie'
-    ? (tieTimelineSteps.value.byStream[clusterScope.value] ?? [])
-    : generate.value.streamIds.flatMap((ids, stepIndex) =>
-        ids.includes(Number(clusterScope.value)) ? [stepIndex] : []
-      )
-  return remapClusterTimeline(localClusters, timeline)
+  if (dimension === 'tie') return tieTimelineSteps.value.byStream[clusterScope.value] ?? []
+  return generate.value.streamIds.flatMap((ids, index) =>
+    ids.includes(Number(clusterScope.value)) ? [index] : []
+  )
 }
-
+const clusterSection = (key: string, title: string, dimension = key) => {
+  const compact = generate.value.compressedClusterSpans[dimension]
+  const compressed = clusterScope.value === 'global'
+    ? compact?.global ?? []
+    : compact?.streams?.[clusterScope.value] ?? []
+  return {
+    key, title,
+    compressed,
+    stepMap: clusterStepMap(dimension),
+  }
+}
 const clusterSections = computed(() => [
-  { key: 'note', title: 'NOTE', clusters: clustersForScope(generate.value.clusters.note, 'note') },
-  { key: 'area', title: 'AREA', clusters: clustersForScope(generate.value.clusters.area, 'area') },
-  { key: 'chord-range', title: 'CHORD_RANGE', clusters: clustersForScope(generate.value.clusters.chord_range, 'chord_range') },
-  { key: 'density', title: 'DENSITY', clusters: clustersForScope(generate.value.clusters.density, 'density') },
-  { key: 'vol', title: 'VOL', clusters: clustersForScope(generate.value.clusters.vol, 'vol') },
-  { key: 'brightness', title: 'BRI', clusters: clustersForScope(generate.value.clusters.brightness, 'brightness') },
-  { key: 'noise', title: 'NOI', clusters: clustersForScope(generate.value.clusters.noise, 'noise') },
-  { key: 'harmonicity', title: 'HAR', clusters: clustersForScope(generate.value.clusters.harmonicity, 'harmonicity') },
-  { key: 'attack', title: 'ATK', clusters: clustersForScope(generate.value.clusters.attack, 'attack') },
-  { key: 'decay-sustain', title: 'DEC', clusters: clustersForScope(generate.value.clusters.decay_sustain, 'decay_sustain') },
-  { key: 'release', title: 'S/R', clusters: clustersForScope(generate.value.clusters.release, 'release') },
-  { key: 'tie', title: 'TIE', clusters: clustersForScope(generate.value.clusters.tie, 'tie') },
+  clusterSection('note', 'NOTE'),
+  clusterSection('area', 'AREA'),
+  clusterSection('chord-range', 'CHORD_RANGE', 'chord_range'),
+  clusterSection('density', 'DENSITY'),
+  clusterSection('vol', 'VOL'),
+  clusterSection('brightness', 'BRI'),
+  clusterSection('noise', 'NOI'),
+  clusterSection('harmonicity', 'HAR'),
+  clusterSection('attack', 'ATK'),
+  clusterSection('decay-sustain', 'DEC', 'decay_sustain'),
+  clusterSection('release', 'S/R'),
+  clusterSection('tie', 'TIE'),
 ])
 
 watch(() => generate.value.stableStreamIds, (ids) => {

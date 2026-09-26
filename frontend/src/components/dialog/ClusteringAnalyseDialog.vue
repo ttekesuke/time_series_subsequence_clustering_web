@@ -161,6 +161,7 @@ const handleAnalyseTimeseries = async () => {
         time_series,
         merge_threshold_ratio: mergeThresholdValue,
         contextual_min_width: contextualMinWidthValue,
+        compact_cluster_view: true,
         job_id: props.jobId
       }
     }

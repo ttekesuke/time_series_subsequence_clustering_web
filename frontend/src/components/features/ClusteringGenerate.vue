@@ -31,7 +31,7 @@
       <div class="viz-row" style="height:40%">
         <ClustersRoll
           ref="clustersRollRef"
-          :clustersData="generate.clusteredSubsequences"
+          :compressedData="generate.compressedClusterSpans"
           :stepWidth="computedStepWidth"
           :maxSteps="maxSteps"
           @scroll="onScroll"
@@ -67,10 +67,9 @@ const progress = ref({ percent: 0, status: 'idle' })
 const generate = ref({
   timeseries: [],
   complexityTransition: [],
-  clusteredSubsequences: [],
+  compressedClusterSpans: [],
   loading: false,
   mergeThresholdRatio: 0.02,
-  clusters: {},
   processingTime: null
 })
 
@@ -93,14 +92,12 @@ const handleGenerated = (data) => {
 
   console.log('generated', data)
   // reactive updates
-  if (!generate.value.clusteredSubsequences) generate.value.clusteredSubsequences = []
-  generate.value.clusteredSubsequences.splice(0, generate.value.clusteredSubsequences.length, ...(data.clusteredSubsequences || []))
+  generate.value.compressedClusterSpans = data.compressedClusterSpans || []
 
   if (!generate.value.timeseries) generate.value.timeseries = []
   generate.value.timeseries.splice(0, generate.value.timeseries.length, ...(data.timeSeries || []))
   generate.value.complexityTransition = data.complexityTransition || []
 
-  generate.value.clusters = data.clusters ? { ...data.clusters } : {}
   generate.value.processingTime = data.processingTime
 
 }

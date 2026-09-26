@@ -2469,6 +2469,7 @@ const buildParamsPayload = (jobIdOverride?: string) => {
       initial_context_bpm: normalizeBpmSeries(initialContextBpm.value, contextSteps.value),
       dimension_policy: buildDimensionPolicyPayload(),
       merge_threshold_ratio: mergeThresholdRatio.value,
+      compact_cluster_view: true,
       stream_strength_target: genParams.stream_strength_target,
       stream_strength_spread: genParams.stream_strength_spread,
       note_register_freedom: genParams.note_register_freedom,

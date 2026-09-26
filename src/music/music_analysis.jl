@@ -508,6 +508,7 @@ function _analyse_manager(
   streamwise::Bool=false,
   stream_axis_offset::Float64=1.0,
   stream_axis_capacity::Int=1,
+  compact_cluster_view::Bool=false,
   log_label::AbstractString="",
 )
   n = length(series)
@@ -532,7 +533,7 @@ function _analyse_manager(
   )
   if n < min_window
     !isempty(log_label) && @info "[analyse_music] clustering skipped" label=String(log_label) reason="series shorter than min window" steps=n
-    return Dict("axes"=>axes, "raw"=>raw, "clusters"=>Any[])
+    return Dict("axes"=>axes, "raw"=>raw, "clusters"=>Any[], "compressedClusters"=>Any[])
   end
 
   seed = Vector{Float64}[copy(series[i]) for i in 1:min_window]
@@ -581,12 +582,14 @@ function _analyse_manager(
   return Dict(
     "axes" => axes,
     "raw" => raw,
-    "clusters" => PolyphonicClusterManager.clusters_to_timeline(manager),
+    "clusters" => compact_cluster_view ? Any[] : PolyphonicClusterManager.clusters_to_timeline(manager),
+    "compressedClusters" => PolyphonicClusterManager.compressed_clusters_payload(manager),
   )
 end
 
 function analyse_music_payload(params, scoring)
   analysis_started_at = time()
+  compact_cluster_view = get(params, "compact_cluster_view", false) == true
   xml_text = string(get(params, "musicxml_text", ""))
   @info "[analyse_music] parsing MusicXML" source_type=string(get(params, "source_type", "upload")) xml_bytes=sizeof(xml_text)
   parsed = parse_musicxml_text(xml_text)
@@ -783,6 +786,7 @@ function analyse_music_payload(params, scoring)
     stream_values_payload = Dict{String,Any}()
     stream_analysis_payload = Dict{String,Any}()
     stream_clusters_payload = Dict{String,Any}()
+    stream_compressed_payload = Dict{String,Any}()
 
     if dim == "stream_count"
       global_series = _make_poly_series(stream_count)
@@ -791,11 +795,12 @@ function analyse_music_payload(params, scoring)
         range_min=range_min, range_max=range_max,
         merge_threshold_ratio=merge_threshold_ratio,
         metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
-        log_label="$(dim)/global")
+        compact_cluster_view=compact_cluster_view, log_label="$(dim)/global")
       dimensions[dim] = Dict(
         "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance),
         "analysis"=>Dict("global"=>Dict("axes"=>analysed_global["axes"], "raw"=>analysed_global["raw"]), "streams"=>stream_analysis_payload),
-        "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload))
+        "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload),
+        "compressedClusters"=>Dict("global"=>analysed_global["compressedClusters"], "streams"=>stream_compressed_payload))
       @info "[analyse_music] dimension analysis done" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
       continue
     end
@@ -807,9 +812,10 @@ function analyse_music_payload(params, scoring)
         range_min=range_min, range_max=range_max,
         merge_threshold_ratio=merge_threshold_ratio,
         metric_weights=Config.POLYPHONIC_STREAM_METRIC_WEIGHTS,
-        log_label="$(dim)/stream=$(id):$(stream_labels[id])")
+        compact_cluster_view=compact_cluster_view, log_label="$(dim)/stream=$(id):$(stream_labels[id])")
       stream_analysis_payload[string(id)] = Dict("axes"=>analysed_stream["axes"], "raw"=>analysed_stream["raw"])
       stream_clusters_payload[string(id)] = analysed_stream["clusters"]
+      stream_compressed_payload[string(id)] = analysed_stream["compressedClusters"]
     end
 
     if dim == "note"
@@ -822,11 +828,12 @@ function analyse_music_payload(params, scoring)
         range_min=range_min, range_max=range_max,
         merge_threshold_ratio=merge_threshold_ratio,
         metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
-        log_label="$(dim)/global")
+        compact_cluster_view=compact_cluster_view, log_label="$(dim)/global")
       dimensions[dim] = Dict(
         "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance),
         "analysis"=>Dict("global"=>Dict("axes"=>analysed_global["axes"], "raw"=>analysed_global["raw"]), "streams"=>stream_analysis_payload),
-        "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload))
+        "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload),
+        "compressedClusters"=>Dict("global"=>analysed_global["compressedClusters"], "streams"=>stream_compressed_payload))
       @info "[analyse_music] dimension analysis done" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
       continue
     end
@@ -846,11 +853,12 @@ function analyse_music_payload(params, scoring)
         range_min=0.0, range_max=1.0,
         merge_threshold_ratio=merge_threshold_ratio,
         metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
-        log_label="$(dim)/global")
+        compact_cluster_view=compact_cluster_view, log_label="$(dim)/global")
       dimensions[dim] = Dict(
         "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance),
         "analysis"=>Dict("global"=>Dict("axes"=>analysed_global["axes"], "raw"=>analysed_global["raw"]), "streams"=>stream_analysis_payload),
-        "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload))
+        "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload),
+        "compressedClusters"=>Dict("global"=>analysed_global["compressedClusters"], "streams"=>stream_compressed_payload))
       @info "[analyse_music] dimension analysis done" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
       continue
     end
@@ -884,14 +892,20 @@ function analyse_music_payload(params, scoring)
       streamwise=true,
       stream_axis_offset=offset,
       stream_axis_capacity=max(length(stream_ids), 1),
-      log_label="$(dim)/global")
+      compact_cluster_view=compact_cluster_view, log_label="$(dim)/global")
     dimensions[dim] = Dict(
       "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance),
       "analysis"=>Dict("global"=>Dict("axes"=>analysed_global["axes"], "raw"=>analysed_global["raw"]), "streams"=>stream_analysis_payload),
-      "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload))
+      "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload),
+      "compressedClusters"=>Dict("global"=>analysed_global["compressedClusters"], "streams"=>stream_compressed_payload))
     @info "[analyse_music] dimension analysis done" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
   end
 
+  if compact_cluster_view
+    for dimension in values(dimensions)
+      delete!(dimension, "clusters")
+    end
+  end
   @info "[analyse_music] all dimensions analysed" elapsed_s=round(time() - analysis_started_at; digits=2)
   piano_streams = Any[
     Any[isempty(notes_by_stream[id][step]) ? nothing : copy(notes_by_stream[id][step]) for step in 1:step_count]

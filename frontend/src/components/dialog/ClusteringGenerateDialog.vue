@@ -192,6 +192,7 @@ const handleGenerateTimeseries = async () => {
         range_min: rangeMin.value,
         range_max: rangeMax.value,
         merge_threshold_ratio: mergeThreshold.value,
+        compact_cluster_view: true,
         recency_center: recencyCenter,
         job_id: props.jobId
       }

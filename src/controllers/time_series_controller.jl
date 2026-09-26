@@ -3242,16 +3242,19 @@ function analyse()
 
   PolyphonicClusterManager.process_data!(manager)
 
-  timeline = PolyphonicClusterManager.clusters_to_timeline(manager)
   processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
   println("analyse processing time (s): ", processing_time_s)
 
-  return Dict(
-    "clusteredSubsequences" => timeline,
+  response = Dict(
+    "compressedClusterSpans" => PolyphonicClusterManager.compressed_clusters_payload(manager),
     "timeSeries" => data,
-    "clusters" => PolyphonicClusterManager.clusters_to_dict(manager),
     "processingTime" => processing_time_s
   )
+  if get(p, "compact_cluster_view", false) != true
+    response["clusteredSubsequences"] = PolyphonicClusterManager.clusters_to_timeline(manager)
+    response["clusters"] = PolyphonicClusterManager.clusters_to_dict(manager)
+  end
+  return response
 end
 
 function generate()
@@ -3341,19 +3344,22 @@ function generate()
     PolyphonicClusterManager.update_caches_permanently!(manager)
   end
 
-  timeline = PolyphonicClusterManager.clusters_to_timeline(manager)
   processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
 
   complexity_transition_stream = Any[missing for _ in first_elements]
   append!(complexity_transition_stream, complexity_targets)
 
-  return Dict(
-    "clusteredSubsequences" => timeline,
+  response = Dict(
+    "compressedClusterSpans" => PolyphonicClusterManager.compressed_clusters_payload(manager),
     "timeSeries" => results,
     "complexityTransition" => complexity_transition_stream,
-    "clusters" => PolyphonicClusterManager.clusters_to_dict(manager),
     "processingTime" => processing_time_s
   )
+  if get(p, "compact_cluster_view", false) != true
+    response["clusteredSubsequences"] = PolyphonicClusterManager.clusters_to_timeline(manager)
+    response["clusters"] = PolyphonicClusterManager.clusters_to_dict(manager)
+  end
+  return response
 end
 
 # ------------------------------------------------------------
@@ -4141,6 +4147,7 @@ function generate_polyphonic()
 
   payload = _payload()
   gp = _subhash(payload, "generate_polyphonic")
+  compact_cluster_view = get(gp, "compact_cluster_view", false) == true
   validated_request = _validate_generate_polyphonic_request!(gp)
   evaluation_budget = PolyphonicEvaluationBudget(
     0,
@@ -6425,6 +6432,7 @@ end
   )
 
   cluster_payload = Dict{String,Any}()
+  compressed_cluster_payload = Dict{String,Any}()
   for key in ["note", "area", "vol", "brightness", "noise", "harmonicity", "attack", "decay_sustain", "release", "chord_range", "density", "tie"]
     mgrs = get(managers, key, nothing)
     mgrs === nothing && continue
@@ -6432,19 +6440,29 @@ end
     g_mgr = mgrs[:global]
     s_mgr = mgrs[:stream]
 
-    global_timeline = PolyphonicClusterManager.clusters_to_timeline(g_mgr)
+    global_spans = PolyphonicClusterManager.compressed_clusters_payload(g_mgr)
 
-    streams_hash = Dict{Int,Any}()
+    stream_spans = Dict{Int,Any}()
     for container in s_mgr.stream_pool
-      streams_hash[container.id] = PolyphonicClusterManager.clusters_to_timeline(container.manager)
+      stream_spans[container.id] = PolyphonicClusterManager.compressed_clusters_payload(container.manager)
     end
-
-    cluster_payload[key] = Dict(
-      "global" => global_timeline,
-      "streams" => streams_hash,
+    compressed_cluster_payload[key] = Dict(
+      "global" => global_spans,
+      "streams" => stream_spans,
     )
+
+    if !compact_cluster_view
+      streams_hash = Dict{Int,Any}()
+      for container in s_mgr.stream_pool
+        streams_hash[container.id] = PolyphonicClusterManager.clusters_to_timeline(container.manager)
+      end
+      cluster_payload[key] = Dict(
+        "global" => PolyphonicClusterManager.clusters_to_timeline(g_mgr),
+        "streams" => streams_hash,
+      )
+    end
   end
-  if voice_state !== nothing
+  if voice_state !== nothing && !compact_cluster_view
     cluster_payload["voice_token"] = VoiceTokenGeneration.clusters_payload(voice_state, min_window)
   end
 
@@ -6459,7 +6477,7 @@ end
     for (stream_id, entry) in strength_report
   )
 
-  return Dict(
+  response = Dict(
     "timeSeries" => results,
     "streamIds" => result_stream_ids,
     "voicePlan" => voice_plan,
@@ -6471,7 +6489,7 @@ end
       "source" => voice_inventory.source,
       "dimensions" => voice_inventory.dimensions,
     ),
-    "clusters" => cluster_payload,
+    "compressedClusterSpans" => compressed_cluster_payload,
     "processingTime" => processing_time_s,
     "streamStrengths" => stream_strengths,
     "timbreSeries" => timbre_series,
@@ -6482,6 +6500,10 @@ end
     "bpmSeries" => bpm_series,
     "stepDurations" => step_durations
   )
+  if !compact_cluster_view
+    response["clusters"] = cluster_payload
+  end
+  return response
 end
 
 # ------------------------------------------------------------
@@ -7500,8 +7522,4 @@ function map_note_positions_to_db_points()
         "mapped_notes" => mapped_notes,
         "total_notes_in_phrase" => length(phrase_notes),
         "phrase_index" => phrase_index,
-        "num_phrases" => length(phrases)
-    )
-end
-
-end # module
+  

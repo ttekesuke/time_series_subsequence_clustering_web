@@ -76,6 +76,21 @@ end
   @test length(result["pianoRoll"]["streams"]) == 1
 end
 
+@testset "analyse_music compact cluster view omits expanded timelines" begin
+  result = MA.analyse_music_payload(
+    Dict{String,Any}(
+      "source_type" => "upload",
+      "musicxml_text" => _score_with_divisions(1, [2]),
+      "compact_cluster_view" => true,
+    ),
+    TC,
+  )
+  note_dimension = result["dimensions"]["note"]
+  @test !haskey(note_dimension, "clusters")
+  @test !isempty(note_dimension["compressedClusters"]["global"])
+  @test haskey(note_dimension["compressedClusters"]["streams"], "1")
+end
+
 @testset "analyse_music rejects denominator above 60 before clustering" begin
   xml = _score_with_divisions(61, [1])
   err = try

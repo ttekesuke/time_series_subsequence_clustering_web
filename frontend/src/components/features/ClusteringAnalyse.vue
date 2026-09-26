@@ -17,7 +17,7 @@
       <div class="viz-row" style="height: 50%;">
         <ClustersRoll
           ref="clustersRollRef"
-          :clustersData="analyse.clusteredSubsequences"
+          :compressedData="analyse.compressedClusterSpans"
           :stepWidth="computedStepWidth"
           :maxSteps="maxSteps"
           @scroll="onScroll"
@@ -53,11 +53,10 @@ const progress = ref({ percent: 0, status: 'idle' })
 
 const analyse = ref({
   timeseries: [],
-  clusteredSubsequences: [],
+  compressedClusterSpans: [],
   timeSeriesChart: [],
   loading: false,
   mergeThresholdRatio: 0.02,
-  clusters: {},
   processingTime: null
 })
 
@@ -77,9 +76,8 @@ const onFileSelected = (file) => {
 }
 
 const handleAnalysed = (data) => {
-  analyse.value.clusteredSubsequences = data.clusteredSubsequences
+  analyse.value.compressedClusterSpans = data.compressedClusterSpans || []
   analyse.value.timeseries = data.timeSeries
-  analyse.value.clusters = data.clusters
   analyse.value.processingTime = data.processingTime
 }
 

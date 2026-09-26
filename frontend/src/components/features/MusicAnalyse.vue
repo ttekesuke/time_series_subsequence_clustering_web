@@ -44,7 +44,7 @@
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
               :ref="el => setAnalysisRollRef(el, index)"
-              :clustersData="clustersForSection(section)"
+              :compressedData="compressedForSection(section)"
               :stepWidth="computedStepWidth"
               :maxSteps="stepCount"
               :title="section.title + ' Clusters'"
@@ -140,7 +140,10 @@ import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
 import { useScrollSync } from '../../composables/useScrollSync'
 
-type ClusterData = { window_size: number; cluster_id: string; indices: number[] }
+type CompressedSpan = {
+  window_min: number; window_max: number; cluster_ids: number[]
+  indices: number[]; fit_limits: number[]; children: CompressedSpan[]
+}
 type AxisBundle = {
   prediction?: Array<number | null>
   diversity?: Array<number | null>
@@ -159,9 +162,9 @@ type DimensionResult = {
     global: { axes: AxisBundle; raw: any }
     streams: Record<string, { axes: AxisBundle; raw: any }>
   }
-  clusters: {
-    global: ClusterData[]
-    streams: Record<string, ClusterData[]>
+  compressedClusters?: {
+    global: CompressedSpan[]
+    streams: Record<string, CompressedSpan[]>
   }
 }
 type MusicAnalysisResult = {
@@ -268,10 +271,10 @@ const complexityLabels = (section: any) => {
   return labels
 }
 
-const clustersForSection = (section: any): ClusterData[] => {
+const compressedForSection = (section: any): CompressedSpan[] => {
   const dim = section.dimension as DimensionResult
-  if (analysisScope.value === 'global') return dim.clusters?.global ?? []
-  return dim.clusters?.streams?.[analysisScope.value] ?? []
+  if (analysisScope.value === 'global') return dim.compressedClusters?.global ?? []
+  return dim.compressedClusters?.streams?.[analysisScope.value] ?? []
 }
 
 const highlightIndices = ref<number[]>([])
@@ -361,7 +364,9 @@ const submitMusicXml = async () => {
       payload.xml_score = selected.xml_score
     }
 
-    const { data } = await axios.post('/api/web/time_series/analyse_music', { analyse_music: payload })
+    const { data } = await axios.post('/api/web/time_series/analyse_music', {
+      analyse_music: { ...payload, compact_cluster_view: true },
+    })
     result.value = data as MusicAnalysisResult
     lastResultJson.value = data
     analysisScope.value = 'global'
