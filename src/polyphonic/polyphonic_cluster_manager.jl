@@ -232,6 +232,21 @@ end
   return ref.span.as_max[1:window_size]
 end
 
+# Read compatibility for callers that historically received PolyClusterNode
+# values from collect_clusters_each().  The physical object remains a compact
+# span reference; si/as are reconstructed only when that caller asks for them.
+function Base.getproperty(ref::SpanClusterRef, name::Symbol)
+  name === :si && return _cluster_si(ref)
+  name === :as && return _cluster_as(ref)
+  name === :version && return _cluster_version(ref)
+  return getfield(ref, name)
+end
+
+function Base.propertynames(::SpanClusterRef, private::Bool=false)
+  base = (:span, :offset, :si, :as, :version)
+  return base
+end
+
 @inline function _cluster_has_children(ref::SpanClusterRef)::Bool
   return ref.offset < length(ref.span.cluster_ids) || !isempty(ref.span.children)
 end
