@@ -6429,11 +6429,11 @@ end
     g_mgr = mgrs[:global]
     s_mgr = mgrs[:stream]
 
-    global_timeline = PolyphonicClusterManager.clusters_to_timeline(g_mgr.clusters, min_window)
+    global_timeline = PolyphonicClusterManager.clusters_to_timeline(g_mgr)
 
     streams_hash = Dict{Int,Any}()
     for container in s_mgr.stream_pool
-      streams_hash[container.id] = PolyphonicClusterManager.clusters_to_timeline(container.manager.clusters, min_window)
+      streams_hash[container.id] = PolyphonicClusterManager.clusters_to_timeline(container.manager)
     end
 
     cluster_payload[key] = Dict(
