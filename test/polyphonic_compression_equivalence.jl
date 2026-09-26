@@ -91,7 +91,12 @@ function _logical_snapshot(M, mgr)
   return (
     data=_norm_polyseq(mgr.data),
     cluster_id_counter=mgr.cluster_id_counter,
-    tasks=sort([(Tuple(task[1]), task[2]) for task in mgr.tasks]; by=string),
+    tasks=sort([
+      hasproperty(task, :keys) ?
+        (Tuple(getproperty(task, :keys)), getproperty(task, :length)) :
+        (Tuple(task[1]), task[2])
+      for task in mgr.tasks
+    ]; by=string),
     nodes=nodes,
     timeline=timeline,
     distance_cache=_norm_cache(mgr.cluster_distance_cache),
