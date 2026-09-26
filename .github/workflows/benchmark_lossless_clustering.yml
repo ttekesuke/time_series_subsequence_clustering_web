@@ -42,7 +42,8 @@ jobs:
             [Float64[motif[mod1(i, length(motif))]] for i in 1:n]
           end
 
-          function manager(M, data; occurrence=false)
+          function manager(M, data; occurrence=false, physical=true)
+            kwargs = M === P ? (; physical_compression=physical) : NamedTuple()
             M.Manager(
               deepcopy(data),
               0.0,
@@ -52,6 +53,7 @@ jobs:
               range_max=8.0,
               max_set_size=1,
               enable_occurrence_intervals=occurrence,
+              kwargs...,
             )
           end
 
@@ -65,8 +67,8 @@ jobs:
             return elapsed, mgr
           end
 
-          function time_observed(M, data; occurrence=false)
-            mgr = manager(M, data[1:2]; occurrence=occurrence)
+          function time_observed(M, data; occurrence=false, physical=true)
+            mgr = manager(M, data[1:2]; occurrence=occurrence, physical=physical)
             M.process_data!(mgr)
             M.update_caches_permanently!(mgr)
             GC.gc()
@@ -124,8 +126,10 @@ jobs:
 
           observed_occ = scalar_periodic(60)
           lt, _ = time_observed(L, observed_occ; occurrence=true)
-          pt, _ = time_observed(P, observed_occ; occurrence=true)
+          pt, _ = time_observed(P, observed_occ; occurrence=true, physical=true)
+          pnt, _ = time_observed(P, observed_occ; occurrence=true, physical=false)
           print_ratio("PERIODIC60_OBSERVED_OCC", lt, pt)
+          println("PERIODIC60_OBSERVED_OCC_PROD_NO_PHYSICAL_S=", round(pnt; digits=4))
 
           prod_long = scalar_periodic(256)
           pt, pm = time_observed(P, prod_long)
