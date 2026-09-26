@@ -1115,6 +1115,12 @@ end
 function process_data!(mgr::Manager)
   _initialize_root_cluster_if_ready!(mgr)
   isempty(mgr.cluster_spans) && return nothing
+
+  # Bulk processing has no externally observable intermediate cluster store.
+  # Keeping every newly-created logical node as a one-node span while the
+  # history is ingested avoids repeatedly compressing and re-splitting the
+  # same paths. Normalize once at the end; the virtual logical tree is
+  # identical, which is guarded by the frozen legacy oracle.
   for i in 1:length(mgr.data)
     data_index = i - 1
     if data_index <= mgr.min_window_size - 1
@@ -1122,8 +1128,8 @@ function process_data!(mgr::Manager)
     end
     mgr.cluster_horizon = data_index + 1
     clustering_subsequences_incremental!(mgr, data_index)
-    _normalize_cluster_store!(mgr)
   end
+  _normalize_cluster_store!(mgr)
   return nothing
 end
 
