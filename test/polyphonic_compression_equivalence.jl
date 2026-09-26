@@ -322,6 +322,13 @@ const _compression_equivalence_scenarios = [
     candidates=[Float64[0.0], Float64[3.0]],
   ),
   (
+    name="predictive-repeated-continuation",
+    data=[Float64[x] for x in [0,7,4,7,0,7,4,7,0,7,4,7]],
+    threshold=0.02,
+    kwargs=(range_min=0.0, range_max=11.0, max_set_size=1),
+    candidates=[Float64[x] for x in 0:11],
+  ),
+  (
     name="seeded-random-scalar",
     data=random_scalar,
     threshold=0.12,
