@@ -1831,6 +1831,96 @@ end
 # Incremental clustering core (polyphonic override)
 @inline max_distance_for_length(len::Int)::Float64 = sqrt(float(max(len, 1)))
 
+function _extend_task_member_squared_distances(
+  mgr::Manager,
+  task::ClusterTask,
+  valid_si::Vector{Int},
+  latest_seq::PolySeq,
+  latest_start::Int,
+  new_length::Int,
+)::Dict{Int,Float64}
+  result = Dict{Int,Float64}()
+  isempty(valid_si) && return result
+
+  parent_length = task.length
+  latest_parent = latest_seq[1:parent_length]
+  latest_last = latest_seq[end]
+
+  for s in valid_si
+    previous = get(task.member_squared_distances, s, NaN)
+    if !isfinite(previous)
+      previous_seq = mgr.data[(s + 1):(s + parent_length)]
+      previous = squared_euclidean_distance(mgr, previous_seq, latest_parent)
+    end
+
+    historical_last = mgr.data[s + new_length]
+    d = min_avg_distance(mgr, historical_last, latest_last)
+    result[s] = previous + d * d
+  end
+  return result
+end
+
+function _member_squared_distances_for_node(
+  mgr::Manager,
+  node::PolyClusterNode,
+  latest_seq::PolySeq,
+  latest_start::Int,
+  window_size::Int,
+)::Dict{Int,Float64}
+  result = Dict{Int,Float64}()
+  for s in node.si
+    s == latest_start && continue
+    s + window_size <= length(mgr.data) || continue
+    seq = mgr.data[(s + 1):(s + window_size)]
+    result[s] = squared_euclidean_distance(mgr, seq, latest_seq)
+  end
+  return result
+end
+
+@inline function _can_extend_representative_distance(
+  task::ClusterTask,
+  parent::PolyClusterNode,
+  child::PolyClusterNode,
+)::Bool
+  return task.representative_version == parent.version &&
+         _representative_extends_exactly(parent, child)
+end
+
+function _extended_representative_squared_distance(
+  mgr::Manager,
+  task::ClusterTask,
+  parent::PolyClusterNode,
+  child::PolyClusterNode,
+  latest_seq::PolySeq,
+)::Float64
+  if _can_extend_representative_distance(task, parent, child)
+    d = min_avg_distance(mgr, child.as[end], latest_seq[end])
+    return task.representative_squared_distance + d * d
+  end
+  return squared_euclidean_distance(mgr, child.as, latest_seq)
+end
+
+function _task_member_subset(
+  mgr::Manager,
+  node::PolyClusterNode,
+  extended_member_distances::Dict{Int,Float64},
+  latest_seq::PolySeq,
+  latest_start::Int,
+  window_size::Int,
+)::Dict{Int,Float64}
+  result = Dict{Int,Float64}()
+  for s in node.si
+    s == latest_start && continue
+    value = get(extended_member_distances, s, NaN)
+    if !isfinite(value)
+      seq = mgr.data[(s + 1):(s + window_size)]
+      value = squared_euclidean_distance(mgr, seq, latest_seq)
+    end
+    result[s] = value
+  end
+  return result
+end
+
 function clustering_subsequences_incremental!(mgr::Manager, data_index::Int)
   update_value_width!(mgr, data_index)
 
@@ -1838,8 +1928,8 @@ function clustering_subsequences_incremental!(mgr::Manager, data_index::Int)
   empty!(mgr.tasks)
 
   for task in current_tasks
-    keys_to_parent = copy(task[1])
-    length0 = task[2]
+    keys_to_parent = copy(task.keys)
+    length0 = task.length
     parent = dig_cluster_by_keys(mgr.clusters, keys_to_parent)
     parent === nothing && continue
 
@@ -1847,21 +1937,42 @@ function clustering_subsequences_incremental!(mgr::Manager, data_index::Int)
     latest_start = data_index - new_length + 1
     latest_start < 0 && continue
 
-    latest_seq = mgr.data[(latest_start+1):(latest_start+new_length)]
-    valid_si = [s for s in parent.si if (s + new_length <= data_index + 1) && (s != latest_start)]
+    latest_seq = mgr.data[(latest_start + 1):(latest_start + new_length)]
+    valid_si = Int[
+      s for s in parent.si
+      if (s + new_length <= data_index + 1) && (s != latest_start)
+    ]
     isempty(valid_si) && continue
 
-    # ★ここがポイント：距離関数の上限スケールに合わせる
     max_distance = max_distance_for_length(new_length)
 
     if !isempty(parent.cc)
-      process_existing_clusters!(mgr, parent, latest_seq, max_distance, latest_start, new_length, keys_to_parent)
+      process_existing_clusters!(
+        mgr,
+        parent,
+        valid_si,
+        latest_seq,
+        max_distance,
+        latest_start,
+        new_length,
+        keys_to_parent,
+        task,
+      )
     else
-      process_new_clusters!(mgr, parent, valid_si, latest_seq, max_distance, latest_start, new_length, keys_to_parent)
+      process_new_clusters!(
+        mgr,
+        parent,
+        valid_si,
+        latest_seq,
+        max_distance,
+        latest_start,
+        new_length,
+        keys_to_parent,
+        task,
+      )
     end
   end
 
-  # root（min_window_size）も同様
   root_max_distance = max_distance_for_length(mgr.min_window_size)
   process_root_clusters!(mgr, data_index, root_max_distance)
 end
@@ -1870,21 +1981,39 @@ end
 function process_existing_clusters!(
   mgr::Manager,
   parent::PolyClusterNode,
+  valid_si::Vector{Int},
   latest_seq::PolySeq,
   max_distance::Float64,
   latest_start::Int,
   new_length::Int,
-  keys_to_parent::Vector{Int}
+  keys_to_parent::Vector{Int},
+  task::ClusterTask,
 )
+  extended_member_distances = _extend_task_member_squared_distances(
+    mgr,
+    task,
+    valid_si,
+    latest_seq,
+    latest_start,
+    new_length,
+  )
+
   best_cluster_id = -1
   best_child::Union{Nothing,PolyClusterNode} = nothing
   min_distance = Inf
 
   for (cluster_id, child) in parent.cc
-    # prefer representative sequence (as)
-    distance = euclidean_distance(mgr, child.as, latest_seq)
+    squared_distance = _extended_representative_squared_distance(
+      mgr,
+      task,
+      parent,
+      child,
+      latest_seq,
+    )
+    distance = sqrt(squared_distance)
 
-    if distance < min_distance || (distance == min_distance && (best_cluster_id < 0 || cluster_id < best_cluster_id))
+    if distance < min_distance ||
+       (distance == min_distance && (best_cluster_id < 0 || cluster_id < best_cluster_id))
       min_distance = distance
       best_child = child
       best_cluster_id = cluster_id
@@ -1896,24 +2025,60 @@ function process_existing_clusters!(
   if best_child !== nothing && ratio <= mgr.merge_threshold_ratio
     push!(best_child.si, latest_start)
     record!(mgr, PJSiPush(best_child))
-    old_as = deep_copy_seq(best_child.as)
-    starts = best_child.si
-    sequences = [mgr.data[(s+1):(s+new_length)] for s in starts]
-    best_child.as = average_sequences(mgr, sequences)
-    record!(mgr, PJAsUpdate(best_child, old_as))
 
-    add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_quantities, new_length, best_cluster_id)
+    old_as = deep_copy_seq(best_child.as)
+    old_version = best_child.version
+    starts = best_child.si
+    sequences = [mgr.data[(s + 1):(s + new_length)] for s in starts]
+    best_child.as = average_sequences(mgr, sequences)
+    best_child.version += 1
+    record!(mgr, PJAsUpdate(best_child, old_as, old_version))
+
+    add_updated_id!(
+      mgr.updated_cluster_ids_per_window_for_calculate_quantities,
+      new_length,
+      best_cluster_id,
+    )
     if mgr.calculate_distance_when_added_subsequence_to_cluster
-      add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_distance, new_length, best_cluster_id)
+      add_updated_id!(
+        mgr.updated_cluster_ids_per_window_for_calculate_distance,
+        new_length,
+        best_cluster_id,
+      )
     end
 
-    push!(mgr.tasks, (vcat(copy(keys_to_parent), [best_cluster_id]), new_length))
+    member_distances = _task_member_subset(
+      mgr,
+      best_child,
+      extended_member_distances,
+      latest_seq,
+      latest_start,
+      new_length,
+    )
+    representative_squared_distance = _extended_representative_squared_distance(
+      mgr,
+      task,
+      parent,
+      best_child,
+      latest_seq,
+    )
+    push!(mgr.tasks, ClusterTask(
+      vcat(copy(keys_to_parent), [best_cluster_id]),
+      new_length,
+      member_distances,
+      representative_squared_distance,
+      best_child.version,
+    ))
   else
     new_cluster = _new_cluster_node([latest_start], deep_copy_seq(latest_seq))
     parent.cc[mgr.cluster_id_counter] = new_cluster
     record!(mgr, PJCcAdd(parent.cc, mgr.cluster_id_counter))
 
-    add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_distance, new_length, mgr.cluster_id_counter)
+    add_updated_id!(
+      mgr.updated_cluster_ids_per_window_for_calculate_distance,
+      new_length,
+      mgr.cluster_id_counter,
+    )
     mgr.cluster_id_counter += 1
   end
 end
@@ -1926,14 +2091,23 @@ function process_new_clusters!(
   max_distance::Float64,
   latest_start::Int,
   new_length::Int,
-  keys_to_parent::Vector{Int}
+  keys_to_parent::Vector{Int},
+  task::ClusterTask,
 )
+  extended_member_distances = _extend_task_member_squared_distances(
+    mgr,
+    task,
+    valid_si,
+    latest_seq,
+    latest_start,
+    new_length,
+  )
+
   valid_group = Int[]
   invalid_group = Int[]
 
   for s in valid_si
-    seq = mgr.data[(s+1):(s+new_length)]
-    distance = euclidean_distance(mgr, seq, latest_seq)
+    distance = sqrt(extended_member_distances[s])
     ratio = max_distance == 0.0 ? 0.0 : (distance / max_distance)
     if ratio <= mgr.merge_threshold_ratio
       push!(valid_group, s)
@@ -1944,33 +2118,67 @@ function process_new_clusters!(
 
   if !isempty(valid_group)
     starts = vcat(valid_group, [latest_start])
-    sequences = [mgr.data[(s+1):(s+new_length)] for s in starts]
+    sequences = [mgr.data[(s + 1):(s + new_length)] for s in starts]
     new_cluster = _new_cluster_node(starts, average_sequences(mgr, sequences))
-    parent.cc[mgr.cluster_id_counter] = new_cluster
-    record!(mgr, PJCcAdd(parent.cc, mgr.cluster_id_counter))
+    new_cluster_id = mgr.cluster_id_counter
+    parent.cc[new_cluster_id] = new_cluster
+    record!(mgr, PJCcAdd(parent.cc, new_cluster_id))
 
-    add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_distance, new_length, mgr.cluster_id_counter)
+    add_updated_id!(
+      mgr.updated_cluster_ids_per_window_for_calculate_distance,
+      new_length,
+      new_cluster_id,
+    )
     if mgr.recency > 0.0
-      add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_quantities, new_length, mgr.cluster_id_counter)
+      add_updated_id!(
+        mgr.updated_cluster_ids_per_window_for_calculate_quantities,
+        new_length,
+        new_cluster_id,
+      )
     end
-    push!(mgr.tasks, (vcat(copy(keys_to_parent), [mgr.cluster_id_counter]), new_length))
+
+    member_distances = Dict{Int,Float64}(
+      s => extended_member_distances[s] for s in valid_group
+    )
+    representative_squared_distance = _extended_representative_squared_distance(
+      mgr,
+      task,
+      parent,
+      new_cluster,
+      latest_seq,
+    )
+    push!(mgr.tasks, ClusterTask(
+      vcat(copy(keys_to_parent), [new_cluster_id]),
+      new_length,
+      member_distances,
+      representative_squared_distance,
+      new_cluster.version,
+    ))
     mgr.cluster_id_counter += 1
   else
     new_cluster = _new_cluster_node([latest_start], deep_copy_seq(latest_seq))
     parent.cc[mgr.cluster_id_counter] = new_cluster
     record!(mgr, PJCcAdd(parent.cc, mgr.cluster_id_counter))
 
-    add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_distance, new_length, mgr.cluster_id_counter)
+    add_updated_id!(
+      mgr.updated_cluster_ids_per_window_for_calculate_distance,
+      new_length,
+      mgr.cluster_id_counter,
+    )
     mgr.cluster_id_counter += 1
   end
 
   for s in invalid_group
-    seq = deep_copy_seq(mgr.data[(s+1):(s+new_length)])
+    seq = deep_copy_seq(mgr.data[(s + 1):(s + new_length)])
     new_cluster = _new_cluster_node([s], seq)
     parent.cc[mgr.cluster_id_counter] = new_cluster
     record!(mgr, PJCcAdd(parent.cc, mgr.cluster_id_counter))
 
-    add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_distance, new_length, mgr.cluster_id_counter)
+    add_updated_id!(
+      mgr.updated_cluster_ids_per_window_for_calculate_distance,
+      new_length,
+      mgr.cluster_id_counter,
+    )
     mgr.cluster_id_counter += 1
   end
 end
@@ -1978,20 +2186,18 @@ end
 function process_root_clusters!(mgr::Manager, data_index::Int, max_distance::Float64)
   latest_start = data_index - 1
   latest_start < 0 && return
-  latest_seq = mgr.data[(latest_start+1):(latest_start+mgr.min_window_size)]
+  latest_seq = mgr.data[(latest_start + 1):(latest_start + mgr.min_window_size)]
 
   best_cluster_id = -1
   best_cluster::Union{Nothing,PolyClusterNode} = nothing
   min_distance = Inf
 
   for (cluster_id, cluster) in mgr.clusters
-    if latest_start in cluster.si
-      continue
-    end
+    latest_start in cluster.si && continue
 
-    compare_seq = cluster.as
-    distance = euclidean_distance(mgr, compare_seq, latest_seq)
-    if distance < min_distance || (distance == min_distance && (best_cluster_id < 0 || cluster_id < best_cluster_id))
+    distance = euclidean_distance(mgr, cluster.as, latest_seq)
+    if distance < min_distance ||
+       (distance == min_distance && (best_cluster_id < 0 || cluster_id < best_cluster_id))
       min_distance = distance
       best_cluster = cluster
       best_cluster_id = cluster_id
@@ -2003,206 +2209,60 @@ function process_root_clusters!(mgr::Manager, data_index::Int, max_distance::Flo
   if best_cluster !== nothing && ratio <= mgr.merge_threshold_ratio
     push!(best_cluster.si, latest_start)
     record!(mgr, PJSiPush(best_cluster))
-    old_as = deep_copy_seq(best_cluster.as)
-    sequences = [mgr.data[(s+1):(s+mgr.min_window_size)] for s in best_cluster.si]
-    best_cluster.as = average_sequences(mgr, sequences)
-    record!(mgr, PJAsUpdate(best_cluster, old_as))
 
-    add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_quantities, mgr.min_window_size, best_cluster_id)
+    old_as = deep_copy_seq(best_cluster.as)
+    old_version = best_cluster.version
+    sequences = [
+      mgr.data[(s + 1):(s + mgr.min_window_size)]
+      for s in best_cluster.si
+    ]
+    best_cluster.as = average_sequences(mgr, sequences)
+    best_cluster.version += 1
+    record!(mgr, PJAsUpdate(best_cluster, old_as, old_version))
+
+    add_updated_id!(
+      mgr.updated_cluster_ids_per_window_for_calculate_quantities,
+      mgr.min_window_size,
+      best_cluster_id,
+    )
     if mgr.calculate_distance_when_added_subsequence_to_cluster
-      add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_distance, mgr.min_window_size, best_cluster_id)
+      add_updated_id!(
+        mgr.updated_cluster_ids_per_window_for_calculate_distance,
+        mgr.min_window_size,
+        best_cluster_id,
+      )
     end
 
-    push!(mgr.tasks, ([best_cluster_id], mgr.min_window_size))
+    member_distances = _member_squared_distances_for_node(
+      mgr,
+      best_cluster,
+      latest_seq,
+      latest_start,
+      mgr.min_window_size,
+    )
+    representative_squared_distance =
+      squared_euclidean_distance(mgr, best_cluster.as, latest_seq)
+    push!(mgr.tasks, ClusterTask(
+      [best_cluster_id],
+      mgr.min_window_size,
+      member_distances,
+      representative_squared_distance,
+      best_cluster.version,
+    ))
   else
     new_cluster = _new_cluster_node([latest_start], deep_copy_seq(latest_seq))
     mgr.clusters[mgr.cluster_id_counter] = new_cluster
     record!(mgr, PJRootAdd(mgr.cluster_id_counter))
 
-    add_updated_id!(mgr.updated_cluster_ids_per_window_for_calculate_distance, mgr.min_window_size, mgr.cluster_id_counter)
+    add_updated_id!(
+      mgr.updated_cluster_ids_per_window_for_calculate_distance,
+      mgr.min_window_size,
+      mgr.cluster_id_counter,
+    )
     mgr.cluster_id_counter += 1
   end
 end
 
-
-
-# ------------------------------------------------------------------
-# Lossless path-compressed cluster view
-#
-# This is deliberately a representation layer over the canonical cluster tree.
-# A span may collapse only a single-child chain whose start-index set is
-# identical at every virtual window and whose representative is an exact
-# prefix of the next representative.  Therefore every original virtual node
-# (window size, cluster id, starts, representative, parent relation) can be
-# reconstructed exactly.
-# ------------------------------------------------------------------
-
-struct CompressedClusterSpan
-  window_min::Int
-  window_max::Int
-  cluster_ids::Vector{Int}
-  si_min::Vector{Int}
-  as_max::PolySeq
-  data_length::Int
-  children::Vector{CompressedClusterSpan}
-end
-
-@inline function _representative_extends_exactly(parent::PolyClusterNode, child::PolyClusterNode)::Bool
-  length(child.as) == length(parent.as) + 1 || return false
-  @inbounds for i in eachindex(parent.as)
-    parent.as[i] == child.as[i] || return false
-  end
-  return true
-end
-
-function _starts_extend_without_semantic_loss(
-  parent::PolyClusterNode,
-  child::PolyClusterNode,
-  child_window_size::Int,
-  data_length::Int,
-)::Bool
-  expected = Int[
-    s for s in parent.si
-    if s + child_window_size <= data_length
-  ]
-  sort!(expected)
-  actual = sort(copy(child.si))
-  return expected == actual
-end
-
-function _compress_cluster_span(
-  cluster_id::Int,
-  node::PolyClusterNode,
-  window_size::Int,
-  data_length::Int,
-)::CompressedClusterSpan
-  ids = Int[cluster_id]
-  first_starts = copy(node.si)
-  current = node
-  current_window = window_size
-
-  while length(current.cc) == 1
-    child_id, child = first(current.cc)
-    _starts_extend_without_semantic_loss(
-      current,
-      child,
-      current_window + 1,
-      data_length,
-    ) || break
-    _representative_extends_exactly(current, child) || break
-    push!(ids, child_id)
-    current = child
-    current_window += 1
-  end
-
-  children = CompressedClusterSpan[]
-  for child_id in sort!(collect(keys(current.cc)))
-    push!(children, _compress_cluster_span(
-      child_id,
-      current.cc[child_id],
-      current_window + 1,
-      data_length,
-    ))
-  end
-
-  return CompressedClusterSpan(
-    window_size,
-    current_window,
-    ids,
-    first_starts,
-    deep_copy_seq(current.as),
-    data_length,
-    children,
-  )
-end
-
-function compress_cluster_tree(
-  clusters::Dict{Int,PolyClusterNode},
-  min_window_size::Int,
-  data_length::Int,
-)::Vector{CompressedClusterSpan}
-  spans = CompressedClusterSpan[]
-  for cluster_id in sort!(collect(keys(clusters)))
-    push!(spans, _compress_cluster_span(
-      cluster_id,
-      clusters[cluster_id],
-      min_window_size,
-      data_length,
-    ))
-  end
-  return spans
-end
-
-compress_cluster_tree(mgr::Manager)::Vector{CompressedClusterSpan} =
-  compress_cluster_tree(mgr.clusters, mgr.min_window_size, length(mgr.data))
-
-"""Return a canonical virtual-node snapshot from a compressed tree.
-
-This is used both by regression tests and by callers that need to prove that
-path compression did not remove any logical cluster information.
-"""
-function compressed_virtual_nodes(
-  spans::Vector{CompressedClusterSpan},
-)::Vector{NamedTuple}
-  rows = NamedTuple[]
-  stack = Tuple{CompressedClusterSpan,Union{Nothing,Int}}[
-    (span, nothing) for span in reverse(spans)
-  ]
-
-  while !isempty(stack)
-    span, parent_id = pop!(stack)
-    previous_id = parent_id
-    for (offset, cluster_id) in enumerate(span.cluster_ids)
-      window_size = span.window_min + offset - 1
-      representative = deep_copy_seq(span.as_max[1:window_size])
-      push!(rows, (
-        window_size=window_size,
-        cluster_id=cluster_id,
-        parent_id=previous_id,
-        si=sort(Int[
-          s for s in span.si_min
-          if s + window_size <= span.data_length
-        ]),
-        as=representative,
-      ))
-      previous_id = cluster_id
-    end
-    for child in reverse(span.children)
-      push!(stack, (child, previous_id))
-    end
-  end
-
-  sort!(rows; by=row -> (row.window_size, row.cluster_id))
-  return rows
-end
-
-function logical_virtual_nodes(
-  clusters::Dict{Int,PolyClusterNode},
-  min_window_size::Int,
-)::Vector{NamedTuple}
-  rows = NamedTuple[]
-  stack = Tuple{Int,Int,PolyClusterNode,Union{Nothing,Int}}[]
-  for cluster_id in sort!(collect(keys(clusters)); rev=true)
-    push!(stack, (min_window_size, cluster_id, clusters[cluster_id], nothing))
-  end
-
-  while !isempty(stack)
-    window_size, cluster_id, node, parent_id = pop!(stack)
-    push!(rows, (
-      window_size=window_size,
-      cluster_id=cluster_id,
-      parent_id=parent_id,
-      si=sort(copy(node.si)),
-      as=deep_copy_seq(node.as),
-    ))
-    for child_id in sort!(collect(keys(node.cc)); rev=true)
-      push!(stack, (window_size + 1, child_id, node.cc[child_id], cluster_id))
-    end
-  end
-
-  sort!(rows; by=row -> (row.window_size, row.cluster_id))
-  return rows
-end
 
 # Rails-compatible wrapper APIs
 #
