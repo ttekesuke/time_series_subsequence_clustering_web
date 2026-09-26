@@ -389,10 +389,10 @@ end
 function clusters_payload(state::VoiceTokenState, min_window::Int)::Dict{String,Any}
   streams = Dict{Int,Any}()
   for (id, manager) in state.stream_managers
-    streams[id] = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window)
+    streams[id] = PolyphonicClusterManager.clusters_to_timeline(manager)
   end
   return Dict(
-    "global" => PolyphonicClusterManager.clusters_to_timeline(state.global_manager.clusters, min_window),
+    "global" => PolyphonicClusterManager.clusters_to_timeline(state.global_manager),
     "streams" => streams,
   )
 end
