@@ -72,7 +72,7 @@
   - `as`: 代表系列です。複数部分列が同じクラスタに入ると平均系列として更新されます。
   - `cc`: 子クラスタです。子は window size が 1 つ長いクラスタです。
 
-`manager.clusters` の root は `min_window_size`、つまり現在は長さ 2 のクラスタ群です。子に進むたびに window size が 3、4、5... と伸びます。
+論理クラスタ木では root が `min_window_size`、つまり現在は長さ 2 のクラスタ群で、子に進むたびに window size が 3、4、5... と伸びます。現在の実装ではこの論理木を `manager.cluster_spans` に lossless path-compression して保持し、`collect_clusters_each(manager)` / `clusters_to_timeline(manager)` などの公開アクセサから従来と同じ論理node列を復元します。
 
 ### 4.1 具体イメージ
 
