@@ -2474,7 +2474,63 @@ add_data_point_permanently(mgr::Manager, val::PolySet) = add_data_point_permanen
 
 update_caches_permanently(mgr::Manager) = update_caches_permanently!(mgr)
 
-# Instance-style helper wrappers (argument order parity with Rails)
+# Manager-level logical view API.
+#
+# Production callers should use these methods rather than reaching into
+# `mgr.clusters` directly.  The physical cluster storage is intentionally an
+# implementation detail so it can be replaced by path-compressed spans without
+# changing controllers, generators, MusicXML analysis, or UI payload builders.
+#
+# For now the manager still mutates the legacy tree internally, but all read
+# APIs below round-trip through the lossless compressed representation.  This
+# continuously exercises the compressed representation while preserving the
+# exact legacy logical result.
+function logical_virtual_nodes(mgr::Manager)::Vector{NamedTuple}
+  return compressed_virtual_nodes(compress_cluster_tree(mgr))
+end
+
+function transform_clusters(mgr::Manager)
+  clusters_each = Dict{Int,Dict{Int,Dict{String,Any}}}()
+  for row in logical_virtual_nodes(mgr)
+    sequences = [[s, s + row.window_size - 1] for s in row.si]
+    same_ws = get!(clusters_each, row.window_size, Dict{Int,Dict{String,Any}}())
+    same_ws[row.cluster_id] = Dict(
+      "si" => sequences,
+      "as" => deep_copy_seq(row.as),
+    )
+  end
+  return clusters_each
+end
+
+function clusters_to_timeline(mgr::Manager)
+  result = Vector{Dict{String,Any}}()
+  for row in logical_virtual_nodes(mgr)
+    isempty(row.si) && continue
+    push!(result, Dict(
+      "window_size" => row.window_size,
+      "cluster_id" => string(row.cluster_id),
+      "indices" => sort(copy(row.si)),
+    ))
+  end
+  return result
+end
+
+function compressed_clusters_payload(mgr::Manager)
+  function span_payload(span::CompressedClusterSpan)
+    return Dict(
+      "window_min" => span.window_min,
+      "window_max" => span.window_max,
+      "cluster_ids" => copy(span.cluster_ids),
+      "indices" => sort(copy(span.si_min)),
+      "children" => Any[span_payload(child) for child in span.children],
+    )
+  end
+  spans = compress_cluster_tree(mgr)
+  return Any[span_payload(span) for span in spans]
+end
+
+# Backward-compatible explicit-tree overloads.  Keep these for tests and
+# internal migration only; new production code should call the Manager forms.
 transform_clusters(mgr::Manager, clusters::Dict{Int,PolyClusterNode}, min_window_size::Int) =
   transform_clusters(clusters, min_window_size)
 
@@ -2491,6 +2547,36 @@ end
 
 function clusters_to_dict(clusters::Dict{Int,PolyClusterNode})
   Dict(string(cid) => cluster_to_dict(cl) for (cid, cl) in clusters)
+end
+
+function clusters_to_dict(mgr::Manager)
+  # Preserve the legacy nested JSON shape exactly by rebuilding it from the
+  # lossless virtual-node view instead of exposing physical storage.
+  rows = logical_virtual_nodes(mgr)
+  isempty(rows) && return Dict{String,Any}()
+
+  children_by_parent = Dict{Union{Nothing,Int},Vector{NamedTuple}}()
+  for row in rows
+    push!(get!(children_by_parent, row.parent_id, NamedTuple[]), row)
+  end
+  for values in values(children_by_parent)
+    sort!(values; by=row -> row.cluster_id)
+  end
+
+  function build(row)
+    children = get(children_by_parent, row.cluster_id, NamedTuple[])
+    return Dict(
+      "si" => sort(copy(row.si)),
+      "as" => deep_copy_seq(row.as),
+      "cc" => Dict(
+        string(child.cluster_id) => build(child)
+        for child in children
+      ),
+    )
+  end
+
+  roots = get(children_by_parent, nothing, NamedTuple[])
+  return Dict(string(row.cluster_id) => build(row) for row in roots)
 end
 
 end # module
