@@ -1415,14 +1415,39 @@ end
 Production callers must use this read view instead of the mutable working tree.
 """
 function collect_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,LogicalClusterView}}
+  # Hot-path logical view: traverse the compressed physical store directly.
+  # Do NOT route through logical_virtual_nodes(), which is intentionally a
+  # fully detached/JSON-safe expansion and therefore deep-copies every
+  # representative sequence.
   clusters_each = Dict{Int,Dict{Int,LogicalClusterView}}()
-  for row in logical_virtual_nodes(mgr)
-    same_ws = get!(clusters_each, row.window_size, Dict{Int,LogicalClusterView}())
-    same_ws[row.cluster_id] = LogicalClusterView(
-      sort(copy(row.si)),
-      deep_copy_seq(row.as),
-    )
+  stack = CompressedClusterSpan[reverse(mgr.cluster_spans)...]
+
+  while !isempty(stack)
+    span = pop!(stack)
+
+    for offset in eachindex(span.cluster_ids)
+      window_size = span.window_min + offset - 1
+      cluster_id = span.cluster_ids[offset]
+      fit_limit = span.fit_limits[offset]
+      starts = Int[
+        s for s in span.si_min
+        if s + window_size <= fit_limit
+      ]
+      sort!(starts)
+
+      # A shallow prefix copy is sufficient: metric code never mutates the
+      # PolySet rows in a representative.  The old path deep-copied every row
+      # for every virtual node, which defeated physical compression.
+      representative = span.as_max[1:window_size]
+      same_ws = get!(clusters_each, window_size, Dict{Int,LogicalClusterView}())
+      same_ws[cluster_id] = LogicalClusterView(starts, representative)
+    end
+
+    for child in reverse(span.children)
+      push!(stack, child)
+    end
   end
+
   return clusters_each
 end
 
