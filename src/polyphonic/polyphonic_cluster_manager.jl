@@ -1551,7 +1551,15 @@ function start_transaction!(mgr::Manager)
     mgr.cluster_id_counter,
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_distance),
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_quantities),
-    copy(mgr.cluster_spans),
+    # Compressed spans may be structurally split during speculative
+    # clustering. Keep the proven recursive topology snapshot there until the
+    # structural transaction itself is fully persistent. Bounded helper
+    # managers run with physical_compression=false: every physical span is a
+    # single logical node, so their topology never needs virtual-node
+    # isolation and the shallow-root + mutation journal is lossless.
+    mgr.physical_compression ?
+      _snapshot_cluster_spans(mgr.cluster_spans) :
+      copy(mgr.cluster_spans),
     mgr.cluster_horizon,
   )
 end
