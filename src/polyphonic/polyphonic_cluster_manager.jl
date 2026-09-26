@@ -861,6 +861,7 @@ end
 end
 
 @inline calculate_cluster_complexity(mgr::Manager, node::PolyClusterNode)::Float64 = calculate_cluster_complexity(mgr, node.as)
+@inline calculate_cluster_complexity(mgr::Manager, node::LogicalClusterView)::Float64 = calculate_cluster_complexity(mgr, node.as)
 
 # JSON-facing overload (kept for Rails-compatible Dict payloads)
 function calculate_cluster_complexity(mgr::Manager, cluster::Dict{String,Any})::Float64
@@ -1062,6 +1063,7 @@ function rollback!(mgr::Manager)
   mgr.snapshot_state = nothing
 end
 
+"""Internal mutable-tree view. Write-path implementation only; production readers must use collect_clusters_each."""
 function _collect_working_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,PolyClusterNode}}
   clusters_each = Dict{Int,Dict{Int,PolyClusterNode}}()
   stack = Vector{Tuple{Int,Int,PolyClusterNode}}()
@@ -1433,7 +1435,7 @@ function _occurrence_interval_metrics_for_starts(
       merge_threshold_ratio,
       min_window_size,
     )
-    interval_clusters = _collect_working_clusters_each(interval_mgr)
+    interval_clusters = collect_clusters_each(interval_mgr)
     d, q, c = _aggregate_current_metrics(
       interval_mgr,
       interval_clusters;
