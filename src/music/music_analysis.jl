@@ -550,7 +550,7 @@ function _analyse_manager(
     recency=0.0,
   )
   PolyphonicClusterManager.process_data!(manager)
-  scoring.initial_calc_values!(manager, PolyphonicClusterManager.transform_clusters(manager.clusters, min_window))
+  scoring.initial_calc_values!(manager, PolyphonicClusterManager.transform_clusters(manager))
   empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
 
   if n > min_window
@@ -581,7 +581,7 @@ function _analyse_manager(
   return Dict(
     "axes" => axes,
     "raw" => raw,
-    "clusters" => PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window),
+    "clusters" => PolyphonicClusterManager.clusters_to_timeline(manager),
   )
 end
 
