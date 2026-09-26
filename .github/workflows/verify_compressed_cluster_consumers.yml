@@ -1,0 +1,56 @@
+name: Verify Compressed Cluster Consumers
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file:
+          - analyse_music.jl
+          - generate_polyphonic_validation.jl
+          - issues_16_23_regressions.jl
+          - issues_18_lifecycle_regression.jl
+          - metric_calibration_and_chord_greedy.jl
+          - normalize_octave_invariance.jl
+          - occurrence_interval_complexity.jl
+          - polyphonic_compression_equivalence.jl
+          - predictive_complexity.jl
+          - tie_rendering.jl
+          - transaction_safety.jl
+          - voice_token_generation.jl
+          - voicevox_client.jl
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Run test
+        run: julia --project=. -e 'ENV["GENIE_ENV"]="test"; using Genie; Genie.loadapp(); include("test/${{ matrix.test_file }}")'
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run build
