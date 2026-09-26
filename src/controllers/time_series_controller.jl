@@ -549,7 +549,7 @@ function query_db()
         PolyphonicClusterManager.add_data_point_permanently!(manager, Float64[_parse_int(v)])
       end
 
-      timeline = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window)
+      timeline = PolyphonicClusterManager.clusters_to_timeline(manager)
       qlen = length(q_int)
       slen = length(db_series_values)
       cross_entries = Any[]
@@ -592,7 +592,7 @@ function query_db()
           "source_index" => source_index,
           "match_score" => match_score,
           "timeline" => cross_entries,
-          "clusters" => PolyphonicClusterManager.clusters_to_dict(manager.clusters),
+          "clusters" => PolyphonicClusterManager.clusters_to_dict(manager),
           "matches" => simple_matches,
           "metadata" => get(series_info, "metadata", Dict())
         )
@@ -915,7 +915,7 @@ function _query_db_note_vol(t0, p, query_points::Vector{Vector{Float64}})
           PolyphonicClusterManager.add_data_point_permanently!(manager, copy(v))
         end
 
-        timeline = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window)
+        timeline = PolyphonicClusterManager.clusters_to_timeline(manager)
         for entry in timeline
           inds = entry["indices"]::Vector{Int}
           has_q = any(i -> i < qlen, inds)
@@ -3239,14 +3239,14 @@ function analyse()
 
   PolyphonicClusterManager.process_data!(manager)
 
-  timeline = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window_size)
+  timeline = PolyphonicClusterManager.clusters_to_timeline(manager)
   processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
   println("analyse processing time (s): ", processing_time_s)
 
   return Dict(
     "clusteredSubsequences" => timeline,
     "timeSeries" => data,
-    "clusters" => PolyphonicClusterManager.clusters_to_dict(manager.clusters),
+    "clusters" => PolyphonicClusterManager.clusters_to_dict(manager),
     "processingTime" => processing_time_s
   )
 end
@@ -3287,7 +3287,7 @@ function generate()
 
   PolyphonicClusterManager.process_data!(manager)
 
-  clusters_each = PolyphonicClusterManager.transform_clusters(manager.clusters, min_window_size)
+  clusters_each = PolyphonicClusterManager.transform_clusters(manager)
   initial_calc_values!(
     manager,
     clusters_each
@@ -3338,7 +3338,7 @@ function generate()
     PolyphonicClusterManager.update_caches_permanently!(manager)
   end
 
-  timeline = PolyphonicClusterManager.clusters_to_timeline(manager.clusters, min_window_size)
+  timeline = PolyphonicClusterManager.clusters_to_timeline(manager)
   processing_time_s = round(time() - t0; digits=Config.PROCESSING_TIME_DIGITS)
 
   complexity_transition_stream = Any[missing for _ in first_elements]
@@ -3348,7 +3348,7 @@ function generate()
     "clusteredSubsequences" => timeline,
     "timeSeries" => results,
     "complexityTransition" => complexity_transition_stream,
-    "clusters" => PolyphonicClusterManager.clusters_to_dict(manager.clusters),
+    "clusters" => PolyphonicClusterManager.clusters_to_dict(manager),
     "processingTime" => processing_time_s
   )
 end
