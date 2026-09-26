@@ -82,9 +82,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.dev
     working_dir: /app
-    # The Vite UI should remain reachable on :5173 even while the API
-    # (or its optional VOICEVOX dependency) is starting or unavailable.
-    # API requests will simply fail through the proxy until Genie is ready.
+    depends_on:
+      - api
     ports:
       - "5173:5173"
     environment:
