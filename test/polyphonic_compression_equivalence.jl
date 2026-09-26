@@ -62,6 +62,27 @@ function _norm_cache(cache)
   return rows
 end
 
+function _norm_transform_payload(M, mgr)
+  payload =
+    M === _ProdPCM ?
+      M.transform_clusters(mgr) :
+      M.transform_clusters(mgr.clusters, mgr.min_window_size)
+  rows = Any[]
+  for ws in sort!(collect(keys(payload)))
+    same_ws = payload[ws]
+    for cid in sort!(collect(keys(same_ws)))
+      cluster = same_ws[cid]
+      push!(rows, (
+        window=ws,
+        id=cid,
+        starts=sort([Tuple(Int[x for x in bounds]) for bounds in cluster["si"]]),
+        representative=_norm_polyseq(cluster["as"]),
+      ))
+    end
+  end
+  return rows
+end
+
 function _logical_snapshot(M, mgr)
   clusters_each = M.collect_clusters_each(mgr)
   nodes = Any[]
@@ -103,6 +124,7 @@ function _logical_snapshot(M, mgr)
     ]; by=string),
     nodes=nodes,
     timeline=timeline,
+    transformed=_norm_transform_payload(M, mgr),
     distance_cache=_norm_cache(mgr.cluster_distance_cache),
     quantity_cache=_norm_cache(mgr.cluster_quantity_cache),
     complexity_cache=_norm_cache(mgr.cluster_complexity_cache),
@@ -432,4 +454,41 @@ end
   end
 
   @test isempty(offenders)
+end
+
+
+@testset "compressed cluster public accessor contract" begin
+  data = [Float64[mod(i - 1, 3)] for i in 1:18]
+  mgr = _ProdPCM.Manager(
+    deepcopy(data),
+    0.0,
+    2,
+    false;
+    range_min=0.0,
+    range_max=2.0,
+    max_set_size=1,
+  )
+  _ProdPCM.process_data!(mgr)
+  _ProdPCM.update_caches_permanently!(mgr)
+
+  by_window = _ProdPCM.collect_clusters_each(mgr)
+  @test !isempty(by_window)
+  for (_, same_window) in by_window
+    for (_, ref) in same_window
+      @test _ProdPCM.cluster_starts(ref) == sort(copy(ref.si))
+      @test _ProdPCM.cluster_representative(ref) == ref.as
+      @test _ProdPCM.cluster_version(ref) == ref.version
+    end
+  end
+
+  # The JSON/UI-facing shape intentionally stays legacy-compatible even
+  # though the physical store is compressed.
+  timeline = _ProdPCM.clusters_to_timeline(mgr)
+  @test all(haskey(row, "window_size") && haskey(row, "cluster_id") && haskey(row, "indices") for row in timeline)
+  transformed = _ProdPCM.transform_clusters(mgr)
+  @test all(
+    haskey(cluster, "si") && haskey(cluster, "as")
+    for same_window in values(transformed)
+    for cluster in values(same_window)
+  )
 end
