@@ -120,3 +120,42 @@ end
   windows = Int[Int(cluster["window_size"]) for cluster in analysed["clusters"]]
   @test isempty(windows) || maximum(windows) <= 4
 end
+
+
+@testset "committed-state metrics match simulation structural metrics" begin
+  PCM = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
+  Config = Main.TimeseriesClusteringAPI.Config
+  seed = [Float64[1.0], Float64[2.0], Float64[1.0], Float64[2.0]]
+
+  function prepared_manager()
+    manager = PCM.Manager(
+      deepcopy(seed),
+      0.02,
+      Config.POLYPHONIC_MIN_WINDOW_SIZE,
+      false;
+      range_min=0.0,
+      range_max=4.0,
+      enable_occurrence_intervals=false,
+    )
+    PCM.process_data!(manager)
+    TC.initial_calc_values!(
+      manager,
+      PCM.transform_clusters(manager.clusters, Config.POLYPHONIC_MIN_WINDOW_SIZE),
+    )
+    empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
+    empty!(manager.updated_cluster_ids_per_window_for_calculate_quantities)
+    return manager
+  end
+
+  simulated_manager = prepared_manager()
+  simulated = PCM.simulate_add_and_calculate_all_extended(simulated_manager, Float64[3.0])
+
+  committed_manager = prepared_manager()
+  PCM.add_data_point_permanently!(committed_manager, Float64[3.0])
+  PCM.update_caches_permanently!(committed_manager)
+  committed = PCM.calculate_all_extended_current_state(committed_manager)
+
+  @test committed.distance ≈ simulated.distance
+  @test committed.quantity ≈ simulated.quantity
+  @test committed.complexity ≈ simulated.complexity
+end
