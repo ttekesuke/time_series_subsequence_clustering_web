@@ -91,6 +91,22 @@ end
   end
 end
 
+@testset "MusicAnalyse disables occurrence interval work" begin
+  manager = PCM.Manager(Vector{Float64}[Float64[0.0], Float64[0.0]],
+    0.02, 2, false; range_min=0.0, range_max=1.0,
+    enable_occurrence_intervals=false, recency=0.0)
+  PCM.process_data!(manager)
+  TC.initial_calc_values!(manager, PCM.transform_clusters(manager))
+  empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
+  for _ in 1:12
+    observed = TC.evaluate_observed_complexity!(manager, Float64[0.0])
+    @test !haskey(observed, "occurrence")
+    @test !haskey(observed, "combined")
+    @test !haskey(observed["raw"], "occurrenceDistance")
+    @test isempty(manager.occurrence_interval_states)
+  end
+end
+
 function _score_with_divisions(divisions::Int, durations::Vector{Int})
   body = IOBuffer()
   for (index, duration) in enumerate(durations)
@@ -194,10 +210,10 @@ end
     "dissonance",
     "stream_count",
   ]
-  @test haskey(
-    result["dimensions"]["note"]["analysis"]["global"]["axes"],
-    "combined",
-  )
+  axes = result["dimensions"]["note"]["analysis"]["global"]["axes"]
+  raw = result["dimensions"]["note"]["analysis"]["global"]["raw"]
+  @test Set(keys(axes)) == Set(["prediction", "diversity", "shape", "mass"])
+  @test Set(keys(raw)) == Set(["distance", "quantity", "complexity"])
   @test !haskey(result["dimensions"]["dissonance"], "analysis")
   @test !haskey(result["dimensions"]["stream_count"], "analysis")
   @test result["dimensions"]["stream_count"]["values"]["global"][1] == 1.0
