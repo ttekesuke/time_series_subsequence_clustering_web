@@ -876,6 +876,54 @@ clamp01(x::Float64)::Float64 = x < 0.0 ? 0.0 : (x > 1.0 ? 1.0 : x)
 function streamwise_surface_distance01(mgr::Manager, a::PolySet, b::PolySet)::Float64
   isempty(a) && isempty(b) && return 0.0
 
+  # MusicAnalyse's streamwise rows and their averaged representatives are
+  # ordered by slot. Merge them without allocating two Dicts and three Sets
+  # for every timestep of every long cluster-distance comparison.
+  function ordered_slots(row::PolySet)::Bool
+    previous = 0
+    for encoded in row
+      slot, _ = _decode_streamwise_value(mgr, encoded)
+      slot == previous && error("Duplicate encoded stream slot $(slot) in global row.")
+      slot < previous && return false
+      previous = slot
+    end
+    return true
+  end
+
+  if ordered_slots(a) && ordered_slots(b)
+    raw_width = abs(mgr.stream_axis_offset) - 1.0
+    raw_width = raw_width <= 0.0 ? 1.0 : raw_width
+    i = 1
+    j = 1
+    count = 0
+    distance_sum = 0.0
+    @inbounds while i <= length(a) || j <= length(b)
+      if i > length(a)
+        distance_sum += 1.0
+        j += 1
+      elseif j > length(b)
+        distance_sum += 1.0
+        i += 1
+      else
+        slot_a, raw_a = _decode_streamwise_value(mgr, a[i])
+        slot_b, raw_b = _decode_streamwise_value(mgr, b[j])
+        if slot_a == slot_b
+          distance_sum += clamp01(abs(raw_a - raw_b) / raw_width)
+          i += 1
+          j += 1
+        elseif slot_a < slot_b
+          distance_sum += 1.0
+          i += 1
+        else
+          distance_sum += 1.0
+          j += 1
+        end
+      end
+      count += 1
+    end
+    return count == 0 ? 0.0 : clamp01(distance_sum / float(count))
+  end
+
   function decode_row(row::PolySet)::Dict{Int,Float64}
     decoded = Dict{Int,Float64}()
     for encoded in row
@@ -1336,7 +1384,29 @@ function update_caches_permanently!(
     phase_timings[:cache_windows] += length(clusters_each)
   end
 
-  for (window_size, same_ws) in clusters_each
+  # A compressed span stores representatives as prefixes of as_max. When the
+  # same two spans meet at consecutive window sizes, extend their squared
+  # distance by one row instead of traversing the entire prefix again.
+  prefix_distances = Dict{Tuple{UInt,UInt},Tuple{Int,Float64}}()
+  function observed_pair_distance(node1::SpanClusterRef, node2::SpanClusterRef, window_size::Int)
+    id1, id2 = objectid(node1.span), objectid(node2.span)
+    key = id1 < id2 ? (id1, id2) : (id2, id1)
+    previous = get(prefix_distances, key, nothing)
+    squared = if previous !== nothing && previous[1] + 1 == window_size
+      d = min_avg_distance(mgr, node1.span.as_max[window_size], node2.span.as_max[window_size])
+      phase_timings !== nothing && (phase_timings[:cache_distance_prefix_hits] += 1.0)
+      previous[2] + d * d
+    else
+      squared_euclidean_distance(mgr, _cluster_as_view(node1), _cluster_as_view(node2))
+    end
+    prefix_distances[key] = (window_size, squared)
+    return sqrt(squared)
+  end
+
+  window_sizes = observed_distance_sums === nothing ?
+    collect(keys(clusters_each)) : sort!(collect(keys(clusters_each)))
+  for window_size in window_sizes
+    same_ws = clusters_each[window_size]
     all_ids = collect(keys(same_ws))
     phase_started = phase_timings === nothing ? 0 : time_ns()
 
@@ -1353,8 +1423,7 @@ function update_caches_permanently!(
           cid1 = all_ids[i]
           for j in (i+1):length(all_ids)
             cid2 = all_ids[j]
-            current_sum += euclidean_distance(
-              mgr, _cluster_as_view(same_ws[cid1]), _cluster_as_view(same_ws[cid2]))
+            current_sum += observed_pair_distance(same_ws[cid1], same_ws[cid2], window_size)
             phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
           end
         end
@@ -1364,8 +1433,7 @@ function update_caches_permanently!(
           node1 === nothing && continue
           for cid2 in all_ids
             (cid1 == cid2 || (cid2 in updated_ids_set && cid2 < cid1)) && continue
-            current_sum += euclidean_distance(
-              mgr, _cluster_as_view(node1), _cluster_as_view(same_ws[cid2]))
+            current_sum += observed_pair_distance(node1, same_ws[cid2], window_size)
             phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
           end
         end
