@@ -613,6 +613,12 @@ function _analyse_manager(
   # The metrics returned after each committed append are exactly the next
   # step's calibrator prestate. Keep them instead of scanning all clusters.
   committed_metrics_ref = Ref(PolyphonicClusterManager.current_extended_metrics(manager))
+  # Observed analysis never changes a committed distance cache entry: only
+  # newly created cluster IDs are marked for distance updates. Retain sums,
+  # not every pair, across the long score.
+  distance_sums = Dict(window => sum(values(cache))
+    for (window, cache) in manager.cluster_distance_cache)
+  empty!(manager.cluster_distance_cache)
 
   if n > min_window
     total_observed_steps = n - min_window
@@ -637,7 +643,8 @@ function _analyse_manager(
     for index in (min_window + 1):n
       observed = scoring.evaluate_observed_complexity!(manager, series[index];
         metric_weights=metric_weights, phase_timings=phase_timings,
-        committed_metrics_ref=committed_metrics_ref)
+        committed_metrics_ref=committed_metrics_ref,
+        observed_distance_sums=distance_sums)
       for key in keys(axes)
         axes[key][index] = get(observed, key, nothing)
       end
