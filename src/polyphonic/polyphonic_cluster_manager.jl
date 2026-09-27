@@ -2293,7 +2293,10 @@ is the observed-data counterpart of simulate_add_and_calculate_all_extended:
 it avoids a transactional append/rollback when the next value is already known
 and has been permanently committed.
 """
-function calculate_all_extended_current_state(mgr::Manager)::ExtendedClusterMetrics
+function calculate_all_extended_current_state(
+  mgr::Manager;
+  occurrence_intervals::Union{Nothing,OccurrenceIntervalMetrics}=nothing,
+)::ExtendedClusterMetrics
   clusters_each = collect_clusters_each(mgr)
   sum_distances = 0.0
   sum_quantities = 0.0
@@ -2326,19 +2329,61 @@ function calculate_all_extended_current_state(mgr::Manager)::ExtendedClusterMetr
     end
   end
 
-  occurrence_intervals =
-    if mgr.enable_occurrence_intervals
-      latest_occurrence_interval_metrics(mgr, clusters_each, now_index)
-    else
-      EMPTY_OCCURRENCE_INTERVAL_METRICS
-    end
+  temporal = occurrence_intervals === nothing ?
+    (mgr.enable_occurrence_intervals ?
+      latest_occurrence_interval_metrics(mgr, clusters_each, now_index) :
+      EMPTY_OCCURRENCE_INTERVAL_METRICS) : occurrence_intervals
 
   return ExtendedClusterMetrics(
     sum_distances,
     sum_quantities,
     sum_complexities,
-    occurrence_intervals,
+    temporal,
   )
+end
+
+"""Commit one observed value and score its resulting state without a transaction.
+
+The occurrence preview must precede the permanent cache update: it compares
+the new occurrence against the committed interval history. Structural metrics
+are read after the existing incremental cache update, which only recomputes
+distances involving changed clusters.
+"""
+function add_observed_and_calculate_all_extended!(
+  mgr::Manager,
+  value::PolySet;
+  phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
+)::ExtendedClusterMetrics
+  started = phase_timings === nothing ? 0 : time_ns()
+  add_data_point_permanently!(mgr, copy(value))
+  if phase_timings !== nothing
+    phase_timings[:commit] += (time_ns() - started) / 1.0e9
+    started = time_ns()
+  end
+
+  touched_windows = union(
+    Set(keys(mgr.updated_cluster_ids_per_window_for_calculate_distance)),
+    Set(keys(mgr.updated_cluster_ids_per_window_for_calculate_quantities)),
+  )
+  updated_clusters = collect_clusters_each(mgr, touched_windows)
+  temporal = mgr.enable_occurrence_intervals ?
+    latest_occurrence_interval_metrics(mgr, updated_clusters, length(mgr.data) - 1) :
+    EMPTY_OCCURRENCE_INTERVAL_METRICS
+  if phase_timings !== nothing
+    phase_timings[:metrics] += (time_ns() - started) / 1.0e9
+    started = time_ns()
+  end
+
+  update_caches_permanently!(mgr; phase_timings=phase_timings)
+  if phase_timings !== nothing
+    phase_timings[:cache] += (time_ns() - started) / 1.0e9
+    started = time_ns()
+  end
+  metrics = calculate_all_extended_current_state(mgr; occurrence_intervals=temporal)
+  if phase_timings !== nothing
+    phase_timings[:metrics] += (time_ns() - started) / 1.0e9
+  end
+  return metrics
 end
 
 function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySet)::ExtendedClusterMetrics
