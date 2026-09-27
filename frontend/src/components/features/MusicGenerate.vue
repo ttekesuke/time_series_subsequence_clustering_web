@@ -520,7 +520,7 @@ onUnmounted(() => {
 // ===== types =====
 type CompressedSpan = {
   window_min: number; window_max: number; cluster_ids: number[]
-  indices: number[]; fit_limits: number[]; children: CompressedSpan[]
+  indices: number[]; fit_limits: number[]; parent_index: number | null
 }
 type CompressedScope = { global: CompressedSpan[]; streams: Record<string, CompressedSpan[]> }
 // strict server: [abs_notes(Int[]), vol, brightness, noise, harmonicity, attack, decay_sustain, release, chord_range(Int), density, tie]
