@@ -131,7 +131,7 @@ end
   end
 end
 
-@testset "streamwise distance and prefix totals match full cache" begin
+@testset "streamwise distance and prefix totals match current clusters" begin
   function prepared_streamwise_manager()
     seed = Vector{Float64}[Float64[10.0, 134.0], Float64[20.0, 261.0]]
     manager = PCM.Manager(seed, 0.02, 2, false;
@@ -144,13 +144,12 @@ end
     return manager
   end
 
-  baseline = prepared_streamwise_manager()
   cached = prepared_streamwise_manager()
   a, b = Float64[10.0, 150.0], Float64[20.0, 288.0]
   expected_distance = (10.0 / 128.0 + 2.0) / 3.0
-  @test isapprox(PCM.streamwise_surface_distance01(baseline, a, b), expected_distance)
-  @test isapprox(PCM.streamwise_surface_distance01(baseline, reverse(a), b), expected_distance)
-  @test_throws ErrorException PCM.streamwise_surface_distance01(baseline, Float64[10.0, 12.0], b)
+  @test isapprox(PCM.streamwise_surface_distance01(cached, a, b), expected_distance)
+  @test isapprox(PCM.streamwise_surface_distance01(cached, reverse(a), b), expected_distance)
+  @test_throws ErrorException PCM.streamwise_surface_distance01(cached, Float64[10.0, 12.0], b)
 
   preceding = Ref(PCM.current_extended_metrics(cached))
   distance_sums = Dict(window => sum(values(cache))
@@ -160,22 +159,12 @@ end
     Float64[15.0], Float64[11.0, 140.0, 268.0]]
   for index in 1:20
     row = rows[mod1(index, length(rows))]
-    expected = TC.evaluate_observed_complexity!(baseline, row)
     actual = TC.evaluate_observed_complexity!(cached, row;
       committed_metrics_ref=preceding, observed_distance_sums=distance_sums)
-    for key in ("quantity", "complexity")
-      @test isapprox(actual["raw"][key], expected["raw"][key]; atol=1e-8)
+    exact = _exact_current_cluster_metrics(cached)
+    for field in (:distance, :quantity, :complexity)
+      @test isapprox(actual["raw"][string(field)], getfield(exact, field); atol=1e-8)
     end
-    exact_distance = 0.0
-    for (window_size, same_ws) in PCM.collect_clusters_each(cached)
-      ids = collect(keys(same_ws))
-      for i in 1:length(ids), j in (i + 1):length(ids)
-        exact_distance += PCM.euclidean_distance(
-          cached, PCM._cluster_as_view(same_ws[ids[i]]),
-          PCM._cluster_as_view(same_ws[ids[j]])) / float(window_size)
-      end
-    end
-    @test isapprox(actual["raw"]["distance"], exact_distance; atol=1e-8)
     @test isempty(cached.cluster_distance_cache)
   end
 end
