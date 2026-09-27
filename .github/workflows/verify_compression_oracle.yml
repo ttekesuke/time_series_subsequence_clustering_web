@@ -22,3 +22,5 @@ jobs:
         run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
       - name: Run equivalence oracle
         run: julia --project=. -e 'ENV["GENIE_ENV"]="test"; using Genie; Genie.loadapp(); include("test/polyphonic_compression_equivalence.jl")'
+      - name: Run MusicAnalyse observed metric equivalence
+        run: julia --project=. -e 'ENV["GENIE_ENV"]="test"; using Genie; Genie.loadapp(); include("test/analyse_music.jl")'
