@@ -28,12 +28,15 @@
             <option v-for="stream in result.streams" :key="stream.id" :value="String(stream.id)">
               {{ stream.label }}
             </option>
+            <option v-if="analysedViewMode === 'Complexity' && hasConcordance" value="concordance">
+              Concordance
+            </option>
           </select>
           <span class="timing-info">
             exact grid: {{ result.timing.quarterUnit }} quarter / {{ result.timing.stepCount }} steps
           </span>
           <div v-if="analysedViewMode === 'Complexity'" class="metric-legend">
-            <span v-for="(label, index) in metricLabelsWithConcordance" :key="label">
+            <span v-for="(label, index) in visibleMetricLabels" :key="label">
               <i :style="{ backgroundColor: metricColor(index) }"></i>{{ label }}
             </span>
           </div>
@@ -55,12 +58,12 @@
               v-else
               :ref="el => setAnalysisRollRef(el, index)"
               :streamValues="complexityStreams(section)"
-              :streamLabels="complexityLabels(section)"
+              :streamLabels="complexityLabels()"
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="1"
               :valueResolution="0.01"
-              :title="section.title + ' Complexity'"
+              :title="section.title + (analysisScope === 'concordance' ? ' Concordance' : ' Complexity')"
               @scroll="onScroll"
             />
           </div>
@@ -240,12 +243,17 @@ const sections = computed(() => {
   if (!data) return []
   return data.dimensionOrder
     .filter(key => !!data.dimensions[key])
-    .map(key => ({ key, title: titleMap[key] ?? key, dimension: data.dimensions[key] }))
+    .filter(key => analysisScope.value !== 'concordance' ||
+      data.dimensions[key]!.values.concordance.some(value => value != null))
+    .map(key => ({ key, title: titleMap[key] ?? key, dimension: data.dimensions[key]! }))
 })
 
-const metricKeys = ['prediction', 'diversity', 'shape', 'occurrence', 'mass', 'combined'] as const
-const metricLabels = ['Prediction', 'Diversity', 'Shape', 'Occurrence', 'Mass', 'Combined']
-const metricLabelsWithConcordance = [...metricLabels, 'Concordance']
+const metricKeys = ['prediction', 'diversity', 'shape', 'occurrence', 'mass'] as const
+const metricLabels = ['Prediction', 'Diversity', 'Shape', 'Occurrence', 'Mass']
+const hasConcordance = computed(() => sections.value.some(section =>
+  section.dimension.values.concordance.some(value => value != null)
+))
+const visibleMetricLabels = computed(() => analysisScope.value === 'concordance' ? ['Concordance'] : metricLabels)
 const metricColor = (index: number) => 'hsl(' + ((index * 137.5) % 360) + ', 70%, 45%)'
 
 const axisBundleFor = (section: any): AxisBundle => {
@@ -255,21 +263,14 @@ const axisBundleFor = (section: any): AxisBundle => {
 }
 
 const complexityStreams = (section: any) => {
+  if (analysisScope.value === 'concordance') return [section.dimension.values.concordance]
   const axes = axisBundleFor(section)
-  const rows: Array<Array<number | null>> = metricKeys.map(key =>
+  return metricKeys.map(key =>
     Array.isArray(axes[key]) ? (axes[key] as Array<number | null>) : Array(stepCount.value).fill(null)
   )
-  const conc = section.dimension?.values?.concordance
-  if (Array.isArray(conc) && conc.some((value: any) => value != null)) rows.push(conc)
-  return rows
 }
 
-const complexityLabels = (section: any) => {
-  const labels = [...metricLabels]
-  const conc = section.dimension?.values?.concordance
-  if (Array.isArray(conc) && conc.some((value: any) => value != null)) labels.push('Concordance')
-  return labels
-}
+const complexityLabels = () => visibleMetricLabels.value
 
 const compressedForSection = (section: any): CompressedSpan[] => {
   const dim = section.dimension as DimensionResult
@@ -399,6 +400,7 @@ const downloadAnalysisJson = () => {
 
 const setAnalysedViewMode = (mode: string) => {
   analysedViewMode.value = mode === 'Cluster' ? 'Cluster' : 'Complexity'
+  if (analysedViewMode.value === 'Cluster' && analysisScope.value === 'concordance') analysisScope.value = 'global'
   analysisRollRefs.value = []
 }
 
