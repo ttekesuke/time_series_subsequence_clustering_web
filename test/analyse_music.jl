@@ -42,6 +42,42 @@ const PCM = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
   @test isapprox(observed["raw"]["complexity"], expected.complexity; atol=1e-8)
 end
 
+@testset "observed calibrator reuses the exact preceding committed metrics" begin
+  function prepared_manager()
+    seed = Vector{Float64}[Float64[0.0], Float64[1.0]]
+    manager = PCM.Manager(seed, 0.02, 2, false;
+      range_min=0.0, range_max=1.0, max_set_size=1, recency=0.0)
+    PCM.process_data!(manager)
+    TC.initial_calc_values!(manager, PCM.transform_clusters(manager))
+    empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
+    return manager
+  end
+
+  baseline = prepared_manager()
+  cached = prepared_manager()
+  preceding = Ref(PCM.current_extended_metrics(cached))
+  for index in 1:24
+    value = Float64[float((index ÷ 3) % 2)]
+    expected = TC.evaluate_observed_complexity!(baseline, value)
+    actual = TC.evaluate_observed_complexity!(cached, value;
+      committed_metrics_ref=preceding)
+    for key in ("prediction", "diversity", "shape", "occurrence", "mass", "combined")
+      left, right = expected[key], actual[key]
+      @test isequal(left, right) ||
+        (left !== nothing && right !== nothing && isapprox(left, right; atol=1e-8))
+    end
+    for key in keys(expected["raw"])
+      left, right = expected["raw"][key], actual["raw"][key]
+      @test isequal(left, right) ||
+        (left !== nothing && right !== nothing && isapprox(left, right; atol=1e-8))
+    end
+    fresh = PCM.current_extended_metrics(cached)
+    for field in (:distance, :quantity, :complexity)
+      @test isapprox(getfield(preceding[], field), getfield(fresh, field); atol=1e-8)
+    end
+  end
+end
+
 function _score_with_divisions(divisions::Int, durations::Vector{Int})
   body = IOBuffer()
   for (index, duration) in enumerate(durations)
