@@ -78,7 +78,10 @@ const contentHeight = ref(1)
 const contentWidth = computed(() => Math.max(viewportWidth.value, props.maxSteps * props.stepWidth))
 const selectedKey = ref<string | null>(null)
 const selectedWindow = ref(2)
-const selectedSpan = computed(() => rows.find(row => row.key === selectedKey.value)?.span ?? null)
+const selectedSpan = computed(() => {
+  const key = selectedKey.value
+  return key === null ? null : rows.find(row => row.key === key)?.span ?? null
+})
 const summaryHeight = 24
 let rows: SpanRow[] = []
 let resizeObserver: ResizeObserver | null = null
