@@ -4,7 +4,28 @@ const MA = Main.TimeseriesClusteringAPI.MusicAnalysis
 const TC = Main.TimeseriesClusteringAPI.TimeSeriesController
 const PCM = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
 
-@testset "observed append matches candidate simulation metrics" begin
+function _exact_current_cluster_metrics(manager)
+  distance = 0.0
+  quantity = 0.0
+  complexity = 0.0
+  for (window_size, same_ws) in PCM.collect_clusters_each(manager)
+    ids = collect(keys(same_ws))
+    for i in 1:length(ids), j in (i + 1):length(ids)
+      distance += PCM.euclidean_distance(manager,
+        PCM._cluster_as_view(same_ws[ids[i]]),
+        PCM._cluster_as_view(same_ws[ids[j]])) / float(window_size)
+    end
+    for node in values(same_ws)
+      count = PCM._cluster_si_count(node)
+      count > 1 || continue
+      quantity += PCM.cluster_quantity_score(count, window_size)
+      complexity += PCM.calculate_cluster_complexity(manager, PCM._cluster_as_view(node))
+    end
+  end
+  return (distance=distance, quantity=quantity, complexity=complexity)
+end
+
+@testset "observed append matches exact committed clusters" begin
   seed = Vector{Float64}[Float64[0.0], Float64[1.0]]
   manager = PCM.Manager(seed, 0.02, 2, false;
     range_min=0.0, range_max=1.0, max_set_size=1, recency=0.0)
@@ -19,8 +40,9 @@ const PCM = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
     @test length(manager.data) == before
     committed = PCM.add_observed_and_calculate_all_extended!(manager, value)
     @test length(manager.data) == before + 1
+    exact = _exact_current_cluster_metrics(manager)
     for field in (:distance, :quantity, :complexity)
-      @test isapprox(getfield(committed, field), getfield(simulated, field); atol=1e-8, rtol=1e-8)
+      @test isapprox(getfield(committed, field), getfield(exact, field); atol=1e-8, rtol=1e-8)
     end
     expected_occurrence = simulated.occurrence_intervals
     actual_occurrence = committed.occurrence_intervals
@@ -35,11 +57,11 @@ const PCM = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
   end
 
   next_value = Float64[0.0]
-  expected = PCM.simulate_add_and_calculate_all_extended(manager, next_value)
   observed = TC.evaluate_observed_complexity!(manager, next_value)
-  @test isapprox(observed["raw"]["distance"], expected.distance; atol=1e-8)
-  @test isapprox(observed["raw"]["quantity"], expected.quantity; atol=1e-8)
-  @test isapprox(observed["raw"]["complexity"], expected.complexity; atol=1e-8)
+  exact = _exact_current_cluster_metrics(manager)
+  @test isapprox(observed["raw"]["distance"], exact.distance; atol=1e-8)
+  @test isapprox(observed["raw"]["quantity"], exact.quantity; atol=1e-8)
+  @test isapprox(observed["raw"]["complexity"], exact.complexity; atol=1e-8)
 end
 
 @testset "observed calibrator reuses the exact preceding committed metrics" begin
