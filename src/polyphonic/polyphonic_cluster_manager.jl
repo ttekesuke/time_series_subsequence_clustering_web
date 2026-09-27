@@ -2297,6 +2297,27 @@ function calculate_all_extended_current_state(
   mgr::Manager;
   occurrence_intervals::Union{Nothing,OccurrenceIntervalMetrics}=nothing,
 )::ExtendedClusterMetrics
+  # MusicAnalyse has already captured the occurrence preview and uses no
+  # recency weighting. The cache sums are the same sums used by candidate
+  # simulation, so there is no need to expand logical cluster refs again.
+  if mgr.recency <= 0.0 && occurrence_intervals !== nothing
+    sum_distances = 0.0
+    sum_quantities = 0.0
+    sum_complexities = 0.0
+    for (window_size, cache) in mgr.cluster_distance_cache
+      isempty(cache) || (sum_distances += sum(values(cache)) / float(window_size))
+    end
+    for cache in values(mgr.cluster_quantity_cache)
+      isempty(cache) || (sum_quantities += sum(values(cache)))
+    end
+    for cache in values(mgr.cluster_complexity_cache)
+      isempty(cache) || (sum_complexities += sum(values(cache)))
+    end
+    return ExtendedClusterMetrics(
+      sum_distances, sum_quantities, sum_complexities, occurrence_intervals,
+    )
+  end
+
   clusters_each = collect_clusters_each(mgr)
   sum_distances = 0.0
   sum_quantities = 0.0
