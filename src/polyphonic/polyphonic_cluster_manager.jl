@@ -2445,12 +2445,19 @@ function add_observed_and_calculate_all_extended!(
   metrics = calculate_all_extended_current_state(mgr;
     occurrence_intervals=temporal, observed_distance_sums=observed_distance_sums)
   if next_calibration_metrics_ref !== nothing
-    # The preview above scores the newly observed occurrence. The following
-    # calibrator instead reads the committed occurrence history, so retain
-    # that distinct temporal value without traversing the whole cluster tree.
-    committed_temporal = mgr.enable_occurrence_intervals ?
-      current_occurrence_interval_metrics(mgr, updated_clusters, length(mgr.data) - 1) :
-      EMPTY_OCCURRENCE_INTERVAL_METRICS
+    # Before the interval-history limit, previewing the just-observed gap
+    # yields exactly the committed interval metric: the same prefix, scale,
+    # and candidate are used by current_occurrence_interval_metrics. Once
+    # the history slides, retain its original rebuild semantics.
+    committed_temporal = temporal
+    if mgr.enable_occurrence_intervals
+      targets = _selected_latest_occurrence_targets(updated_clusters, length(mgr.data) - 1)
+      history_limit = max(Config.OCCURRENCE_INTERVAL_HISTORY_LIMIT, mgr.min_window_size)
+      if any(_cluster_si_count(target) > history_limit + 1 for (_, _, target) in targets)
+        committed_temporal = current_occurrence_interval_metrics(
+          mgr, updated_clusters, length(mgr.data) - 1)
+      end
+    end
     next_calibration_metrics_ref[] = ExtendedClusterMetrics(
       metrics.distance, metrics.quantity, metrics.complexity, committed_temporal,
     )
