@@ -169,12 +169,22 @@ end
     for (window, cache) in manager.cluster_distance_cache)
   empty!(manager.cluster_distance_cache)
 
+  changed_with_other_clusters = false
   for value in (0.05, 0.8, 0.85, 0.05, 0.1, 0.8, 0.85, 0.0, 0.05)
+    before = Dict((window_size, cluster_id) =>
+      Vector{Float64}[copy(row) for row in PCM._cluster_as_view(node)]
+      for (window_size, same_ws) in PCM.collect_clusters_each(manager)
+      for (cluster_id, node) in same_ws)
     observed = TC.evaluate_observed_complexity!(manager, Float64[value];
       committed_metrics_ref=preceding, observed_distance_sums=distance_sums)
     expected = 0.0
     for (window_size, same_ws) in PCM.collect_clusters_each(manager)
       ids = collect(keys(same_ws))
+      for (cluster_id, node) in same_ws
+        previous = get(before, (window_size, cluster_id), nothing)
+        changed_with_other_clusters |= previous !== nothing && length(ids) > 1 &&
+          previous != PCM._cluster_as_view(node)
+      end
       for i in 1:length(ids), j in (i + 1):length(ids)
         expected += PCM.euclidean_distance(
           manager, PCM._cluster_as_view(same_ws[ids[i]]),
@@ -183,6 +193,7 @@ end
     end
     @test isapprox(observed["raw"]["distance"], expected; atol=1e-8, rtol=1e-8)
   end
+  @test changed_with_other_clusters
 end
 
 function _score_with_divisions(divisions::Int, durations::Vector{Int})
