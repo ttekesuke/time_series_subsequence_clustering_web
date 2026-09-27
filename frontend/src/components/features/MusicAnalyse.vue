@@ -2,7 +2,7 @@
   <div class="music-analyse-root" ref="containerRef">
     <div v-if="errorMessage" class="error-banner">{{ errorMessage }}</div>
 
-    <div v-if="result" class="viz-container">
+    <div v-if="result" class="viz-container" :style="topRollHeight == null ? undefined : { gridTemplateRows: `${topRollHeight}px minmax(0, 1fr)` }">
       <div class="top-roll">
         <StreamsRoll
           ref="pianoRollRef"
@@ -15,7 +15,9 @@
           :valueResolution="1"
           :highlightIndices="highlightIndices"
           :highlightWindowSize="highlightWindowSize"
+          resizable
           title="MusicXML Piano Roll"
+          @resize-height="height => topRollHeight = height"
           @scroll="onScroll"
         />
       </div>
@@ -43,7 +45,13 @@
         </div>
 
         <div class="analysis-scroll">
-          <div v-for="(section, index) in sections" :key="section.key" class="analysis-row">
+          <div
+            v-for="(section, index) in sections"
+            :key="section.key"
+            class="analysis-row"
+            :class="{ 'analysis-row--complexity': analysedViewMode === 'Complexity' }"
+            :style="analysedViewMode === 'Complexity' ? { height: `${analysisRowHeights[section.key] ?? 184}px` } : undefined"
+          >
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
               :ref="el => setAnalysisRollRef(el, index)"
@@ -58,12 +66,14 @@
               v-else
               :ref="el => setAnalysisRollRef(el, index)"
               :streamValues="complexityStreams(section)"
-              :streamLabels="complexityLabels()"
+              :streamLabels="complexityLabels(section)"
               :stepWidth="computedStepWidth"
               :minValue="0"
-              :maxValue="1"
-              :valueResolution="0.01"
-              :title="section.title + (analysisScope === 'concordance' ? ' Concordance' : ' Complexity')"
+              :maxValue="section.key === 'stream_count' ? Math.max(result.streams.length, 1) : 1"
+              :valueResolution="section.key === 'stream_count' ? 1 : 0.01"
+              :title="section.title + (analysisScope === 'concordance' ? ' Concordance' : isDirectValueDimension(section.key) ? ' Value' : ' Complexity')"
+              resizable
+              @resize-height="height => analysisRowHeights[section.key] = height"
               @scroll="onScroll"
             />
           </div>
@@ -161,7 +171,7 @@ type DimensionResult = {
     streams: Record<string, Array<number | null>>
     concordance: Array<number | null>
   }
-  analysis: {
+  analysis?: {
     global: { axes: AxisBundle; raw: any }
     streams: Record<string, { axes: AxisBundle; raw: any }>
   }
@@ -198,6 +208,8 @@ const submitting = ref(false)
 const mergeThresholdRatio = ref(0.02)
 const analysedViewMode = ref<'Cluster' | 'Complexity'>('Complexity')
 const analysisScope = ref('global')
+const topRollHeight = ref<number | null>(null)
+const analysisRowHeights = ref<Record<string, number>>({})
 
 const containerRef = ref<HTMLElement | null>(null)
 const pianoRollRef = ref<any>(null)
@@ -237,12 +249,15 @@ const titleMap: Record<string, string> = {
   dissonance: 'DISSONANCE',
   stream_count: 'STREAM COUNT',
 }
+const isDirectValueDimension = (key: string) => key === 'dissonance' || key === 'stream_count'
 
 const sections = computed(() => {
   const data = result.value
   if (!data) return []
   return data.dimensionOrder
     .filter(key => !!data.dimensions[key])
+    .filter(key => analysedViewMode.value !== 'Cluster' || !isDirectValueDimension(key))
+    .filter(key => key !== 'stream_count' || analysisScope.value === 'global')
     .filter(key => analysisScope.value !== 'concordance' ||
       data.dimensions[key]!.values.concordance.some(value => value != null))
     .map(key => ({ key, title: titleMap[key] ?? key, dimension: data.dimensions[key]! }))
@@ -258,19 +273,26 @@ const metricColor = (index: number) => 'hsl(' + ((index * 137.5) % 360) + ', 70%
 
 const axisBundleFor = (section: any): AxisBundle => {
   const dim = section.dimension as DimensionResult
-  if (analysisScope.value === 'global') return dim.analysis.global?.axes ?? {}
-  return dim.analysis.streams?.[analysisScope.value]?.axes ?? dim.analysis.global?.axes ?? {}
+  if (analysisScope.value === 'global') return dim.analysis?.global?.axes ?? {}
+  return dim.analysis?.streams?.[analysisScope.value]?.axes ?? dim.analysis?.global?.axes ?? {}
 }
 
 const complexityStreams = (section: any) => {
   if (analysisScope.value === 'concordance') return [section.dimension.values.concordance]
+  if (isDirectValueDimension(section.key)) {
+    const values = section.dimension.values as DimensionResult['values']
+    return [analysisScope.value === 'global' ? values.global : values.streams[analysisScope.value] ?? []]
+  }
   const axes = axisBundleFor(section)
   return metricKeys.map(key =>
     Array.isArray(axes[key]) ? (axes[key] as Array<number | null>) : Array(stepCount.value).fill(null)
   )
 }
 
-const complexityLabels = () => visibleMetricLabels.value
+const complexityLabels = (section: { key: string }) =>
+  analysisScope.value !== 'concordance' && isDirectValueDimension(section.key)
+    ? [section.key === 'stream_count' ? 'Stream Count' : 'Dissonance']
+    : visibleMetricLabels.value
 
 const compressedForSection = (section: any): CompressedSpan[] => {
   const dim = section.dimension as DimensionResult
@@ -371,6 +393,7 @@ const submitMusicXml = async () => {
     result.value = data as MusicAnalysisResult
     lastResultJson.value = data
     analysisScope.value = 'global'
+    analysisRowHeights.value = {}
     highlightIndices.value = []
     highlightWindowSize.value = 0
     errorMessage.value = ''
@@ -506,6 +529,9 @@ defineExpose({
 .analysis-row {
   min-height: 92px;
   flex: 1 0 92px;
+}
+.analysis-row--complexity {
+  flex: 0 0 auto;
 }
 .empty-state {
   flex: 1 1 auto;
