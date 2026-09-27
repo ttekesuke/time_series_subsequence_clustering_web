@@ -4136,7 +4136,8 @@ function evaluate_observed_complexity!(
     phase_timings[:commit] += (time_ns() - phase_started) / 1.0e9
     phase_started = time_ns()
   end
-  PolyphonicClusterManager.update_caches_permanently!(manager)
+  PolyphonicClusterManager.update_caches_permanently!(manager;
+    phase_timings=phase_timings)
   if phase_timings !== nothing
     phase_timings[:cache] += (time_ns() - phase_started) / 1.0e9
   end

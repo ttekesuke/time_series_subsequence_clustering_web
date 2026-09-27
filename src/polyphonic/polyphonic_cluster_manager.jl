@@ -1314,18 +1314,27 @@ function weighted_complexity_score(
   return weight_sum > 0.0 ? (weighted / weight_sum) : 0.0
 end
 
-function update_caches_permanently!(mgr::Manager)
+function update_caches_permanently!(
+  mgr::Manager;
+  phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
+)
   # Cache writes are incremental. Materialize logical refs only for window
   # sizes that actually changed on this append instead of expanding the full
   # compressed cluster store.
+  phase_started = phase_timings === nothing ? 0 : time_ns()
   touched_windows = union(
     Set(keys(mgr.updated_cluster_ids_per_window_for_calculate_distance)),
     Set(keys(mgr.updated_cluster_ids_per_window_for_calculate_quantities)),
   )
   clusters_each = collect_clusters_each(mgr, touched_windows)
+  if phase_timings !== nothing
+    phase_timings[:cache_collect] += (time_ns() - phase_started) / 1.0e9
+    phase_timings[:cache_windows] += length(clusters_each)
+  end
 
   for (window_size, same_ws) in clusters_each
     all_ids = collect(keys(same_ws))
+    phase_started = phase_timings === nothing ? 0 : time_ns()
 
     # ----------------------------------------------------------
     # Distance cache (incremental)
@@ -1343,6 +1352,7 @@ function update_caches_permanently!(mgr::Manager)
           node2 = same_ws[cid2]
           key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
           cache[key] = euclidean_distance(mgr, _cluster_as_view(node1), _cluster_as_view(node2))
+          phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
         end
       end
     elseif updated_ids_set !== nothing && !isempty(updated_ids_set)
@@ -1355,8 +1365,13 @@ function update_caches_permanently!(mgr::Manager)
           node2 = same_ws[cid2]
           key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
           cache[key] = euclidean_distance(mgr, _cluster_as_view(node1), _cluster_as_view(node2))
+          phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
         end
       end
+    end
+    if phase_timings !== nothing
+      phase_timings[:cache_distance] += (time_ns() - phase_started) / 1.0e9
+      phase_started = time_ns()
     end
 
     # ----------------------------------------------------------
@@ -1373,6 +1388,7 @@ function update_caches_permanently!(mgr::Manager)
         q = cluster_quantity_score(_cluster_si_count(node), window_size)
         q_cache[cid] = q
         c_cache[cid] = calculate_cluster_complexity(mgr, _cluster_as_view(node))
+        phase_timings !== nothing && (phase_timings[:cache_complexity_evals] += 1.0)
       end
     elseif updated_quant_set !== nothing && !isempty(updated_quant_set)
       for cid in updated_quant_set
@@ -1383,15 +1399,25 @@ function update_caches_permanently!(mgr::Manager)
         q = cluster_quantity_score(_cluster_si_count(node), window_size)
         q_cache[cid] = q
         c_cache[cid] = calculate_cluster_complexity(mgr, _cluster_as_view(node))
+        phase_timings !== nothing && (phase_timings[:cache_complexity_evals] += 1.0)
       end
+    end
+    if phase_timings !== nothing
+      phase_timings[:cache_quantity] += (time_ns() - phase_started) / 1.0e9
     end
   end
 
+  phase_started = phase_timings === nothing ? 0 : time_ns()
   if mgr.enable_occurrence_intervals
     now_index = length(mgr.data) - 1
-    for (window_size, cluster_id, node) in _selected_latest_occurrence_targets(clusters_each, now_index)
+    targets = _selected_latest_occurrence_targets(clusters_each, now_index)
+    phase_timings !== nothing && (phase_timings[:cache_occurrence_targets] += length(targets))
+    for (window_size, cluster_id, node) in targets
       _sync_occurrence_interval_state!(mgr, window_size, cluster_id, node)
     end
+  end
+  if phase_timings !== nothing
+    phase_timings[:cache_occurrence] += (time_ns() - phase_started) / 1.0e9
   end
 
   # reset updated ids (Rails behavior)

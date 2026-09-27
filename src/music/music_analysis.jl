@@ -567,6 +567,14 @@ function _analyse_manager(
       :simulation => 0.0,
       :commit => 0.0,
       :cache => 0.0,
+      :cache_collect => 0.0,
+      :cache_distance => 0.0,
+      :cache_quantity => 0.0,
+      :cache_occurrence => 0.0,
+      :cache_windows => 0.0,
+      :cache_distance_pairs => 0.0,
+      :cache_complexity_evals => 0.0,
+      :cache_occurrence_targets => 0.0,
     )
     last_progress_time = time()
     last_progress_steps = 0
@@ -590,8 +598,9 @@ function _analyse_manager(
         now = time()
         interval_s = now - last_progress_time
         interval_steps = processed - last_progress_steps
-        measured_s = sum(values(phase_timings))
+        measured_s = sum(phase_timings[phase] for phase in (:calibrator, :prediction, :simulation, :commit, :cache))
         @info "[analyse_music] clustering progress" label=String(log_label) progress="$(percent)%" processed=processed total=total_observed_steps elapsed_s=round(now - log_started_at; digits=2) interval_s=round(interval_s; digits=2) ms_per_step=round(1000 * interval_s / interval_steps; digits=1) calibrator_s=round(phase_timings[:calibrator]; digits=2) prediction_s=round(phase_timings[:prediction]; digits=2) simulation_s=round(phase_timings[:simulation]; digits=2) commit_s=round(phase_timings[:commit]; digits=2) cache_s=round(phase_timings[:cache]; digits=2) other_s=round(max(interval_s - measured_s, 0.0); digits=2) active_tasks=length(manager.tasks)
+        @info "[analyse_music] cache breakdown" label=String(log_label) progress="$(percent)%" collect_s=round(phase_timings[:cache_collect]; digits=2) distance_s=round(phase_timings[:cache_distance]; digits=2) quantity_s=round(phase_timings[:cache_quantity]; digits=2) occurrence_s=round(phase_timings[:cache_occurrence]; digits=2) windows=Int(phase_timings[:cache_windows]) distance_pairs=Int(phase_timings[:cache_distance_pairs]) complexity_evals=Int(phase_timings[:cache_complexity_evals]) occurrence_targets=Int(phase_timings[:cache_occurrence_targets])
         for phase in keys(phase_timings)
           phase_timings[phase] = 0.0
         end
