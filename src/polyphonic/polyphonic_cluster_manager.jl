@@ -1404,24 +1404,37 @@ function update_caches_permanently!(
   prefix_distances = Dict{Tuple{UInt,UInt},Tuple{Int,Float64}}()
   prefix_complexities = Dict{UInt,Tuple{Int,Float64}}()
   function observed_pair_distance(node1::SpanClusterRef, node2::SpanClusterRef, window_size::Int)
+    started = phase_timings === nothing ? 0 : time_ns()
     id1, id2 = objectid(node1.span), objectid(node2.span)
     key = id1 < id2 ? (id1, id2) : (id2, id1)
     previous = get(prefix_distances, key, nothing)
-    squared = if previous !== nothing && previous[1] + 1 == window_size
+    prefix_hit = previous !== nothing && previous[1] + 1 == window_size
+    squared = if prefix_hit
       d = min_avg_distance(mgr, node1.span.as_max[window_size], node2.span.as_max[window_size])
-      phase_timings !== nothing && (phase_timings[:cache_distance_prefix_hits] += 1.0)
       previous[2] + d * d
     else
       squared_euclidean_distance(mgr, _cluster_as_view(node1), _cluster_as_view(node2))
     end
     prefix_distances[key] = (window_size, squared)
-    return sqrt(squared)
+    result = sqrt(squared)
+    if phase_timings !== nothing
+      if prefix_hit
+        phase_timings[:cache_distance_prefix_hits] += 1.0
+        phase_timings[:cache_distance_new_prefix_s] += (time_ns() - started) / 1.0e9
+      else
+        phase_timings[:cache_distance_new_full_pairs] += 1.0
+        phase_timings[:cache_distance_new_full_rows] += window_size
+        phase_timings[:cache_distance_new_full_s] += (time_ns() - started) / 1.0e9
+      end
+    end
+    return result
   end
   function observed_cluster_complexity(node::SpanClusterRef, window_size::Int)
+    started = phase_timings === nothing ? 0 : time_ns()
     key = objectid(node.span)
     previous = get(prefix_complexities, key, nothing)
-    total = if previous !== nothing && previous[1] + 1 == window_size
-      phase_timings !== nothing && (phase_timings[:cache_complexity_prefix_hits] += 1.0)
+    prefix_hit = previous !== nothing && previous[1] + 1 == window_size
+    total = if prefix_hit
       previous[2] + step_distance(mgr, node.span.as_max[window_size - 1], node.span.as_max[window_size])
     else
       representative = _cluster_as_view(node)
@@ -1429,7 +1442,17 @@ function update_caches_permanently!(
         for i in 1:(window_size - 1))
     end
     prefix_complexities[key] = (window_size, total)
-    return total / float(window_size - 1)
+    result = total / float(window_size - 1)
+    if phase_timings !== nothing
+      if prefix_hit
+        phase_timings[:cache_complexity_prefix_hits] += 1.0
+        phase_timings[:cache_complexity_prefix_s] += (time_ns() - started) / 1.0e9
+      else
+        phase_timings[:cache_complexity_full_rows] += window_size - 1
+        phase_timings[:cache_complexity_full_s] += (time_ns() - started) / 1.0e9
+      end
+    end
+    return result
   end
 
   window_sizes = observed_distance_sums === nothing ?
@@ -1473,8 +1496,13 @@ function update_caches_permanently!(
               old2 = get(observed_old_representatives, (window_size, cid2), nothing)
               previous1 = old1 === nothing ? _cluster_as_view(node1) : old1
               previous2 = old2 === nothing ? _cluster_as_view(node2) : old2
+              old_started = phase_timings === nothing ? 0 : time_ns()
               current_sum -= euclidean_distance(mgr, previous1, previous2)
-              phase_timings !== nothing && (phase_timings[:cache_distance_revised_pairs] += 1.0)
+              if phase_timings !== nothing
+                phase_timings[:cache_distance_revised_pairs] += 1.0
+                phase_timings[:cache_distance_old_full_rows] += window_size
+                phase_timings[:cache_distance_old_full_s] += (time_ns() - old_started) / 1.0e9
+              end
             end
             current_sum += new_distance
             phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
