@@ -4099,8 +4099,8 @@ function evaluate_observed_complexity!(
     manager,
     value,
     phase_timings=phase_timings,
+    next_calibration_metrics_ref=committed_metrics_ref,
   )
-  committed_metrics_ref !== nothing && (committed_metrics_ref[] = metrics)
 
   diversity = calibrate_metric(metrics.distance, calibrator.base.distance)
   shape = calibrate_metric(metrics.complexity, calibrator.base.complexity)
