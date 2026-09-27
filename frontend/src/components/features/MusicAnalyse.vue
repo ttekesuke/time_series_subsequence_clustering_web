@@ -162,9 +162,7 @@ type AxisBundle = {
   prediction?: Array<number | null>
   diversity?: Array<number | null>
   shape?: Array<number | null>
-  occurrence?: Array<number | null>
   mass?: Array<number | null>
-  combined?: Array<number | null>
 }
 type DimensionResult = {
   values: {
@@ -270,8 +268,8 @@ const sections = computed(() => {
     .map(key => ({ key, title: titleMap[key] ?? key, dimension: data.dimensions[key]! }))
 })
 
-const metricKeys = ['prediction', 'diversity', 'shape', 'occurrence', 'mass'] as const
-const metricLabels = ['Prediction', 'Diversity', 'Shape', 'Occurrence', 'Mass']
+const metricKeys = ['prediction', 'diversity', 'shape', 'mass'] as const
+const metricLabels = ['Prediction', 'Diversity', 'Shape', 'Mass']
 const hasConcordance = computed(() => sections.value.some(section =>
   section.dimension.values.concordance.some(value => value != null)
 ))
