@@ -139,10 +139,49 @@ end
     expected = TC.evaluate_observed_complexity!(baseline, row)
     actual = TC.evaluate_observed_complexity!(cached, row;
       committed_metrics_ref=preceding, observed_distance_sums=distance_sums)
-    for key in ("distance", "quantity", "complexity")
+    for key in ("quantity", "complexity")
       @test isapprox(actual["raw"][key], expected["raw"][key]; atol=1e-8)
     end
+    exact_distance = 0.0
+    for (window_size, same_ws) in PCM.collect_clusters_each(cached)
+      ids = collect(keys(same_ws))
+      for i in 1:length(ids), j in (i + 1):length(ids)
+        exact_distance += PCM.euclidean_distance(
+          cached, PCM._cluster_as_view(same_ws[ids[i]]),
+          PCM._cluster_as_view(same_ws[ids[j]])) / float(window_size)
+      end
+    end
+    @test isapprox(actual["raw"]["distance"], exact_distance; atol=1e-8)
     @test isempty(cached.cluster_distance_cache)
+  end
+end
+
+@testset "observed distances follow changing cluster representatives" begin
+  seed = Vector{Float64}[Float64[0.0], Float64[0.0]]
+  manager = PCM.Manager(seed, 0.1, 2, false;
+    range_min=0.0, range_max=1.0, max_set_size=1,
+    enable_occurrence_intervals=false, recency=0.0)
+  PCM.process_data!(manager)
+  TC.initial_calc_values!(manager, PCM.transform_clusters(manager))
+  empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
+  preceding = Ref(PCM.current_extended_metrics(manager))
+  distance_sums = Dict(window => sum(values(cache))
+    for (window, cache) in manager.cluster_distance_cache)
+  empty!(manager.cluster_distance_cache)
+
+  for value in (0.05, 0.8, 0.85, 0.05, 0.1, 0.8, 0.85, 0.0, 0.05)
+    observed = TC.evaluate_observed_complexity!(manager, Float64[value];
+      committed_metrics_ref=preceding, observed_distance_sums=distance_sums)
+    expected = 0.0
+    for (window_size, same_ws) in PCM.collect_clusters_each(manager)
+      ids = collect(keys(same_ws))
+      for i in 1:length(ids), j in (i + 1):length(ids)
+        expected += PCM.euclidean_distance(
+          manager, PCM._cluster_as_view(same_ws[ids[i]]),
+          PCM._cluster_as_view(same_ws[ids[j]])) / float(window_size)
+      end
+    end
+    @test isapprox(observed["raw"]["distance"], expected; atol=1e-8, rtol=1e-8)
   end
 end
 
