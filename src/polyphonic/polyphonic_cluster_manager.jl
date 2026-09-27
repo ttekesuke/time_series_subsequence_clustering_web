@@ -1250,12 +1250,16 @@ function process_data!(mgr::Manager)
   return nothing
 end
 
-function add_data_point_permanently!(mgr::Manager, val::PolySet)
+function add_data_point_permanently!(
+  mgr::Manager, val::PolySet;
+  old_representatives::Union{Nothing,Dict{Tuple{Int,Int},PolySeq}}=nothing,
+)
   push!(mgr.data, val)
   length(mgr.data) < mgr.min_window_size && return nothing
   _initialize_root_cluster_if_ready!(mgr) && return nothing
   mgr.cluster_horizon = length(mgr.data)
-  clustering_subsequences_incremental!(mgr, length(mgr.data) - 1)
+  clustering_subsequences_incremental!(mgr, length(mgr.data) - 1;
+    old_representatives=old_representatives)
 
   # Delaying physical re-compaction does not change any virtual node, ID, si,
   # representative, cache, or task. It only allows a few adjacent singleton
@@ -1366,10 +1370,14 @@ function update_caches_permanently!(
   mgr::Manager;
   phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
   observed_distance_sums::Union{Nothing,Dict{Int,Float64}}=nothing,
+  observed_old_representatives::Union{Nothing,Dict{Tuple{Int,Int},PolySeq}}=nothing,
+  observed_first_new_id::Int=typemax(Int),
 )
   observed_distance_sums !== nothing &&
     mgr.calculate_distance_when_added_subsequence_to_cluster &&
     error("Observed distance sums require new-cluster-only distance updates.")
+  observed_distance_sums !== nothing && observed_old_representatives === nothing &&
+    error("Observed distance sums require the pre-append representative snapshot.")
   # Cache writes are incremental. Materialize logical refs only for window
   # sizes that actually changed on this append instead of expanding the full
   # compressed cluster store.
@@ -1379,6 +1387,12 @@ function update_caches_permanently!(
     Set(keys(mgr.updated_cluster_ids_per_window_for_calculate_quantities)),
   )
   clusters_each = collect_clusters_each(mgr, touched_windows)
+  changed_by_window = Dict{Int,Set{Int}}()
+  if observed_old_representatives !== nothing
+    for (window_size, cluster_id) in keys(observed_old_representatives)
+      push!(get!(changed_by_window, window_size, Set{Int}()), cluster_id)
+    end
+  end
   if phase_timings !== nothing
     phase_timings[:cache_collect] += (time_ns() - phase_started) / 1.0e9
     phase_timings[:cache_windows] += length(clusters_each)
@@ -1442,13 +1456,27 @@ function update_caches_permanently!(
             phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
           end
         end
-      elseif updated_ids_set !== nothing
-        for cid1 in updated_ids_set
+      else
+        affected_ids = union(
+          updated_ids_set === nothing ? Set{Int}() : updated_ids_set,
+          get(changed_by_window, window_size, Set{Int}()),
+        )
+        for cid1 in affected_ids
           node1 = get(same_ws, cid1, nothing)
           node1 === nothing && continue
           for cid2 in all_ids
-            (cid1 == cid2 || (cid2 in updated_ids_set && cid2 < cid1)) && continue
-            current_sum += observed_pair_distance(node1, same_ws[cid2], window_size)
+            (cid1 == cid2 || (cid2 in affected_ids && cid2 < cid1)) && continue
+            node2 = same_ws[cid2]
+            new_distance = observed_pair_distance(node1, node2, window_size)
+            if cid1 < observed_first_new_id && cid2 < observed_first_new_id
+              old1 = get(observed_old_representatives, (window_size, cid1), nothing)
+              old2 = get(observed_old_representatives, (window_size, cid2), nothing)
+              previous1 = old1 === nothing ? _cluster_as_view(node1) : old1
+              previous2 = old2 === nothing ? _cluster_as_view(node2) : old2
+              current_sum -= euclidean_distance(mgr, previous1, previous2)
+              phase_timings !== nothing && (phase_timings[:cache_distance_revised_pairs] += 1.0)
+            end
+            current_sum += new_distance
             phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
           end
         end
@@ -2509,7 +2537,11 @@ function add_observed_and_calculate_all_extended!(
   observed_distance_sums::Union{Nothing,Dict{Int,Float64}}=nothing,
 )::ExtendedClusterMetrics
   started = phase_timings === nothing ? 0 : time_ns()
-  add_data_point_permanently!(mgr, copy(value))
+  old_representatives = observed_distance_sums === nothing ? nothing :
+    Dict{Tuple{Int,Int},PolySeq}()
+  first_new_id = mgr.cluster_id_counter
+  add_data_point_permanently!(mgr, copy(value);
+    old_representatives=old_representatives)
   if phase_timings !== nothing
     phase_timings[:commit] += (time_ns() - started) / 1.0e9
     started = time_ns()
@@ -2530,7 +2562,9 @@ function add_observed_and_calculate_all_extended!(
   end
 
   update_caches_permanently!(mgr; phase_timings=phase_timings,
-    observed_distance_sums=observed_distance_sums)
+    observed_distance_sums=observed_distance_sums,
+    observed_old_representatives=old_representatives,
+    observed_first_new_id=first_new_id)
   if phase_timings !== nothing
     phase_timings[:cache] += (time_ns() - started) / 1.0e9
     started = time_ns()
@@ -3011,7 +3045,10 @@ function _task_member_subset(
   return result
 end
 
-function clustering_subsequences_incremental!(mgr::Manager, data_index::Int)
+function clustering_subsequences_incremental!(
+  mgr::Manager, data_index::Int;
+  old_representatives::Union{Nothing,Dict{Tuple{Int,Int},PolySeq}}=nothing,
+)
   update_value_width!(mgr, data_index)
 
   current_tasks = copy(mgr.tasks)
@@ -3046,7 +3083,8 @@ function clustering_subsequences_incremental!(mgr::Manager, data_index::Int)
         latest_start,
         new_length,
         keys_to_parent,
-        task,
+        task;
+        old_representatives=old_representatives,
       )
     else
       process_new_clusters!(
@@ -3064,7 +3102,8 @@ function clustering_subsequences_incremental!(mgr::Manager, data_index::Int)
   end
 
   root_max_distance = max_distance_for_length(mgr.min_window_size)
-  process_root_clusters!(mgr, data_index, root_max_distance)
+  process_root_clusters!(mgr, data_index, root_max_distance;
+    old_representatives=old_representatives)
 end
 
 
@@ -3077,7 +3116,8 @@ function process_existing_clusters!(
   latest_start::Int,
   new_length::Int,
   keys_to_parent::Vector{Int},
-  task::ClusterTask,
+  task::ClusterTask;
+  old_representatives::Union{Nothing,Dict{Tuple{Int,Int},PolySeq}}=nothing,
 )
   extended_member_distances = _extend_task_member_squared_distances(
     mgr,
@@ -3122,6 +3162,11 @@ function process_existing_clusters!(
     # This exact equality shortcut removes the dominant O(support * window)
     # rebuild on long exact repeats without changing any logical result.
     if _cluster_as_view(best_child) != latest_seq
+      if old_representatives !== nothing
+        get!(old_representatives, (new_length, best_cluster_id)) do
+          deep_copy_seq(_cluster_as_view(best_child))
+        end
+      end
       starts = _cluster_si(best_child)
       sequences = [mgr.data[(s + 1):(s + new_length)] for s in starts]
       _replace_cluster_representative!(
@@ -3308,7 +3353,10 @@ function process_new_clusters!(
   end
 end
 
-function process_root_clusters!(mgr::Manager, data_index::Int, max_distance::Float64)
+function process_root_clusters!(
+  mgr::Manager, data_index::Int, max_distance::Float64;
+  old_representatives::Union{Nothing,Dict{Tuple{Int,Int},PolySeq}}=nothing,
+)
   latest_start = data_index - 1
   latest_start < 0 && return
   latest_seq = mgr.data[(latest_start + 1):(latest_start + mgr.min_window_size)]
@@ -3336,6 +3384,11 @@ function process_root_clusters!(mgr::Manager, data_index::Int, max_distance::Flo
     _append_cluster_start!(mgr, best_cluster, latest_start)
 
     if _cluster_as(best_cluster) != latest_seq
+      if old_representatives !== nothing
+        get!(old_representatives, (mgr.min_window_size, best_cluster_id)) do
+          deep_copy_seq(_cluster_as_view(best_cluster))
+        end
+      end
       sequences = [
         mgr.data[(s + 1):(s + mgr.min_window_size)]
         for s in _cluster_si(best_cluster)
