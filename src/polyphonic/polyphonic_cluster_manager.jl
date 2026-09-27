@@ -1444,8 +1444,10 @@ function update_caches_permanently!(
     now_index = length(mgr.data) - 1
     targets = _selected_latest_occurrence_targets(clusters_each, now_index)
     phase_timings !== nothing && (phase_timings[:cache_occurrence_targets] += length(targets))
-    for (window_size, cluster_id, node) in targets
-      _sync_occurrence_interval_state!(mgr, window_size, cluster_id, node)
+    if observed_distance_sums === nothing
+      for (window_size, cluster_id, node) in targets
+        _sync_occurrence_interval_state!(mgr, window_size, cluster_id, node)
+      end
     end
   end
   if phase_timings !== nothing
@@ -2140,6 +2142,7 @@ function _preview_occurrence_interval_metrics(
   window_size::Int,
   cluster_id::Int,
   node,
+  use_incremental_state::Bool=true,
 )::OccurrenceIntervalMetrics
   starts = sort!(unique(collect(_cluster_si_view(node))))
   occurrence_count = length(starts)
@@ -2148,7 +2151,7 @@ function _preview_occurrence_interval_metrics(
 
   committed_count = occurrence_count - 1
   state = get(mgr.occurrence_interval_states, (window_size, cluster_id), nothing)
-  if state !== nothing &&
+  if use_incremental_state && state !== nothing &&
       state.manager !== nothing &&
       state.source_occurrence_count == committed_count
     interval_manager = state.manager::Manager
@@ -2223,6 +2226,7 @@ function latest_occurrence_interval_metrics(
   mgr::Manager,
   clusters_each,
   now_index::Int,
+  use_incremental_state::Bool=true,
 )::OccurrenceIntervalMetrics
   targets = _selected_latest_occurrence_targets(clusters_each, now_index)
   isempty(targets) && return EMPTY_OCCURRENCE_INTERVAL_METRICS
@@ -2235,7 +2239,8 @@ function latest_occurrence_interval_metrics(
   ready_count = 0
 
   for (window_size, cluster_id, target) in targets
-    temporal = _preview_occurrence_interval_metrics(mgr, window_size, cluster_id, target)
+    temporal = _preview_occurrence_interval_metrics(
+      mgr, window_size, cluster_id, target, use_incremental_state)
     temporal.ready || continue
 
     sum_distance += temporal.distance
@@ -2429,7 +2434,8 @@ function add_observed_and_calculate_all_extended!(
   )
   updated_clusters = collect_clusters_each(mgr, touched_windows)
   temporal = mgr.enable_occurrence_intervals ?
-    latest_occurrence_interval_metrics(mgr, updated_clusters, length(mgr.data) - 1) :
+    latest_occurrence_interval_metrics(mgr, updated_clusters, length(mgr.data) - 1,
+      observed_distance_sums === nothing) :
     EMPTY_OCCURRENCE_INTERVAL_METRICS
   if phase_timings !== nothing
     phase_timings[:metrics] += (time_ns() - started) / 1.0e9
