@@ -828,23 +828,29 @@ function analyse_music_payload(params, scoring)
     stream_compressed_payload = Dict{String,Any}()
 
     if dim == "stream_count"
-      global_series = _make_poly_series(stream_count)
       global_display = copy(stream_count)
-      analysed_global = _analyse_manager(global_series, scoring;
-        range_min=range_min, range_max=range_max,
-        merge_threshold_ratio=merge_threshold_ratio,
-        metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
-        compact_cluster_view=compact_cluster_view, log_label="$(dim)/global")
       dimensions[dim] = Dict(
-        "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance),
-        "analysis"=>Dict("global"=>Dict("axes"=>analysed_global["axes"], "raw"=>analysed_global["raw"]), "streams"=>stream_analysis_payload),
-        "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload),
-        "compressedClusters"=>Dict("global"=>analysed_global["compressedClusters"], "streams"=>stream_compressed_payload))
-      @info "[analyse_music] dimension analysis done" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
+        "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance))
+      @info "[analyse_music] dimension values ready" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
       continue
     end
 
     stream_source = scalar_streams[dim]
+    if dim == "dissonance"
+      global_display = copy(global_dissonance)
+      for id in stream_ids
+        stream_values_payload[string(id)] = stream_source[id]
+      end
+      for step in 1:step_count
+        active_vals = Float64[float(stream_source[id][step]) for id in stream_ids if !isempty(notes_by_stream[id][step])]
+        concordance[step] = _concordance(active_vals, 1.0)
+      end
+      dimensions[dim] = Dict(
+        "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance))
+      @info "[analyse_music] dimension values ready" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
+      continue
+    end
+
     for id in stream_ids
       stream_values_payload[string(id)] = stream_source[id]
       analysed_stream = _analyse_manager(_make_poly_series(stream_source[id]), scoring;
@@ -877,15 +883,10 @@ function analyse_music_payload(params, scoring)
       continue
     end
 
-    if dim == "tie" || dim == "dissonance"
-      if dim == "dissonance"
-        global_display = copy(global_dissonance)
-      end
+    if dim == "tie"
       for step in 1:step_count
         active_vals = Float64[float(stream_source[id][step]) for id in stream_ids if !isempty(notes_by_stream[id][step])]
-        if dim == "tie"
-          global_display[step] = isempty(active_vals) ? 0.0 : sum(active_vals) / float(length(active_vals))
-        end
+        global_display[step] = isempty(active_vals) ? 0.0 : sum(active_vals) / float(length(active_vals))
         concordance[step] = _concordance(active_vals, 1.0)
       end
       analysed_global = _analyse_manager(_make_poly_series(global_display), scoring;
