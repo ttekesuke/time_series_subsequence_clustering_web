@@ -1,4 +1,5 @@
 using Test
+using JSON3
 
 const MA = Main.TimeseriesClusteringAPI.MusicAnalysis
 const TC = Main.TimeseriesClusteringAPI.TimeSeriesController
@@ -336,6 +337,28 @@ end
   @test !haskey(note_dimension, "clusters")
   @test !isempty(note_dimension["compressedClusters"]["global"])
   @test haskey(note_dimension["compressedClusters"]["streams"], "1")
+end
+
+@testset "compressed cluster response is shallow even for deep trees" begin
+  seed = Vector{Float64}[Float64[0.0], Float64[1.0]]
+  manager = PCM.Manager(seed, 0.02, 2, false;
+    range_min=0.0, range_max=1.0, max_set_size=1)
+  root = PCM.CompressedClusterSpan(2, 2, Int[1], Int[0], seed,
+    Int[0], Int[250], PCM.CompressedClusterSpan[])
+  parent = root
+  for window in 3:202
+    child = PCM.CompressedClusterSpan(window, window, Int[window], Int[0], seed,
+      Int[0], Int[250], PCM.CompressedClusterSpan[])
+    push!(parent.children, child)
+    parent = child
+  end
+  manager.cluster_spans = [root]
+  payload = PCM.compressed_clusters_payload(manager)
+  @test length(payload) == 201
+  @test payload[1]["parent_index"] === nothing
+  @test all(payload[i]["parent_index"] == i - 2 for i in 2:length(payload))
+  @test all(!haskey(span, "children") for span in payload)
+  @test length(JSON3.write(payload)) > 0
 end
 
 @testset "analyse_music rejects denominator above 60 before clustering" begin
