@@ -87,6 +87,7 @@ end
       end
     end
     @test isempty(cached.cluster_distance_cache)
+    @test isempty(cached.occurrence_interval_states)
   end
 end
 
