@@ -24,6 +24,17 @@
       <div>Step: {{ hoverInfo.step }}</div>
       <div>Value: {{ hoverInfo.value }}</div>
     </div>
+    <div
+      v-if="resizable"
+      class="resize-handle"
+      role="separator"
+      aria-label="Resize roll height"
+      aria-orientation="horizontal"
+      tabindex="0"
+      @pointerdown="startResize"
+      @keydown.up.prevent="resizeBy(-16)"
+      @keydown.down.prevent="resizeBy(16)"
+    ></div>
   </div>
 </template>
 
@@ -42,6 +53,7 @@ const props = defineProps({
   highlightWindowSize: { type: Number, default: 0 },
   playheadStep: { type: Number, default: -1 },
   streamLabels: { type: Array as () => string[], default: () => [] },
+  resizable: { type: Boolean, default: false },
 
   // Left label text
   title: { type: String, default: '' },
@@ -50,7 +62,10 @@ const props = defineProps({
   valueResolution: { type: Number, default: 1 }
 })
 
-const emit = defineEmits(['scroll'])
+const emit = defineEmits<{
+  scroll: [event: Event]
+  'resize-height': [height: number]
+}>()
 
 const container = ref<HTMLElement | null>(null)
 const scrollWrapper = ref<HTMLElement | null>(null)
@@ -79,6 +94,30 @@ const getStreamLabel = (streamIndex: number) => {
 }
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
+const resizeBy = (delta: number) => {
+  if (container.value) emit('resize-height', Math.max(92, Math.round(container.value.getBoundingClientRect().height + delta)))
+}
+
+let resizeStartY = 0
+let resizeStartHeight = 0
+const stopResize = () => {
+  window.removeEventListener('pointermove', moveResize)
+  window.removeEventListener('pointerup', stopResize)
+  window.removeEventListener('pointercancel', stopResize)
+}
+const moveResize = (event: PointerEvent) => {
+  emit('resize-height', Math.max(92, Math.round(resizeStartHeight + event.clientY - resizeStartY)))
+}
+const startResize = (event: PointerEvent) => {
+  if (event.button !== 0 || !container.value) return
+  event.preventDefault()
+  stopResize()
+  resizeStartY = event.clientY
+  resizeStartHeight = container.value.getBoundingClientRect().height
+  window.addEventListener('pointermove', moveResize)
+  window.addEventListener('pointerup', stopResize)
+  window.addEventListener('pointercancel', stopResize)
+}
 const MAX_CANVAS_WIDTH = 30000
 
 /**
@@ -344,6 +383,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopResize()
   resizeObserver?.disconnect()
   resizeObserver = null
 })
@@ -408,5 +448,20 @@ defineExpose({ scrollWrapper, redraw: draw, scrollToStep })
   border-radius: 4px;
   white-space: nowrap;
   z-index: 10;
+}
+.resize-handle {
+  position: absolute;
+  bottom: 0;
+  left: 80px;
+  right: 0;
+  height: 9px;
+  cursor: ns-resize;
+  touch-action: none;
+  background: linear-gradient(to bottom, transparent 3px, #999 4px, transparent 5px);
+  z-index: 11;
+}
+.resize-handle:focus-visible {
+  outline: 2px solid #1976d2;
+  outline-offset: -2px;
 }
 </style>
