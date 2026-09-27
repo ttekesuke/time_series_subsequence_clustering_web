@@ -576,17 +576,12 @@ function _analyse_manager(
     "prediction" => Any[nothing for _ in 1:n],
     "diversity" => Any[nothing for _ in 1:n],
     "shape" => Any[nothing for _ in 1:n],
-    "occurrence" => Any[nothing for _ in 1:n],
     "mass" => Any[nothing for _ in 1:n],
-    "combined" => Any[nothing for _ in 1:n],
   )
   raw = Dict(
     "distance" => Any[nothing for _ in 1:n],
     "quantity" => Any[nothing for _ in 1:n],
     "complexity" => Any[nothing for _ in 1:n],
-    "occurrenceDistance" => Any[nothing for _ in 1:n],
-    "occurrenceQuantity" => Any[nothing for _ in 1:n],
-    "occurrenceComplexity" => Any[nothing for _ in 1:n],
   )
   if n < min_window
     !isempty(log_label) && @info "[analyse_music] clustering skipped" label=String(log_label) reason="series shorter than min window" steps=n
@@ -606,6 +601,7 @@ function _analyse_manager(
     stream_axis_offset=stream_axis_offset,
     stream_axis_capacity=max(stream_axis_capacity, 1),
     recency=0.0,
+    enable_occurrence_intervals=false,
   )
   PolyphonicClusterManager.process_data!(manager)
   scoring.initial_calc_values!(manager, PolyphonicClusterManager.transform_clusters(manager))
@@ -652,9 +648,6 @@ function _analyse_manager(
       raw["distance"][index] = get(raw_metrics, "distance", nothing)
       raw["quantity"][index] = get(raw_metrics, "quantity", nothing)
       raw["complexity"][index] = get(raw_metrics, "complexity", nothing)
-      raw["occurrenceDistance"][index] = get(raw_metrics, "occurrenceDistance", nothing)
-      raw["occurrenceQuantity"][index] = get(raw_metrics, "occurrenceQuantity", nothing)
-      raw["occurrenceComplexity"][index] = get(raw_metrics, "occurrenceComplexity", nothing)
 
       processed = index - min_window
       if !isempty(log_label) && (processed == total_observed_steps || processed % progress_interval == 0)
