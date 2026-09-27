@@ -40,7 +40,7 @@ type CompressedSpan = {
   cluster_ids: number[]
   indices: number[]
   fit_limits: number[]
-  children: CompressedSpan[]
+  parent_index: number | null
 }
 type SpanRow = {
   key: string
@@ -128,14 +128,12 @@ const startResize = (event: PointerEvent) => {
 
 function flattenSpans(): Array<{ key: string; span: CompressedSpan; depth: number }> {
   const result: Array<{ key: string; span: CompressedSpan; depth: number }> = []
-  function visit(spans: CompressedSpan[], parent: string, depth: number) {
-    spans.forEach((span, index) => {
-      const key = `${parent}/${index}`
-      result.push({ key, span, depth })
-      visit(span.children ?? [], key, depth + 1)
-    })
-  }
-  visit(props.compressedData, '', 0)
+  const depths: number[] = []
+  props.compressedData.forEach((span, index) => {
+    const depth = span.parent_index === null ? 0 : (depths[span.parent_index] ?? -1) + 1
+    depths.push(depth)
+    result.push({ key: String(index), span, depth })
+  })
   return result.sort((a, b) => a.span.window_min - b.span.window_min || a.depth - b.depth)
 }
 
