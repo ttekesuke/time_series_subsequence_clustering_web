@@ -3164,7 +3164,7 @@ function process_existing_clusters!(
     if _cluster_as_view(best_child) != latest_seq
       if old_representatives !== nothing
         get!(old_representatives, (new_length, best_cluster_id)) do
-          deep_copy_seq(_cluster_as_view(best_child))
+          PolySet[copy(row) for row in _cluster_as_view(best_child)]
         end
       end
       starts = _cluster_si(best_child)
@@ -3386,7 +3386,7 @@ function process_root_clusters!(
     if _cluster_as(best_cluster) != latest_seq
       if old_representatives !== nothing
         get!(old_representatives, (mgr.min_window_size, best_cluster_id)) do
-          deep_copy_seq(_cluster_as_view(best_cluster))
+          PolySet[copy(row) for row in _cluster_as_view(best_cluster)]
         end
       end
       sequences = [
