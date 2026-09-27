@@ -46,6 +46,43 @@ end
   @test MA.rhythm_denominator(parsed) == 60
 end
 
+@testset "analysis lanes reuse nonoverlapping source voices per staff" begin
+  note(voice, staff, start, stop) = MA.NoteEvent(
+    ("P1", staff, voice), "P1", start // 1, stop // 1, 60, false, false,
+  )
+  events = [
+    note("5", "2", 0, 1),
+    note("6", "2", 0, 2),
+    note("7", "2", 2, 3),
+    note("5", "2", 3, 4),
+    note("5", "1", 0, 1),
+  ]
+  lanes, voices = MA._analysis_stream_lanes(events)
+  @test lanes[("P1", "2", "5")] == lanes[("P1", "2", "7")]
+  @test lanes[("P1", "2", "5")] != lanes[("P1", "2", "6")]
+  @test lanes[("P1", "2", "5")] != lanes[("P1", "1", "5")]
+  @test Set(voices[lanes[("P1", "2", "5")]]) == Set(["5", "7"])
+end
+
+@testset "analyse_music reports compacted stream metadata" begin
+  xml = """
+  <score-partwise version="4.0">
+    <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+    <part id="P1"><measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><voice>5</voice><staff>1</staff></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><voice>7</voice><staff>1</staff></note>
+    </measure></part>
+  </score-partwise>
+  """
+  result = MA.analyse_music_payload(Dict{String,Any}(
+    "source_type" => "upload", "musicxml_text" => xml, "compact_cluster_view" => true,
+  ), TC)
+  @test length(result["streams"]) == 1
+  @test Set(result["streams"][1]["sourceVoices"]) == Set(["5", "7"])
+  @test result["dimensions"]["stream_count"]["values"]["global"] == [1.0, 1.0]
+end
+
 @testset "analyse_music produces requested dimensions" begin
   xml = _score_with_divisions(1, [1])
   result = MA.analyse_music_payload(
