@@ -2,6 +2,38 @@ using Test
 
 const MA = Main.TimeseriesClusteringAPI.MusicAnalysis
 const TC = Main.TimeseriesClusteringAPI.TimeSeriesController
+const PCM = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
+
+@testset "observed append matches candidate simulation metrics" begin
+  seed = Vector{Float64}[Float64[0.0], Float64[1.0]]
+  manager = PCM.Manager(seed, 0.02, 2, false;
+    range_min=0.0, range_max=1.0, max_set_size=1, recency=0.0)
+  PCM.process_data!(manager)
+  TC.initial_calc_values!(manager, PCM.transform_clusters(manager))
+  empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
+
+  for index in 1:40
+    value = Float64[float((index ÷ 3) % 2)]
+    before = length(manager.data)
+    simulated = PCM.simulate_add_and_calculate_all_extended(manager, value)
+    @test length(manager.data) == before
+    committed = PCM.add_observed_and_calculate_all_extended!(manager, value)
+    @test length(manager.data) == before + 1
+    for field in (:distance, :quantity, :complexity)
+      @test isapprox(getfield(committed, field), getfield(simulated, field); atol=1e-8, rtol=1e-8)
+    end
+    expected_occurrence = simulated.occurrence_intervals
+    actual_occurrence = committed.occurrence_intervals
+    @test actual_occurrence.ready == expected_occurrence.ready
+    if expected_occurrence.ready
+      for field in (:distance, :quantity, :complexity, :prediction)
+        expected = getfield(expected_occurrence, field)
+        actual = getfield(actual_occurrence, field)
+        @test isequal(actual, expected) || isapprox(actual, expected; atol=1e-8, rtol=1e-8)
+      end
+    end
+  end
+end
 
 function _score_with_divisions(divisions::Int, durations::Vector{Int})
   body = IOBuffer()
