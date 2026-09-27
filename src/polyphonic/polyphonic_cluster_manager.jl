@@ -3557,8 +3557,17 @@ function clusters_to_timeline(mgr::Manager)
 end
 
 function compressed_clusters_payload(mgr::Manager)
-  function span_payload(span::CompressedClusterSpan)
-    return Dict(
+  # A deeply branching cluster tree can exceed the recursive JSON writer's
+  # stack even after every single-child path has been compressed. Encode the
+  # same tree as a preorder table with zero-based parent indices instead.
+  payload = Any[]
+  stack = Tuple{CompressedClusterSpan,Union{Nothing,Int}}[
+    (span, nothing) for span in reverse(mgr.cluster_spans)
+  ]
+  while !isempty(stack)
+    span, parent_index = pop!(stack)
+    index = length(payload)
+    push!(payload, Dict(
       "window_min" => span.window_min,
       "window_max" => span.window_max,
       "cluster_ids" => copy(span.cluster_ids),
@@ -3566,11 +3575,13 @@ function compressed_clusters_payload(mgr::Manager)
       # Required to reconstruct each virtual window's exact occurrence set:
       # starts(w) = indices filtered by s + w <= fit_limits[offset].
       "fit_limits" => copy(span.fit_limits),
-      "children" => Any[span_payload(child) for child in span.children],
-    )
+      "parent_index" => parent_index,
+    ))
+    for child in reverse(span.children)
+      push!(stack, (child, index))
+    end
   end
-  spans = compress_cluster_tree(mgr)
-  return Any[span_payload(span) for span in spans]
+  return payload
 end
 
 # Backward-compatible explicit-tree overloads.  Keep these for tests and
