@@ -4078,10 +4078,15 @@ function evaluate_observed_complexity!(
   observed_distance_sums::Union{Nothing,Dict{Int,Float64}}=nothing,
 )::Dict{String,Any}
   phase_started = phase_timings === nothing ? 0 : time_ns()
-  calibrator = build_extended_metric_calibrator(
-    manager,
-    committed_metrics_ref === nothing ? nothing : committed_metrics_ref[],
-  )
+  committed_metrics = committed_metrics_ref === nothing ?
+    PolyphonicClusterManager.current_extended_metrics(manager) : committed_metrics_ref[]
+  calibrator = manager.enable_occurrence_intervals ?
+    build_extended_metric_calibrator(manager, committed_metrics) : nothing
+  base_calibrator = manager.enable_occurrence_intervals ? calibrator.base :
+    _build_complexity_metric_calibrator(
+      committed_metrics,
+      max(length(manager.data) - manager.min_window_size + 1, 1),
+    )
   if phase_timings !== nothing
     phase_timings[:calibrator] += (time_ns() - phase_started) / 1.0e9
     phase_started = time_ns()
@@ -4104,9 +4109,22 @@ function evaluate_observed_complexity!(
     observed_distance_sums=observed_distance_sums,
   )
 
-  diversity = calibrate_metric(metrics.distance, calibrator.base.distance)
-  shape = calibrate_metric(metrics.complexity, calibrator.base.complexity)
-  mass = calibrate_metric(metrics.quantity, calibrator.base.quantity)
+  diversity = calibrate_metric(metrics.distance, base_calibrator.distance)
+  shape = calibrate_metric(metrics.complexity, base_calibrator.complexity)
+  mass = calibrate_metric(metrics.quantity, base_calibrator.quantity)
+  if !manager.enable_occurrence_intervals
+    return Dict(
+      "prediction" => predictive,
+      "diversity" => diversity,
+      "shape" => shape,
+      "mass" => mass,
+      "raw" => Dict(
+        "distance" => metrics.distance,
+        "quantity" => metrics.quantity,
+        "complexity" => metrics.complexity,
+      ),
+    )
+  end
   occurrence = _observed_occurrence_complexity(
     metrics.occurrence_intervals,
     calibrator.occurrence_intervals,
