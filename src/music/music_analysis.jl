@@ -610,6 +610,9 @@ function _analyse_manager(
   PolyphonicClusterManager.process_data!(manager)
   scoring.initial_calc_values!(manager, PolyphonicClusterManager.transform_clusters(manager))
   empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
+  # The metrics returned after each committed append are exactly the next
+  # step's calibrator prestate. Keep them instead of scanning all clusters.
+  committed_metrics_ref = Ref(PolyphonicClusterManager.current_extended_metrics(manager))
 
   if n > min_window
     total_observed_steps = n - min_window
@@ -633,7 +636,8 @@ function _analyse_manager(
     last_progress_steps = 0
     for index in (min_window + 1):n
       observed = scoring.evaluate_observed_complexity!(manager, series[index];
-        metric_weights=metric_weights, phase_timings=phase_timings)
+        metric_weights=metric_weights, phase_timings=phase_timings,
+        committed_metrics_ref=committed_metrics_ref)
       for key in keys(axes)
         axes[key][index] = get(observed, key, nothing)
       end
