@@ -73,6 +73,10 @@ end
     result["dimensions"]["note"]["analysis"]["global"]["axes"],
     "combined",
   )
+  @test !haskey(result["dimensions"]["dissonance"], "analysis")
+  @test !haskey(result["dimensions"]["stream_count"], "analysis")
+  @test result["dimensions"]["stream_count"]["values"]["global"][1] == 1.0
+  @test length(result["dimensions"]["dissonance"]["values"]["global"]) == result["timing"]["stepCount"]
   @test length(result["pianoRoll"]["streams"]) == 1
 end
 
