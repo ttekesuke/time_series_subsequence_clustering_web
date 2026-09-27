@@ -156,7 +156,7 @@ import { useScrollSync } from '../../composables/useScrollSync'
 
 type CompressedSpan = {
   window_min: number; window_max: number; cluster_ids: number[]
-  indices: number[]; fit_limits: number[]; children: CompressedSpan[]
+  indices: number[]; fit_limits: number[]; parent_index: number | null
 }
 type AxisBundle = {
   prediction?: Array<number | null>
