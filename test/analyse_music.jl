@@ -33,6 +33,13 @@ const PCM = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
       end
     end
   end
+
+  next_value = Float64[0.0]
+  expected = PCM.simulate_add_and_calculate_all_extended(manager, next_value)
+  observed = TC.evaluate_observed_complexity!(manager, next_value)
+  @test isapprox(observed["raw"]["distance"], expected.distance; atol=1e-8)
+  @test isapprox(observed["raw"]["quantity"], expected.quantity; atol=1e-8)
+  @test isapprox(observed["raw"]["complexity"], expected.complexity; atol=1e-8)
 end
 
 function _score_with_divisions(divisions::Int, durations::Vector{Int})
