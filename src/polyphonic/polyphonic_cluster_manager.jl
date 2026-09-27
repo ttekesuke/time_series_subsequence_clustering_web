@@ -2628,18 +2628,30 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
         record!(mgr, PJHashSetKeyDist(window_size, nothing))
       end
 
-      # Distances cache (only for updated clusters)
-      for cid1 in updated_ids
-        node1 = get(same_ws, cid1, nothing)
-        node1 === nothing && continue
-        @inbounds for cid2 in all_ids
-          cid1 == cid2 && continue
+      # Match the permanent cache: a newly seen window must start with every
+      # pair, including clusters that did not change during this append.
+      if isempty(cache)
+        for i in 1:length(all_ids), j in (i + 1):length(all_ids)
+          cid1, cid2 = all_ids[i], all_ids[j]
           key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
-          node2 = same_ws[cid2]
-          dist = euclidean_distance(mgr, _cluster_as_view(node1), _cluster_as_view(node2))
-          old_val = haskey(cache, key) ? cache[key] : nothing
+          dist = euclidean_distance(mgr, _cluster_as_view(same_ws[cid1]),
+            _cluster_as_view(same_ws[cid2]))
           cache[key] = dist
-          record!(mgr, PJCacheWriteDist(cache, key, old_val))
+          record!(mgr, PJCacheWriteDist(cache, key, nothing))
+        end
+      else
+        for cid1 in updated_ids
+          node1 = get(same_ws, cid1, nothing)
+          node1 === nothing && continue
+          @inbounds for cid2 in all_ids
+            cid1 == cid2 && continue
+            key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
+            node2 = same_ws[cid2]
+            dist = euclidean_distance(mgr, _cluster_as_view(node1), _cluster_as_view(node2))
+            old_val = haskey(cache, key) ? cache[key] : nothing
+            cache[key] = dist
+            record!(mgr, PJCacheWriteDist(cache, key, old_val))
+          end
         end
       end
 
@@ -2657,8 +2669,10 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
         record!(mgr, PJHashSetKeyComp(window_size, nothing))
       end
 
-      # Quantity / complexity cache (only for updated clusters)
-      for cid in updated_quant_ids
+      # Seed every supported cluster for a new window, as the permanent
+      # update does. Existing windows still visit only updated clusters.
+      quant_ids = (isempty(q_cache) || isempty(c_cache)) ? all_ids : updated_quant_ids
+      for cid in quant_ids
         node = get(same_ws, cid, nothing)
         node === nothing && continue
         _cluster_si_count(node) > 1 || continue
