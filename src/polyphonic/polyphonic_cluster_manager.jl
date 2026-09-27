@@ -1523,6 +1523,18 @@ function update_caches_permanently!(
     q_cache = get!(mgr.cluster_quantity_cache, window_size, Dict{Int,Float64}())
     c_cache = get!(mgr.cluster_complexity_cache, window_size, Dict{Int,Float64}())
     updated_quant_set = get(mgr.updated_cluster_ids_per_window_for_calculate_quantities, window_size, nothing)
+    if observed_distance_sums !== nothing && updated_ids_set !== nothing
+      # A newly created child can already have several occurrences. The
+      # generator leaves it out of the quantity update when recency is zero;
+      # observed analysis must account for it immediately.
+      for cid in updated_ids_set
+        if cid >= observed_first_new_id
+          updated_quant_set = get!(mgr.updated_cluster_ids_per_window_for_calculate_quantities,
+            window_size, Set{Int}())
+          push!(updated_quant_set, cid)
+        end
+      end
+    end
 
     if isempty(q_cache) || isempty(c_cache)
       for (cid, node) in same_ws
