@@ -1,5 +1,5 @@
 <template>
-  <div class="roll-container">
+  <div class="roll-container" ref="container">
     <div class="label-column">
       <canvas ref="labelsCanvas" :style="{ height: viewportHeight + 'px' }"
         @click="onLabelClick" />
@@ -17,6 +17,17 @@
         :max="selectedSpan.window_max" step="1" aria-label="Cluster window size" />
       <button type="button" aria-label="Close cluster details" @click="closeDetails">×</button>
     </div>
+    <div
+      v-if="resizable"
+      class="resize-handle"
+      role="separator"
+      aria-label="Resize roll height"
+      aria-orientation="horizontal"
+      tabindex="0"
+      @pointerdown="startResize"
+      @keydown.up.prevent="resizeBy(-16)"
+      @keydown.down.prevent="resizeBy(16)"
+    ></div>
   </div>
 </template>
 
@@ -58,17 +69,21 @@ const props = withDefaults(defineProps<{
   stepWidth?: number
   rowHeight?: number
   maxSteps?: number
+  resizable?: boolean
 }>(), {
   title: '',
   stepWidth: 10,
   rowHeight: 12,
   maxSteps: 100,
+  resizable: false,
 })
 const emit = defineEmits<{
   scroll: [event: Event]
   'hover-cluster': [cluster: { indices: number[]; windowSize: number; id: string } | null]
+  'resize-height': [height: number]
 }>()
 
+const container = ref<HTMLElement | null>(null)
 const scrollWrapper = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const labelsCanvas = ref<HTMLCanvasElement | null>(null)
@@ -86,6 +101,30 @@ const summaryHeight = 24
 let rows: SpanRow[] = []
 let resizeObserver: ResizeObserver | null = null
 let rafId: number | null = null
+
+const resizeBy = (delta: number) => {
+  if (container.value) emit('resize-height', Math.max(92, Math.round(container.value.getBoundingClientRect().height + delta)))
+}
+let resizeStartY = 0
+let resizeStartHeight = 0
+const stopResize = () => {
+  window.removeEventListener('pointermove', moveResize)
+  window.removeEventListener('pointerup', stopResize)
+  window.removeEventListener('pointercancel', stopResize)
+}
+const moveResize = (event: PointerEvent) => {
+  emit('resize-height', Math.max(92, Math.round(resizeStartHeight + event.clientY - resizeStartY)))
+}
+const startResize = (event: PointerEvent) => {
+  if (event.button !== 0 || !container.value) return
+  event.preventDefault()
+  stopResize()
+  resizeStartY = event.clientY
+  resizeStartHeight = container.value.getBoundingClientRect().height
+  window.addEventListener('pointermove', moveResize)
+  window.addEventListener('pointerup', stopResize)
+  window.addEventListener('pointercancel', stopResize)
+}
 
 function flattenSpans(): Array<{ key: string; span: CompressedSpan; depth: number }> {
   const result: Array<{ key: string; span: CompressedSpan; depth: number }> = []
@@ -356,6 +395,7 @@ onMounted(() => {
   }
 })
 onUnmounted(() => {
+  stopResize()
   resizeObserver?.disconnect()
   if (rafId !== null) cancelAnimationFrame(rafId)
 })
@@ -364,6 +404,10 @@ defineExpose({ scrollWrapper })
 
 <style scoped>
 .roll-container { display: flex; border: 1px solid #ccc; background: white; height: 100%; position: relative; }
+.resize-handle { position: absolute; bottom: 0; left: 80px; right: 0; height: 9px;
+  cursor: ns-resize; touch-action: none; z-index: 3;
+  background: linear-gradient(to bottom, transparent 3px, #999 4px, transparent 5px); }
+.resize-handle:focus-visible { outline: 2px solid #1976d2; outline-offset: -2px; }
 .label-column { width: 80px; min-width: 80px; position: relative; border-right: 1px solid #eee; overflow: hidden; }
 .label-column canvas { position: absolute; top: 0; left: 0; cursor: pointer; }
 .title-label { position: absolute; top: 0; left: 0; right: 0; height: 21px;
