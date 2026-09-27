@@ -2549,8 +2549,10 @@ end
 """Freeze all metric mappings from the committed manager state."""
 function build_extended_metric_calibrator(
   mgr::PolyphonicClusterManager.Manager,
+  committed_metrics::Union{Nothing,PolyphonicClusterManager.ExtendedClusterMetrics}=nothing,
 )::ExtendedMetricCalibrator
-  committed = PolyphonicClusterManager.current_extended_metrics(mgr)
+  committed = committed_metrics === nothing ?
+    PolyphonicClusterManager.current_extended_metrics(mgr) : committed_metrics
   effective_steps = max(length(mgr.data) - mgr.min_window_size + 1, 1)
   return ExtendedMetricCalibrator(
     _build_complexity_metric_calibrator(committed, effective_steps),
@@ -4072,9 +4074,13 @@ function evaluate_observed_complexity!(
   value::PolyphonicClusterManager.PolySet;
   metric_weights::NTuple{3,Float64}=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
   phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
+  committed_metrics_ref::Union{Nothing,Base.RefValue{PolyphonicClusterManager.ExtendedClusterMetrics}}=nothing,
 )::Dict{String,Any}
   phase_started = phase_timings === nothing ? 0 : time_ns()
-  calibrator = build_extended_metric_calibrator(manager)
+  calibrator = build_extended_metric_calibrator(
+    manager,
+    committed_metrics_ref === nothing ? nothing : committed_metrics_ref[],
+  )
   if phase_timings !== nothing
     phase_timings[:calibrator] += (time_ns() - phase_started) / 1.0e9
     phase_started = time_ns()
@@ -4094,6 +4100,7 @@ function evaluate_observed_complexity!(
     value,
     phase_timings=phase_timings,
   )
+  committed_metrics_ref !== nothing && (committed_metrics_ref[] = metrics)
 
   diversity = calibrate_metric(metrics.distance, calibrator.base.distance)
   shape = calibrate_metric(metrics.complexity, calibrator.base.complexity)
