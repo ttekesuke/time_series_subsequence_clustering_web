@@ -2374,6 +2374,7 @@ function add_observed_and_calculate_all_extended!(
   mgr::Manager,
   value::PolySet;
   phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
+  next_calibration_metrics_ref::Union{Nothing,Base.RefValue{ExtendedClusterMetrics}}=nothing,
 )::ExtendedClusterMetrics
   started = phase_timings === nothing ? 0 : time_ns()
   add_data_point_permanently!(mgr, copy(value))
@@ -2401,6 +2402,17 @@ function add_observed_and_calculate_all_extended!(
     started = time_ns()
   end
   metrics = calculate_all_extended_current_state(mgr; occurrence_intervals=temporal)
+  if next_calibration_metrics_ref !== nothing
+    # The preview above scores the newly observed occurrence. The following
+    # calibrator instead reads the committed occurrence history, so retain
+    # that distinct temporal value without traversing the whole cluster tree.
+    committed_temporal = mgr.enable_occurrence_intervals ?
+      current_occurrence_interval_metrics(mgr, updated_clusters, length(mgr.data) - 1) :
+      EMPTY_OCCURRENCE_INTERVAL_METRICS
+    next_calibration_metrics_ref[] = ExtendedClusterMetrics(
+      metrics.distance, metrics.quantity, metrics.complexity, committed_temporal,
+    )
+  end
   if phase_timings !== nothing
     phase_timings[:metrics] += (time_ns() - started) / 1.0e9
   end
