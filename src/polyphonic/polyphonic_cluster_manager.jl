@@ -1317,7 +1317,11 @@ end
 function update_caches_permanently!(
   mgr::Manager;
   phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
+  observed_distance_sums::Union{Nothing,Dict{Int,Float64}}=nothing,
 )
+  observed_distance_sums !== nothing &&
+    mgr.calculate_distance_when_added_subsequence_to_cluster &&
+    error("Observed distance sums require new-cluster-only distance updates.")
   # Cache writes are incremental. Materialize logical refs only for window
   # sizes that actually changed on this append instead of expanding the full
   # compressed cluster store.
@@ -1339,33 +1343,61 @@ function update_caches_permanently!(
     # ----------------------------------------------------------
     # Distance cache (incremental)
     # ----------------------------------------------------------
-    cache = get!(mgr.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
     updated_ids_set = get(mgr.updated_cluster_ids_per_window_for_calculate_distance, window_size, nothing)
 
-    if isempty(cache)
-      # First-time seeding: compute all pairs once.
-      for i in 1:length(all_ids)
-        cid1 = all_ids[i]
-        node1 = same_ws[cid1]
-        for j in (i+1):length(all_ids)
-          cid2 = all_ids[j]
-          node2 = same_ws[cid2]
-          key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
-          cache[key] = euclidean_distance(mgr, _cluster_as_view(node1), _cluster_as_view(node2))
-          phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
+    if observed_distance_sums !== nothing
+      first_window = !haskey(observed_distance_sums, window_size)
+      current_sum = get(observed_distance_sums, window_size, 0.0)
+      if first_window
+        for i in 1:length(all_ids)
+          cid1 = all_ids[i]
+          for j in (i+1):length(all_ids)
+            cid2 = all_ids[j]
+            current_sum += euclidean_distance(
+              mgr, _cluster_as_view(same_ws[cid1]), _cluster_as_view(same_ws[cid2]))
+            phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
+          end
+        end
+      elseif updated_ids_set !== nothing
+        for cid1 in updated_ids_set
+          node1 = get(same_ws, cid1, nothing)
+          node1 === nothing && continue
+          for cid2 in all_ids
+            (cid1 == cid2 || (cid2 in updated_ids_set && cid2 < cid1)) && continue
+            current_sum += euclidean_distance(
+              mgr, _cluster_as_view(node1), _cluster_as_view(same_ws[cid2]))
+            phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
+          end
         end
       end
-    elseif updated_ids_set !== nothing && !isempty(updated_ids_set)
-      # Incremental update: only clusters whose "as" changed / was created.
-      for cid1 in updated_ids_set
-        node1 = get(same_ws, cid1, nothing)
-        node1 === nothing && continue
-        @inbounds for cid2 in all_ids
-          cid1 == cid2 && continue
-          node2 = same_ws[cid2]
-          key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
-          cache[key] = euclidean_distance(mgr, _cluster_as_view(node1), _cluster_as_view(node2))
-          phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
+      observed_distance_sums[window_size] = current_sum
+    else
+      cache = get!(mgr.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
+      if isempty(cache)
+        # First-time seeding: compute all pairs once.
+        for i in 1:length(all_ids)
+          cid1 = all_ids[i]
+          node1 = same_ws[cid1]
+          for j in (i+1):length(all_ids)
+            cid2 = all_ids[j]
+            node2 = same_ws[cid2]
+            key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
+            cache[key] = euclidean_distance(mgr, _cluster_as_view(node1), _cluster_as_view(node2))
+            phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
+          end
+        end
+      elseif updated_ids_set !== nothing && !isempty(updated_ids_set)
+        # Incremental update: only clusters whose "as" changed / was created.
+        for cid1 in updated_ids_set
+          node1 = get(same_ws, cid1, nothing)
+          node1 === nothing && continue
+          @inbounds for cid2 in all_ids
+            cid1 == cid2 && continue
+            node2 = same_ws[cid2]
+            key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
+            cache[key] = euclidean_distance(mgr, _cluster_as_view(node1), _cluster_as_view(node2))
+            phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
+          end
         end
       end
     end
@@ -2296,6 +2328,7 @@ and has been permanently committed.
 function calculate_all_extended_current_state(
   mgr::Manager;
   occurrence_intervals::Union{Nothing,OccurrenceIntervalMetrics}=nothing,
+  observed_distance_sums::Union{Nothing,Dict{Int,Float64}}=nothing,
 )::ExtendedClusterMetrics
   # MusicAnalyse has already captured the occurrence preview and uses no
   # recency weighting. The cache sums are the same sums used by candidate
@@ -2304,8 +2337,14 @@ function calculate_all_extended_current_state(
     sum_distances = 0.0
     sum_quantities = 0.0
     sum_complexities = 0.0
-    for (window_size, cache) in mgr.cluster_distance_cache
-      isempty(cache) || (sum_distances += sum(values(cache)) / float(window_size))
+    if observed_distance_sums === nothing
+      for (window_size, cache) in mgr.cluster_distance_cache
+        isempty(cache) || (sum_distances += sum(values(cache)) / float(window_size))
+      end
+    else
+      for (window_size, distance_sum) in observed_distance_sums
+        sum_distances += distance_sum / float(window_size)
+      end
     end
     for cache in values(mgr.cluster_quantity_cache)
       isempty(cache) || (sum_quantities += sum(values(cache)))
@@ -2375,6 +2414,7 @@ function add_observed_and_calculate_all_extended!(
   value::PolySet;
   phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
   next_calibration_metrics_ref::Union{Nothing,Base.RefValue{ExtendedClusterMetrics}}=nothing,
+  observed_distance_sums::Union{Nothing,Dict{Int,Float64}}=nothing,
 )::ExtendedClusterMetrics
   started = phase_timings === nothing ? 0 : time_ns()
   add_data_point_permanently!(mgr, copy(value))
@@ -2396,12 +2436,14 @@ function add_observed_and_calculate_all_extended!(
     started = time_ns()
   end
 
-  update_caches_permanently!(mgr; phase_timings=phase_timings)
+  update_caches_permanently!(mgr; phase_timings=phase_timings,
+    observed_distance_sums=observed_distance_sums)
   if phase_timings !== nothing
     phase_timings[:cache] += (time_ns() - started) / 1.0e9
     started = time_ns()
   end
-  metrics = calculate_all_extended_current_state(mgr; occurrence_intervals=temporal)
+  metrics = calculate_all_extended_current_state(mgr;
+    occurrence_intervals=temporal, observed_distance_sums=observed_distance_sums)
   if next_calibration_metrics_ref !== nothing
     # The preview above scores the newly observed occurrence. The following
     # calibrator instead reads the committed occurrence history, so retain
