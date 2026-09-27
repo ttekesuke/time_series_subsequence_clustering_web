@@ -17,7 +17,7 @@
           :highlightWindowSize="highlightWindowSize"
           resizable
           title="MusicXML Piano Roll"
-          @resize-height="height => topRollHeight = height"
+          @resize-height="resizeTopRoll"
           @scroll="onScroll"
         />
       </div>
@@ -217,6 +217,11 @@ const analysisRollRefs = ref<any[]>([])
 const bottomScrollRef = ref<HTMLElement | null>(null)
 const containerWidth = ref(0)
 let resizeObserver: ResizeObserver | null = null
+
+const resizeTopRoll = (height: number) => {
+  const availableHeight = (containerRef.value?.clientHeight ?? height) - 160
+  topRollHeight.value = Math.min(height, Math.max(92, availableHeight))
+}
 
 const setAnalysisRollRef = (el: any, index: number) => {
   analysisRollRefs.value[index] = el ?? null
