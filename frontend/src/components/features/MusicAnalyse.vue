@@ -49,8 +49,7 @@
             v-for="(section, index) in sections"
             :key="section.key"
             class="analysis-row"
-            :class="{ 'analysis-row--complexity': analysedViewMode === 'Complexity' }"
-            :style="analysedViewMode === 'Complexity' ? { height: `${analysisRowHeights[section.key] ?? 184}px` } : undefined"
+            :style="{ height: `${analysisRowHeights[section.key] ?? (analysedViewMode === 'Complexity' ? 184 : 92)}px` }"
           >
             <ClustersRoll
               v-if="analysedViewMode === 'Cluster'"
@@ -59,6 +58,8 @@
               :stepWidth="computedStepWidth"
               :maxSteps="stepCount"
               :title="section.title + ' Clusters'"
+              resizable
+              @resize-height="height => analysisRowHeights[section.key] = height"
               @hover-cluster="onHoverCluster"
               @scroll="onScroll"
             />
@@ -213,7 +214,8 @@ const analysisRowHeights = ref<Record<string, number>>({})
 
 const containerRef = ref<HTMLElement | null>(null)
 const pianoRollRef = ref<any>(null)
-const analysisRollRefs = ref<any[]>([])
+// Template function refs run during rendering; this list is only read by scroll event handlers.
+const analysisRollRefs: { value: any[] } = { value: [] }
 const bottomScrollRef = ref<HTMLElement | null>(null)
 const containerWidth = ref(0)
 let resizeObserver: ResizeObserver | null = null
@@ -533,9 +535,6 @@ defineExpose({
 }
 .analysis-row {
   min-height: 92px;
-  flex: 1 0 92px;
-}
-.analysis-row--complexity {
   flex: 0 0 auto;
 }
 .empty-state {
