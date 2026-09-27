@@ -75,6 +75,14 @@ end
     for field in (:distance, :quantity, :complexity)
       @test isapprox(getfield(preceding[], field), getfield(fresh, field); atol=1e-8)
     end
+    left, right = preceding[].occurrence_intervals, fresh.occurrence_intervals
+    @test left.ready == right.ready
+    if left.ready
+      for field in (:distance, :quantity, :complexity, :prediction)
+        a, b = getfield(left, field), getfield(right, field)
+        @test isequal(a, b) || isapprox(a, b; atol=1e-8)
+      end
+    end
   end
 end
 
