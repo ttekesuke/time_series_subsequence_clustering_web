@@ -28,36 +28,31 @@ end
 @testset "observed append matches exact committed clusters" begin
   seed = Vector{Float64}[Float64[0.0], Float64[1.0]]
   manager = PCM.Manager(seed, 0.02, 2, false;
-    range_min=0.0, range_max=1.0, max_set_size=1, recency=0.0)
+    range_min=0.0, range_max=1.0, max_set_size=1,
+    recency=0.0, enable_occurrence_intervals=false)
   PCM.process_data!(manager)
   TC.initial_calc_values!(manager, PCM.transform_clusters(manager))
   empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
+  distance_sums = Dict(window => sum(values(cache))
+    for (window, cache) in manager.cluster_distance_cache)
+  empty!(manager.cluster_distance_cache)
 
   for index in 1:40
     value = Float64[float((index ÷ 3) % 2)]
     before = length(manager.data)
-    simulated = PCM.simulate_add_and_calculate_all_extended(manager, value)
-    @test length(manager.data) == before
-    committed = PCM.add_observed_and_calculate_all_extended!(manager, value)
+    committed = PCM.add_observed_and_calculate_all_extended!(manager, value;
+      observed_distance_sums=distance_sums)
     @test length(manager.data) == before + 1
     exact = _exact_current_cluster_metrics(manager)
     for field in (:distance, :quantity, :complexity)
       @test isapprox(getfield(committed, field), getfield(exact, field); atol=1e-8, rtol=1e-8)
     end
-    expected_occurrence = simulated.occurrence_intervals
-    actual_occurrence = committed.occurrence_intervals
-    @test actual_occurrence.ready == expected_occurrence.ready
-    if expected_occurrence.ready
-      for field in (:distance, :quantity, :complexity, :prediction)
-        expected = getfield(expected_occurrence, field)
-        actual = getfield(actual_occurrence, field)
-        @test isequal(actual, expected) || isapprox(actual, expected; atol=1e-8, rtol=1e-8)
-      end
-    end
+    @test isempty(manager.cluster_distance_cache)
   end
 
   next_value = Float64[0.0]
-  observed = TC.evaluate_observed_complexity!(manager, next_value)
+  observed = TC.evaluate_observed_complexity!(manager, next_value;
+    observed_distance_sums=distance_sums)
   exact = _exact_current_cluster_metrics(manager)
   @test isapprox(observed["raw"]["distance"], exact.distance; atol=1e-8)
   @test isapprox(observed["raw"]["quantity"], exact.quantity; atol=1e-8)
@@ -77,13 +72,18 @@ end
 
   baseline = prepared_manager()
   cached = prepared_manager()
+  baseline_preceding = Ref(PCM.current_extended_metrics(baseline))
   preceding = Ref(PCM.current_extended_metrics(cached))
+  baseline_sums = Dict(window => sum(values(cache))
+    for (window, cache) in baseline.cluster_distance_cache)
+  empty!(baseline.cluster_distance_cache)
   distance_sums = Dict(window => sum(values(cache))
     for (window, cache) in cached.cluster_distance_cache)
   empty!(cached.cluster_distance_cache)
   for index in 1:24
     value = Float64[float((index ÷ 3) % 2)]
-    expected = TC.evaluate_observed_complexity!(baseline, value)
+    expected = TC.evaluate_observed_complexity!(baseline, value;
+      committed_metrics_ref=baseline_preceding, observed_distance_sums=baseline_sums)
     actual = TC.evaluate_observed_complexity!(cached, value;
       committed_metrics_ref=preceding, observed_distance_sums=distance_sums)
     for key in ("prediction", "diversity", "shape", "occurrence", "mass", "combined")
@@ -96,11 +96,13 @@ end
       @test isequal(left, right) ||
         (left !== nothing && right !== nothing && isapprox(left, right; atol=1e-8))
     end
-    fresh = PCM.current_extended_metrics(baseline)
+    exact = _exact_current_cluster_metrics(cached)
     for field in (:distance, :quantity, :complexity)
-      @test isapprox(getfield(preceding[], field), getfield(fresh, field); atol=1e-8)
+      @test isapprox(getfield(preceding[], field), getfield(exact, field); atol=1e-8)
     end
-    left, right = preceding[].occurrence_intervals, fresh.occurrence_intervals
+    fresh_occurrence = PCM.current_occurrence_interval_metrics(baseline,
+      PCM.collect_clusters_each(baseline), length(baseline.data) - 1)
+    left, right = preceding[].occurrence_intervals, fresh_occurrence
     @test left.ready == right.ready
     if left.ready
       for field in (:distance, :quantity, :complexity, :prediction)
