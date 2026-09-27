@@ -56,11 +56,14 @@ end
   baseline = prepared_manager()
   cached = prepared_manager()
   preceding = Ref(PCM.current_extended_metrics(cached))
+  distance_sums = Dict(window => sum(values(cache))
+    for (window, cache) in cached.cluster_distance_cache)
+  empty!(cached.cluster_distance_cache)
   for index in 1:24
     value = Float64[float((index ÷ 3) % 2)]
     expected = TC.evaluate_observed_complexity!(baseline, value)
     actual = TC.evaluate_observed_complexity!(cached, value;
-      committed_metrics_ref=preceding)
+      committed_metrics_ref=preceding, observed_distance_sums=distance_sums)
     for key in ("prediction", "diversity", "shape", "occurrence", "mass", "combined")
       left, right = expected[key], actual[key]
       @test isequal(left, right) ||
@@ -71,7 +74,7 @@ end
       @test isequal(left, right) ||
         (left !== nothing && right !== nothing && isapprox(left, right; atol=1e-8))
     end
-    fresh = PCM.current_extended_metrics(cached)
+    fresh = PCM.current_extended_metrics(baseline)
     for field in (:distance, :quantity, :complexity)
       @test isapprox(getfield(preceding[], field), getfield(fresh, field); atol=1e-8)
     end
@@ -83,6 +86,7 @@ end
         @test isequal(a, b) || isapprox(a, b; atol=1e-8)
       end
     end
+    @test isempty(cached.cluster_distance_cache)
   end
 end
 
