@@ -107,6 +107,45 @@ end
   end
 end
 
+@testset "streamwise distance and prefix totals match full cache" begin
+  function prepared_streamwise_manager()
+    seed = Vector{Float64}[Float64[10.0, 134.0], Float64[20.0, 261.0]]
+    manager = PCM.Manager(seed, 0.02, 2, false;
+      range_min=0.0, range_max=386.0, max_set_size=3,
+      use_streamwise_surface_average=true, stream_axis_offset=129.0,
+      stream_axis_capacity=3, enable_occurrence_intervals=false, recency=0.0)
+    PCM.process_data!(manager)
+    TC.initial_calc_values!(manager, PCM.transform_clusters(manager))
+    empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
+    return manager
+  end
+
+  baseline = prepared_streamwise_manager()
+  cached = prepared_streamwise_manager()
+  a, b = Float64[10.0, 150.0], Float64[20.0, 288.0]
+  expected_distance = (10.0 / 128.0 + 2.0) / 3.0
+  @test isapprox(PCM.streamwise_surface_distance01(baseline, a, b), expected_distance)
+  @test isapprox(PCM.streamwise_surface_distance01(baseline, reverse(a), b), expected_distance)
+  @test_throws ErrorException PCM.streamwise_surface_distance01(baseline, Float64[10.0, 12.0], b)
+
+  preceding = Ref(PCM.current_extended_metrics(cached))
+  distance_sums = Dict(window => sum(values(cache))
+    for (window, cache) in cached.cluster_distance_cache)
+  empty!(cached.cluster_distance_cache)
+  rows = [Float64[10.0, 134.0], Float64[20.0, 261.0],
+    Float64[15.0], Float64[11.0, 140.0, 268.0]]
+  for index in 1:20
+    row = rows[mod1(index, length(rows))]
+    expected = TC.evaluate_observed_complexity!(baseline, row)
+    actual = TC.evaluate_observed_complexity!(cached, row;
+      committed_metrics_ref=preceding, observed_distance_sums=distance_sums)
+    for key in ("distance", "quantity", "complexity")
+      @test isapprox(actual["raw"][key], expected["raw"][key]; atol=1e-8)
+    end
+    @test isempty(cached.cluster_distance_cache)
+  end
+end
+
 function _score_with_divisions(divisions::Int, durations::Vector{Int})
   body = IOBuffer()
   for (index, duration) in enumerate(durations)
