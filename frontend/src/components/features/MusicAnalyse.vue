@@ -184,7 +184,7 @@ type DimensionResult = {
 type MusicAnalysisResult = {
   metadata: any
   timing: { exact: boolean; gridDenominator: number; quarterUnit: string; stepCount: number }
-  streams: Array<{ id: number; label: string; partId: string; staff: string; voice: string }>
+  streams: Array<{ id: number; label: string; partId: string; staff: string; voice: string; lane: string; sourceVoices: string[] }>
   pianoRoll: {
     streams: Array<Array<number[] | null>>
     velocities: Array<Array<number | null>>
