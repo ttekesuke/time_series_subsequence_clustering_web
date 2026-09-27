@@ -1388,6 +1388,7 @@ function update_caches_permanently!(
   # same two spans meet at consecutive window sizes, extend their squared
   # distance by one row instead of traversing the entire prefix again.
   prefix_distances = Dict{Tuple{UInt,UInt},Tuple{Int,Float64}}()
+  prefix_complexities = Dict{UInt,Tuple{Int,Float64}}()
   function observed_pair_distance(node1::SpanClusterRef, node2::SpanClusterRef, window_size::Int)
     id1, id2 = objectid(node1.span), objectid(node2.span)
     key = id1 < id2 ? (id1, id2) : (id2, id1)
@@ -1401,6 +1402,20 @@ function update_caches_permanently!(
     end
     prefix_distances[key] = (window_size, squared)
     return sqrt(squared)
+  end
+  function observed_cluster_complexity(node::SpanClusterRef, window_size::Int)
+    key = objectid(node.span)
+    previous = get(prefix_complexities, key, nothing)
+    total = if previous !== nothing && previous[1] + 1 == window_size
+      phase_timings !== nothing && (phase_timings[:cache_complexity_prefix_hits] += 1.0)
+      previous[2] + step_distance(mgr, node.span.as_max[window_size - 1], node.span.as_max[window_size])
+    else
+      representative = _cluster_as_view(node)
+      sum(step_distance(mgr, representative[i], representative[i + 1])
+        for i in 1:(window_size - 1))
+    end
+    prefix_complexities[key] = (window_size, total)
+    return total / float(window_size - 1)
   end
 
   window_sizes = observed_distance_sums === nothing ?
@@ -1487,7 +1502,9 @@ function update_caches_permanently!(
 
         q = cluster_quantity_score(_cluster_si_count(node), window_size)
         q_cache[cid] = q
-        c_cache[cid] = calculate_cluster_complexity(mgr, _cluster_as_view(node))
+        c_cache[cid] = observed_distance_sums === nothing ?
+          calculate_cluster_complexity(mgr, _cluster_as_view(node)) :
+          observed_cluster_complexity(node, window_size)
         phase_timings !== nothing && (phase_timings[:cache_complexity_evals] += 1.0)
       end
     elseif updated_quant_set !== nothing && !isempty(updated_quant_set)
@@ -1498,7 +1515,9 @@ function update_caches_permanently!(
 
         q = cluster_quantity_score(_cluster_si_count(node), window_size)
         q_cache[cid] = q
-        c_cache[cid] = calculate_cluster_complexity(mgr, _cluster_as_view(node))
+        c_cache[cid] = observed_distance_sums === nothing ?
+          calculate_cluster_complexity(mgr, _cluster_as_view(node)) :
+          observed_cluster_complexity(node, window_size)
         phase_timings !== nothing && (phase_timings[:cache_complexity_evals] += 1.0)
       end
     end
