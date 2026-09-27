@@ -427,6 +427,59 @@ function _concordance(values::Vector{Float64}, width::Float64)
   return clamp(1.0 - total / float(count), 0.0, 1.0)
 end
 
+# A MusicXML voice number is a source identifier, not a staff-local lane number.
+# Keep each source voice intact, and share an analysis lane only when the entire
+# source voices have no overlapping sounding notes on the same staff.
+function _voices_overlap(a::Vector{NoteEvent}, b::Vector{NoteEvent})::Bool
+  i = 1
+  j = 1
+  while i <= length(a) && j <= length(b)
+    left = a[i]
+    right = b[j]
+    if left.start_q < right.end_q && right.start_q < left.end_q
+      return true
+    end
+    if left.end_q <= right.end_q
+      i += 1
+    else
+      j += 1
+    end
+  end
+  return false
+end
+
+function _analysis_stream_lanes(notes::Vector{NoteEvent})
+  source_events = Dict{Tuple{String,String,String},Vector{NoteEvent}}()
+  for event in notes
+    push!(get!(source_events, event.stream_key, NoteEvent[]), event)
+  end
+  staff_groups = Dict{Tuple{String,String},Vector{Tuple{String,String,String}}}()
+  for key in keys(source_events)
+    push!(get!(staff_groups, (key[1], key[2]), Tuple{String,String,String}[]), key)
+  end
+
+  lane_by_source = Dict{Tuple{String,String,String},Tuple{String,String,String}}()
+  source_voices_by_lane = Dict{Tuple{String,String,String},Vector{String}}()
+  for ((part_id, staff), voice_keys) in staff_groups
+    # Preserve the most established voices first; occasional voices fill idle lanes.
+    sort!(voice_keys; by=key -> (-length(source_events[key]), source_events[key][1].start_q, key[3]))
+    lanes = Vector{Vector{Tuple{String,String,String}}}()
+    for key in voice_keys
+      lane_index = findfirst(lane -> all(other ->
+        !_voices_overlap(source_events[key], source_events[other]), lane), lanes)
+      if lane_index === nothing
+        push!(lanes, Tuple{String,String,String}[])
+        lane_index = length(lanes)
+      end
+      push!(lanes[lane_index], key)
+      lane_key = (part_id, staff, string(lane_index))
+      lane_by_source[key] = lane_key
+      push!(get!(source_voices_by_lane, lane_key, String[]), key[3])
+    end
+  end
+  return lane_by_source, source_voices_by_lane
+end
+
 function _csv_rows_from_text(csv_text::AbstractString)
   rows = Vector{Vector{String}}()
   for raw in eachline(IOBuffer(csv_text))
@@ -647,16 +700,18 @@ function analyse_music_payload(params, scoring)
     "Exact grid would require $(step_count) steps; maximum is $(MAX_ANALYSIS_STEPS).",
   ))
 
+  lane_by_source, source_voices_by_lane = _analysis_stream_lanes(parsed.notes)
   stream_keys = Tuple{String,String,String}[]
   seen_keys = Set{Tuple{String,String,String}}()
   for event in parsed.notes
-    if !(event.stream_key in seen_keys)
-      push!(stream_keys, event.stream_key)
-      push!(seen_keys, event.stream_key)
+    lane_key = lane_by_source[event.stream_key]
+    if !(lane_key in seen_keys)
+      push!(stream_keys, lane_key)
+      push!(seen_keys, lane_key)
     end
   end
   stream_ids = collect(1:length(stream_keys))
-  @info "[analyse_music] exact grid ready" grid_denominator=grid_den step_count=step_count streams=length(stream_ids)
+  @info "[analyse_music] exact grid ready" grid_denominator=grid_den step_count=step_count source_voices=length(lane_by_source) streams=length(stream_ids)
   id_by_key = Dict(key => idx for (idx, key) in enumerate(stream_keys))
   key_by_id = Dict(idx => key for (idx, key) in enumerate(stream_keys))
 
@@ -664,7 +719,7 @@ function analyse_music_payload(params, scoring)
   onsets_by_stream = Dict(id => [Set{Int}() for _ in 1:step_count] for id in stream_ids)
 
   for event in parsed.notes
-    id = id_by_key[event.stream_key]
+    id = id_by_key[lane_by_source[event.stream_key]]
     start_r = event.start_q * grid_den
     end_r = event.end_q * grid_den
     denominator(start_r) == 1 || throw(RequestError("rhythm_grid_internal_error", "Note onset does not align to exact grid."))
@@ -687,9 +742,10 @@ function analyse_music_payload(params, scoring)
   stream_labels = Dict{Int,String}()
   part_by_stream = Dict{Int,String}()
   for id in stream_ids
-    part_id, staff, voice = key_by_id[id]
+    part_id, staff, lane = key_by_id[id]
     part_name = get(parsed.part_names, part_id, part_id)
-    stream_labels[id] = "$(part_name) / staff $(staff) / voice $(voice)"
+    voices = source_voices_by_lane[key_by_id[id]]
+    stream_labels[id] = "$(part_name) / staff $(staff) / lane $(lane) (voices $(join(voices, ", ")))"
     part_by_stream[id] = part_id
   end
 
@@ -969,7 +1025,7 @@ function analyse_music_payload(params, scoring)
       "totalQuarterLength"=>float(parsed.total_q),
       "tempoSeries"=>tempo_series),
     "streams" => Any[
-      Dict("id"=>id, "label"=>stream_labels[id], "partId"=>key_by_id[id][1], "staff"=>key_by_id[id][2], "voice"=>key_by_id[id][3])
+      Dict("id"=>id, "label"=>stream_labels[id], "partId"=>key_by_id[id][1], "staff"=>key_by_id[id][2], "voice"=>join(source_voices_by_lane[key_by_id[id]], ","), "lane"=>key_by_id[id][3], "sourceVoices"=>source_voices_by_lane[key_by_id[id]])
       for id in stream_ids
     ],
     "pianoRoll" => Dict(
