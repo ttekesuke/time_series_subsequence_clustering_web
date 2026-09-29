@@ -317,8 +317,14 @@ end
   raw = result["dimensions"]["note"]["analysis"]["global"]["raw"]
   @test Set(keys(axes)) == Set(["prediction", "diversity", "shape", "mass"])
   @test Set(keys(raw)) == Set(["distance", "quantity", "complexity"])
-  @test !haskey(result["dimensions"]["dissonance"], "analysis")
-  @test !haskey(result["dimensions"]["stream_count"], "analysis")
+  for dim in ("chord_range", "density", "tie", "dissonance", "stream_count")
+    @test Set(keys(result["dimensions"][dim])) == Set(["values"])
+    @test length(result["dimensions"][dim]["values"]["global"]) == result["timing"]["stepCount"]
+  end
+  @test result["dimensions"]["chord_range"]["values"]["global"][1] == 0.0
+  @test result["dimensions"]["density"]["values"]["global"][1] == 0.25
+  @test result["dimensions"]["tie"]["values"]["global"][1] == 0.0
+  @test result["dimensions"]["density"]["values"]["streams"]["1"][1] == 0.25
   @test result["dimensions"]["stream_count"]["values"]["global"][1] == 1.0
   @test length(result["dimensions"]["dissonance"]["values"]["global"]) == result["timing"]["stepCount"]
   @test length(result["pianoRoll"]["streams"]) == 1
