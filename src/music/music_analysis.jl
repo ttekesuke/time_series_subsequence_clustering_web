@@ -926,6 +926,21 @@ function analyse_music_payload(params, scoring)
       continue
     end
 
+    if dim in ("chord_range", "density", "tie")
+      for id in stream_ids
+        stream_values_payload[string(id)] = stream_source[id]
+      end
+      for step in 1:step_count
+        active_vals = Float64[float(stream_source[id][step]) for id in stream_ids if !isempty(notes_by_stream[id][step])]
+        global_display[step] = isempty(active_vals) ? (dim == "tie" ? 0.0 : nothing) : sum(active_vals) / float(length(active_vals))
+        concordance[step] = _concordance(active_vals, range_max - range_min)
+      end
+      dimensions[dim] = Dict(
+        "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance))
+      @info "[analyse_music] dimension values ready" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
+      continue
+    end
+
     for id in stream_ids
       stream_values_payload[string(id)] = stream_source[id]
       analysed_stream = _analyse_manager(_make_poly_series(stream_source[id]), scoring;
@@ -946,26 +961,6 @@ function analyse_music_payload(params, scoring)
       end
       analysed_global = _analyse_manager(_make_poly_series(global_display), scoring;
         range_min=range_min, range_max=range_max,
-        merge_threshold_ratio=merge_threshold_ratio,
-        metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
-        compact_cluster_view=compact_cluster_view, log_label="$(dim)/global")
-      dimensions[dim] = Dict(
-        "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance),
-        "analysis"=>Dict("global"=>Dict("axes"=>analysed_global["axes"], "raw"=>analysed_global["raw"]), "streams"=>stream_analysis_payload),
-        "clusters"=>Dict("global"=>analysed_global["clusters"], "streams"=>stream_clusters_payload),
-        "compressedClusters"=>Dict("global"=>analysed_global["compressedClusters"], "streams"=>stream_compressed_payload))
-      @info "[analyse_music] dimension analysis done" dimension=dim elapsed_s=round(time() - dimension_started_at; digits=2)
-      continue
-    end
-
-    if dim == "tie"
-      for step in 1:step_count
-        active_vals = Float64[float(stream_source[id][step]) for id in stream_ids if !isempty(notes_by_stream[id][step])]
-        global_display[step] = isempty(active_vals) ? 0.0 : sum(active_vals) / float(length(active_vals))
-        concordance[step] = _concordance(active_vals, 1.0)
-      end
-      analysed_global = _analyse_manager(_make_poly_series(global_display), scoring;
-        range_min=0.0, range_max=1.0,
         merge_threshold_ratio=merge_threshold_ratio,
         metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
         compact_cluster_view=compact_cluster_view, log_label="$(dim)/global")
