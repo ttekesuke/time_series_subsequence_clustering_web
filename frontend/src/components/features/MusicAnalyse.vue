@@ -70,8 +70,8 @@
               :streamLabels="complexityLabels(section)"
               :stepWidth="computedStepWidth"
               :minValue="0"
-              :maxValue="section.key === 'stream_count' ? Math.max(result.streams.length, 1) : 1"
-              :valueResolution="section.key === 'stream_count' ? 1 : 0.01"
+              :maxValue="maxValueForSection(section)"
+              :valueResolution="analysisScope !== 'concordance' && (section.key === 'stream_count' || section.key === 'chord_range') ? 1 : 0.01"
               :title="section.title + (analysisScope === 'concordance' ? ' Concordance' : isDirectValueDimension(section.key) ? ' Value' : ' Complexity')"
               resizable
               @resize-height="height => analysisRowHeights[section.key] = height"
@@ -254,7 +254,8 @@ const titleMap: Record<string, string> = {
   dissonance: 'DISSONANCE',
   stream_count: 'STREAM COUNT',
 }
-const isDirectValueDimension = (key: string) => key === 'dissonance' || key === 'stream_count'
+const isDirectValueDimension = (key: string) =>
+  ['chord_range', 'density', 'tie', 'dissonance', 'stream_count'].includes(key)
 
 const sections = computed(() => {
   const data = result.value
@@ -296,8 +297,18 @@ const complexityStreams = (section: any) => {
 
 const complexityLabels = (section: { key: string }) =>
   analysisScope.value !== 'concordance' && isDirectValueDimension(section.key)
-    ? [section.key === 'stream_count' ? 'Stream Count' : 'Dissonance']
+    ? [titleMap[section.key] ?? section.key]
     : visibleMetricLabels.value
+
+const maxValueForSection = (section: { key: string; dimension: DimensionResult }) => {
+  if (section.key === 'stream_count') return Math.max(result.value?.streams.length ?? 0, 1)
+  if (section.key !== 'chord_range' || analysisScope.value === 'concordance') return 1
+  const values = analysisScope.value === 'global'
+    ? section.dimension.values.global
+    : section.dimension.values.streams[analysisScope.value] ?? []
+  return values.reduce<number>((max, value) => typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(max, value) : max, 1)
+}
 
 const compressedForSection = (section: any): CompressedSpan[] => {
   const dim = section.dimension as DimensionResult
