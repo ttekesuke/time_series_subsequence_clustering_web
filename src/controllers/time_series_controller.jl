@@ -5371,7 +5371,9 @@ function generate_polyphonic()
     results_len_before_step = length(results)
     stream_ids_len_before_step = length(result_stream_ids)
     voice_plan_len_before_step = length(voice_plan)
-    previous_step_by_id_before = deepcopy(previous_step_by_id)
+    # Previous rows are read-only in this step; only the dictionary binding is
+    # replaced after success. Retain it for rollback without copying history.
+    previous_step_by_id_before = previous_step_by_id
     failure_context = Dict{Symbol,Any}(
       :operation => "step_setup",
       :dimension => nothing,
@@ -5508,8 +5510,8 @@ function generate_polyphonic()
           PolyphonicClusterManager.add_data_point_permanently(mgrs[:global], global_vals)
           PolyphonicClusterManager.update_caches_permanently(mgrs[:global])
           _set_generation_failure_context!(failure_context; operation="commit_streams", dimension="vol", candidate=copy(fixed_vals))
-          MultiStreamManager.commit_state!(mgrs[:stream], fixed_vals, (target=st_target, spread=st_spread))
-          MultiStreamManager.update_caches_permanently!(mgrs[:stream])
+          MultiStreamManager.commit_state_staged!(mgrs[:stream], fixed_vals, (target=st_target, spread=st_spread))
+          MultiStreamManager.update_caches_staged!(mgrs[:stream])
         end
         continue
       end
@@ -5556,12 +5558,12 @@ function generate_polyphonic()
 
       _set_generation_failure_context!(failure_context; operation="commit_streams", dimension=key, candidate=copy(best_vals))
       if key == "vol"
-        MultiStreamManager.commit_state!(mgrs[:stream], best_vals, (target=st_target, spread=st_spread))
+        MultiStreamManager.commit_state_staged!(mgrs[:stream], best_vals, (target=st_target, spread=st_spread))
       else
-        MultiStreamManager.commit_state!(mgrs[:stream], best_vals)
+        MultiStreamManager.commit_state_staged!(mgrs[:stream], best_vals)
       end
       _set_generation_failure_context!(failure_context; operation="commit_stream_caches", dimension=key, candidate=copy(best_vals))
-      MultiStreamManager.update_caches_permanently!(mgrs[:stream])
+      MultiStreamManager.update_caches_staged!(mgrs[:stream])
 
       step_decisions[key] = best_vals
 
@@ -5902,9 +5904,9 @@ end
     # stream: commit per-stream anchors
     chosen_area_f = Float64[float(chosen_area[s]) for s in 1:desired_stream_count]
     _set_generation_failure_context!(failure_context; operation="commit_streams", dimension="area", candidate=copy(chosen_area))
-    MultiStreamManager.commit_state!(area_mgrs[:stream], chosen_area_f)
+    MultiStreamManager.commit_state_staged!(area_mgrs[:stream], chosen_area_f)
     _set_generation_failure_context!(failure_context; operation="commit_stream_caches", dimension="area", candidate=copy(chosen_area))
-    MultiStreamManager.update_caches_permanently!(area_mgrs[:stream])
+    MultiStreamManager.update_caches_staged!(area_mgrs[:stream])
 
     # ---- Decide realized notes per stream (within band + chord_range, size by density, choose by dissonance LAST) ----
     onset = step_idx <= length(future_step_onsets) ? future_step_onsets[step_idx] : base_onset
@@ -6160,9 +6162,9 @@ end
       push!(stream_anchors, float(_anchor_from_abs(current_step_values[s][note_abs_idx])))
     end
     _set_generation_failure_context!(failure_context; operation="commit_streams", dimension="note", candidate=copy(stream_anchors))
-    MultiStreamManager.commit_state!(note_mgrs[:stream], stream_anchors)
+    MultiStreamManager.commit_state_staged!(note_mgrs[:stream], stream_anchors)
     _set_generation_failure_context!(failure_context; operation="commit_stream_caches", dimension="note", candidate=copy(stream_anchors))
-    MultiStreamManager.update_caches_permanently!(note_mgrs[:stream])
+    MultiStreamManager.update_caches_staged!(note_mgrs[:stream])
 
     if clustered_tie_enabled
       tie_mgrs = managers["tie"]

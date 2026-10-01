@@ -1208,12 +1208,17 @@ end
 """Finite number check."""
 @inline finite_number(x)::Bool = (x isa Real) && isfinite(float(x))
 
-"""Commit state atomically across all currently active streams."""
-function commit_state!(
+"""Commit state across all active streams.
+
+The staged variant is only for callers that already own a disposable copy of
+the entire generation step. The public variant keeps cross-stream atomicity.
+"""
+function _commit_state!(
   m::Manager,
   best_chord_raw,
   strength_params=nothing,
-  absolute_bases::Union{Nothing,Vector{Int}}=nothing
+  absolute_bases::Union{Nothing,Vector{Int}}=nothing;
+  staged_step::Bool=false,
 )::Bool
   # normalize chord
   best_chord = PolyphonicClusterManager.PolySet[]
@@ -1242,7 +1247,9 @@ function commit_state!(
     push!(actives, stream)
   end
 
-  staged_managers = PolyphonicClusterManager.Manager[deepcopy(stream.manager) for stream in actives]
+  staged_managers = staged_step ?
+    PolyphonicClusterManager.Manager[stream.manager for stream in actives] :
+    PolyphonicClusterManager.Manager[deepcopy(stream.manager) for stream in actives]
   for i in 1:n
     PolyphonicClusterManager.add_data_point_permanently(staged_managers[i], best_chord[i])
   end
@@ -1273,7 +1280,7 @@ function commit_state!(
   # Publish only after every stream append succeeded.
   for i in 1:n
     stream = actives[i]
-    replace_manager_state!(stream.manager, staged_managers[i])
+    staged_step || replace_manager_state!(stream.manager, staged_managers[i])
     stream.last_value = copy(best_chord[i])
     stream.last_abs_pitch = staged_last_abs[i]
     stream.presence_sum = staged_presence_sum[i]
@@ -1285,18 +1292,36 @@ function commit_state!(
   return true
 end
 
+commit_state!(m::Manager, best_chord_raw, strength_params=nothing,
+  absolute_bases::Union{Nothing,Vector{Int}}=nothing) =
+  _commit_state!(m, best_chord_raw, strength_params, absolute_bases)
+
+"""Append directly to managers owned by a disposable generation-step state."""
+commit_state_staged!(m::Manager, best_chord_raw, strength_params=nothing,
+  absolute_bases::Union{Nothing,Vector{Int}}=nothing) =
+  _commit_state!(m, best_chord_raw, strength_params, absolute_bases; staged_step=true)
+
 """Update caches atomically across all streams."""
-function update_caches_permanently!(m::Manager)::Nothing
-  staged_managers = PolyphonicClusterManager.Manager[deepcopy(c.manager) for c in m.stream_pool]
+function _update_caches_permanently!(m::Manager; staged_step::Bool=false)::Nothing
+  staged_managers = staged_step ?
+    PolyphonicClusterManager.Manager[c.manager for c in m.stream_pool] :
+    PolyphonicClusterManager.Manager[deepcopy(c.manager) for c in m.stream_pool]
   for staged in staged_managers
     PolyphonicClusterManager.update_caches_permanently(staged)
   end
-  for i in eachindex(m.stream_pool)
-    replace_manager_state!(m.stream_pool[i].manager, staged_managers[i])
+  if !staged_step
+    for i in eachindex(m.stream_pool)
+      replace_manager_state!(m.stream_pool[i].manager, staged_managers[i])
+    end
   end
   m.pending_absolute_bases = nothing
   return nothing
 end
+
+update_caches_permanently!(m::Manager)::Nothing = _update_caches_permanently!(m)
+
+"""Update caches on managers owned by a disposable generation-step state."""
+update_caches_staged!(m::Manager)::Nothing = _update_caches_permanently!(m; staged_step=true)
 
 """Stream strengths report (Rails stream_strengths_report)."""
 function stream_strengths_report(m::Manager)::Dict{Int,StreamStrengthEntry}
