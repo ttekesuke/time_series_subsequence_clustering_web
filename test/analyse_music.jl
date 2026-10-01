@@ -210,6 +210,71 @@ end
   @test changed_with_other_clusters
 end
 
+@testset "observed old distances reuse only exact parent prefixes" begin
+  function check_prefix_case(; changed_prefix::Bool=false)
+    manager = PCM.Manager(Vector{Float64}[Float64[0.0] for _ in 1:4],
+      0.02, 2, false; range_min=0.0, range_max=1.0,
+      max_set_size=1, enable_occurrence_intervals=false, recency=0.0)
+    old_tail = changed_prefix ? 0.1 : 0.0
+    manager.cluster_spans = PCM.CompressedClusterSpan[
+      PCM.CompressedClusterSpan(2, 4, [0, 2, 4], [0, 1],
+        [Float64[0.2] for _ in 1:4], [0, 0, 0], [4, 4, 4],
+        PCM.CompressedClusterSpan[]),
+      PCM.CompressedClusterSpan(2, 4, [1, 3, 5], [0, 1],
+        [Float64[1.0] for _ in 1:4], [0, 0, 0], [4, 4, 4],
+        PCM.CompressedClusterSpan[]),
+    ]
+    manager.cluster_id_counter = 6
+    empty!(manager.cluster_quantity_cache)
+    empty!(manager.cluster_complexity_cache)
+    empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
+    empty!(manager.updated_cluster_ids_per_window_for_calculate_quantities)
+    old_representatives = Dict{Tuple{Int,Int},PCM.PolySeq}(
+      (2, 0) => [Float64[0.0] for _ in 1:2],
+      (3, 2) => [Float64[0.0] for _ in 1:3],
+      (4, 4) => [Float64[old_tail], Float64[0.0], Float64[0.0], Float64[0.0]],
+    )
+    distance_sums = Dict{Int,Float64}(
+      2 => sqrt(2.0), 3 => sqrt(3.0),
+      4 => sqrt((1.0 - old_tail)^2 + 3.0),
+    )
+    timing_keys = (
+      :cache_collect, :cache_windows, :cache_distance,
+      :cache_distance_pairs, :cache_distance_revised_pairs,
+      :cache_distance_prefix_hits, :cache_distance_new_prefix_s,
+      :cache_distance_new_full_pairs, :cache_distance_new_full_rows,
+      :cache_distance_new_full_s, :cache_distance_old_full_pairs,
+      :cache_distance_old_full_rows, :cache_distance_old_full_s,
+      :cache_distance_old_prefix_hits, :cache_distance_old_prefix_s,
+      :cache_distance_old_prefix_check_s, :cache_quantity,
+      :cache_complexity_evals, :cache_complexity_prefix_hits,
+      :cache_complexity_prefix_s, :cache_complexity_full_rows,
+      :cache_complexity_full_s, :cache_occurrence,
+    )
+    timings = Dict{Symbol,Float64}(key => 0.0 for key in timing_keys)
+    PCM.update_caches_permanently!(manager;
+      phase_timings=timings, observed_distance_sums=distance_sums,
+      observed_old_representatives=old_representatives,
+      observed_first_new_id=6)
+
+    for window_size in 2:4
+      @test isapprox(distance_sums[window_size], 0.8 * sqrt(float(window_size)); atol=1e-12)
+    end
+    exact = _exact_current_cluster_metrics(manager)
+    @test isapprox(sum(distance_sums[window] / window for window in 2:4),
+      exact.distance; atol=1e-12)
+    @test timings[:cache_distance_revised_pairs] == 3.0
+    @test timings[:cache_distance_old_prefix_hits] == (changed_prefix ? 1.0 : 2.0)
+    @test timings[:cache_distance_old_full_pairs] == (changed_prefix ? 2.0 : 1.0)
+    @test timings[:cache_distance_old_full_rows] == (changed_prefix ? 6.0 : 2.0)
+    @test isempty(manager.cluster_distance_cache) ||
+      all(isempty, values(manager.cluster_distance_cache))
+  end
+
+  check_prefix_case()
+  check_prefix_case(changed_prefix=true)
+end
+
 function _score_with_divisions(divisions::Int, durations::Vector{Int})
   body = IOBuffer()
   for (index, duration) in enumerate(durations)

@@ -1366,6 +1366,34 @@ function weighted_complexity_score(
   return weight_sum > 0.0 ? (weighted / weight_sum) : 0.0
 end
 
+"""Whether two successive logical windows have the same old representative prefix.
+
+Physical spans may be split while an observed point is committed, so distinct
+spans are compared by value. Sharing the unchanged as_max gives an O(1) fast
+path; changed representatives are checked once per cluster and window, rather
+than once for every distance pair.
+"""
+function _observed_old_prefix_matches(
+  previous_node::SpanClusterRef,
+  node::SpanClusterRef,
+  previous_old::Union{Nothing,PolySeq},
+  current_old::Union{Nothing,PolySeq},
+  window_size::Int,
+)::Bool
+  previous = previous_old === nothing ? _cluster_as_view(previous_node) : previous_old
+  current = current_old === nothing ? _cluster_as_view(node) : current_old
+  length(previous) == window_size - 1 || return false
+  length(current) == window_size || return false
+  if previous_old === nothing && current_old === nothing &&
+      previous_node.span.as_max === node.span.as_max
+    return true
+  end
+  @inbounds for index in 1:(window_size - 1)
+    previous[index] == current[index] || return false
+  end
+  return true
+end
+
 function update_caches_permanently!(
   mgr::Manager;
   phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
@@ -1457,10 +1485,49 @@ function update_caches_permanently!(
 
   window_sizes = observed_distance_sums === nothing ?
     collect(keys(clusters_each)) : sort!(collect(keys(clusters_each)))
+  previous_old_window = 0
+  previous_old_nodes = Dict{Int,SpanClusterRef}()
+  previous_old_pair_squares = Dict{Tuple{Int,Int},Float64}()
   for window_size in window_sizes
     same_ws = clusters_each[window_size]
     all_ids = collect(keys(same_ws))
     phase_started = phase_timings === nothing ? 0 : time_ns()
+    current_old_pair_squares = Dict{Tuple{Int,Int},Float64}()
+    old_prefix_matches = Dict{Int,Bool}()
+    parent_ids = Dict{Int,Int}()
+    if observed_distance_sums !== nothing &&
+        haskey(changed_by_window, window_size) &&
+        previous_old_window + 1 == window_size
+      for (parent_id, parent) in previous_old_nodes
+        span = parent.span
+        if parent.offset < length(span.cluster_ids)
+          parent_ids[span.cluster_ids[parent.offset + 1]] = parent_id
+        else
+          for child in span.children
+            parent_ids[child.cluster_ids[1]] = parent_id
+          end
+        end
+      end
+    end
+
+    function old_prefix_matches_for(cid::Int, node::SpanClusterRef)::Bool
+      return get!(old_prefix_matches, cid) do
+        parent_id = get(parent_ids, cid, nothing)
+        parent_id === nothing && return false
+        previous_node = get(previous_old_nodes, parent_id, nothing)
+        previous_node === nothing && return false
+        checked_at = phase_timings === nothing ? 0 : time_ns()
+        matches = _observed_old_prefix_matches(
+          previous_node, node,
+          get(observed_old_representatives, (previous_old_window, parent_id), nothing),
+          get(observed_old_representatives, (window_size, cid), nothing),
+          window_size,
+        )
+        phase_timings !== nothing &&
+          (phase_timings[:cache_distance_old_prefix_check_s] += (time_ns() - checked_at) / 1.0e9)
+        return matches
+      end
+    end
 
     # ----------------------------------------------------------
     # Distance cache (incremental)
@@ -1497,11 +1564,35 @@ function update_caches_permanently!(
               previous1 = old1 === nothing ? _cluster_as_view(node1) : old1
               previous2 = old2 === nothing ? _cluster_as_view(node2) : old2
               old_started = phase_timings === nothing ? 0 : time_ns()
-              current_sum -= euclidean_distance(mgr, previous1, previous2)
+              pair_key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
+              parent1 = get(parent_ids, cid1, nothing)
+              parent2 = get(parent_ids, cid2, nothing)
+              parent_key = parent1 === nothing || parent2 === nothing ? nothing :
+                (parent1 < parent2 ? (parent1, parent2) : (parent2, parent1))
+              prior_square = parent_key === nothing || parent1 == parent2 ? NaN :
+                get(previous_old_pair_squares, parent_key, NaN)
+              prefix_hit = previous_old_window + 1 == window_size &&
+                isfinite(prior_square) &&
+                old_prefix_matches_for(cid1, node1) &&
+                old_prefix_matches_for(cid2, node2)
+              old_square = if prefix_hit
+                tail_distance = min_avg_distance(mgr, previous1[end], previous2[end])
+                prior_square + tail_distance * tail_distance
+              else
+                squared_euclidean_distance(mgr, previous1, previous2)
+              end
+              current_old_pair_squares[pair_key] = old_square
+              current_sum -= sqrt(old_square)
               if phase_timings !== nothing
                 phase_timings[:cache_distance_revised_pairs] += 1.0
-                phase_timings[:cache_distance_old_full_rows] += window_size
-                phase_timings[:cache_distance_old_full_s] += (time_ns() - old_started) / 1.0e9
+                if prefix_hit
+                  phase_timings[:cache_distance_old_prefix_hits] += 1.0
+                  phase_timings[:cache_distance_old_prefix_s] += (time_ns() - old_started) / 1.0e9
+                else
+                  phase_timings[:cache_distance_old_full_pairs] += 1.0
+                  phase_timings[:cache_distance_old_full_rows] += window_size
+                  phase_timings[:cache_distance_old_full_s] += (time_ns() - old_started) / 1.0e9
+                end
               end
             end
             current_sum += new_distance
@@ -1591,6 +1682,11 @@ function update_caches_permanently!(
     end
     if phase_timings !== nothing
       phase_timings[:cache_quantity] += (time_ns() - phase_started) / 1.0e9
+    end
+    if observed_distance_sums !== nothing
+      previous_old_window = window_size
+      previous_old_nodes = same_ws
+      previous_old_pair_squares = current_old_pair_squares
     end
   end
 
