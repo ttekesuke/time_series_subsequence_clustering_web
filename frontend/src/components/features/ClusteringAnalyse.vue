@@ -40,6 +40,7 @@
 import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
 import { useScrollSync } from '../../composables/useScrollSync'
+import { seriesBounds } from '../../composables/seriesBounds'
 
 import { ref, nextTick, computed, watch, onMounted, onUnmounted } from 'vue'
 import ClusteringAnalyseDialog from '../dialog/ClusteringAnalyseDialog.vue'
@@ -128,16 +129,12 @@ const maxSteps = computed(() => {
   return Math.max(1, ts.length)
 })
 
-const minValue = computed(() => {
+const valueBounds = computed(() => {
   const ts = Array.isArray(analyse.value.timeseries) ? analyse.value.timeseries : []
-  if (ts.length === 0) return 0
-  return Math.min(...ts)
+  return seriesBounds(ts)
 })
-const maxValue = computed(() => {
-  const ts = Array.isArray(analyse.value.timeseries) ? analyse.value.timeseries : []
-  if (ts.length === 0) return 127
-  return Math.max(...ts)
-})
+const minValue = computed(() => valueBounds.value.min)
+const maxValue = computed(() => valueBounds.value.max)
 // 画面幅に合わせてステップ幅を計算
 const computedStepWidth = computed(() => {
 
