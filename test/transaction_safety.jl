@@ -245,6 +245,23 @@ end
   end
 end
 
+@testset "failed staged stream append leaves the committed step untouched" begin
+  history = [Any[0.0, 0.0] for _ in 1:3]
+  committed = _tx_msm.Manager(history, 0.02, 2; value_range=[0.0, 1.0])
+  staged = deepcopy(committed)
+  bad = staged.containers_by_id[staged.active_ids[2]].manager
+  bad.use_streamwise_surface_average = true
+  bad.stream_axis_offset = 2.0
+  bad.stream_axis_capacity = 1
+  bad.value_min = 0.0
+  bad.value_max = 1.0
+  bad.value_width = 1.0
+  before = _msm_snapshot(committed)
+
+  @test_throws ErrorException _tx_msm.commit_state_staged!(staged, [0.0, 4.0])
+  @test _msm_snapshot(committed) == before
+end
+
 @testset "candidate failure context preserves dimension stream and candidate" begin
   axis = _tx_controller.StableStreamAxis(1, [1])
   global_manager = _invalid_streamwise_manager()

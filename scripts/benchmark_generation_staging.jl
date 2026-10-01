@@ -7,18 +7,16 @@ const MSM = Main.TimeseriesClusteringAPI.MultiStreamManager
 function measure_commit(seed, staged::Bool, values)
   manager = deepcopy(seed)
   GC.gc()
-  elapsed = @elapsed begin
-    bytes = @allocated begin
-      if staged
-        MSM.commit_state_staged!(manager, values)
-        MSM.update_caches_staged!(manager)
-      else
-        MSM.commit_state!(manager, values)
-        MSM.update_caches_permanently!(manager)
-      end
+  measurement = @timed begin
+    if staged
+      MSM.commit_state_staged!(manager, values)
+      MSM.update_caches_staged!(manager)
+    else
+      MSM.commit_state!(manager, values)
+      MSM.update_caches_permanently!(manager)
     end
   end
-  return bytes, elapsed
+  return measurement.bytes, measurement.time
 end
 
 println("history_steps,streams,mode,allocated_bytes,elapsed_s")
