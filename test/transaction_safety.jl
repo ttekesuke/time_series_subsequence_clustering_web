@@ -211,8 +211,8 @@ end
   staged_streams = staged.managers["vol"][:stream]
   _tx_pcm.add_data_point_permanently!(staged_global, Float64[0.5])
   _tx_pcm.update_caches_permanently!(staged_global)
-  _tx_msm.commit_state!(staged_streams, [0.25, 0.75])
-  _tx_msm.update_caches_permanently!(staged_streams)
+  _tx_msm.commit_state_staged!(staged_streams, [0.25, 0.75])
+  _tx_msm.update_caches_staged!(staged_streams)
   _tx_stm.commit!(staged.stm_mgr, [67, 71], [0.4, 0.6], 1.0)
   _tx_controller._register_stream_ids!(staged.stream_axis, [3])
 
@@ -225,6 +225,24 @@ end
   @test length(staged.stm_mgr.memory) == length(stm.memory) + 1
   @test haskey(staged.stream_axis.id_to_slot, 3)
   @test !haskey(axis.id_to_slot, 3)
+end
+
+@testset "staged stream commit matches atomic commit and preserves manager references" begin
+  history = [Any[0.0, 0.0] for _ in 1:4]
+  atomic = _tx_msm.Manager(history, 0.02, 2;
+    value_range=[0.0, 1.0], track_presence=true)
+  staged = deepcopy(atomic)
+  refs = [staged.containers_by_id[id].manager for id in staged.active_ids]
+
+  for values in ([0.25, 0.75], [0.5, 0.5])
+    _tx_msm.commit_state!(atomic, values)
+    _tx_msm.update_caches_permanently!(atomic)
+    _tx_msm.commit_state_staged!(staged, values)
+    _tx_msm.update_caches_staged!(staged)
+    @test _msm_snapshot(staged) == _msm_snapshot(atomic)
+    @test all(staged.containers_by_id[id].manager === refs[i]
+      for (i, id) in enumerate(staged.active_ids))
+  end
 end
 
 @testset "candidate failure context preserves dimension stream and candidate" begin

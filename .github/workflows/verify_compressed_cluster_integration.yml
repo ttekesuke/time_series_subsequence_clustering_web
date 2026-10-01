@@ -1,6 +1,7 @@
 name: Verify Compressed Cluster Integration
 
 on:
+  pull_request:
   push:
     branches: [main]
 
@@ -45,6 +46,8 @@ jobs:
               include(file);
             end
           '
+      - name: Measure generation stream commits
+        run: julia --project=. scripts/benchmark_generation_staging.jl
 
   frontend:
     runs-on: ubuntu-latest
