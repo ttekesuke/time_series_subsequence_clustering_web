@@ -229,6 +229,10 @@ end
     empty!(manager.cluster_complexity_cache)
     empty!(manager.updated_cluster_ids_per_window_for_calculate_distance)
     empty!(manager.updated_cluster_ids_per_window_for_calculate_quantities)
+    for (window_size, cluster_id) in ((2, 0), (3, 2), (4, 4))
+      manager.updated_cluster_ids_per_window_for_calculate_quantities[window_size] =
+        Set([cluster_id])
+    end
     old_representatives = Dict{Tuple{Int,Int},PCM.PolySeq}(
       (2, 0) => [Float64[0.0] for _ in 1:2],
       (3, 2) => [Float64[0.0] for _ in 1:3],
