@@ -1487,16 +1487,18 @@ function update_caches_permanently!(
     collect(keys(clusters_each)) : sort!(collect(keys(clusters_each)))
   previous_old_window = 0
   previous_old_nodes = Dict{Int,SpanClusterRef}()
-  previous_old_pair_squares = Dict{Tuple{Int,Int},Float64}()
+  previous_old_pair_squares::Union{Nothing,Dict{Tuple{Int,Int},Float64}} = nothing
   for window_size in window_sizes
     same_ws = clusters_each[window_size]
     all_ids = collect(keys(same_ws))
     phase_started = phase_timings === nothing ? 0 : time_ns()
-    current_old_pair_squares = Dict{Tuple{Int,Int},Float64}()
-    old_prefix_matches = Dict{Int,Bool}()
-    parent_ids = Dict{Int,Int}()
-    if observed_distance_sums !== nothing &&
-        haskey(changed_by_window, window_size) &&
+    has_old_revisions = observed_distance_sums !== nothing &&
+      haskey(changed_by_window, window_size)
+    current_old_pair_squares = has_old_revisions ? Dict{Tuple{Int,Int},Float64}() : nothing
+    old_prefix_matches = has_old_revisions ? Dict{Int,Bool}() : nothing
+    parent_ids = has_old_revisions ? Dict{Int,Int}() : nothing
+    if has_old_revisions && previous_old_pair_squares !== nothing &&
+        !isempty(previous_old_pair_squares) &&
         previous_old_window + 1 == window_size
       for (parent_id, parent) in previous_old_nodes
         span = parent.span
@@ -1569,7 +1571,8 @@ function update_caches_permanently!(
               parent2 = get(parent_ids, cid2, nothing)
               parent_key = parent1 === nothing || parent2 === nothing ? nothing :
                 (parent1 < parent2 ? (parent1, parent2) : (parent2, parent1))
-              prior_square = parent_key === nothing || parent1 == parent2 ? NaN :
+              prior_square = previous_old_pair_squares === nothing ||
+                  parent_key === nothing || parent1 == parent2 ? NaN :
                 get(previous_old_pair_squares, parent_key, NaN)
               prefix_hit = previous_old_window + 1 == window_size &&
                 isfinite(prior_square) &&
