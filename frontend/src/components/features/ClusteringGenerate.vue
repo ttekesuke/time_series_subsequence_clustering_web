@@ -54,17 +54,40 @@
 import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
 import { useScrollSync } from '../../composables/useScrollSync'
+import { seriesBounds } from '../../composables/seriesBounds'
 
-import { ref, nextTick, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import ClusteringGenerateDialog from '../dialog/ClusteringGenerateDialog.vue'
-import axios from 'axios'
 
 const props = defineProps({ jobId: { type: String, required: false } })
+
+type CompressedSpan = {
+  window_min: number
+  window_max: number
+  cluster_ids: number[]
+  indices: number[]
+  fit_limits: number[]
+  parent_index: number | null
+}
+type GenerationResult = {
+  timeseries: number[]
+  complexityTransition: number[]
+  compressedClusterSpans: CompressedSpan[]
+  loading: boolean
+  mergeThresholdRatio: number
+  processingTime: number | null
+}
+type GenerationResponse = {
+  timeSeries: number[]
+  complexityTransition?: number[]
+  compressedClusterSpans?: CompressedSpan[]
+  processingTime: number | null
+}
 
 const openDialog = ref(false)
 const progress = ref({ percent: 0, status: 'idle' })
 
-const generate = ref({
+const generate = ref<GenerationResult>({
   timeseries: [],
   complexityTransition: [],
   compressedClusterSpans: [],
@@ -73,22 +96,24 @@ const generate = ref({
   processingTime: null
 })
 
-const onFileSelected = (file) => {
+const onFileSelected = (event: Event) => {
+  const file = (event.target as HTMLInputElement | null)?.files?.[0]
+  if (!file) return
   const reader = new FileReader()
   reader.onload = (e) => {
     if (!e.target) return
     const text = e.target.result
-      if (typeof text === 'string') {
+    if (typeof text === 'string') {
       const json = JSON.parse(text)
       if (json.methodType === 'generate') {
-        generate.value = json.generate || {}
+        generate.value = json.generate
       }
     }
   }
-  reader.readAsText(file.target.files[0])
+  reader.readAsText(file)
 }
 
-const handleGenerated = (data) => {
+const handleGenerated = (data: GenerationResponse) => {
 
   console.log('generated', data)
   // reactive updates
@@ -128,13 +153,13 @@ const containerWidth = ref(containerRef.value ? containerRef.value.clientWidth :
 let resizeObserver: ResizeObserver | null = null
 // スクロール同期
 const { syncScroll } = useScrollSync([timeseriesStreamsRollRef, clustersRollRef, complexityTransitionStreamsRollRef])
-const onScroll = (e) => syncScroll(e)
+const onScroll = (e: Event) => syncScroll(e)
 
 // ハイライト状態
 const highlightedIndices = ref<number[]>([])
 const highlightedWindowSize = ref(0)
 
-const onHoverCluster = (clusterInfo) => {
+const onHoverCluster = (clusterInfo: { indices: number[]; windowSize: number } | null) => {
   if (clusterInfo) {
     highlightedIndices.value = clusterInfo.indices
     highlightedWindowSize.value = clusterInfo.windowSize
@@ -150,8 +175,9 @@ const maxSteps = computed(() => {
   return generate.value.timeseries.length
 })
 
-const minValue = computed(() => Math.min(...(generate.value.timeseries || [0])))
-const maxValue = computed(() => Math.max(...(generate.value.timeseries || [1])))
+const valueBounds = computed(() => seriesBounds(generate.value.timeseries))
+const minValue = computed(() => valueBounds.value.min)
+const maxValue = computed(() => valueBounds.value.max)
 
 // 画面幅に合わせてステップ幅を計算
 const computedStepWidth = computed(() => {

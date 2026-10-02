@@ -4,14 +4,15 @@
   </div>
 </template>
 
-<script setup>
-import { onMounted, onBeforeUnmount, watch, ref } from 'vue'
+<script setup lang="ts">
+import { onMounted, onBeforeUnmount, watch, ref, type PropType } from 'vue'
 
 // Props
 const props = defineProps({
   audioEl: {
-    type: Object,
+    type: Object as PropType<HTMLAudioElement | null>,
     required: false, // audioElが後で生成されるケースに対応
+    default: null,
   },
   width: {
     type: Number,
@@ -31,20 +32,21 @@ const props = defineProps({
   },
 })
 
-const canvas = ref(null)
-let ctx = null
-let audioCtx = null
-let source = null
-let analyser = null
-let dataArray = null
-let rafId = null
+const canvas = ref<HTMLCanvasElement | null>(null)
+let audioCtx: AudioContext | null = null
+let source: MediaElementAudioSourceNode | null = null
+let analyser: AnalyserNode | null = null
+let dataArray: Uint8Array<ArrayBuffer> | null = null
+let rafId: number | null = null
 let isConnected = false
 
 function setupAudio() {
   if (!props.audioEl) return
 
   if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    const AudioContextClass = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioContextClass) return
+    audioCtx = new AudioContextClass()
   }
 
   if (source) {
@@ -74,8 +76,8 @@ function setupAudio() {
 function teardownAudio() {
   if (!isConnected) return
   try {
-    source.disconnect()
-    analyser.disconnect()
+    source?.disconnect()
+    analyser?.disconnect()
   } catch (e) {}
   source = null
   analyser = null
@@ -86,7 +88,8 @@ function teardownAudio() {
 function draw() {
   if (!canvas.value) return
   const c = canvas.value
-  ctx = c.getContext('2d')
+  const ctx = c.getContext('2d')
+  if (!ctx) return
   const w = props.width
   const h = props.height
   const marginLeft = 70
@@ -148,7 +151,7 @@ function draw() {
   // 周波数→x座標（logスケール）
   const logMin = Math.log10(20)
   const logMax = Math.log10(nyquist)
-  function freqToX(freq) {
+  function freqToX(freq: number) {
     return marginLeft + (Math.log10(freq) - logMin) / (logMax - logMin) * plotW
   }
 
@@ -156,8 +159,9 @@ function draw() {
   const barW = plotW / semitoneFreqs.length
   for (let i = 0; i < semitoneFreqs.length; i++) {
     const freq = semitoneFreqs[i]
+    if (freq === undefined) continue
     const binIndex = Math.round((freq / nyquist) * (bins - 1))
-    const value = dataArray[binIndex]
+    const value = dataArray[binIndex] ?? 0
     const magnitude = value / 255 // 0〜1 に正規化
 
     const barH = magnitude * plotH
@@ -211,8 +215,6 @@ function handlePlayEvent() {
 }
 
 onMounted(() => {
-  if (canvas.value) ctx = canvas.value.getContext('2d')
-
   if (props.audioEl) {
     props.audioEl.addEventListener('play', handlePlayEvent)
     props.audioEl.addEventListener('pause', () => {

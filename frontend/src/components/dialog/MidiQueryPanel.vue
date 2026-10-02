@@ -145,20 +145,28 @@ watch(selectedTrackIndex, () => {
   selectedChannel.value = 'all'
 })
 
+const readByte = (bytes: Uint8Array, offset: number, end = bytes.length): number => {
+  if (offset < 0 || offset >= end) throw new Error('Truncated MIDI data')
+  const byte = bytes[offset]
+  if (byte === undefined) throw new Error('Truncated MIDI data')
+  return byte
+}
+
 const readU32BE = (bytes: Uint8Array, offset: number) =>
-  (bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]
+  ((readByte(bytes, offset) << 24) | (readByte(bytes, offset + 1) << 16) |
+    (readByte(bytes, offset + 2) << 8) | readByte(bytes, offset + 3)) >>> 0
 
 const readU16BE = (bytes: Uint8Array, offset: number) =>
-  (bytes[offset] << 8) | bytes[offset + 1]
+  (readByte(bytes, offset) << 8) | readByte(bytes, offset + 1)
 
 const readAscii = (bytes: Uint8Array, start: number, length: number) =>
   String.fromCharCode(...bytes.slice(start, start + length))
 
-const readVarLen = (bytes: Uint8Array, state: { pos: number }) => {
+const readVarLen = (bytes: Uint8Array, state: { pos: number }, end = bytes.length) => {
   let value = 0
   let count = 0
-  while (state.pos < bytes.length) {
-    const byte = bytes[state.pos++]
+  while (state.pos < end) {
+    const byte = readByte(bytes, state.pos++, end)
     value = (value << 7) | (byte & 0x7f)
     count += 1
     if ((byte & 0x80) === 0) break
@@ -204,12 +212,12 @@ const parseMidi = (bytes: Uint8Array): ParsedMidi => {
 
     while (index < chunk.end) {
       const state = { pos: index }
-      const delta = readVarLen(bytes, state)
+      const delta = readVarLen(bytes, state, chunk.end)
       index = state.pos
       tick += delta
       if (index >= chunk.end) break
 
-      let status = bytes[index]
+      let status = readByte(bytes, index, chunk.end)
       if (status < 0x80) {
         if (runningStatus < 0) break
         status = runningStatus
@@ -221,9 +229,9 @@ const parseMidi = (bytes: Uint8Array): ParsedMidi => {
 
       if (status === 0xff) {
         if (index >= chunk.end) break
-        const metaType = bytes[index++]
+        const metaType = readByte(bytes, index++, chunk.end)
         const lenState = { pos: index }
-        const metaLen = readVarLen(bytes, lenState)
+        const metaLen = readVarLen(bytes, lenState, chunk.end)
         index = lenState.pos
         if (metaType === 0x03) name = readAscii(bytes, index, Math.min(metaLen, chunk.end - index))
         index += metaLen
@@ -232,7 +240,7 @@ const parseMidi = (bytes: Uint8Array): ParsedMidi => {
 
       if (status === 0xf0 || status === 0xf7) {
         const lenState = { pos: index }
-        const syxLen = readVarLen(bytes, lenState)
+        const syxLen = readVarLen(bytes, lenState, chunk.end)
         index = lenState.pos + syxLen
         continue
       }
@@ -242,8 +250,8 @@ const parseMidi = (bytes: Uint8Array): ParsedMidi => {
 
       if (kind === 0x80 || kind === 0x90) {
         if (index + 1 >= chunk.end) break
-        const note = bytes[index++]
-        const velocity = bytes[index++]
+        const note = readByte(bytes, index++, chunk.end)
+        const velocity = readByte(bytes, index++, chunk.end)
         const on = kind === 0x90 && velocity > 0
         events.push({ tick, channel, note, velocity, on })
       } else if (kind === 0xa0 || kind === 0xb0 || kind === 0xe0) {
@@ -282,7 +290,9 @@ const extractMidiSeries = (
   if (events.length === 0) return { pitch: [], velocity: [], activeSteps: 0, restSteps: 0 }
 
   const ticksPerStep = Math.max(1, Math.round(midi.ticksPerQuarter / 4))
-  const maxTick = events[events.length - 1].tick
+  const lastEvent = events.at(-1)
+  if (!lastEvent) return { pitch: [], velocity: [], activeSteps: 0, restSteps: 0 }
+  const maxTick = lastEvent.tick
   const totalSteps = Math.max(1, Math.floor(maxTick / ticksPerStep) + 1)
   const active = new Map<number, { count: number; velocity: number }>()
   const pitch: number[] = []
@@ -294,8 +304,9 @@ const extractMidiSeries = (
 
   for (let step = 0; step < totalSteps; step++) {
     const stepTick = step * ticksPerStep
-    while (eventIndex < events.length && events[eventIndex].tick <= stepTick) {
+    while (eventIndex < events.length) {
       const event = events[eventIndex]
+      if (!event || event.tick > stepTick) break
       const current = active.get(event.note)
       if (event.on) {
         active.set(event.note, { count: (current?.count ?? 0) + 1, velocity: event.velocity })
@@ -343,9 +354,8 @@ const onMidiFilePicked = async (value: File | File[] | null) => {
     const buffer = await file.arrayBuffer()
     const parsed = parseMidi(new Uint8Array(buffer))
     parsedMidi.value = parsed
-    if (midiTrackOptions.value.length > 0) {
-      selectedTrackIndex.value = Number(midiTrackOptions.value[0].value)
-    }
+    const firstTrack = midiTrackOptions.value[0]
+    if (firstTrack) selectedTrackIndex.value = firstTrack.value
     midiSummary.value = `MIDI loaded: format=${parsed.format}, tracks=${parsed.tracks.length}, PPQ=${parsed.ticksPerQuarter}`
   } catch (error: any) {
     midiError.value = `Failed to parse MIDI: ${error?.message ?? String(error)}`
@@ -367,16 +377,14 @@ const applyMidiToGrid = () => {
     { name: 'midiVol', shortName: 'Vol', data: series.velocity, config: { min: 0, max: 1, isInt: true, step: 1 } },
   ]
 
-  const nextRows = rows.length > 0 ? rows : [
-    { name: 'querySeries', shortName: 'Query', data: [0], config: { min: 0, max: 127, isInt: true, step: 1 } },
-  ]
+  const stepCount = series.pitch.length
 
   emit('applied', {
-    rows: nextRows,
-    steps: Math.max(1, nextRows[0].data.length),
-    summary: `Extracted steps=${nextRows[0].data.length}, note-steps=${series.activeSteps}, rests=${series.restSteps} (${chordNoteMode.value} note, vol=1 for sounding / 0 for rests)`,
+    rows,
+    steps: Math.max(1, stepCount),
+    summary: `Extracted steps=${stepCount}, note-steps=${series.activeSteps}, rests=${series.restSteps} (${chordNoteMode.value} note, vol=1 for sounding / 0 for rests)`,
   })
 
-  midiSummary.value = `Extracted steps=${nextRows[0].data.length}, note-steps=${series.activeSteps}, rests=${series.restSteps} (${chordNoteMode.value} note, vol=1 for sounding / 0 for rests)`
+  midiSummary.value = `Extracted steps=${stepCount}, note-steps=${series.activeSteps}, rests=${series.restSteps} (${chordNoteMode.value} note, vol=1 for sounding / 0 for rests)`
 }
 </script>

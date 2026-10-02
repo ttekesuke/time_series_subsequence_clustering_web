@@ -228,10 +228,6 @@ const selectedComponent = computed(() => {
 const audio = ref<HTMLAudioElement | null>(null)
 const currentAudioSrc = ref('')
 
-const progress = ref({
-  percent: 0,
-  status: 'idle'
-})
 const jobId = ref(uuidv4())
 
 // Header -> call methods exposed by active feature component
@@ -325,35 +321,6 @@ const startPlayingSound = () => {
   } else {
     started()
   }
-}
-
-const renderPolyphonicAudio = (timeSeries) => {
-  progress.value.status = 'rendering'
-  axios.post('/api/web/supercolliders/render_polyphonic', {
-    time_series: timeSeries
-  }).then(response => {
-    if (response?.data?.error) {
-      console.error("Rendering error:", response.data.error)
-      music.value.loading = false
-      return
-    }
-
-    const { sound_file_path, scd_file_path, audio_data } = response.data
-    music.value.soundFilePath = sound_file_path
-    const base64 = audio_data.includes(',') ? audio_data.split(',')[1] : audio_data
-    const binary = atob(base64)
-    const len = binary.length
-    const bytes = new Uint8Array(len)
-    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
-    const blob = new Blob([bytes.buffer], { type: "audio/wav" })
-    const url = URL.createObjectURL(blob)
-    audio.value = new Audio(url)
-    // audio.value.addEventListener('ended', () => nowPlaying.value = false)
-    music.value.loading = false
-    music.value.setDataDialog = false
-    cleanup()
-  })
-  .catch(error => { console.error("Rendering error:", error); music.value.loading = false })
 }
 
 const confirmLeaveMessage = '移動または再読み込みしてよいですか？'

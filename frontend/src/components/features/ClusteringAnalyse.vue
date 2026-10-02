@@ -42,17 +42,37 @@ import ClustersRoll from '../visualizer/ClustersRoll.vue'
 import { useScrollSync } from '../../composables/useScrollSync'
 import { seriesBounds } from '../../composables/seriesBounds'
 
-import { ref, nextTick, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import ClusteringAnalyseDialog from '../dialog/ClusteringAnalyseDialog.vue'
-import axios from 'axios'
 
 const props = defineProps({ jobId: { type: String, required: false } })
-const jobId = props.jobId
+
+type CompressedSpan = {
+  window_min: number
+  window_max: number
+  cluster_ids: number[]
+  indices: number[]
+  fit_limits: number[]
+  parent_index: number | null
+}
+type AnalysisResult = {
+  timeseries: number[]
+  compressedClusterSpans: CompressedSpan[]
+  timeSeriesChart: number[]
+  loading: boolean
+  mergeThresholdRatio: number
+  processingTime: number | null
+}
+type AnalysisResponse = {
+  timeSeries: number[]
+  compressedClusterSpans?: CompressedSpan[]
+  processingTime: number | null
+}
 
 const openDialog = ref(false)
 const progress = ref({ percent: 0, status: 'idle' })
 
-const analyse = ref({
+const analyse = ref<AnalysisResult>({
   timeseries: [],
   compressedClusterSpans: [],
   timeSeriesChart: [],
@@ -61,7 +81,9 @@ const analyse = ref({
   processingTime: null
 })
 
-const onFileSelected = (file) => {
+const onFileSelected = (event: Event) => {
+  const file = (event.target as HTMLInputElement | null)?.files?.[0]
+  if (!file) return
   const reader = new FileReader()
   reader.onload = (e) => {
     if (!e.target) return
@@ -73,10 +95,10 @@ const onFileSelected = (file) => {
       }
     }
   }
-  reader.readAsText(file.target.files[0])
+  reader.readAsText(file)
 }
 
-const handleAnalysed = (data) => {
+const handleAnalysed = (data: AnalysisResponse) => {
   analyse.value.compressedClusterSpans = data.compressedClusterSpans || []
   analyse.value.timeseries = data.timeSeries
   analyse.value.processingTime = data.processingTime
@@ -107,13 +129,13 @@ const containerWidth = ref(containerRef.value ? containerRef.value.clientWidth :
 let resizeObserver: ResizeObserver | null = null
 // スクロール同期
 const { syncScroll } = useScrollSync([StreamsRollRef, clustersRollRef])
-const onScroll = (e) => syncScroll(e)
+const onScroll = (e: Event) => syncScroll(e)
 
 // ハイライト状態
 const highlightedIndices = ref<number[]>([])
 const highlightedWindowSize = ref(0)
 
-const onHoverCluster = (clusterInfo) => {
+const onHoverCluster = (clusterInfo: { indices: number[]; windowSize: number } | null) => {
   if (clusterInfo) {
     highlightedIndices.value = clusterInfo.indices
     highlightedWindowSize.value = clusterInfo.windowSize
