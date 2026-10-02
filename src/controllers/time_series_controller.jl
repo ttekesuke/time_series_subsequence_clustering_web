@@ -3530,7 +3530,8 @@ function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, v
   # memory vector, and token selection reads the inventory. Reuse these
   # historical leaves while copying mutable clusters, cache outer maps,
   # stream containers, axis, and voice managers as a single graph. Cache
-  # windows remain shared until the staged manager first writes each window.
+  # windows and occurrence-interval states remain shared until the staged
+  # manager first writes each one.
   shared = IdDict{Any,Any}()
   function share_pcm_rows!(pcm)
     PolyphonicClusterManager.share_staged_payloads!(shared, pcm)
@@ -3539,6 +3540,7 @@ function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, v
     staged_pcm.shared_distance_cache_windows = Set(keys(original_pcm.cluster_distance_cache))
     staged_pcm.shared_quantity_cache_windows = Set(keys(original_pcm.cluster_quantity_cache))
     staged_pcm.shared_complexity_cache_windows = Set(keys(original_pcm.cluster_complexity_cache))
+    staged_pcm.shared_occurrence_state_keys = Set(keys(original_pcm.occurrence_interval_states))
   end
   for mgrs in values(managers)
     share_pcm_rows!(mgrs[:global])

@@ -272,6 +272,13 @@ end
       children=map(span_signature, span.children),
     )
   end
+  function occurrence_signature(manager)
+    return Dict(key => (
+      count=state.source_occurrence_count,
+      scale=state.scale,
+      nested=state.manager === nothing ? nothing : _pcm_snapshot(state.manager),
+    ) for (key, state) in manager.occurrence_interval_states)
+  end
   history = [Float64[float(mod(i - 1, 2))] for i in 1:24]
   global_manager = _tx_pcm.Manager(deepcopy(history), 0.0, 2, false;
     range_min=0.0, range_max=1.0, max_set_size=1)
@@ -279,6 +286,8 @@ end
   _tx_pcm.update_caches_permanently!(global_manager)
   before = _pcm_snapshot(global_manager)
   before_spans = map(span_signature, global_manager.cluster_spans)
+  before_occurrences = occurrence_signature(global_manager)
+  @test !isempty(before_occurrences)
   baseline = deepcopy(global_manager)
   axis = _tx_controller.StableStreamAxis(1, [1])
   staged = _tx_controller._stage_generate_polyphonic_step_state(
@@ -299,17 +308,29 @@ end
     foreach(assert_shared_metadata, original.children, copied.children)
   end
   foreach(assert_shared_metadata, global_manager.cluster_spans, staged.cluster_spans)
+  for (key, state) in global_manager.occurrence_interval_states
+    @test staged.occurrence_interval_states[key] === state
+  end
 
   _tx_pcm.simulate_add_and_calculate_all_extended(staged, Float64[0.0])
-  _tx_pcm.add_data_point_permanently!(staged, Float64[0.0])
-  _tx_pcm.add_data_point_permanently!(baseline, Float64[0.0])
+  # The first new interval reaches the opposite alternating root; the next
+  # revisits an existing interval state and must detach its nested manager.
+  for value in (0.0, 1.0)
+    _tx_pcm.add_data_point_permanently!(staged, Float64[value])
+    _tx_pcm.add_data_point_permanently!(baseline, Float64[value])
+    _tx_pcm.update_caches_permanently!(staged)
+    _tx_pcm.update_caches_permanently!(baseline)
+  end
   _tx_pcm.finalize_cluster_storage!(staged)
   _tx_pcm.finalize_cluster_storage!(baseline)
-  _tx_pcm.update_caches_permanently!(staged)
-  _tx_pcm.update_caches_permanently!(baseline)
   @test _pcm_snapshot(staged) == _pcm_snapshot(baseline)
+  @test occurrence_signature(staged) == occurrence_signature(baseline)
   @test _pcm_snapshot(global_manager) == before
   @test map(span_signature, global_manager.cluster_spans) == before_spans
+  @test occurrence_signature(global_manager) == before_occurrences
+  @test any(staged.occurrence_interval_states[key] !== state
+    for (key, state) in global_manager.occurrence_interval_states
+    if haskey(staged.occurrence_interval_states, key))
 end
 
 @testset "staged cluster tasks share read-only payloads" begin
