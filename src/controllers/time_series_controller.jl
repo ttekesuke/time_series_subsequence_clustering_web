@@ -3536,6 +3536,7 @@ function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, v
     PolyphonicClusterManager.share_staged_payloads!(shared, pcm)
   end
   function mark_shared_caches!(staged_pcm, original_pcm)
+    PolyphonicClusterManager.mark_staged_span_topology!(staged_pcm)
     staged_pcm.shared_distance_cache_windows = Set(keys(original_pcm.cluster_distance_cache))
     staged_pcm.shared_quantity_cache_windows = Set(keys(original_pcm.cluster_quantity_cache))
     staged_pcm.shared_complexity_cache_windows = Set(keys(original_pcm.cluster_complexity_cache))

@@ -65,6 +65,23 @@ function measure_commit(seed, staged::Bool, values)
   return measurement.bytes, measurement.time
 end
 
+function measure_generated_step(graph, staged::Bool, values)
+  GC.gc()
+  measurement = @timed begin
+    copy_state = staged ? CTRL._stage_generate_polyphonic_step_state(
+      graph.managers, graph.stm_mgr, graph.stream_axis, graph.voice_state,
+    ) : deepcopy(graph)
+    global_manager = copy_state.managers["vol"][:global]
+    PCM.simulate_add_and_calculate_all_extended(global_manager, Float64[0.5])
+    PCM.add_data_point_permanently!(global_manager, Float64[0.5])
+    PCM.update_caches_permanently!(global_manager)
+    stream_manager = copy_state.managers["vol"][:stream]
+    MSM.commit_state_staged!(stream_manager, values)
+    MSM.update_caches_staged!(stream_manager)
+  end
+  return measurement.bytes, measurement.time
+end
+
 println("transaction_history_steps,mode,allocated_bytes,elapsed_s")
 for history_steps in (24, 64, 128)
   history = [Float64[float(step % 3) / 4] for step in 1:history_steps]
@@ -79,6 +96,31 @@ for history_steps in (24, 64, 128)
     allocated = minimum(first, samples)
     elapsed = minimum(last, samples)
     println("$history_steps,$(old ? "recursive_snapshot" : "journal_snapshot"),$allocated,$elapsed")
+  end
+end
+
+println("step_history_steps,streams,mode,allocated_bytes,elapsed_s")
+for history_steps in (24, 64), streams in (2, 4)
+  history = [Any[float((step + slot) % 3) / 4 for slot in 1:streams]
+    for step in 1:history_steps]
+  seed = MSM.Manager(history, 0.02, 2; value_range=[0.0, 1.0])
+  axis = CTRL.StableStreamAxis(streams, collect(1:streams))
+  graph = (
+    managers=Dict("vol" => Dict{Symbol,Any}(
+      :global => deepcopy(seed.stream_pool[1].manager),
+      :stream => seed,
+      :stream_axis => axis,
+    )),
+    stm_mgr=STM.Manager(), stream_axis=axis, voice_state=nothing,
+  )
+  values = fill(0.5, streams)
+  measure_generated_step(graph, false, values)
+  measure_generated_step(graph, true, values)
+  for staged in (false, true)
+    samples = [measure_generated_step(graph, staged, values) for _ in 1:2]
+    allocated = minimum(first, samples)
+    elapsed = minimum(last, samples)
+    println("$history_steps,$streams,$(staged ? "copy_on_write" : "deepcopy"),$allocated,$elapsed")
   end
 end
 

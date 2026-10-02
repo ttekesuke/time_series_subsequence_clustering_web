@@ -209,7 +209,7 @@ end
   @test staged.managers["vol"][:stream_axis] === staged.stream_axis
   @test staged.managers["vol"][:global].data !== global_manager.data
   @test staged.managers["vol"][:global].data[1] === global_manager.data[1]
-  @test staged.managers["vol"][:global].cluster_spans[1] !== global_manager.cluster_spans[1]
+  @test staged.managers["vol"][:global].cluster_spans[1] === global_manager.cluster_spans[1]
   @test staged.managers["vol"][:global].cluster_spans[1].si_min === global_manager.cluster_spans[1].si_min
   @test staged.managers["vol"][:global].cluster_spans[1].as_max === global_manager.cluster_spans[1].as_max
   @test staged.managers["vol"][:global].cluster_quantity_cache !== global_manager.cluster_quantity_cache
@@ -228,7 +228,9 @@ end
   staged_streams = staged.managers["vol"][:stream]
   @test _tx_pcm.simulate_add_and_calculate_all_extended(staged_global, Float64[0.5]) ==
     _tx_pcm.simulate_add_and_calculate_all_extended(baseline.managers["vol"][:global], Float64[0.5])
+  @test staged_global.cluster_spans[1] === global_manager.cluster_spans[1]
   _tx_pcm.add_data_point_permanently!(staged_global, Float64[0.5])
+  @test staged_global.cluster_spans[1] !== global_manager.cluster_spans[1]
   _tx_pcm.update_caches_permanently!(staged_global)
   _tx_msm.commit_state_staged!(staged_streams, [0.25, 0.75])
   _tx_msm.update_caches_staged!(staged_streams)
@@ -291,7 +293,7 @@ end
   ).managers["note"][:global]
 
   function assert_shared_metadata(original, copied)
-    @test original !== copied
+    @test original === copied
     @test original.cluster_ids === copied.cluster_ids
     @test original.versions === copied.versions
     @test original.fit_limits === copied.fit_limits
@@ -301,7 +303,11 @@ end
   foreach(assert_shared_metadata, global_manager.cluster_spans, staged.cluster_spans)
 
   _tx_pcm.simulate_add_and_calculate_all_extended(staged, Float64[0.0])
+  @test _pcm_snapshot(staged) == before
+  @test map(span_signature, staged.cluster_spans) == before_spans
+  @test staged.cluster_spans[1] === global_manager.cluster_spans[1]
   _tx_pcm.add_data_point_permanently!(staged, Float64[0.0])
+  @test staged.cluster_spans[1] !== global_manager.cluster_spans[1]
   _tx_pcm.add_data_point_permanently!(baseline, Float64[0.0])
   _tx_pcm.finalize_cluster_storage!(staged)
   _tx_pcm.finalize_cluster_storage!(baseline)
@@ -310,6 +316,25 @@ end
   @test _pcm_snapshot(staged) == _pcm_snapshot(baseline)
   @test _pcm_snapshot(global_manager) == before
   @test map(span_signature, global_manager.cluster_spans) == before_spans
+end
+
+@testset "staged speculative failure restores shared span topology" begin
+  manager = _invalid_streamwise_manager()
+  axis = _tx_controller.StableStreamAxis(1, [1])
+  staged = _tx_controller._stage_generate_polyphonic_step_state(
+    Dict("note" => Dict{Symbol,Any}(
+      :global => manager,
+      :stream => _tx_msm.Manager([Any[0.0] for _ in 1:3], 0.02, 2;
+        value_range=[0.0, 1.0]),
+      :stream_axis => axis,
+    )), _tx_stm.Manager(), axis, nothing,
+  ).managers["note"][:global]
+  before = _pcm_snapshot(manager)
+  @test_throws ErrorException _tx_pcm.simulate_add_and_calculate_all_extended(
+    staged, Float64[4.0])
+  @test _pcm_snapshot(staged) == before
+  @test _pcm_snapshot(manager) == before
+  @test staged.cluster_spans[1] === manager.cluster_spans[1]
 end
 
 @testset "staged cluster tasks share read-only payloads" begin

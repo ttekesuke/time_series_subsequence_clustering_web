@@ -213,7 +213,14 @@ mutable struct CompressedClusterSpan
   versions::Vector{Int}
   fit_limits::Vector{Int}
   children::Vector{CompressedClusterSpan}
+  stage_owner::UInt64
 end
+
+# The eight-field constructor is used by normal clustering and by tests. Only
+# staged copies receive a nonzero owner token when their path is first written.
+CompressedClusterSpan(window_min, window_max, cluster_ids, si_min, as_max,
+  versions, fit_limits, children) = CompressedClusterSpan(window_min, window_max,
+  cluster_ids, si_min, as_max, versions, fit_limits, children, UInt64(0))
 
 """Rollback record for one physically mutated compressed span.
 
@@ -374,6 +381,7 @@ mutable struct Manager <: AbstractClusterManager
   shared_distance_cache_windows::Set{Int}
   shared_quantity_cache_windows::Set{Int}
   shared_complexity_cache_windows::Set{Int}
+  stage_span_owner::UInt64
 
   recency::Float64
   enable_occurrence_intervals::Bool
@@ -384,6 +392,14 @@ mutable struct Manager <: AbstractClusterManager
   snapshot_state::Union{Nothing,PolySnapshot}
 end
 
+const _next_stage_span_owner = Base.Threads.Atomic{UInt64}(1)
+
+"""Mark a staged manager as the owner of future private span paths."""
+function mark_staged_span_topology!(mgr::Manager)::Nothing
+  mgr.stage_span_owner = Base.Threads.atomic_add!(_next_stage_span_owner, UInt64(1))
+  return nothing
+end
+
 # Constructors
 
 """Deep-copy a PolySeq."""
@@ -391,14 +407,18 @@ deep_copy_seq(seq::PolySeq)::PolySeq = [copy(s) for s in seq]
 
 """Memoize payloads that clustering only reads or replaces, for step staging.
 
-The caller copies the manager graph with this IdDict. Span objects and their
-child vectors, task vectors, data vectors, and outer cache maps are still copied.
+The caller copies the manager graph with this IdDict. Span objects stay shared
+until a staged write copies their path; root vectors, task vectors, data vectors,
+and outer cache maps are copied.
 """
 function share_staged_payloads!(shared::IdDict{Any,Any}, mgr::Manager)::Nothing
   for row in mgr.data
     shared[row] = row
   end
   function share_span!(span::CompressedClusterSpan)
+    # Staged managers copy their root/child vectors but acquire a private
+    # path only when an append actually edits it.
+    shared[span] = span
     # Incremental writes and compaction replace these arrays instead of
     # mutating them; the stage may safely share the historical payload.
     shared[span.cluster_ids] = span.cluster_ids
@@ -523,6 +543,56 @@ function _find_span_container(
   return nothing
 end
 
+function _span_path!(
+  spans::Vector{CompressedClusterSpan},
+  target::CompressedClusterSpan,
+  path::Vector{Int},
+)::Bool
+  for index in eachindex(spans)
+    push!(path, index)
+    if spans[index] === target || _span_path!(spans[index].children, target, path)
+      return true
+    end
+    pop!(path)
+  end
+  return false
+end
+
+@inline function _private_span(mgr::Manager, span::CompressedClusterSpan)::CompressedClusterSpan
+  return CompressedClusterSpan(
+    span.window_min, span.window_max, span.cluster_ids, span.si_min, span.as_max,
+    span.versions, span.fit_limits, copy(span.children), mgr.stage_span_owner,
+  )
+end
+
+"""Copy only the path to a span before changing a staged manager's topology."""
+function _ensure_owned_span_ref!(mgr::Manager, ref::SpanClusterRef)::Nothing
+  owner = mgr.stage_span_owner
+  owner == 0 && return nothing
+  ref.span.stage_owner == owner && return nothing
+
+  path = Int[]
+  _span_path!(mgr.cluster_spans, ref.span, path) ||
+    error("Compressed cluster span is detached from staged manager storage.")
+  container = mgr.cluster_spans
+  for index in path
+    span = container[index]
+    if span.stage_owner != owner
+      span = _private_span(mgr, span)
+      container[index] = span
+    end
+    container = span.children
+    ref.span = span
+  end
+  return nothing
+end
+
+function _own_span_tree(mgr::Manager, span::CompressedClusterSpan)::CompressedClusterSpan
+  owned = _private_span(mgr, span)
+  owned.children = CompressedClusterSpan[_own_span_tree(mgr, child) for child in span.children]
+  return owned
+end
+
 @inline function _span_starts_at(span::CompressedClusterSpan, offset::Int)::Vector{Int}
   window_size = span.window_min + offset - 1
   fit_limit = span.fit_limits[offset]
@@ -590,6 +660,7 @@ function _isolate_cluster_ref!(
   mgr::Manager,
   ref::SpanClusterRef,
 )::SpanClusterRef
+  _ensure_owned_span_ref!(mgr, ref)
   span = ref.span
   n = length(span.cluster_ids)
   n == 1 && return ref
@@ -623,6 +694,7 @@ function _isolate_cluster_ref!(
 end
 
 function _append_cluster_start!(mgr::Manager, ref::SpanClusterRef, start::Int)::Nothing
+  _ensure_owned_span_ref!(mgr, ref)
   span = ref.span
   offset = ref.offset
   window_size = _cluster_window(ref)
@@ -693,6 +765,7 @@ function _add_child_cluster!(
   starts::Vector{Int},
   representative::PolySeq,
 )::SpanClusterRef
+  _ensure_owned_span_ref!(mgr, parent)
   # A node can acquire a new explicit child without splitting only when it is
   # already the end of its compressed span. A middle virtual node has the
   # implicit next node as its child and therefore must be isolated first.
@@ -789,6 +862,11 @@ function _normalize_span!(span::CompressedClusterSpan)::Nothing
 end
 
 function _normalize_cluster_store!(mgr::Manager)::Nothing
+  if mgr.stage_span_owner != 0
+    mgr.cluster_spans = CompressedClusterSpan[
+      _own_span_tree(mgr, span) for span in mgr.cluster_spans
+    ]
+  end
   for span in mgr.cluster_spans
     _normalize_span!(span)
   end
@@ -886,6 +964,7 @@ function Manager(
     Set{Int}(),
     Set{Int}(),
     Set{Int}(),
+    UInt64(0),
     clamp(float(recency), 0.0, 1.0),
     Bool(enable_occurrence_intervals),
     Dict{Tuple{Int,Int},OccurrenceIntervalState}(),
