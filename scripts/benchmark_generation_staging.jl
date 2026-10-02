@@ -65,12 +65,60 @@ function measure_commit(seed, staged::Bool, values)
   return measurement.bytes, measurement.time
 end
 
-function measure_generated_step(graph, staged::Bool, values)
+function previous_stage_without_lazy_topology(graph)
+  # The #51 staged graph, kept here as an exact comparator for this fixture.
+  shared = IdDict{Any,Any}()
+  function share_pcm(pcm)
+    foreach(row -> (shared[row] = row), pcm.data)
+    function share_span(span)
+      for payload in (span.cluster_ids, span.si_min, span.as_max,
+          span.versions, span.fit_limits)
+        shared[payload] = payload
+      end
+      foreach(row -> (shared[row] = row), span.as_max)
+      foreach(share_span, span.children)
+    end
+    foreach(share_span, pcm.cluster_spans)
+    for task in pcm.tasks
+      shared[task.keys] = task.keys
+      shared[task.member_squared_distances] = task.member_squared_distances
+    end
+    for caches in (pcm.cluster_distance_cache, pcm.cluster_quantity_cache,
+        pcm.cluster_complexity_cache), cache in values(caches)
+      shared[cache] = cache
+    end
+  end
+  mgrs = graph.managers["vol"]
+  share_pcm(mgrs[:global])
+  stream = mgrs[:stream]
+  shared[stream.history_matrix] = stream.history_matrix
+  foreach(c -> share_pcm(c.manager), stream.stream_pool)
+  shared[graph.stm_mgr.memory] = graph.stm_mgr.memory
+  copied = Base.deepcopy_internal(graph, shared)
+  function mark_caches(copy_pcm, original)
+    copy_pcm.shared_distance_cache_windows = Set(keys(original.cluster_distance_cache))
+    copy_pcm.shared_quantity_cache_windows = Set(keys(original.cluster_quantity_cache))
+    copy_pcm.shared_complexity_cache_windows = Set(keys(original.cluster_complexity_cache))
+  end
+  mark_caches(copied.managers["vol"][:global], mgrs[:global])
+  for (id, container) in stream.containers_by_id
+    mark_caches(copied.managers["vol"][:stream].containers_by_id[id].manager,
+      container.manager)
+  end
+  return copied
+end
+
+function measure_generated_step(graph, mode::Symbol, values)
   GC.gc()
   measurement = @timed begin
-    copy_state = staged ? CTRL._stage_generate_polyphonic_step_state(
-      graph.managers, graph.stm_mgr, graph.stream_axis, graph.voice_state,
-    ) : deepcopy(graph)
+    copy_state = if mode == :copy_on_write
+      CTRL._stage_generate_polyphonic_step_state(
+        graph.managers, graph.stm_mgr, graph.stream_axis, graph.voice_state)
+    elseif mode == :previous_copy_on_write
+      previous_stage_without_lazy_topology(graph)
+    else
+      deepcopy(graph)
+    end
     global_manager = copy_state.managers["vol"][:global]
     PCM.simulate_add_and_calculate_all_extended(global_manager, Float64[0.5])
     PCM.add_data_point_permanently!(global_manager, Float64[0.5])
@@ -114,13 +162,14 @@ for history_steps in (24, 64), streams in (2, 4)
     stm_mgr=STM.Manager(), stream_axis=axis, voice_state=nothing,
   )
   values = fill(0.5, streams)
-  measure_generated_step(graph, false, values)
-  measure_generated_step(graph, true, values)
-  for staged in (false, true)
-    samples = [measure_generated_step(graph, staged, values) for _ in 1:2]
+  for mode in (:deepcopy, :previous_copy_on_write, :copy_on_write)
+    measure_generated_step(graph, mode, values)
+  end
+  for mode in (:deepcopy, :previous_copy_on_write, :copy_on_write)
+    samples = [measure_generated_step(graph, mode, values) for _ in 1:2]
     allocated = minimum(first, samples)
     elapsed = minimum(last, samples)
-    println("$history_steps,$streams,$(staged ? "copy_on_write" : "deepcopy"),$allocated,$elapsed")
+    println("$history_steps,$streams,$mode,$allocated,$elapsed")
   end
 end
 
