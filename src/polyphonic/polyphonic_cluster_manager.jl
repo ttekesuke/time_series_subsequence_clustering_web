@@ -217,10 +217,9 @@ end
 
 """Rollback record for one physically mutated compressed span.
 
-Simulation uses copy-on-write for heavy arrays.  Therefore preserving the old
-field references (plus a shallow copy of the child vector, which is mutated
-in-place by push!/sort!) is enough to restore the exact physical and logical
-state without cloning the whole cluster topology at transaction start.
+Simulation replaces span payloads and child vectors before writing them.
+Preserving the old field references lets the journal restore the exact
+physical and logical state without cloning the entire cluster topology.
 """
 struct PJCompressedSpanState <: PolyJournalEntry
   span::CompressedClusterSpan
@@ -392,17 +391,21 @@ deep_copy_seq(seq::PolySeq)::PolySeq = [copy(s) for s in seq]
 
 """Memoize payloads that clustering only reads or replaces, for step staging.
 
-The caller copies the manager graph with this IdDict. Span topology and
-metadata, task vectors, data vectors, and outer cache maps are still copied.
+The caller copies the manager graph with this IdDict. Span objects and their
+child vectors, task vectors, data vectors, and outer cache maps are still copied.
 """
 function share_staged_payloads!(shared::IdDict{Any,Any}, mgr::Manager)::Nothing
   for row in mgr.data
     shared[row] = row
   end
   function share_span!(span::CompressedClusterSpan)
-    # Incremental writes replace these arrays, including every as_max row.
+    # Incremental writes and compaction replace these arrays instead of
+    # mutating them; the stage may safely share the historical payload.
+    shared[span.cluster_ids] = span.cluster_ids
     shared[span.si_min] = span.si_min
     shared[span.as_max] = span.as_max
+    shared[span.versions] = span.versions
+    shared[span.fit_limits] = span.fit_limits
     for row in span.as_max
       shared[row] = row
     end
@@ -775,9 +778,9 @@ function _normalize_span!(span::CompressedClusterSpan)::Nothing
     child = span.children[1]
     _can_merge_spans(span, child) || break
     span.window_max = child.window_max
-    append!(span.cluster_ids, child.cluster_ids)
-    append!(span.versions, child.versions)
-    append!(span.fit_limits, child.fit_limits)
+    span.cluster_ids = vcat(span.cluster_ids, child.cluster_ids)
+    span.versions = vcat(span.versions, child.versions)
+    span.fit_limits = vcat(span.fit_limits, child.fit_limits)
     span.as_max = deep_copy_seq(child.as_max)
     span.children = child.children
     sort!(span.children; by=grandchild -> grandchild.cluster_ids[1])
