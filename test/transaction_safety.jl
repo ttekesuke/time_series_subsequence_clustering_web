@@ -260,6 +260,58 @@ end
   @test !haskey(axis.id_to_slot, 3)
 end
 
+@testset "staged span metadata survives compaction without changing committed state" begin
+  function span_signature(span)
+    return (
+      bounds=(span.window_min, span.window_max),
+      ids=copy(span.cluster_ids),
+      starts=copy(span.si_min),
+      representative=deepcopy(span.as_max),
+      versions=copy(span.versions),
+      limits=copy(span.fit_limits),
+      children=map(span_signature, span.children),
+    )
+  end
+  history = [Float64[float(mod(i - 1, 2))] for i in 1:24]
+  global_manager = _tx_pcm.Manager(deepcopy(history), 0.0, 2, false;
+    range_min=0.0, range_max=1.0, max_set_size=1)
+  _tx_pcm.process_data!(global_manager)
+  _tx_pcm.update_caches_permanently!(global_manager)
+  before = _pcm_snapshot(global_manager)
+  before_spans = map(span_signature, global_manager.cluster_spans)
+  baseline = deepcopy(global_manager)
+  axis = _tx_controller.StableStreamAxis(1, [1])
+  staged = _tx_controller._stage_generate_polyphonic_step_state(
+    Dict("note" => Dict{Symbol,Any}(
+      :global => global_manager,
+      :stream => _tx_msm.Manager([Any[row[1]] for row in history], 0.0, 2;
+        value_range=[0.0, 1.0]),
+      :stream_axis => axis,
+    )), _tx_stm.Manager(), axis, nothing,
+  ).managers["note"][:global]
+
+  function assert_shared_metadata(original, copied)
+    @test original !== copied
+    @test original.cluster_ids === copied.cluster_ids
+    @test original.versions === copied.versions
+    @test original.fit_limits === copied.fit_limits
+    @test length(original.children) == length(copied.children)
+    foreach(assert_shared_metadata, original.children, copied.children)
+  end
+  foreach(assert_shared_metadata, global_manager.cluster_spans, staged.cluster_spans)
+
+  _tx_pcm.simulate_add_and_calculate_all_extended(staged, Float64[0.0])
+  _tx_pcm.add_data_point_permanently!(staged, Float64[0.0])
+  _tx_pcm.add_data_point_permanently!(baseline, Float64[0.0])
+  _tx_pcm.finalize_cluster_storage!(staged)
+  _tx_pcm.finalize_cluster_storage!(baseline)
+  _tx_pcm.update_caches_permanently!(staged)
+  _tx_pcm.update_caches_permanently!(baseline)
+  @test _pcm_snapshot(staged) == _pcm_snapshot(baseline)
+  @test _pcm_snapshot(global_manager) == before
+  @test map(span_signature, global_manager.cluster_spans) == before_spans
+end
+
 @testset "staged cluster tasks share read-only payloads" begin
   manager = _tx_pcm.Manager(Vector{Float64}[[0.0], [0.0], [0.0]], 0.02, 2)
   push!(manager.tasks, _tx_pcm.ClusterTask([0], 2, Dict(0 => 0.0), 0.0, 0))
