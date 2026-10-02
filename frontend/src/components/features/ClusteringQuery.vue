@@ -198,7 +198,7 @@ const handleQueried = (payload: any) => {
   }
 }
 
-const queryStatus = computed(() => {
+const queryStatus = computed<{ type: 'error' | 'warning' | 'info'; message: string } | null>(() => {
   if (!dbStatus.value) return null
   if (dbStatus.value === 'ok') return null
   const diag = dbDiagnostics.value || {}

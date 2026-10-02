@@ -512,7 +512,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (resizeObserver) resizeObserver.disconnect()
-  clearPlayheadTimer()
+  stopPlayhead()
   if (uploadedWavObjectUrl) URL.revokeObjectURL(uploadedWavObjectUrl)
   if (generatedAudioObjectUrl) URL.revokeObjectURL(generatedAudioObjectUrl)
 })

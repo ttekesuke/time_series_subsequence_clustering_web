@@ -311,7 +311,12 @@ const copiedTooltipVisible = ref(false)
 let copiedTooltipTimer: ReturnType<typeof setTimeout> | null = null
 
 const stickyIndices = [0]
-const virtualItems = computed(() => [{ __header: true } as const, ...props.rows])
+// The first virtual row renders only column headings; give it the same shape as
+// data rows so the slot's row type matches the data branch.
+const virtualItems = computed<GridRowData[]>(() => [
+  { name: 'Steps', data: [], config: { min: 0, max: 0 } },
+  ...props.rows,
+])
 
 const rowHeight = computed(() => props.rowHeight)
 const cellWidth = 56
@@ -521,7 +526,9 @@ const applyRowPaste = (clipboard: GridStructuredClipboard) => {
     const sourceValues = matrix[srcRow]
     if (!Array.isArray(sourceValues) || sourceValues.length === 0) continue
 
-    const targetRow = { ...newRows[dstRowIndex] }
+    const existingRow = newRows[dstRowIndex]
+    if (!existingRow) continue
+    const targetRow = { ...existingRow }
     const newData = [...targetRow.data]
 
     while (newData.length < props.steps) newData.push(targetRow.config.inputMode === 'note-array' || targetRow.config.inputMode === 'text' ? '' : 0)
@@ -562,7 +569,9 @@ const applyColPaste = (clipboard: GridStructuredClipboard) => {
     const sourceValues = matrix[rowIndex]
     if (!Array.isArray(sourceValues) || sourceValues.length === 0) continue
 
-    const targetRow = { ...newRows[rowIndex] }
+    const existingRow = newRows[rowIndex]
+    if (!existingRow) continue
+    const targetRow = { ...existingRow }
     const newData = [...targetRow.data]
 
     while (newData.length < requiredLen) newData.push(targetRow.config.inputMode === 'note-array' || targetRow.config.inputMode === 'text' ? '' : 0)
@@ -683,7 +692,7 @@ const onWrapperCopy = (event: ClipboardEvent) => {
   }
 
   let type: GridStructuredClipboardType | null = null
-  let matrix: number[][] = []
+  let matrix: GridCellValue[][] = []
 
   if (rowSelection.value) {
     type = 'rows'
@@ -806,7 +815,9 @@ const onCellPaste = (payload: any) => {
   }
 
   const { text, rowIndex, colIndex, config } = payload
-  const targetRow = { ...props.rows[rowIndex] }
+  const existingRow = props.rows[rowIndex]
+  if (!existingRow) return
+  const targetRow = { ...existingRow }
 
   if (config.inputMode === 'note-array' || config.inputMode === 'text') {
     const newData = [...targetRow.data]
@@ -847,7 +858,8 @@ const openParamGenDialogAt = (cell: any) => {
   clearHeaderSelections()
 
   const { rowIndex, colIndex, config } = cell
-  const currentVal = props.rows[rowIndex].data[colIndex] ?? 0
+  const currentVal = props.rows[rowIndex]?.data[colIndex] ?? 0
+  if (typeof currentVal !== 'number') return
 
   paramGenInit.value = {
     steps: Math.max(1, props.steps - colIndex),
@@ -898,7 +910,9 @@ const applyGeneratedParams = async (params: any) => {
   const requiredLen = colIndex + steps
   if (requiredLen > props.steps) emit('update:steps', requiredLen)
 
-  const targetRow = { ...props.rows[rowIndex] }
+  const existingRow = props.rows[rowIndex]
+  if (!existingRow) return
+  const targetRow = { ...existingRow }
   const newData = [...targetRow.data]
   while (newData.length < requiredLen) newData.push(0)
 

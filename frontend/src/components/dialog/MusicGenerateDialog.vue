@@ -207,7 +207,7 @@
 
 <script setup lang="ts">
 import { POLYPHONIC_BPM_DEFAULT } from '../../constants/musicDefaults'
-import { computed, defineExpose, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, defineExpose, nextTick, onUnmounted, ref, watch, type PropType } from 'vue'
 import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
 import GridContainer from '../grid/GridContainer.vue'
@@ -217,7 +217,7 @@ import VoiceEmbeddingDialog from './VoiceEmbeddingDialog.vue'
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
   modelValue: Boolean,
-  progress: { type: Object, required: false }
+  progress: { type: Object as PropType<{ percent: number; status: string }>, required: false }
 })
 const emit = defineEmits([
   'update:modelValue',
@@ -283,19 +283,6 @@ const cleanupProgress = () => {
     unsubscribeProgress()
     unsubscribeProgress = null
   }
-}
-
-const startProgressTracking = (jobId: string) => {
-  cleanupProgress()
-  updateProgress({ percent: 0, status: 'start' })
-  // const { unsubscribe } = useJobChannel(jobId, (data: any) => {
-  //   updateProgress({
-  //     percent: data.progress ?? progressState.value.percent,
-  //     status: data.status
-  //   })
-  //   if (data.status === 'done') cleanupProgress()
-  // })
-  // unsubscribeProgress = unsubscribe
 }
 
 const isProcessing = computed(
@@ -670,7 +657,7 @@ const onContextSelectedColumnsChange = (raw: unknown) => {
     .filter((v) => Number.isInteger(v) && v >= 0 && v < contextSteps.value)
 
   if (selectedContextColumns.value.length === 1) {
-    selectedContextColumnForSoundCheck.value = selectedContextColumns.value[0]
+    selectedContextColumnForSoundCheck.value = selectedContextColumns.value[0] ?? null
   } else if (selectedContextColumns.value.length > 1) {
     selectedContextColumnForSoundCheck.value = null
   }
@@ -763,7 +750,7 @@ const buildSoundCheckVoice = (streamIdx: number) => {
 
 const decodeBase64AudioToObjectUrl = (audioData: string) => {
   const base64 = audioData.includes(',') ? audioData.split(',')[1] : audioData
-  const binary = atob(base64)
+  const binary = atob(base64 ?? '')
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
   const blob = new Blob([bytes.buffer], { type: 'audio/wav' })
@@ -818,7 +805,8 @@ const saveSoundCheckToInitialContext = () => {
   const nextRows = contextRowsForGrid.value.map((row, idx) => {
     const next = { ...row, config: { ...row.config }, data: [...row.data] }
     if (colIndex >= next.data.length) return next
-    next.data[colIndex] = soundCheckRows.value[idx]?.data?.[0] ?? next.data[colIndex]
+    const edited = soundCheckRows.value[idx]?.data?.[0]
+    if (edited !== undefined) next.data[colIndex] = edited
     return next
   })
 
@@ -848,6 +836,7 @@ const makeContextConfig = (dimKey: string) => {
 
 const makeContextRow = (streamIdx: number, dimIdx: number): GridRowData => {
   const dim = contextInputDimensions[dimIdx]
+  if (!dim) throw new Error(`Unknown context dimension index: ${dimIdx}`)
   const base = defaultContextInputBase[dimIdx] ?? 0
   return {
     name: `S${streamIdx + 1} ${dim.name}`,
@@ -898,6 +887,7 @@ const getObservedChordRangeAndDensity = (rawNotes: unknown) => {
   ))
   const minNote = uniqueSorted[0]
   const maxNote = uniqueSorted[uniqueSorted.length - 1]
+  if (minNote === undefined || maxNote === undefined) return { chordRange: 0, density: 0 }
   const chordRange = Math.max(0, Math.round(maxNote - minNote))
   const slotCount = Math.max(1, chordRange + 1)
   const density = Math.max(0, Math.min(1, uniqueSorted.length / slotCount))
@@ -921,41 +911,12 @@ const getLastContextAreaFixedValue = () => {
   }
 
   const sorted = [...absNotes].sort((left, right) => left - right)
-  const anchor = sorted[Math.ceil(sorted.length / 2) - 1] ?? defaultContextBase[0]
+  const anchor = sorted[Math.ceil(sorted.length / 2) - 1] ?? defaultContextBase[0] ?? 60
   const bandLow = Math.min(areaBandLowMax, Math.max(areaBandLowMin, Math.floor(anchor / areaBandSize) * areaBandSize))
   const bandCount = Math.max(Math.floor((areaBandLowMax - areaBandLowMin) / areaBandSize), 0)
   if (bandCount === 0) return 0
 
   return clampDimensionFixedValue('area', (bandLow - areaBandLowMin) / bandCount)
-}
-
-const getLastContextAreaFixedValues = () => {
-  const lastStepIndex = getLastContextStepIndex()
-  const values: number[] = []
-
-  for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
-    const rowIndex = streamIdx * contextInputDimensions.length
-    const row = contextRows.value[rowIndex]
-    const notes = parseAbsNoteCell(row?.data[lastStepIndex] ?? '')
-
-    if (notes.length === 0) {
-      values.push(managedDimPolicyConfigs.area.defaultFixedValue)
-      continue
-    }
-
-    const sorted = [...notes].sort((left, right) => left - right)
-    const anchor = sorted[Math.ceil(sorted.length / 2) - 1] ?? defaultContextBase[0]
-    const bandLow = Math.min(areaBandLowMax, Math.max(areaBandLowMin, Math.floor(anchor / areaBandSize) * areaBandSize))
-    const bandCount = Math.max(Math.floor((areaBandLowMax - areaBandLowMin) / areaBandSize), 0)
-    if (bandCount === 0) {
-      values.push(0)
-      continue
-    }
-
-    values.push(clampDimensionFixedValue('area', (bandLow - areaBandLowMin) / bandCount))
-  }
-
-  return values
 }
 
 const getLastContextManagedDimensionFixedValue = (key: Exclude<ManagedDimKey, 'area'>) => {
@@ -996,34 +957,6 @@ const getLastContextManagedDimensionFixedValue = (key: Exclude<ManagedDimKey, 'a
   return clampDimensionFixedValue(key, average)
 }
 
-const getLastContextManagedDimensionFixedValues = (key: Exclude<ManagedDimKey, 'area'>) => {
-  if (key === 'chord_range' || key === 'density') {
-    const lastStepIndex = getLastContextStepIndex()
-    const values: number[] = []
-
-    for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
-      const rowIndex = streamIdx * contextInputDimensions.length
-      const row = contextRows.value[rowIndex]
-      const observed = getObservedChordRangeAndDensity(row?.data[lastStepIndex] ?? '')
-      values.push(key === 'chord_range' ? observed.chordRange : observed.density)
-    }
-
-    return values.map((value) => clampDimensionFixedValue(key, value))
-  }
-
-  const dimIndex = contextManagedDimensionIndex[key]
-  const lastStepIndex = getLastContextStepIndex()
-  const values: number[] = []
-
-  for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
-    const rowIndex = streamIdx * contextInputDimensions.length + dimIndex
-    const row = contextRows.value[rowIndex]
-    values.push(clampDimensionFixedValue(key, row?.data[lastStepIndex]))
-  }
-
-  return values
-}
-
 const getResolvedDimensionPolicyFixedValue = (key: ManagedDimKey) => {
   const policy = dimensionPolicy.value[key]
   if (policy.fixedValueSource === 'initial_context_last_step') {
@@ -1032,24 +965,6 @@ const getResolvedDimensionPolicyFixedValue = (key: ManagedDimKey) => {
       : getLastContextManagedDimensionFixedValue(key)
   }
   return clampDimensionFixedValue(key, policy.fixedValue)
-}
-
-const formatDimensionPolicyDerivedValue = (raw: unknown) => {
-  const key = resolveManagedDimKey(raw)
-  const policy = dimensionPolicy.value[key]
-
-  if (policy.fixedValueSource === 'initial_context_last_step') {
-    const values = key === 'area'
-      ? getLastContextAreaFixedValues()
-      : getLastContextManagedDimensionFixedValues(key)
-    const rendered = values.map((value) => (
-      managedDimPolicyConfigs[key].isInt ? `${Math.round(value)}` : value.toFixed(2)
-    ))
-    return `Last ${rendered.join(' / ')}`
-  }
-
-  const value = getResolvedDimensionPolicyFixedValue(key)
-  return managedDimPolicyConfigs[key].isInt ? `Last ${Math.round(value)}` : `Last ${value.toFixed(2)}`
 }
 
 // 初期化
@@ -1073,7 +988,7 @@ watch(contextSteps, (len) => {
   contextRows.value = contextRows.value.map((row) => {
     const data = [...row.data]
     while (data.length < len) {
-      data.push(data.length > 0 ? data[data.length - 1] : (row.config.inputMode === 'note-array' || row.config.inputMode === 'text' ? '' : 0))
+      data.push(data.at(-1) ?? (row.config.inputMode === 'note-array' || row.config.inputMode === 'text' ? '' : 0))
     }
     if (data.length > len) data.splice(len)
     return { ...row, data }
@@ -1166,19 +1081,6 @@ const H = (
 
 const stepsDefault = 3
 
-const fill = (start: number, mid: number, end: number, len: number = stepsDefault) => {
-  const arr: number[] = []
-  const pivot = Math.floor(len / 2)
-  for (let i = 0; i < len; i++) {
-    if (i < pivot) {
-      arr.push(Number((start + (mid - start) * (i / Math.max(pivot, 1))).toFixed(2)))
-    } else {
-      const denom = Math.max(len - pivot - 1, 1)
-      arr.push(Number((mid + (end - mid) * ((i - pivot) / denom)).toFixed(2)))
-    }
-  }
-  return arr
-}
 const constant = (val: number, len: number = stepsDefault) => Array(len).fill(val)
 
 const makeTimbreDimensionRows = (
@@ -1979,6 +1881,7 @@ const buildGenHelp = (meta: GenRowMeta): RowHelp | undefined => {
   const dim = detectDimKey(k)
   if (!dim) return meta.help
   const info = dimHelp[dim]
+  if (!info) return meta.help
 
   if (k.endsWith('_global_complexity_target') || k === 'area_global') {
     return H(
@@ -2179,9 +2082,10 @@ watch(genSteps, (len) => {
   if (suppressGenWatch.value) return
   genRows.value = genRows.value.map((row, idx) => {
     const meta = genRowMetas[idx]
+    if (!meta) return row
     const data = [...row.data]
     while (data.length < len) {
-      data.push(data.length > 0 ? data[data.length - 1] : (meta.isInt ? meta.min : 0))
+      data.push(data.at(-1) ?? (meta.isInt ? meta.min : 0))
     }
     if (data.length > len) data.splice(len)
     return { ...row, data, disabled: isGenRowDisabled(meta.key) }
@@ -2198,13 +2102,13 @@ genRowMetas.forEach((m) => { genMetaByKey[m.key] = m })
 const buildGenParamsFromRows = () => {
   const len = genSteps.value
 
-  const ensureLen = (arr: number[] | undefined, meta: GenRowMeta) => {
+  const ensureLen = (arr: Array<number | string> | undefined, meta: GenRowMeta) => {
     const fallback = meta.defaultFactory(len)
     const out: number[] = []
     for (let i = 0; i < len; i++) {
       let v = (arr && i < arr.length && arr[i] != null)
         ? Number(arr[i])
-        : Number(fallback[i])
+        : Number(fallback[i] ?? meta.min)
 
       if (meta.isInt) v = Math.round(v)
       else v = Number(v.toFixed(2))
@@ -2219,6 +2123,7 @@ const buildGenParamsFromRows = () => {
 
   const get = (key: string): number[] => {
     const meta = genMetaByKey[key]
+    if (!meta) throw new Error(`Unknown generation parameter: ${key}`)
     const idx = genRowMetas.indexOf(meta)
     const row = genRows.value[idx]
     return ensureLen(row?.data, meta)
