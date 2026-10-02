@@ -208,6 +208,8 @@ end
   @test staged.managers["vol"][:stream_axis] === staged.stream_axis
   @test staged.managers["vol"][:global].data !== global_manager.data
   @test staged.managers["vol"][:global].data[1] === global_manager.data[1]
+  @test staged.managers["vol"][:global].cluster_quantity_cache !== global_manager.cluster_quantity_cache
+  @test staged.managers["vol"][:global].cluster_quantity_cache[2] === global_manager.cluster_quantity_cache[2]
   @test staged.managers["vol"][:stream].history_matrix === stream_manager.history_matrix
   for id in stream_manager.active_ids
     staged_pcm = staged.managers["vol"][:stream].containers_by_id[id].manager
@@ -222,6 +224,7 @@ end
   staged_streams = staged.managers["vol"][:stream]
   _tx_pcm.add_data_point_permanently!(staged_global, Float64[0.5])
   _tx_pcm.update_caches_permanently!(staged_global)
+  @test staged_global.cluster_quantity_cache[2] !== global_manager.cluster_quantity_cache[2]
   _tx_msm.commit_state_staged!(staged_streams, [0.25, 0.75])
   _tx_msm.update_caches_staged!(staged_streams)
   _tx_stm.commit!(staged.stm_mgr, [67, 71], [0.4, 0.6], 1.0)

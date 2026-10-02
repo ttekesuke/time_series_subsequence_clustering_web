@@ -3536,6 +3536,17 @@ function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, v
     for row in pcm.data
       shared[row] = row
     end
+    for caches in (pcm.cluster_distance_cache, pcm.cluster_quantity_cache,
+        pcm.cluster_complexity_cache)
+      for cache in values(caches)
+        shared[cache] = cache
+      end
+    end
+  end
+  function mark_shared_caches!(staged_pcm, original_pcm)
+    staged_pcm.shared_distance_cache_windows = Set(keys(original_pcm.cluster_distance_cache))
+    staged_pcm.shared_quantity_cache_windows = Set(keys(original_pcm.cluster_quantity_cache))
+    staged_pcm.shared_complexity_cache_windows = Set(keys(original_pcm.cluster_complexity_cache))
   end
   for mgrs in values(managers)
     share_pcm_rows!(mgrs[:global])
@@ -3565,6 +3576,18 @@ function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, v
   ), shared)
   if voice_state !== nothing
     staged.voice_state.inventory = voice_state.inventory
+    mark_shared_caches!(staged.voice_state.global_manager, voice_state.global_manager)
+    for (id, pcm) in voice_state.stream_managers
+      mark_shared_caches!(staged.voice_state.stream_managers[id], pcm)
+    end
+  end
+  for (key, mgrs) in managers
+    staged_mgrs = staged.managers[key]
+    mark_shared_caches!(staged_mgrs[:global], mgrs[:global])
+    for (id, container) in mgrs[:stream].containers_by_id
+      staged_container = staged_mgrs[:stream].containers_by_id[id]
+      mark_shared_caches!(staged_container.manager, container.manager)
+    end
   end
   return staged
 end
