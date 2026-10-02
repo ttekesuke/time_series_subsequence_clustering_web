@@ -3528,9 +3528,9 @@ function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, v
   # PCM appends new rows but never mutates committed PolySet rows. Likewise,
   # lifecycle operations read the seed history, STM pruning replaces its
   # memory vector, and token selection reads the inventory. Reuse these
-  # historical leaves while copying mutable clusters, caches, stream
-  # containers, axis, and voice managers as a single graph. The shared leaves
-  # become a copy-on-write boundary for each generated step.
+  # historical leaves while copying mutable clusters, cache outer maps,
+  # stream containers, axis, and voice managers as a single graph. Cache
+  # windows remain shared until the staged manager first writes each window.
   shared = IdDict{Any,Any}()
   function share_pcm_rows!(pcm)
     for row in pcm.data

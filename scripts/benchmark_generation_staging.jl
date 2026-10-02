@@ -6,10 +6,10 @@ const MSM = Main.TimeseriesClusteringAPI.MultiStreamManager
 const CTRL = Main.TimeseriesClusteringAPI.TimeSeriesController
 const STM = Main.TimeseriesClusteringAPI.DissonanceStmManager
 
-function measure_stage(graph, shared_rows::Bool)
+function measure_stage(graph, copy_on_write::Bool)
   GC.gc()
   measurement = @timed begin
-    if shared_rows
+    if copy_on_write
       CTRL._stage_generate_polyphonic_step_state(
         graph.managers, graph.stm_mgr, graph.stream_axis, graph.voice_state)
     else
@@ -35,7 +35,7 @@ function measure_commit(seed, staged::Bool, values)
 end
 
 println("stage_history_steps,streams,mode,allocated_bytes,elapsed_s")
-for history_steps in (8, 24), streams in (2, 4)
+for history_steps in (8, 24, 64), streams in (2, 4)
   history = [Any[float((step + slot) % 3) / 4 for slot in 1:streams]
     for step in 1:history_steps]
   seed = MSM.Manager(history, 0.02, 2; value_range=[0.0, 1.0])
@@ -52,11 +52,11 @@ for history_steps in (8, 24), streams in (2, 4)
   )
   measure_stage(graph, false)
   measure_stage(graph, true)
-  for shared_rows in (false, true)
-    samples = [measure_stage(graph, shared_rows) for _ in 1:3]
+  for copy_on_write in (false, true)
+    samples = [measure_stage(graph, copy_on_write) for _ in 1:3]
     allocated = minimum(first, samples)
     elapsed = minimum(last, samples)
-    println("$history_steps,$streams,$(shared_rows ? "shared_rows" : "deepcopy"),$allocated,$elapsed")
+    println("$history_steps,$streams,$(copy_on_write ? "copy_on_write" : "deepcopy"),$allocated,$elapsed")
   end
 end
 
