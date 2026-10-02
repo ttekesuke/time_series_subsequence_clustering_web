@@ -65,6 +65,52 @@ function measure_commit(seed, staged::Bool, values)
   return measurement.bytes, measurement.time
 end
 
+function previous_stage_with_copied_occurrences(graph)
+  # Same graph copy as #51, with nested occurrence states copied eagerly.
+  shared = IdDict{Any,Any}()
+  function share_pcm(pcm)
+    PCM.share_staged_payloads!(shared, pcm)
+    for state in values(pcm.occurrence_interval_states)
+      delete!(shared, state)
+    end
+  end
+  mgrs = graph.managers["vol"]
+  share_pcm(mgrs[:global])
+  stream = mgrs[:stream]
+  shared[stream.history_matrix] = stream.history_matrix
+  foreach(c -> share_pcm(c.manager), stream.stream_pool)
+  shared[graph.stm_mgr.memory] = graph.stm_mgr.memory
+  copied = Base.deepcopy_internal(graph, shared)
+  function mark_caches(copy_pcm, original)
+    copy_pcm.shared_distance_cache_windows = Set(keys(original.cluster_distance_cache))
+    copy_pcm.shared_quantity_cache_windows = Set(keys(original.cluster_quantity_cache))
+    copy_pcm.shared_complexity_cache_windows = Set(keys(original.cluster_complexity_cache))
+  end
+  mark_caches(copied.managers["vol"][:global], mgrs[:global])
+  for (id, container) in stream.containers_by_id
+    mark_caches(copied.managers["vol"][:stream].containers_by_id[id].manager,
+      container.manager)
+  end
+  return copied
+end
+
+function measure_generated_step(graph, old::Bool, values)
+  GC.gc()
+  measurement = @timed begin
+    copied = old ? previous_stage_with_copied_occurrences(graph) :
+      CTRL._stage_generate_polyphonic_step_state(
+        graph.managers, graph.stm_mgr, graph.stream_axis, graph.voice_state)
+    global_manager = copied.managers["vol"][:global]
+    PCM.simulate_add_and_calculate_all_extended(global_manager, Float64[0.5])
+    PCM.add_data_point_permanently!(global_manager, Float64[0.5])
+    PCM.update_caches_permanently!(global_manager)
+    stream_manager = copied.managers["vol"][:stream]
+    MSM.commit_state_staged!(stream_manager, values)
+    MSM.update_caches_staged!(stream_manager)
+  end
+  return measurement.bytes, measurement.time
+end
+
 println("transaction_history_steps,mode,allocated_bytes,elapsed_s")
 for history_steps in (24, 64, 128)
   history = [Float64[float(step % 3) / 4] for step in 1:history_steps]
@@ -79,6 +125,31 @@ for history_steps in (24, 64, 128)
     allocated = minimum(first, samples)
     elapsed = minimum(last, samples)
     println("$history_steps,$(old ? "recursive_snapshot" : "journal_snapshot"),$allocated,$elapsed")
+  end
+end
+
+println("step_history_steps,streams,mode,allocated_bytes,elapsed_s")
+for history_steps in (24, 64), streams in (2, 4)
+  history = [Any[float((step + slot) % 3) / 4 for slot in 1:streams]
+    for step in 1:history_steps]
+  seed = MSM.Manager(history, 0.02, 2; value_range=[0.0, 1.0])
+  axis = CTRL.StableStreamAxis(streams, collect(1:streams))
+  graph = (
+    managers=Dict("vol" => Dict{Symbol,Any}(
+      :global => deepcopy(seed.stream_pool[1].manager),
+      :stream => seed,
+      :stream_axis => axis,
+    )),
+    stm_mgr=STM.Manager(), stream_axis=axis, voice_state=nothing,
+  )
+  values = fill(0.5, streams)
+  measure_generated_step(graph, true, values)
+  measure_generated_step(graph, false, values)
+  for old in (true, false)
+    samples = [measure_generated_step(graph, old, values) for _ in 1:2]
+    allocated = minimum(first, samples)
+    elapsed = minimum(last, samples)
+    println("$history_steps,$streams,$(old ? "copied_occurrences" : "shared_occurrences"),$allocated,$elapsed")
   end
 end
 

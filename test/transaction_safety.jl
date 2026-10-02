@@ -313,12 +313,16 @@ end
   end
 
   _tx_pcm.simulate_add_and_calculate_all_extended(staged, Float64[0.0])
-  _tx_pcm.add_data_point_permanently!(staged, Float64[0.0])
-  _tx_pcm.add_data_point_permanently!(baseline, Float64[0.0])
+  # The first new interval reaches the opposite alternating root; the next
+  # revisits an existing interval state and must detach its nested manager.
+  for value in (0.0, 1.0)
+    _tx_pcm.add_data_point_permanently!(staged, Float64[value])
+    _tx_pcm.add_data_point_permanently!(baseline, Float64[value])
+    _tx_pcm.update_caches_permanently!(staged)
+    _tx_pcm.update_caches_permanently!(baseline)
+  end
   _tx_pcm.finalize_cluster_storage!(staged)
   _tx_pcm.finalize_cluster_storage!(baseline)
-  _tx_pcm.update_caches_permanently!(staged)
-  _tx_pcm.update_caches_permanently!(baseline)
   @test _pcm_snapshot(staged) == _pcm_snapshot(baseline)
   @test occurrence_signature(staged) == occurrence_signature(baseline)
   @test _pcm_snapshot(global_manager) == before
