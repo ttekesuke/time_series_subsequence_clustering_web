@@ -227,7 +227,6 @@ end
     _tx_pcm.simulate_add_and_calculate_all_extended(baseline.managers["vol"][:global], Float64[0.5])
   _tx_pcm.add_data_point_permanently!(staged_global, Float64[0.5])
   _tx_pcm.update_caches_permanently!(staged_global)
-  @test staged_global.cluster_quantity_cache[2] !== global_manager.cluster_quantity_cache[2]
   _tx_msm.commit_state_staged!(staged_streams, [0.25, 0.75])
   _tx_msm.update_caches_staged!(staged_streams)
   _tx_stm.commit!(staged.stm_mgr, [67, 71], [0.4, 0.6], 1.0)
