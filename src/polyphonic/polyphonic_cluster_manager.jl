@@ -1907,61 +1907,25 @@ end
 
 # Rollback journal
 
-function _snapshot_cluster_span(span::CompressedClusterSpan)::CompressedClusterSpan
-  # Snapshot the small mutable metadata vectors independently.  Speculative
-  # clustering can advance per-window fit limits while sharing the same
-  # si_min/as_max payload; rollback must never observe those metadata writes.
-  #
-  # The potentially large occurrence/representative payloads remain shared:
-  # all speculative writes to si_min/as_max are copy-on-write assignments.
-  return CompressedClusterSpan(
-    span.window_min,
-    span.window_max,
-    copy(span.cluster_ids),
-    span.si_min,
-    span.as_max,
-    copy(span.versions),
-    copy(span.fit_limits),
-    CompressedClusterSpan[_snapshot_cluster_span(child) for child in span.children],
-  )
-end
-
-function _snapshot_cluster_spans(
-  spans::Vector{CompressedClusterSpan},
-)::Vector{CompressedClusterSpan}
-  return CompressedClusterSpan[_snapshot_cluster_span(span) for span in spans]
-end
-
 function start_transaction!(mgr::Manager)
   mgr.recording_mode = true
   empty!(mgr.journal)
 
-  # Keep rollback independent from simulation-owned task dictionaries.
-  snapshot_tasks = ClusterTask[
-    ClusterTask(
-      copy(t.keys),
-      t.length,
-      copy(t.member_squared_distances),
-      t.representative_squared_distance,
-      t.representative_version,
-    )
-    for t in mgr.tasks
-  ]
+  # Incremental clustering reads prior tasks and replaces the task vector.
+  # Keys and cached distances in those prior tasks are never mutated, so a
+  # vector copy preserves the exact pre-simulation state for rollback.
+  snapshot_tasks = copy(mgr.tasks)
 
   mgr.snapshot_state = PolySnapshot(
     snapshot_tasks,
     mgr.cluster_id_counter,
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_distance),
     deep_dup_sets(mgr.updated_cluster_ids_per_window_for_calculate_quantities),
-    # Compressed spans may be structurally split during speculative
-    # clustering. Keep the proven recursive topology snapshot there until the
-    # structural transaction itself is fully persistent. Bounded helper
-    # managers run with physical_compression=false: every physical span is a
-    # single logical node, so their topology never needs virtual-node
-    # isolation and the shallow-root + mutation journal is lossless.
-    mgr.physical_compression ?
-      _snapshot_cluster_spans(mgr.cluster_spans) :
-      copy(mgr.cluster_spans),
+    # Keep only the root vector. Span writes record their old fields in the
+    # journal, structural splits record the replaced slot, and newly added
+    # roots disappear when the original root vector is restored. Replaying
+    # the journal in reverse reconstructs the original topology exactly.
+    copy(mgr.cluster_spans),
     mgr.cluster_horizon,
   )
 end

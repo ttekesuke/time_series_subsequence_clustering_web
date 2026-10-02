@@ -194,6 +194,16 @@ function _physical_span_signature(mgr)
   return [signature(span) for span in mgr.cluster_spans]
 end
 
+function _task_signature(mgr)
+  return [(
+    keys=copy(task.keys),
+    length=task.length,
+    distances=sort!(collect(task.member_squared_distances); by=first),
+    representative_distance=task.representative_squared_distance,
+    representative_version=task.representative_version,
+  ) for task in mgr.tasks]
+end
+
 function _assert_equivalent(prod, legacy)
   @test _logical_snapshot(_ProdPCM, prod) == _logical_snapshot(_LegacyPCM, legacy)
   _assert_lossless_compression(prod)
@@ -231,6 +241,8 @@ function _run_bulk_case(scenario)
 
   before_prod = _logical_snapshot(_ProdPCM, prod)
   before_physical = _physical_span_signature(prod)
+  before_roots = copy(prod.cluster_spans)
+  before_tasks = _task_signature(prod)
   before_legacy = _logical_snapshot(_LegacyPCM, legacy)
   for candidate in scenario.candidates
     pm = _ProdPCM.simulate_add_and_calculate_all_extended(prod, copy(candidate))
@@ -238,6 +250,8 @@ function _run_bulk_case(scenario)
     @test _norm_metrics(pm) == _norm_metrics(lm)
     @test _logical_snapshot(_ProdPCM, prod) == before_prod
     @test _physical_span_signature(prod) == before_physical
+    @test all(prod.cluster_spans[i] === before_roots[i] for i in eachindex(before_roots))
+    @test _task_signature(prod) == before_tasks
     @test _logical_snapshot(_LegacyPCM, legacy) == before_legacy
   end
 end
@@ -252,9 +266,15 @@ function _run_incremental_case(scenario)
   _assert_equivalent(prod, legacy)
 
   for value in scenario.data[3:end]
+    before_physical = _physical_span_signature(prod)
+    before_roots = copy(prod.cluster_spans)
+    before_tasks = _task_signature(prod)
     simulated_prod = _ProdPCM.simulate_add_and_calculate_all_extended(prod, copy(value))
     simulated_legacy = _LegacyPCM.simulate_add_and_calculate_all_extended(legacy, copy(value))
     @test _norm_metrics(simulated_prod) == _norm_metrics(simulated_legacy)
+    @test _physical_span_signature(prod) == before_physical
+    @test all(prod.cluster_spans[i] === before_roots[i] for i in eachindex(before_roots))
+    @test _task_signature(prod) == before_tasks
 
     _ProdPCM.add_data_point_permanently!(prod, copy(value))
     _LegacyPCM.add_data_point_permanently!(legacy, copy(value))
