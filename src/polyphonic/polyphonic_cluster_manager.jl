@@ -372,6 +372,9 @@ mutable struct Manager <: AbstractClusterManager
   cluster_distance_cache::Dict{Int,Dict{Tuple{Int,Int},Float64}}
   cluster_quantity_cache::Dict{Int,Dict{Int,Float64}}
   cluster_complexity_cache::Dict{Int,Dict{Int,Float64}}
+  shared_distance_cache_windows::Set{Int}
+  shared_quantity_cache_windows::Set{Int}
+  shared_complexity_cache_windows::Set{Int}
 
   recency::Float64
   enable_occurrence_intervals::Bool
@@ -836,6 +839,9 @@ function Manager(
     dist_cache,
     qty_cache,
     comp_cache,
+    Set{Int}(),
+    Set{Int}(),
+    Set{Int}(),
     clamp(float(recency), 0.0, 1.0),
     Bool(enable_occurrence_intervals),
     Dict{Tuple{Int,Int},OccurrenceIntervalState}(),
@@ -843,6 +849,37 @@ function Manager(
     PolyJournalEntry[],
     nothing
   )
+end
+
+"""Detach a shared cache window before the first speculative write."""
+function _distance_cache_for_write!(mgr::Manager, window_size::Int)
+  cache = get!(mgr.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
+  if window_size in mgr.shared_distance_cache_windows
+    cache = copy(cache)
+    mgr.cluster_distance_cache[window_size] = cache
+    delete!(mgr.shared_distance_cache_windows, window_size)
+  end
+  return cache
+end
+
+function _quantity_cache_for_write!(mgr::Manager, window_size::Int)
+  cache = get!(mgr.cluster_quantity_cache, window_size, Dict{Int,Float64}())
+  if window_size in mgr.shared_quantity_cache_windows
+    cache = copy(cache)
+    mgr.cluster_quantity_cache[window_size] = cache
+    delete!(mgr.shared_quantity_cache_windows, window_size)
+  end
+  return cache
+end
+
+function _complexity_cache_for_write!(mgr::Manager, window_size::Int)
+  cache = get!(mgr.cluster_complexity_cache, window_size, Dict{Int,Float64}())
+  if window_size in mgr.shared_complexity_cache_windows
+    cache = copy(cache)
+    mgr.cluster_complexity_cache[window_size] = cache
+    delete!(mgr.shared_complexity_cache_windows, window_size)
+  end
+  return cache
 end
 
 function _initialize_root_cluster_if_ready!(mgr::Manager)::Bool
@@ -1606,6 +1643,9 @@ function update_caches_permanently!(
       observed_distance_sums[window_size] = current_sum
     else
       cache = get!(mgr.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
+      if isempty(cache) || (updated_ids_set !== nothing && !isempty(updated_ids_set))
+        cache = _distance_cache_for_write!(mgr, window_size)
+      end
       if isempty(cache)
         # First-time seeding: compute all pairs once.
         for i in 1:length(all_ids)
@@ -1656,6 +1696,12 @@ function update_caches_permanently!(
           push!(updated_quant_set, cid)
         end
       end
+    end
+
+    if isempty(q_cache) || isempty(c_cache) ||
+        (updated_quant_set !== nothing && !isempty(updated_quant_set))
+      q_cache = _quantity_cache_for_write!(mgr, window_size)
+      c_cache = _complexity_cache_for_write!(mgr, window_size)
     end
 
     if isempty(q_cache) || isempty(c_cache)
@@ -2762,7 +2808,7 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
       updated_ids = collect(get(mgr.updated_cluster_ids_per_window_for_calculate_distance, window_size, Set{Int}()))
 
       cache_old = get(mgr.cluster_distance_cache, window_size, nothing)
-      cache = get!(mgr.cluster_distance_cache, window_size, Dict{Tuple{Int,Int},Float64}())
+      cache = _distance_cache_for_write!(mgr, window_size)
       if cache_old === nothing
         record!(mgr, PJHashSetKeyDist(window_size, nothing))
       end
@@ -2785,13 +2831,13 @@ function simulate_add_and_calculate_all_extended(mgr::Manager, candidate::PolySe
       updated_quant_ids = collect(get(mgr.updated_cluster_ids_per_window_for_calculate_quantities, window_size, Set{Int}()))
 
       q_old = get(mgr.cluster_quantity_cache, window_size, nothing)
-      q_cache = get!(mgr.cluster_quantity_cache, window_size, Dict{Int,Float64}())
+      q_cache = _quantity_cache_for_write!(mgr, window_size)
       if q_old === nothing
         record!(mgr, PJHashSetKeyQty(window_size, nothing))
       end
 
       c_old = get(mgr.cluster_complexity_cache, window_size, nothing)
-      c_cache = get!(mgr.cluster_complexity_cache, window_size, Dict{Int,Float64}())
+      c_cache = _complexity_cache_for_write!(mgr, window_size)
       if c_old === nothing
         record!(mgr, PJHashSetKeyComp(window_size, nothing))
       end

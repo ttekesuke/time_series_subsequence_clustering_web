@@ -3525,13 +3525,71 @@ function _set_generation_failure_context!(
 end
 
 function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, voice_state)
-  # Copy one graph so manager dictionaries keep the same staged StableStreamAxis.
-  return deepcopy((
+  # PCM appends new rows but never mutates committed PolySet rows. Likewise,
+  # lifecycle operations read the seed history, STM pruning replaces its
+  # memory vector, and token selection reads the inventory. Reuse these
+  # historical leaves while copying mutable clusters, cache outer maps,
+  # stream containers, axis, and voice managers as a single graph. Cache
+  # windows remain shared until the staged manager first writes each window.
+  shared = IdDict{Any,Any}()
+  function share_pcm_rows!(pcm)
+    for row in pcm.data
+      shared[row] = row
+    end
+    for caches in (pcm.cluster_distance_cache, pcm.cluster_quantity_cache,
+        pcm.cluster_complexity_cache)
+      for cache in values(caches)
+        shared[cache] = cache
+      end
+    end
+  end
+  function mark_shared_caches!(staged_pcm, original_pcm)
+    staged_pcm.shared_distance_cache_windows = Set(keys(original_pcm.cluster_distance_cache))
+    staged_pcm.shared_quantity_cache_windows = Set(keys(original_pcm.cluster_quantity_cache))
+    staged_pcm.shared_complexity_cache_windows = Set(keys(original_pcm.cluster_complexity_cache))
+  end
+  for mgrs in values(managers)
+    share_pcm_rows!(mgrs[:global])
+    stream_mgr = mgrs[:stream]
+    shared[stream_mgr.history_matrix] = stream_mgr.history_matrix
+    for container in stream_mgr.stream_pool
+      share_pcm_rows!(container.manager)
+    end
+  end
+  # commit! calls prune! first, which replaces this vector before appending.
+  shared[stm_mgr.memory] = stm_mgr.memory
+  if voice_state !== nothing
+    # VoiceInventory is immutable, so deepcopy_internal reconstructs its
+    # wrapper even when memoized. Its token vector is the costly read-only
+    # leaf; restore the original wrapper after the graph has been copied.
+    shared[voice_state.inventory.tokens] = voice_state.inventory.tokens
+    share_pcm_rows!(voice_state.global_manager)
+    for pcm in values(voice_state.stream_managers)
+      share_pcm_rows!(pcm)
+    end
+  end
+  staged = Base.deepcopy_internal((
     managers=managers,
     stm_mgr=stm_mgr,
     stream_axis=stream_axis,
     voice_state=voice_state,
-  ))
+  ), shared)
+  if voice_state !== nothing
+    staged.voice_state.inventory = voice_state.inventory
+    mark_shared_caches!(staged.voice_state.global_manager, voice_state.global_manager)
+    for (id, pcm) in voice_state.stream_managers
+      mark_shared_caches!(staged.voice_state.stream_managers[id], pcm)
+    end
+  end
+  for (key, mgrs) in managers
+    staged_mgrs = staged.managers[key]
+    mark_shared_caches!(staged_mgrs[:global], mgrs[:global])
+    for (id, container) in mgrs[:stream].containers_by_id
+      staged_container = staged_mgrs[:stream].containers_by_id[id]
+      mark_shared_caches!(staged_container.manager, container.manager)
+    end
+  end
+  return staged
 end
 
 function _log_generate_polyphonic_step_failure(err, bt, step_idx::Int, context::Dict{Symbol,Any})::Nothing

@@ -200,21 +200,51 @@ end
   before_stm = _stm_snapshot(stm)
   before_axis = (copy(axis.id_to_slot), copy(axis.slot_to_id))
 
+  baseline = deepcopy((managers=managers, stm_mgr=stm, stream_axis=axis))
   staged = _tx_controller._stage_generate_polyphonic_step_state(managers, stm, axis, nothing)
 
   @test staged.managers !== managers
   @test staged.stm_mgr !== stm
   @test staged.stream_axis !== axis
   @test staged.managers["vol"][:stream_axis] === staged.stream_axis
+  @test staged.managers["vol"][:global].data !== global_manager.data
+  @test staged.managers["vol"][:global].data[1] === global_manager.data[1]
+  @test staged.managers["vol"][:global].cluster_quantity_cache !== global_manager.cluster_quantity_cache
+  @test staged.managers["vol"][:global].cluster_quantity_cache[2] === global_manager.cluster_quantity_cache[2]
+  @test staged.managers["vol"][:stream].history_matrix === stream_manager.history_matrix
+  for id in stream_manager.active_ids
+    staged_pcm = staged.managers["vol"][:stream].containers_by_id[id].manager
+    original_pcm = stream_manager.containers_by_id[id].manager
+    @test staged_pcm !== original_pcm
+    @test staged_pcm.data[1] === original_pcm.data[1]
+  end
+  @test staged.stm_mgr.memory === stm.memory
+  @test staged.stm_mgr.memory[1] === stm.memory[1]
 
   staged_global = staged.managers["vol"][:global]
   staged_streams = staged.managers["vol"][:stream]
+  @test _tx_pcm.simulate_add_and_calculate_all_extended(staged_global, Float64[0.5]) ==
+    _tx_pcm.simulate_add_and_calculate_all_extended(baseline.managers["vol"][:global], Float64[0.5])
   _tx_pcm.add_data_point_permanently!(staged_global, Float64[0.5])
   _tx_pcm.update_caches_permanently!(staged_global)
   _tx_msm.commit_state_staged!(staged_streams, [0.25, 0.75])
   _tx_msm.update_caches_staged!(staged_streams)
   _tx_stm.commit!(staged.stm_mgr, [67, 71], [0.4, 0.6], 1.0)
+  @test staged.stm_mgr.memory !== stm.memory
   _tx_controller._register_stream_ids!(staged.stream_axis, [3])
+
+  baseline_global = baseline.managers["vol"][:global]
+  _tx_pcm.add_data_point_permanently!(baseline_global, Float64[0.5])
+  _tx_pcm.update_caches_permanently!(baseline_global)
+  _tx_msm.commit_state_staged!(baseline.managers["vol"][:stream], [0.25, 0.75])
+  _tx_msm.update_caches_staged!(baseline.managers["vol"][:stream])
+  _tx_stm.commit!(baseline.stm_mgr, [67, 71], [0.4, 0.6], 1.0)
+  _tx_controller._register_stream_ids!(baseline.stream_axis, [3])
+  @test _pcm_snapshot(staged_global) == _pcm_snapshot(baseline_global)
+  @test _msm_snapshot(staged_streams) == _msm_snapshot(baseline.managers["vol"][:stream])
+  @test _stm_snapshot(staged.stm_mgr) == _stm_snapshot(baseline.stm_mgr)
+  @test (staged.stream_axis.id_to_slot, staged.stream_axis.slot_to_id) ==
+    (baseline.stream_axis.id_to_slot, baseline.stream_axis.slot_to_id)
 
   @test _pcm_snapshot(global_manager) == before_global
   @test _msm_snapshot(stream_manager) == before_streams
@@ -225,6 +255,28 @@ end
   @test length(staged.stm_mgr.memory) == length(stm.memory) + 1
   @test haskey(staged.stream_axis.id_to_slot, 3)
   @test !haskey(axis.id_to_slot, 3)
+end
+
+@testset "voice inventory is shared while generated token managers are isolated" begin
+  voice = Main.TimeseriesClusteringAPI.VoiceTokenGeneration
+  inventory = voice.VoiceInventory(
+    "test", "test", "test", "test", 1,
+    [voice.VoiceToken("a", "a", ["a"], [0.25]),
+     voice.VoiceToken("b", "b", ["b"], [0.75])],
+  )
+  state = voice.VoiceTokenState(inventory, [1], 0.02, 2)
+  axis = _tx_controller.StableStreamAxis(1, [1])
+  staged = _tx_controller._stage_generate_polyphonic_step_state(
+    Dict{String,Any}(), _tx_stm.Manager(), axis, state)
+
+  @test staged.voice_state.inventory === inventory
+  @test staged.voice_state.global_manager !== state.global_manager
+  @test staged.voice_state.global_manager.data[1] === state.global_manager.data[1]
+  @test staged.voice_state.stream_managers[1] !== state.stream_managers[1]
+  @test staged.voice_state.stream_managers[1].data[1] === state.stream_managers[1].data[1]
+  before = _pcm_snapshot(state.global_manager)
+  voice.generate_tokens!(staged.voice_state, [1])
+  @test _pcm_snapshot(state.global_manager) == before
 end
 
 @testset "staged stream commit matches atomic commit and preserves manager references" begin
