@@ -3533,15 +3533,7 @@ function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, v
   # windows remain shared until the staged manager first writes each window.
   shared = IdDict{Any,Any}()
   function share_pcm_rows!(pcm)
-    for row in pcm.data
-      shared[row] = row
-    end
-    for caches in (pcm.cluster_distance_cache, pcm.cluster_quantity_cache,
-        pcm.cluster_complexity_cache)
-      for cache in values(caches)
-        shared[cache] = cache
-      end
-    end
+    PolyphonicClusterManager.share_staged_payloads!(shared, pcm)
   end
   function mark_shared_caches!(staged_pcm, original_pcm)
     staged_pcm.shared_distance_cache_windows = Set(keys(original_pcm.cluster_distance_cache))
