@@ -19,7 +19,7 @@ sort!(dynamics; by=e -> (e.time_q, e.part_id))
 sort!(wedges; by=e -> (e.start_q, e.part_id))
 parsed = MA.ParsedScore(MA.NoteEvent[], dynamics, wedges, tempos,
   Dict(part => part for part in parts), 64 // 1)
-times = Rational{Int}[n // 4 for n in 0:255]
+times = Rational{Int}[n // 4 for n in 0:511]
 index = MA._score_event_index(parsed)
 
 function old_values(parsed, times, parts)
@@ -46,13 +46,24 @@ function indexed_values(index, times, parts)
   return total
 end
 
-old_values(parsed, times, parts)
-indexed_values(index, times, parts)
-@assert old_values(parsed, times, parts) == indexed_values(index, times, parts)
+function measure(work)
+  work() # Compile the closure and its call site before measuring.
+  samples = NamedTuple[]
+  for _ in 1:5
+    GC.gc()
+    result = @timed work()
+    push!(samples, (bytes=result.bytes, time=result.time))
+  end
+  return minimum(sample.bytes for sample in samples), minimum(sample.time for sample in samples)
+end
 
-for (label, work) in (("scan", () -> old_values(parsed, times, parts)),
-    ("indexed_with_build", () -> indexed_values(MA._score_event_index(parsed), times, parts)))
-  GC.gc()
-  result = @timed work()
-  println("music_events,steps=$(length(times)),parts=$(length(parts)),mode=$label,allocated_bytes=$(result.bytes),elapsed_s=$(result.time)")
+for step_count in (128, 256, 512)
+  sample_times = times[1:step_count]
+  @assert old_values(parsed, sample_times, parts) == indexed_values(index, sample_times, parts)
+  for (label, work) in (("scan", () -> old_values(parsed, sample_times, parts)),
+      ("indexed_reuse", () -> indexed_values(index, sample_times, parts)),
+      ("indexed_with_build", () -> indexed_values(MA._score_event_index(parsed), sample_times, parts)))
+    bytes, elapsed = measure(work)
+    println("music_events,steps=$step_count,parts=$(length(parts)),mode=$label,allocated_bytes=$bytes,elapsed_s=$elapsed")
+  end
 end
