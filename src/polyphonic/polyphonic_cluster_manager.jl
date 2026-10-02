@@ -390,6 +390,44 @@ end
 """Deep-copy a PolySeq."""
 deep_copy_seq(seq::PolySeq)::PolySeq = [copy(s) for s in seq]
 
+"""Memoize payloads that clustering only reads or replaces, for step staging.
+
+The caller copies the manager graph with this IdDict. Span topology and
+metadata, task vectors, data vectors, and outer cache maps are still copied.
+"""
+function share_staged_payloads!(shared::IdDict{Any,Any}, mgr::Manager)::Nothing
+  for row in mgr.data
+    shared[row] = row
+  end
+  function share_span!(span::CompressedClusterSpan)
+    # Incremental writes replace these arrays, including every as_max row.
+    shared[span.si_min] = span.si_min
+    shared[span.as_max] = span.as_max
+    for row in span.as_max
+      shared[row] = row
+    end
+    for child in span.children
+      share_span!(child)
+    end
+  end
+  for span in mgr.cluster_spans
+    share_span!(span)
+  end
+  for task in mgr.tasks
+    # Tasks are read, discarded, and replaced; prior keys and maps are not
+    # edited when the next subsequence is processed.
+    shared[task.keys] = task.keys
+    shared[task.member_squared_distances] = task.member_squared_distances
+  end
+  for caches in (mgr.cluster_distance_cache, mgr.cluster_quantity_cache,
+      mgr.cluster_complexity_cache)
+    for cache in values(caches)
+      shared[cache] = cache
+    end
+  end
+  return nothing
+end
+
 """Ensure a PolySet is non-nil and compact."""
 normalize_set(x::PolySet)::PolySet = x
 
