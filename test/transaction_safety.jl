@@ -215,7 +215,7 @@ end
     @test staged_pcm !== original_pcm
     @test staged_pcm.data[1] === original_pcm.data[1]
   end
-  @test staged.stm_mgr.memory !== stm.memory
+  @test staged.stm_mgr.memory === stm.memory
   @test staged.stm_mgr.memory[1] === stm.memory[1]
 
   staged_global = staged.managers["vol"][:global]
@@ -225,6 +225,7 @@ end
   _tx_msm.commit_state_staged!(staged_streams, [0.25, 0.75])
   _tx_msm.update_caches_staged!(staged_streams)
   _tx_stm.commit!(staged.stm_mgr, [67, 71], [0.4, 0.6], 1.0)
+  @test staged.stm_mgr.memory !== stm.memory
   _tx_controller._register_stream_ids!(staged.stream_axis, [3])
 
   @test _pcm_snapshot(global_manager) == before_global

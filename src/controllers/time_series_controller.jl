@@ -3545,22 +3545,28 @@ function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, v
       share_pcm_rows!(container.manager)
     end
   end
-  for event in stm_mgr.memory
-    shared[event] = event
-  end
+  # commit! calls prune! first, which replaces this vector before appending.
+  shared[stm_mgr.memory] = stm_mgr.memory
   if voice_state !== nothing
-    shared[voice_state.inventory] = voice_state.inventory
+    # VoiceInventory is immutable, so deepcopy_internal reconstructs its
+    # wrapper even when memoized. Its token vector is the costly read-only
+    # leaf; restore the original wrapper after the graph has been copied.
+    shared[voice_state.inventory.tokens] = voice_state.inventory.tokens
     share_pcm_rows!(voice_state.global_manager)
     for pcm in values(voice_state.stream_managers)
       share_pcm_rows!(pcm)
     end
   end
-  return Base.deepcopy_internal((
+  staged = Base.deepcopy_internal((
     managers=managers,
     stm_mgr=stm_mgr,
     stream_axis=stream_axis,
     voice_state=voice_state,
   ), shared)
+  if voice_state !== nothing
+    staged.voice_state.inventory = voice_state.inventory
+  end
+  return staged
 end
 
 function _log_generate_polyphonic_step_failure(err, bt, step_idx::Int, context::Dict{Symbol,Any})::Nothing
