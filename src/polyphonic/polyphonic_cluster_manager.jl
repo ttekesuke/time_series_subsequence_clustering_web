@@ -378,6 +378,7 @@ mutable struct Manager <: AbstractClusterManager
   recency::Float64
   enable_occurrence_intervals::Bool
   occurrence_interval_states::Dict{Tuple{Int,Int},OccurrenceIntervalState}
+  shared_occurrence_state_keys::Set{Tuple{Int,Int}}
 
   recording_mode::Bool
   journal::Vector{PolyJournalEntry}
@@ -421,6 +422,11 @@ function share_staged_payloads!(shared::IdDict{Any,Any}, mgr::Manager)::Nothing
     # edited when the next subsequence is processed.
     shared[task.keys] = task.keys
     shared[task.member_squared_distances] = task.member_squared_distances
+  end
+  for state in values(mgr.occurrence_interval_states)
+    # Previewing an interval manager only performs reversible simulations.
+    # A committed change detaches the state and its nested manager on demand.
+    shared[state] = state
   end
   for caches in (mgr.cluster_distance_cache, mgr.cluster_quantity_cache,
       mgr.cluster_complexity_cache)
@@ -889,6 +895,7 @@ function Manager(
     clamp(float(recency), 0.0, 1.0),
     Bool(enable_occurrence_intervals),
     Dict{Tuple{Int,Int},OccurrenceIntervalState}(),
+    Set{Tuple{Int,Int}}(),
     false,
     PolyJournalEntry[],
     nothing
@@ -2324,6 +2331,18 @@ function _build_occurrence_interval_manager(
   return manager
 end
 
+"""Detach a previously shared occurrence state before a permanent update."""
+function _occurrence_state_for_write!(
+  mgr::Manager,
+  key::Tuple{Int,Int},
+)::OccurrenceIntervalState
+  if key in mgr.shared_occurrence_state_keys
+    mgr.occurrence_interval_states[key] = deepcopy(mgr.occurrence_interval_states[key])
+    delete!(mgr.shared_occurrence_state_keys, key)
+  end
+  return mgr.occurrence_interval_states[key]
+end
+
 function _sync_occurrence_interval_state!(
   mgr::Manager,
   window_size::Int,
@@ -2343,6 +2362,7 @@ function _sync_occurrence_interval_state!(
       mgr.occurrence_interval_states[state_key] =
         OccurrenceIntervalState(occurrence_count, 1.0, nothing)
     else
+      existing = _occurrence_state_for_write!(mgr, state_key)
       existing.source_occurrence_count = occurrence_count
     end
     return nothing
@@ -2359,10 +2379,12 @@ function _sync_occurrence_interval_state!(
     )
     mgr.occurrence_interval_states[state_key] =
       OccurrenceIntervalState(occurrence_count, scale, interval_manager)
+    delete!(mgr.shared_occurrence_state_keys, state_key)
     return nothing
   end
 
   if existing.source_occurrence_count < occurrence_count
+    existing = _occurrence_state_for_write!(mgr, state_key)
     interval_manager = existing.manager::Manager
     history_limit = max(Config.OCCURRENCE_INTERVAL_HISTORY_LIMIT, mgr.min_window_size)
     if length(interval_manager.data) >= 2 * history_limit
