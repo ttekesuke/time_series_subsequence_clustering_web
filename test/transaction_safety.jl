@@ -209,6 +209,9 @@ end
   @test staged.managers["vol"][:stream_axis] === staged.stream_axis
   @test staged.managers["vol"][:global].data !== global_manager.data
   @test staged.managers["vol"][:global].data[1] === global_manager.data[1]
+  @test staged.managers["vol"][:global].cluster_spans[1] !== global_manager.cluster_spans[1]
+  @test staged.managers["vol"][:global].cluster_spans[1].si_min === global_manager.cluster_spans[1].si_min
+  @test staged.managers["vol"][:global].cluster_spans[1].as_max === global_manager.cluster_spans[1].as_max
   @test staged.managers["vol"][:global].cluster_quantity_cache !== global_manager.cluster_quantity_cache
   @test staged.managers["vol"][:global].cluster_quantity_cache[2] === global_manager.cluster_quantity_cache[2]
   @test staged.managers["vol"][:stream].history_matrix === stream_manager.history_matrix
@@ -255,6 +258,26 @@ end
   @test length(staged.stm_mgr.memory) == length(stm.memory) + 1
   @test haskey(staged.stream_axis.id_to_slot, 3)
   @test !haskey(axis.id_to_slot, 3)
+end
+
+@testset "staged cluster tasks share read-only payloads" begin
+  manager = _tx_pcm.Manager(Vector{Float64}[[0.0], [0.0], [0.0]], 0.02, 2)
+  push!(manager.tasks, _tx_pcm.ClusterTask([0], 2, Dict(0 => 0.0), 0.0, 0))
+  axis = _tx_controller.StableStreamAxis(1, [1])
+  staged = _tx_controller._stage_generate_polyphonic_step_state(
+    Dict("vol" => Dict{Symbol,Any}(
+      :global => manager,
+      :stream => _tx_msm.Manager([Any[0.0] for _ in 1:3], 0.02, 2),
+      :stream_axis => axis,
+    )),
+    _tx_stm.Manager(), axis, nothing,
+  )
+  copied = staged.managers["vol"][:global]
+  @test copied.tasks !== manager.tasks
+  @test copied.tasks[1].keys === manager.tasks[1].keys
+  @test copied.tasks[1].member_squared_distances === manager.tasks[1].member_squared_distances
+  empty!(copied.tasks)
+  @test length(manager.tasks) == 1
 end
 
 @testset "voice inventory is shared while generated token managers are isolated" begin

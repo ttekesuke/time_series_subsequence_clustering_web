@@ -3532,9 +3532,31 @@ function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, v
   # stream containers, axis, and voice managers as a single graph. Cache
   # windows remain shared until the staged manager first writes each window.
   shared = IdDict{Any,Any}()
+  function share_span_payload!(span)
+    # Span topology and metadata vectors are mutable, but both payloads are
+    # replaced with new arrays on updates. In particular, as_max rows and
+    # si_min are never modified in place by incremental clustering.
+    shared[span.si_min] = span.si_min
+    shared[span.as_max] = span.as_max
+    for row in span.as_max
+      shared[row] = row
+    end
+    for child in span.children
+      share_span_payload!(child)
+    end
+  end
   function share_pcm_rows!(pcm)
     for row in pcm.data
       shared[row] = row
+    end
+    for span in pcm.cluster_spans
+      share_span_payload!(span)
+    end
+    for task in pcm.tasks
+      # Incremental clustering reads old tasks, clears the vector, and emits
+      # new tasks. It copies keys before extension and never edits old maps.
+      shared[task.keys] = task.keys
+      shared[task.member_squared_distances] = task.member_squared_distances
     end
     for caches in (pcm.cluster_distance_cache, pcm.cluster_quantity_cache,
         pcm.cluster_complexity_cache)
