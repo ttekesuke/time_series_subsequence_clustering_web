@@ -200,6 +200,7 @@ end
   before_stm = _stm_snapshot(stm)
   before_axis = (copy(axis.id_to_slot), copy(axis.slot_to_id))
 
+  baseline = deepcopy((managers=managers, stm_mgr=stm, stream_axis=axis))
   staged = _tx_controller._stage_generate_polyphonic_step_state(managers, stm, axis, nothing)
 
   @test staged.managers !== managers
@@ -222,6 +223,8 @@ end
 
   staged_global = staged.managers["vol"][:global]
   staged_streams = staged.managers["vol"][:stream]
+  @test _tx_pcm.simulate_add_and_calculate_all_extended(staged_global, Float64[0.5]) ==
+    _tx_pcm.simulate_add_and_calculate_all_extended(baseline.managers["vol"][:global], Float64[0.5])
   _tx_pcm.add_data_point_permanently!(staged_global, Float64[0.5])
   _tx_pcm.update_caches_permanently!(staged_global)
   @test staged_global.cluster_quantity_cache[2] !== global_manager.cluster_quantity_cache[2]
@@ -230,6 +233,19 @@ end
   _tx_stm.commit!(staged.stm_mgr, [67, 71], [0.4, 0.6], 1.0)
   @test staged.stm_mgr.memory !== stm.memory
   _tx_controller._register_stream_ids!(staged.stream_axis, [3])
+
+  baseline_global = baseline.managers["vol"][:global]
+  _tx_pcm.add_data_point_permanently!(baseline_global, Float64[0.5])
+  _tx_pcm.update_caches_permanently!(baseline_global)
+  _tx_msm.commit_state_staged!(baseline.managers["vol"][:stream], [0.25, 0.75])
+  _tx_msm.update_caches_staged!(baseline.managers["vol"][:stream])
+  _tx_stm.commit!(baseline.stm_mgr, [67, 71], [0.4, 0.6], 1.0)
+  _tx_controller._register_stream_ids!(baseline.stream_axis, [3])
+  @test _pcm_snapshot(staged_global) == _pcm_snapshot(baseline_global)
+  @test _msm_snapshot(staged_streams) == _msm_snapshot(baseline.managers["vol"][:stream])
+  @test _stm_snapshot(staged.stm_mgr) == _stm_snapshot(baseline.stm_mgr)
+  @test (staged.stream_axis.id_to_slot, staged.stream_axis.slot_to_id) ==
+    (baseline.stream_axis.id_to_slot, baseline.stream_axis.slot_to_id)
 
   @test _pcm_snapshot(global_manager) == before_global
   @test _msm_snapshot(stream_manager) == before_streams
