@@ -3525,13 +3525,42 @@ function _set_generation_failure_context!(
 end
 
 function _stage_generate_polyphonic_step_state(managers, stm_mgr, stream_axis, voice_state)
-  # Copy one graph so manager dictionaries keep the same staged StableStreamAxis.
-  return deepcopy((
+  # PCM appends new rows but never mutates committed PolySet rows. Likewise,
+  # lifecycle operations read the seed history, STM pruning replaces its
+  # memory vector, and token selection reads the inventory. Reuse these
+  # historical leaves while copying mutable clusters, caches, stream
+  # containers, axis, and voice managers as a single graph. The shared leaves
+  # become a copy-on-write boundary for each generated step.
+  shared = IdDict{Any,Any}()
+  function share_pcm_rows!(pcm)
+    for row in pcm.data
+      shared[row] = row
+    end
+  end
+  for mgrs in values(managers)
+    share_pcm_rows!(mgrs[:global])
+    stream_mgr = mgrs[:stream]
+    shared[stream_mgr.history_matrix] = stream_mgr.history_matrix
+    for container in stream_mgr.stream_pool
+      share_pcm_rows!(container.manager)
+    end
+  end
+  for event in stm_mgr.memory
+    shared[event] = event
+  end
+  if voice_state !== nothing
+    shared[voice_state.inventory] = voice_state.inventory
+    share_pcm_rows!(voice_state.global_manager)
+    for pcm in values(voice_state.stream_managers)
+      share_pcm_rows!(pcm)
+    end
+  end
+  return Base.deepcopy_internal((
     managers=managers,
     stm_mgr=stm_mgr,
     stream_axis=stream_axis,
     voice_state=voice_state,
-  ))
+  ), shared)
 end
 
 function _log_generate_polyphonic_step_failure(err, bt, step_idx::Int, context::Dict{Symbol,Any})::Nothing
