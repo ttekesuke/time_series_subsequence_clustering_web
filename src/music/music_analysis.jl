@@ -408,6 +408,185 @@ function seconds_at(parsed::ParsedScore, t::Rational{Int})::Float64
   return elapsed
 end
 
+# The parser has already sorted events by time. Keep their original order within
+# equal-time groups: the last tempo/dynamic wins, while the first active wedge
+# wins when wedges overlap.
+struct IndexedWedge
+  event::WedgeEvent
+  start_value::Float64
+  target_value::Float64
+end
+
+struct PartEventIndex
+  dynamics::Vector{DynamicEvent}
+  dynamic_times::Vector{Rational{Int}}
+  wedges::Vector{IndexedWedge}
+  wedge_starts::Vector{Rational{Int}}
+  wedge_prefix_max_end::Vector{Rational{Int}}
+end
+
+struct ScoreEventIndex
+  tempo_events::Vector{TempoEvent}
+  tempo_times::Vector{Rational{Int}}
+  segment_starts::Vector{Rational{Int}}
+  segment_seconds::Vector{Float64}
+  segment_bpms::Vector{Float64}
+  parts::Dict{String,PartEventIndex}
+end
+
+function _base_dynamic_at(dynamics::Vector{DynamicEvent},
+    times::Vector{Rational{Int}}, t::Rational{Int})::Float64
+  pos = searchsortedlast(times, t)
+  return pos == 0 ? DEFAULT_DYNAMIC : dynamics[pos].value
+end
+
+function _score_event_index(parsed::ParsedScore)::ScoreEventIndex
+  tempo_times = Rational{Int}[event.time_q for event in parsed.tempos]
+  segment_starts = Rational{Int}[0 // 1]
+  segment_seconds = Float64[0.0]
+  segment_bpms = Float64[]
+  bpm = DEFAULT_TEMPO
+  i = 1
+  while i <= length(parsed.tempos) && parsed.tempos[i].time_q <= 0
+    bpm = parsed.tempos[i].bpm
+    i += 1
+  end
+  push!(segment_bpms, bpm)
+  cursor = 0 // 1
+  elapsed = 0.0
+  while i <= length(parsed.tempos)
+    boundary = parsed.tempos[i].time_q
+    elapsed += float(boundary - cursor) * 60.0 / bpm
+    push!(segment_starts, boundary)
+    push!(segment_seconds, elapsed)
+    while i <= length(parsed.tempos) && parsed.tempos[i].time_q == boundary
+      bpm = parsed.tempos[i].bpm
+      i += 1
+    end
+    push!(segment_bpms, bpm)
+    cursor = boundary
+  end
+
+  dynamics_by_part = Dict{String,Vector{DynamicEvent}}()
+  wedges_by_part = Dict{String,Vector{WedgeEvent}}()
+  for event in parsed.dynamics
+    push!(get!(dynamics_by_part, event.part_id, DynamicEvent[]), event)
+  end
+  for event in parsed.wedges
+    push!(get!(wedges_by_part, event.part_id, WedgeEvent[]), event)
+  end
+  parts = Dict{String,PartEventIndex}()
+  for part_id in union(keys(dynamics_by_part), keys(wedges_by_part))
+    dynamics = get(dynamics_by_part, part_id, DynamicEvent[])
+    dynamic_times = Rational{Int}[event.time_q for event in dynamics]
+    wedges = IndexedWedge[]
+    starts = Rational{Int}[]
+    prefix_max_end = Rational{Int}[]
+    max_end = 0 // 1
+    for event in get(wedges_by_part, part_id, WedgeEvent[])
+      start_value = _base_dynamic_at(dynamics, dynamic_times, event.start_q)
+      next_pos = searchsortedlast(dynamic_times, event.start_q) + 1
+      target = if next_pos <= length(dynamics) && dynamics[next_pos].time_q <= event.end_q
+        dynamics[next_pos].value
+      elseif event.kind == "crescendo"
+        clamp(start_value + 0.20, 0.0, 1.0)
+      else
+        clamp(start_value - 0.20, 0.0, 1.0)
+      end
+      push!(wedges, IndexedWedge(event, start_value, target))
+      push!(starts, event.start_q)
+      max_end = isempty(prefix_max_end) ? event.end_q : max(max_end, event.end_q)
+      push!(prefix_max_end, max_end)
+    end
+    parts[part_id] = PartEventIndex(dynamics, dynamic_times, wedges, starts, prefix_max_end)
+  end
+  return ScoreEventIndex(parsed.tempos, tempo_times, segment_starts,
+    segment_seconds, segment_bpms, parts)
+end
+
+function _seconds_at(index::ScoreEventIndex, t::Rational{Int}, segment_pos::Int=0)::Float64
+  t <= 0 && return 0.0
+  pos = segment_pos > 0 ? segment_pos : searchsortedlast(index.segment_starts, t)
+  return index.segment_seconds[pos] +
+    float(t - index.segment_starts[pos]) * 60.0 / index.segment_bpms[pos]
+end
+
+function _tempo_at(index::ScoreEventIndex, t::Rational{Int})::Float64
+  pos = searchsortedlast(index.tempo_times, t)
+  return pos == 0 ? DEFAULT_TEMPO : index.tempo_events[pos].bpm
+end
+
+function _dynamic_at(index::ScoreEventIndex, part_id::String, t::Rational{Int},
+    dynamic_pos::Int=0, started_wedges::Int=-1)::Float64
+  part = get(index.parts, part_id, nothing)
+  part === nothing && return DEFAULT_DYNAMIC
+  pos = dynamic_pos > 0 ? dynamic_pos : searchsortedlast(part.dynamic_times, t)
+  base = pos == 0 ? DEFAULT_DYNAMIC : part.dynamics[pos].value
+  started = started_wedges >= 0 ? started_wedges : searchsortedlast(part.wedge_starts, t)
+  if started == 0 || part.wedge_prefix_max_end[started] < t
+    return base
+  end
+  first_active = searchsortedfirst(part.wedge_prefix_max_end, t)
+  wedge = part.wedges[first_active]
+  span = float(wedge.event.end_q - wedge.event.start_q)
+  span <= 0 && return wedge.target_value
+  ratio = clamp(float(t - wedge.event.start_q) / span, 0.0, 1.0)
+  return clamp(wedge.start_value + (wedge.target_value - wedge.start_value) * ratio, 0.0, 1.0)
+end
+
+mutable struct PartEventCursor
+  last_t::Union{Nothing,Rational{Int}}
+  dynamic_pos::Int
+  started_wedges::Int
+end
+
+mutable struct ScoreEventCursor
+  last_t::Union{Nothing,Rational{Int}}
+  tempo_pos::Int
+  segment_pos::Int
+  parts::Dict{String,PartEventCursor}
+end
+ScoreEventCursor() = ScoreEventCursor(nothing, 0, 1, Dict{String,PartEventCursor}())
+
+function _step_timing!(index::ScoreEventIndex, cursor::ScoreEventCursor, t::Rational{Int})
+  if cursor.last_t !== nothing && t < cursor.last_t
+    return _seconds_at(index, t), _tempo_at(index, t)
+  end
+  while cursor.tempo_pos < length(index.tempo_times) &&
+      index.tempo_times[cursor.tempo_pos + 1] <= t
+    cursor.tempo_pos += 1
+  end
+  while cursor.segment_pos < length(index.segment_starts) &&
+      index.segment_starts[cursor.segment_pos + 1] <= t
+    cursor.segment_pos += 1
+  end
+  cursor.last_t = t
+  bpm = cursor.tempo_pos == 0 ? DEFAULT_TEMPO : index.tempo_events[cursor.tempo_pos].bpm
+  return _seconds_at(index, t, cursor.segment_pos), bpm
+end
+
+function _dynamic_at!(index::ScoreEventIndex, cursor::ScoreEventCursor,
+    part_id::String, t::Rational{Int})::Float64
+  part = get(index.parts, part_id, nothing)
+  part === nothing && return DEFAULT_DYNAMIC
+  state = get!(cursor.parts, part_id) do
+    PartEventCursor(nothing, 0, 0)
+  end
+  if state.last_t !== nothing && t < state.last_t
+    return _dynamic_at(index, part_id, t)
+  end
+  while state.dynamic_pos < length(part.dynamic_times) &&
+      part.dynamic_times[state.dynamic_pos + 1] <= t
+    state.dynamic_pos += 1
+  end
+  while state.started_wedges < length(part.wedge_starts) &&
+      part.wedge_starts[state.started_wedges + 1] <= t
+    state.started_wedges += 1
+  end
+  state.last_t = t
+  return _dynamic_at(index, part_id, t, state.dynamic_pos, state.started_wedges)
+end
+
 function _median_note(notes::Vector{Int})::Union{Nothing,Float64}
   isempty(notes) && return nothing
   sorted = sort(unique(notes))
@@ -786,14 +965,18 @@ function analyse_music_payload(params, scoring)
   stream_count = Any[nothing for _ in 1:step_count]
   sounding_note_count = Int[]
   tempo_series = Float64[]
+  event_index = _score_event_index(parsed)
+  event_cursor = ScoreEventCursor()
+  dynamic_at_step = Dict{String,Float64}()
 
   @info "[analyse_music] extracting score dimensions" steps=step_count streams=length(stream_ids)
   extraction_started_at = time()
   extraction_progress_interval = max(cld(step_count, 10), 1)
   for step in 1:step_count
     t_q = (step - 1) // grid_den
-    onset_seconds = seconds_at(parsed, t_q)
-    push!(tempo_series, tempo_at(parsed, t_q))
+    onset_seconds, bpm = _step_timing!(event_index, event_cursor, t_q)
+    push!(tempo_series, bpm)
+    empty!(dynamic_at_step)
     active_ids = Int[]
     global_notes = Int[]
     global_amps = Float64[]
@@ -803,7 +986,13 @@ function analyse_music_payload(params, scoring)
       is_active = !isempty(current_notes)
       is_active && push!(active_ids, id)
 
-      vol = is_active ? dynamic_at(parsed, part_by_stream[id], t_q) : 0.0
+      vol = 0.0
+      if is_active
+        part_id = part_by_stream[id]
+        vol = get!(dynamic_at_step, part_id) do
+          _dynamic_at!(event_index, event_cursor, part_id, t_q)
+        end
+      end
       volumes[id][step] = vol
       prev_notes = step > 1 ? notes_by_stream[id][step - 1] : Int[]
       onset_set = onsets_by_stream[id][step]

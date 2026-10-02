@@ -316,6 +316,65 @@ function _score_with_divisions(divisions::Int, durations::Vector{Int})
   """
 end
 
+@testset "indexed MusicXML events match ordered scans at boundaries" begin
+  dynamics = MA.DynamicEvent[
+    MA.DynamicEvent("P1", 0 // 1, 0.4),
+    MA.DynamicEvent("P1", 0 // 1, 0.6),
+    MA.DynamicEvent("P2", 0 // 1, 0.3),
+    MA.DynamicEvent("P1", 2 // 1, 0.8),
+    MA.DynamicEvent("P2", 3 // 1, 0.9),
+  ]
+  wedges = MA.WedgeEvent[
+    MA.WedgeEvent("P1", 0 // 1, 3 // 1, "crescendo"),
+    MA.WedgeEvent("P1", 1 // 1, 4 // 1, "diminuendo"),
+    MA.WedgeEvent("P1", 1 // 1, 2 // 1, "crescendo"),
+    MA.WedgeEvent("P2", 1 // 2, 5 // 2, "diminuendo"),
+  ]
+  tempos = MA.TempoEvent[
+    MA.TempoEvent(-1 // 2, 90.0),
+    MA.TempoEvent(0 // 1, 100.0),
+    MA.TempoEvent(1 // 1, 80.0),
+    MA.TempoEvent(1 // 1, 110.0),
+    MA.TempoEvent(2 // 1, 75.0),
+    MA.TempoEvent(4 // 1, 130.0),
+  ]
+  sort!(dynamics; by=e -> (e.time_q, e.part_id))
+  sort!(wedges; by=e -> (e.start_q, e.part_id))
+  sort!(tempos; by=e -> e.time_q)
+  parsed = MA.ParsedScore(MA.NoteEvent[], dynamics, wedges, tempos,
+    Dict("P1" => "Piano", "P2" => "Strings"), 6 // 1)
+  index = MA._score_event_index(parsed)
+  cursor = MA.ScoreEventCursor()
+  times = Rational{Int}[n // 4 for n in -2:24]
+  for t in times
+    seconds, bpm = MA._step_timing!(index, cursor, t)
+    @test seconds == MA.seconds_at(parsed, t)
+    @test bpm == MA.tempo_at(parsed, t)
+    @test MA._seconds_at(index, t) == MA.seconds_at(parsed, t)
+    @test MA._tempo_at(index, t) == MA.tempo_at(parsed, t)
+    for part_id in ("P1", "P2", "P3")
+      expected = MA.dynamic_at(parsed, part_id, t)
+      @test MA._dynamic_at(index, part_id, t) == expected
+      @test MA._dynamic_at!(index, cursor, part_id, t) == expected
+    end
+  end
+  for t in reverse(times)
+    @test MA._step_timing!(index, cursor, t) ==
+      (MA.seconds_at(parsed, t), MA.tempo_at(parsed, t))
+    for part_id in ("P1", "P2", "P3")
+      @test MA._dynamic_at!(index, cursor, part_id, t) ==
+        MA.dynamic_at(parsed, part_id, t)
+    end
+  end
+
+  sample = MA.parse_musicxml_text(_score_with_divisions(4, [4, 8]))
+  sample_index = MA._score_event_index(sample)
+  for t in Rational{Int}[n // 4 for n in 0:8]
+    @test MA._dynamic_at(sample_index, "P1", t) == MA.dynamic_at(sample, "P1", t)
+    @test MA._seconds_at(sample_index, t) == MA.seconds_at(sample, t)
+  end
+end
+
 @testset "analyse_music exact rhythm denominator accepts 3:4:5" begin
   xml = _score_with_divisions(60, [20, 15, 12])
   parsed = MA.parse_musicxml_text(xml)
