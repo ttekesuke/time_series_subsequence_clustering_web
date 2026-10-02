@@ -543,7 +543,7 @@ function _slice_span(
     deep_copy_seq(span.as_max[1:window_max]),
     copy(span.versions[first_offset:last_offset]),
     copy(span.fit_limits[first_offset:last_offset]),
-    children,
+    copy(children),
   )
 end
 
@@ -567,7 +567,7 @@ compressed and are eligible for lossless re-merge after the committed step.
     span.as_max,
     span.versions,
     span.fit_limits,
-    copy(span.children),
+    span.children,
   ))
   return nothing
 end
@@ -603,7 +603,7 @@ function _isolate_cluster_ref!(
     suffix = _slice_span(span, offset + 1, n, original_children)
     current.children = CompressedClusterSpan[suffix]
   else
-    current.children = original_children
+    current.children = copy(original_children)
   end
 
   replacement = current
@@ -705,8 +705,11 @@ function _add_child_cluster!(
     mgr.cluster_horizon,
   )
   _record_compressed_span_state!(mgr, parent.span)
-  push!(parent.span.children, child)
-  sort!(parent.span.children; by=span -> span.cluster_ids[1])
+  # Replacing the vector preserves the journal's original container identity.
+  # Earlier split entries may still point into that old vector and must be
+  # undone before the parent state is restored.
+  parent.span.children = sort!(vcat(parent.span.children, child);
+    by=span -> span.cluster_ids[1])
   return SpanClusterRef(child, 1)
 end
 
