@@ -129,7 +129,7 @@ for history_steps in (24, 64, 128)
 end
 
 println("step_history_steps,streams,mode,allocated_bytes,elapsed_s")
-for history_steps in (24, 64), streams in (2, 4)
+for history_steps in (24, 64, 128), streams in (2, 4)
   history = [Any[float((step + slot) % 3) / 4 for slot in 1:streams]
     for step in 1:history_steps]
   seed = MSM.Manager(history, 0.02, 2; value_range=[0.0, 1.0])
@@ -154,7 +154,7 @@ for history_steps in (24, 64), streams in (2, 4)
 end
 
 println("stage_history_steps,streams,mode,allocated_bytes,elapsed_s")
-for history_steps in (8, 24, 64), streams in (2, 4)
+for history_steps in (8, 24, 64, 128), streams in (2, 4)
   history = [Any[float((step + slot) % 3) / 4 for slot in 1:streams]
     for step in 1:history_steps]
   seed = MSM.Manager(history, 0.02, 2; value_range=[0.0, 1.0])

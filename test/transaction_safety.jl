@@ -1,4 +1,5 @@
 using Test
+using Random
 
 const _tx_controller = Main.TimeseriesClusteringAPI.TimeSeriesController
 const _tx_pcm = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
@@ -51,6 +52,11 @@ function _pcm_snapshot(manager)
     distance_cache=deepcopy(manager.cluster_distance_cache),
     quantity_cache=deepcopy(manager.cluster_quantity_cache),
     complexity_cache=deepcopy(manager.cluster_complexity_cache),
+    occurrence_states=Dict(key => (
+      count=state.source_occurrence_count,
+      scale=state.scale,
+      nested=state.manager === nothing ? nothing : _pcm_snapshot(state.manager),
+    ) for (key, state) in manager.occurrence_interval_states),
   )
 end
 
@@ -272,13 +278,6 @@ end
       children=map(span_signature, span.children),
     )
   end
-  function occurrence_signature(manager)
-    return Dict(key => (
-      count=state.source_occurrence_count,
-      scale=state.scale,
-      nested=state.manager === nothing ? nothing : _pcm_snapshot(state.manager),
-    ) for (key, state) in manager.occurrence_interval_states)
-  end
   history = [Float64[float(mod(i - 1, 2))] for i in 1:24]
   global_manager = _tx_pcm.Manager(deepcopy(history), 0.0, 2, false;
     range_min=0.0, range_max=1.0, max_set_size=1)
@@ -286,7 +285,7 @@ end
   _tx_pcm.update_caches_permanently!(global_manager)
   before = _pcm_snapshot(global_manager)
   before_spans = map(span_signature, global_manager.cluster_spans)
-  before_occurrences = occurrence_signature(global_manager)
+  before_occurrences = before.occurrence_states
   @test !isempty(before_occurrences)
   baseline = deepcopy(global_manager)
   axis = _tx_controller.StableStreamAxis(1, [1])
@@ -324,13 +323,89 @@ end
   _tx_pcm.finalize_cluster_storage!(staged)
   _tx_pcm.finalize_cluster_storage!(baseline)
   @test _pcm_snapshot(staged) == _pcm_snapshot(baseline)
-  @test occurrence_signature(staged) == occurrence_signature(baseline)
+  @test _pcm_snapshot(staged).occurrence_states == _pcm_snapshot(baseline).occurrence_states
   @test _pcm_snapshot(global_manager) == before
   @test map(span_signature, global_manager.cluster_spans) == before_spans
-  @test occurrence_signature(global_manager) == before_occurrences
+  @test _pcm_snapshot(global_manager).occurrence_states == before_occurrences
   @test any(staged.occurrence_interval_states[key] !== state
     for (key, state) in global_manager.occurrence_interval_states
     if haskey(staged.occurrence_interval_states, key))
+end
+
+@testset "seeded generation steps match full copies and discard failed work" begin
+  rng = MersenneTwister(0x30)
+  history = [Any[float(mod(i, 3)) / 2, float(mod(i + 1, 3)) / 2]
+    for i in 1:12]
+  global_manager = _tx_pcm.Manager(
+    [Float64[row[1]] for row in history], 0.02, 2, false;
+    range_min=0.0, range_max=1.0, max_set_size=1)
+  _tx_pcm.process_data!(global_manager)
+  _tx_pcm.update_caches_permanently!(global_manager)
+  axis = _tx_controller.StableStreamAxis(2, [1, 2])
+  current = (
+    managers=Dict("vol" => Dict{Symbol,Any}(
+      :global => global_manager,
+      :stream => _tx_msm.Manager(history, 0.02, 2; value_range=[0.0, 1.0]),
+      :stream_axis => axis,
+    )),
+    stm_mgr=_tx_stm.Manager(), stream_axis=axis, voice_state=nothing,
+  )
+  full_copy = deepcopy(current)
+
+  for step in 1:6
+    original_global = _pcm_snapshot(current.managers["vol"][:global])
+    original_streams = _msm_snapshot(current.managers["vol"][:stream])
+    staged = _tx_controller._stage_generate_polyphonic_step_state(
+      current.managers, current.stm_mgr, current.stream_axis, current.voice_state)
+    baseline = deepcopy(full_copy)
+    candidate = Float64[rand(rng, 0:2) / 2]
+    stream_values = [rand(rng, 0:2) / 2 for _ in 1:2]
+
+    @test _tx_pcm.simulate_add_and_calculate_all_extended(
+      staged.managers["vol"][:global], candidate) ==
+      _tx_pcm.simulate_add_and_calculate_all_extended(
+        baseline.managers["vol"][:global], candidate)
+    for graph in (staged, baseline)
+      pcm = graph.managers["vol"][:global]
+      _tx_pcm.add_data_point_permanently!(pcm, copy(candidate))
+      _tx_pcm.update_caches_permanently!(pcm)
+      stream = graph.managers["vol"][:stream]
+      _tx_msm.commit_state_staged!(stream, stream_values)
+      _tx_msm.update_caches_staged!(stream)
+      _tx_stm.commit!(graph.stm_mgr, [60, 64], [0.5, 0.5], float(step))
+    end
+    @test _pcm_snapshot(staged.managers["vol"][:global]) ==
+      _pcm_snapshot(baseline.managers["vol"][:global])
+    @test _msm_snapshot(staged.managers["vol"][:stream]) ==
+      _msm_snapshot(baseline.managers["vol"][:stream])
+    @test _stm_snapshot(staged.stm_mgr) == _stm_snapshot(baseline.stm_mgr)
+    @test _pcm_snapshot(current.managers["vol"][:global]) == original_global
+    @test _msm_snapshot(current.managers["vol"][:stream]) == original_streams
+    current, full_copy = staged, baseline
+  end
+
+  committed_global = _pcm_snapshot(current.managers["vol"][:global])
+  committed_streams = _msm_snapshot(current.managers["vol"][:stream])
+  committed_stm = _stm_snapshot(current.stm_mgr)
+  failed = _tx_controller._stage_generate_polyphonic_step_state(
+    current.managers, current.stm_mgr, current.stream_axis, current.voice_state)
+  for value in (0.0, 0.5)
+    pcm = failed.managers["vol"][:global]
+    _tx_pcm.add_data_point_permanently!(pcm, Float64[value])
+    _tx_pcm.update_caches_permanently!(pcm)
+  end
+  stream = failed.managers["vol"][:stream]
+  bad = stream.containers_by_id[stream.active_ids[2]].manager
+  bad.use_streamwise_surface_average = true
+  bad.stream_axis_offset = 2.0
+  bad.stream_axis_capacity = 1
+  bad.value_min = 0.0
+  bad.value_max = 1.0
+  bad.value_width = 1.0
+  @test_throws ErrorException _tx_msm.commit_state_staged!(stream, [0.0, 4.0])
+  @test _pcm_snapshot(current.managers["vol"][:global]) == committed_global
+  @test _msm_snapshot(current.managers["vol"][:stream]) == committed_streams
+  @test _stm_snapshot(current.stm_mgr) == committed_stm
 end
 
 @testset "staged cluster tasks share read-only payloads" begin
