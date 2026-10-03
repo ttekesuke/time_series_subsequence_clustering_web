@@ -224,7 +224,6 @@ const dialogRef = ref<any>(null)
 
 const containerRef = ref<HTMLElement | null>(null)
 const soundFilePath = ref('')
-const serverSoundFilePath = ref('')
 const dispatchInfo = ref<any | null>(null)
 const uploadedResultJsonFile = ref<File | null>(null)
 const uploadedWavFile = ref<File | null>(null)
@@ -232,7 +231,6 @@ const uploadedParamsJsonFile = ref<File | null>(null)
 let uploadedWavObjectUrl: string | null = null
 let generatedAudioObjectUrl: string | null = null
 let generatedAudioBlob: Blob | null = null
-const scdFilePath = ref('')
 const audio = ref<HTMLAudioElement | null>(null)
 const nowPlaying = ref(false)
 const lastResultJson = ref<any | null>(null)
@@ -636,8 +634,6 @@ async function loadWavFile(file: File | null) {
     uploadedWavObjectUrl = URL.createObjectURL(file)
     generatedAudioBlob = null
     soundFilePath.value = uploadedWavObjectUrl
-    serverSoundFilePath.value = ''
-    scdFilePath.value = ''
   } catch (err) {
     console.error('Failed to load wav', err)
   }
@@ -793,25 +789,24 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any, streamIds?: nu
         return
       }
 
-      const { sound_file_path, scd_file_path, audio_data } = response.data
-      serverSoundFilePath.value = sound_file_path
-      scdFilePath.value = scd_file_path
+      const { render_job_id, audio_data } = response.data
+      try {
+        // base64 wav -> Blob URL (browser playback)
+        const base64 = audio_data.includes(',') ? audio_data.split(',')[1] : audio_data
+        const binary = atob(base64)
+        const len = binary.length
+        const bytes = new Uint8Array(len)
+        for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
 
-      // base64 wav -> Blob URL (browser playback)
-      const base64 = audio_data.includes(',') ? audio_data.split(',')[1] : audio_data
-      const binary = atob(base64)
-      const len = binary.length
-      const bytes = new Uint8Array(len)
-      for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
-
-      const blob = new Blob([bytes.buffer], { type: "audio/wav" })
-      generatedAudioBlob = blob
-      if (generatedAudioObjectUrl) URL.revokeObjectURL(generatedAudioObjectUrl)
-      generatedAudioObjectUrl = URL.createObjectURL(blob)
-      soundFilePath.value = generatedAudioObjectUrl
-
-      progress.value.status = 'idle'
-      cleanup()
+        const blob = new Blob([bytes.buffer], { type: "audio/wav" })
+        generatedAudioBlob = blob
+        if (generatedAudioObjectUrl) URL.revokeObjectURL(generatedAudioObjectUrl)
+        generatedAudioObjectUrl = URL.createObjectURL(blob)
+        soundFilePath.value = generatedAudioObjectUrl
+        progress.value.status = 'idle'
+      } finally {
+        if (typeof render_job_id === 'string') cleanup(render_job_id)
+      }
     })
     .catch(error => {
       console.error("Rendering error:", error)
@@ -819,13 +814,8 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any, streamIds?: nu
     })
 }
 
-const cleanup = () => {
-  const data = {
-    cleanup: {
-      sound_file_path: serverSoundFilePath.value,
-      scd_file_path: scdFilePath.value
-    }
-  }
+const cleanup = (renderJobId: string) => {
+  const data = { cleanup: { render_job_id: renderJobId } }
   axios.delete("/api/web/supercolliders/cleanup", { data })
     .then(() => console.log('deleted temporary files'))
     .catch(error => console.error("音声削除エラー", error))

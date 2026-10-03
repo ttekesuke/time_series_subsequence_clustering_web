@@ -764,6 +764,7 @@ const playSoundCheckTone = async () => {
   const bpm = normalizeBpm(soundCheckRows.value[0]?.data?.[0] ?? DEFAULT_BPM)
   const voice = buildSoundCheckVoice(streamIdx)
   soundCheckPlaying.value = true
+  let renderJobId = ''
   try {
     const response = await axios.post('/api/web/supercolliders/render_polyphonic', {
       time_series: [[voice]],
@@ -772,6 +773,7 @@ const playSoundCheckTone = async () => {
       initial_context_bpm: [bpm],
       tail_pad_seconds: 0.05
     })
+    renderJobId = String(response?.data?.render_job_id ?? '')
 
     if (response?.data?.error) {
       console.error('Sound check render error:', response.data.error)
@@ -794,6 +796,15 @@ const playSoundCheckTone = async () => {
   } catch (err) {
     console.error('Sound check request failed:', err)
   } finally {
+    if (renderJobId) {
+      try {
+        await axios.delete('/api/web/supercolliders/cleanup', {
+          data: { cleanup: { render_job_id: renderJobId } }
+        })
+      } catch (err) {
+        console.error('Sound check cleanup failed:', err)
+      }
+    }
     soundCheckPlaying.value = false
   }
 }

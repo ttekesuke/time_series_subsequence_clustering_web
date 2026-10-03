@@ -426,8 +426,72 @@ function _combine_bpm_series(initial_raw, future_raw, expected_len::Int; fallbac
   return _normalize_bpm_series(vcat(initial_series, future_series), expected_len; fallback=fallback, align_tail=true)
 end
 
-function _safe_tmp_path(prefix::AbstractString, suffix::AbstractString)
-  return joinpath("/tmp", "$(prefix)_$(uuid4())$(suffix)")
+const _RENDER_ROOT = Ref{String}("")
+const _RENDER_JOBS = Dict{String,Tuple{String,Float64}}()
+const _RENDER_JOBS_LOCK = ReentrantLock()
+const _RENDER_JOB_TTL_SECONDS = 3600.0
+
+function _render_root()
+  return lock(_RENDER_JOBS_LOCK) do
+    if isempty(_RENDER_ROOT[]) || !isdir(_RENDER_ROOT[])
+      _RENDER_ROOT[] = mktempdir(; prefix="supercollider_render_jobs_")
+    end
+    _RENDER_ROOT[]
+  end
+end
+
+function _new_render_job()
+  _prune_render_jobs!()
+  job_dir = mktempdir(_render_root(); prefix="job_")
+  job_id = string(uuid4())
+  lock(_RENDER_JOBS_LOCK) do
+    # Zero means that the render is still active and must not expire.
+    _RENDER_JOBS[job_id] = (job_dir, 0.0)
+  end
+  return job_id, joinpath(job_dir, "score.scd"), joinpath(job_dir, "audio.wav")
+end
+
+function _finish_render_job!(job_id::String)
+  lock(_RENDER_JOBS_LOCK) do
+    job_dir, _ = _RENDER_JOBS[job_id]
+    _RENDER_JOBS[job_id] = (job_dir, time())
+  end
+end
+
+function _delete_render_job!(job_id::String; allow_active::Bool=false)::Bool
+  return lock(_RENDER_JOBS_LOCK) do
+    job = get(_RENDER_JOBS, job_id, nothing)
+    job === nothing && return false
+    job_dir, finished_at = job
+    finished_at == 0.0 && !allow_active && return false
+    delete!(_RENDER_JOBS, job_id)
+
+    # The registry is the only source of paths. Never follow a replaced job
+    # directory or a symlinked output file, even if it has the expected name.
+    if islink(job_dir) || !isdir(job_dir) || dirname(realpath(job_dir)) != realpath(_render_root())
+      return false
+    end
+    for name in ("score.scd", "audio.wav")
+      path = joinpath(job_dir, name)
+      if islink(path)
+        rm(path)
+      elseif isfile(path) && realpath(dirname(path)) == realpath(job_dir)
+        rm(path)
+      end
+    end
+    isempty(readdir(job_dir)) && rm(job_dir)
+    return true
+  end
+end
+
+function _prune_render_jobs!()
+  expired = lock(_RENDER_JOBS_LOCK) do
+    [id for (id, (_, finished_at)) in _RENDER_JOBS
+      if finished_at > 0.0 && time() - finished_at >= _RENDER_JOB_TTL_SECONDS]
+  end
+  for id in expired
+    _delete_render_job!(id)
+  end
 end
 
 function _render_timeout_seconds(render_duration::Real)::Float64
@@ -474,11 +538,6 @@ function _run_sclang_with_timeout(scd_path::AbstractString, timeout_seconds::Rea
     timeout_seconds = float(timeout_seconds),
     command = string(cmd),
   )
-end
-
-function _is_safe_tmp_file(path::AbstractString)
-  p = abspath(path)
-  return startswith(p, "/tmp/")
 end
 
 # ------------------------------------------------------------
@@ -608,8 +667,7 @@ function render_polyphonic()
   raw_tail_pad_seconds = get(payload, "tail_pad_seconds", get(gp, "tail_pad_seconds", Config.SC_DEFAULT_TAIL_PAD_SECONDS))
   tail_pad_seconds = clamp(_parse_float(raw_tail_pad_seconds), Config.UNIT_MIN, Config.SC_MAX_TAIL_PAD_SECONDS)
 
-  scd_path = _safe_tmp_path("supercollider_render_polyphonic", ".scd")
-  wav_path = _safe_tmp_path("supercollider_render_polyphonic", ".wav")
+  job_id, scd_path, wav_path = _new_render_job()
   voice_stems = Any[]
   voice_backend = nothing
 
@@ -648,10 +706,9 @@ function render_polyphonic()
     empty!(voice_stems)
 
     if !sclang_result.ok
+      _delete_render_job!(job_id; allow_active=true)
       return Dict(
         "error" => sclang_result.timed_out ? "SuperCollider render timed out" : "SuperCollider render failed",
-        "scd_file_path" => scd_path,
-        "sound_file_path" => wav_path,
         "sc_exit_code" => sclang_result.exit_code,
         "sc_timed_out" => sclang_result.timed_out,
         "sc_timeout_seconds" => sclang_result.timeout_seconds,
@@ -665,18 +722,17 @@ function render_polyphonic()
     end
 
     if !isfile(wav_path) || filesize(wav_path) <= 44
+      _delete_render_job!(job_id; allow_active=true)
       return Dict(
         "error" => "wav file was not generated or is empty",
-        "scd_file_path" => scd_path,
-        "sound_file_path" => wav_path,
       )
     end
 
     audio_b64 = base64encode(read(wav_path))
+    _finish_render_job!(job_id)
     return Dict(
       "audio_data" => "data:audio/wav;base64,$audio_b64",
-      "scd_file_path" => scd_path,
-      "sound_file_path" => wav_path,
+      "render_job_id" => job_id,
       "bpm" => (isempty(bpm_series) ? bpm : bpm_series[1]),
       "bpmSeries" => bpm_series,
       "stepDuration" => (isempty(step_durations) ? Config.step_duration_from_bpm(bpm) : step_durations[1]),
@@ -689,6 +745,7 @@ function render_polyphonic()
   catch e
     VoicevoxClient.cleanup_stems!(voice_stems)
     empty!(voice_stems)
+    _delete_render_job!(job_id; allow_active=true)
     bt = catch_backtrace()
     io = IOBuffer()
     try
@@ -700,8 +757,6 @@ function render_polyphonic()
     bt_str = String(take!(io))
     return Dict(
       "error" => bt_str,
-      "scd_file_path" => scd_path,
-      "sound_file_path" => wav_path,
       "bpm" => (isempty(bpm_series) ? bpm : bpm_series[1]),
       "bpmSeries" => bpm_series,
       "stepDuration" => (isempty(step_durations) ? Config.step_duration_from_bpm(bpm) : step_durations[1]),
@@ -711,26 +766,14 @@ function render_polyphonic()
   end
 end
 
-function cleanup()
-  payload = _payload()
+function _cleanup_render_payload(payload)
+  _prune_render_jobs!()
   cleanup_payload = _to_string_dict(get(payload, "cleanup", payload))
-  scd_path = string(get(cleanup_payload, "scd_file_path", ""))
-  wav_path = string(get(cleanup_payload, "sound_file_path", ""))
-
-  deleted = String[]
-
-  for p in (scd_path, wav_path)
-    if !isempty(p) && _is_safe_tmp_file(p) && isfile(p)
-      try
-        rm(p; force=true)
-        push!(deleted, p)
-      catch
-        # ignore
-      end
-    end
-  end
-
-  return Dict("ok" => true, "deleted" => deleted)
+  job_id = get(cleanup_payload, "render_job_id", nothing)
+  deleted = job_id isa AbstractString && _delete_render_job!(String(job_id))
+  return Dict("ok" => deleted)
 end
+
+cleanup() = _cleanup_render_payload(_payload())
 
 end # module
