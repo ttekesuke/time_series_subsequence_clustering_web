@@ -96,20 +96,35 @@ function render_stems(requests; worker_url::AbstractString=get(ENV, "VOICEVOX_UR
   response = HTTP.post(rstrip(String(worker_url), '/') * "/render", ["Content-Type" => "application/json"], JSON3.write(Dict("stems" => requests)); readtimeout=600, status_exception=false)
   response.status == 200 || error("VOICEVOX worker returned HTTP $(response.status): $(String(response.body))")
   result = _string_dict(JSON3.read(String(response.body)))
+  return _decode_stems(result, requests)
+end
+
+function _decode_stems(result, requests; output_dir::AbstractString=tempdir())
   controls_by_id = Dict(Int(request["stream_id"]) => request["controls"] for request in requests)
   stems = Any[]
-  for raw in get(result, "stems", Any[])
-    item = _string_dict(raw)
-    stream_id = Int(item["stream_id"])
-    wav_b64 = string(get(item, "audio_base64", ""))
-    isempty(wav_b64) && error("VOICEVOX worker returned an empty stem for stream $(stream_id)")
-    path = joinpath("/tmp", "voicevox_stem_$(uuid4()).wav")
-    open(path, "w") do io; write(io, base64decode(wav_b64)); end
-    push!(stems, Dict("stream_id" => stream_id, "path" => path, "controls" => get(controls_by_id, stream_id, Any[]), "backend" => string(get(item, "backend", get(result, "backend", "voicevox")))))
+  try
+    for raw in get(result, "stems", Any[])
+      item = _string_dict(raw)
+      stream_id = Int(item["stream_id"])
+      wav_b64 = string(get(item, "audio_base64", ""))
+      isempty(wav_b64) && error("VOICEVOX worker returned an empty stem for stream $(stream_id)")
+      bytes = base64decode(wav_b64)
+      path = joinpath(output_dir, "voicevox_stem_$(uuid4()).wav")
+      try
+        open(path, "w") do io; write(io, bytes); end
+      catch
+        isfile(path) && rm(path; force=true)
+        rethrow()
+      end
+      push!(stems, Dict("stream_id" => stream_id, "path" => path, "controls" => get(controls_by_id, stream_id, Any[]), "backend" => string(get(item, "backend", get(result, "backend", "voicevox")))))
+    end
+    length(stems) == length(requests) || error("VOICEVOX worker returned $(length(stems)) stems; expected $(length(requests))")
+    @info "VOICEVOX stems rendered" request_count=length(requests) stem_count=length(stems) stem_stream_ids=[stem["stream_id"] for stem in stems]
+    return stems
+  catch
+    cleanup_stems!(stems)
+    rethrow()
   end
-  length(stems) == length(requests) || error("VOICEVOX worker returned $(length(stems)) stems; expected $(length(requests))")
-  @info "VOICEVOX stems rendered" request_count=length(requests) stem_count=length(stems) stem_stream_ids=[stem["stream_id"] for stem in stems]
-  return stems
 end
 
 function cleanup_stems!(stems)

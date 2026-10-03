@@ -21,33 +21,16 @@ jobs:
         env:
           JULIA_PKG_PRECOMPILE_AUTO: "0"
         run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
-      - name: Verify SuperCollider render cleanup
-        run: julia --project=. -e 'ENV["GENIE_ENV"]="test"; using Genie; Genie.loadapp(); include("test/supercollider_render_cleanup.jl")'
-      - name: Run compressed cluster integration suite
+      - name: Run all backend regression tests
+        run: julia --project=. test/runtests.jl
+      - name: Verify backend runner rejects a failed test
         run: |
-          julia --project=. -e '
-            ENV["GENIE_ENV"]="test";
-            using Genie;
-            Genie.loadapp();
-            for file in [
-              "test/polyphonic_compression_equivalence.jl",
-              "test/cluster_storage_encapsulation.jl",
-              "test/predictive_complexity.jl",
-              "test/occurrence_interval_complexity.jl",
-              "test/metric_calibration_and_chord_greedy.jl",
-              "test/transaction_safety.jl",
-              "test/issues_16_23_regressions.jl",
-              "test/issues_18_lifecycle_regression.jl",
-              "test/generate_polyphonic_validation.jl",
-              "test/voice_token_generation.jl",
-              "test/analyse_music.jl",
-              "test/tie_rendering.jl",
-              "test/normalize_octave_invariance.jl",
-            ]
-              println("=== ", file, " ===");
-              include(file);
-            end
-          '
+          echo 'using Test; @test false' > test/__ci_failure_probe.jl
+          if julia --project=. test/runtests.jl __ci_failure_probe.jl; then
+            echo 'The backend test runner accepted a failing test'
+            exit 1
+          fi
+          rm test/__ci_failure_probe.jl
       - name: Measure generation stream commits
         run: julia --project=. scripts/benchmark_generation_staging.jl
       - name: Measure MusicXML event indexing (bounded fixture)
@@ -69,3 +52,29 @@ jobs:
         run: npm run typecheck
       - working-directory: frontend
         run: npm run build
+
+  voicevox-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run VOICEVOX worker HTTP tests
+        run: python3 -m unittest discover -s voicevox_worker -p 'test_*.py'
+
+  analyse-music-http:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Verify MusicAnalyse HTTP JSON response
+        run: python3 scripts/smoke_analyse_music_http.py
