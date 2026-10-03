@@ -4128,6 +4128,7 @@ function evaluate_observed_complexity!(
   phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
   committed_metrics_ref::Union{Nothing,Base.RefValue{PolyphonicClusterManager.ExtendedClusterMetrics}}=nothing,
   observed_distance_sums::Union{Nothing,Dict{Int,Float64}}=nothing,
+  observed_quantity_totals::Union{Nothing,PolyphonicClusterManager.ObservedQuantityTotals}=nothing,
 )::Dict{String,Any}
   phase_started = phase_timings === nothing ? 0 : time_ns()
   committed_metrics = committed_metrics_ref === nothing ?
@@ -4159,6 +4160,7 @@ function evaluate_observed_complexity!(
     phase_timings=phase_timings,
     next_calibration_metrics_ref=committed_metrics_ref,
     observed_distance_sums=observed_distance_sums,
+    observed_quantity_totals=observed_quantity_totals,
   )
 
   diversity = calibrate_metric(metrics.distance, base_calibrator.distance)
