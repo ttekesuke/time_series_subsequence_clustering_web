@@ -21,6 +21,8 @@ jobs:
         env:
           JULIA_PKG_PRECOMPILE_AUTO: "0"
         run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Verify SuperCollider render cleanup
+        run: julia --project=. -e 'ENV["GENIE_ENV"]="test"; using Genie; Genie.loadapp(); include("test/supercollider_render_cleanup.jl")'
       - name: Run compressed cluster integration suite
         run: |
           julia --project=. -e '
@@ -40,7 +42,6 @@ jobs:
               "test/voice_token_generation.jl",
               "test/analyse_music.jl",
               "test/tie_rendering.jl",
-              "test/supercollider_render_cleanup.jl",
               "test/normalize_octave_invariance.jl",
             ]
               println("=== ", file, " ===");
