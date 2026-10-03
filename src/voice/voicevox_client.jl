@@ -109,6 +109,7 @@ function _decode_stems(result, requests; output_dir::AbstractString=tempdir())
       wav_b64 = string(get(item, "audio_base64", ""))
       isempty(wav_b64) && error("VOICEVOX worker returned an empty stem for stream $(stream_id)")
       bytes = base64decode(wav_b64)
+      isempty(bytes) && error("VOICEVOX worker returned an empty decoded stem for stream $(stream_id)")
       path = joinpath(output_dir, "voicevox_stem_$(uuid4()).wav")
       try
         open(path, "w") do io; write(io, bytes); end
