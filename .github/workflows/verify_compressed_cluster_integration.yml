@@ -37,6 +37,8 @@ jobs:
         run: julia --project=. scripts/benchmark_music_event_index.jl
       - name: Compare Dissonance STM kernel and original (bounded fixture)
         run: julia --project=. scripts/benchmark_dissonance_stm.jl
+      - name: Compare MusicXML seed parsing and measure lookup (bounded fixture)
+        run: julia --project=. scripts/benchmark_musicxml_seed.jl
 
   frontend:
     runs-on: ubuntu-latest

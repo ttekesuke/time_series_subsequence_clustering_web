@@ -3,6 +3,8 @@ using EzXML
 using HTTP
 using JSON3
 using SHA
+include(joinpath(@__DIR__, "..", "src", "music", "musicxml_events.jl"))
+using .MusicXmlEvents
 
 const influx_url = get(ENV, "INFLUX_URL", "http://influxdb:8086")
 const influx_db = get(ENV, "INFLUX_DB", "timeseries")
@@ -176,21 +178,23 @@ function reset_influx_measurement()
   end
 end
 
-if influx_v2_enabled()
-  isempty(strip(influx_bucket)) && error("INFLUX_BUCKET is required for InfluxDB Cloud/v2")
-  isempty(strip(influx_token)) && error("INFLUX_TOKEN is required for InfluxDB Cloud/v2")
-  println("Using InfluxDB Cloud/v2 bucket: ", influx_bucket)
-else
-  println("Waiting for InfluxDB at ", influx_url)
-  for _ in 1:60
-    ping_influx(influx_url) && (println("InfluxDB is up"); break)
-    sleep(1)
-  end
-  try
-    resp = HTTP.get(string(strip_trailing_slashes(influx_url), "/query"), query=Dict("q" => "CREATE DATABASE \"$(influx_db)\""))
-    println("Created DB (or already exists): ", influx_db, " status ", resp.status)
-  catch e
-    println("DB create failed: ", e)
+function initialize_influx!()
+  if influx_v2_enabled()
+    isempty(strip(influx_bucket)) && error("INFLUX_BUCKET is required for InfluxDB Cloud/v2")
+    isempty(strip(influx_token)) && error("INFLUX_TOKEN is required for InfluxDB Cloud/v2")
+    println("Using InfluxDB Cloud/v2 bucket: ", influx_bucket)
+  else
+    println("Waiting for InfluxDB at ", influx_url)
+    for _ in 1:60
+      ping_influx(influx_url) && (println("InfluxDB is up"); break)
+      sleep(1)
+    end
+    try
+      resp = HTTP.get(string(strip_trailing_slashes(influx_url), "/query"), query=Dict("q" => "CREATE DATABASE \"$(influx_db)\""))
+      println("Created DB (or already exists): ", influx_db, " status ", resp.status)
+    catch e
+      println("DB create failed: ", e)
+    end
   end
 end
 
@@ -255,127 +259,20 @@ function load_scores()
   return scores
 end
 
-function child_elements(node, name::AbstractString)
-  out = Any[]
-  for child in eachelement(node)
-    nodename(child) == name && push!(out, child)
-  end
-  return out
-end
-
-function first_child(node, name::AbstractString)
-  xs = child_elements(node, name)
-  return isempty(xs) ? nothing : xs[1]
-end
-
-function child_text(node, name::AbstractString, default::AbstractString="")
-  child = first_child(node, name)
-  child === nothing && return String(default)
-  return strip(nodecontent(child))
-end
-
-function has_child(node, name::AbstractString)::Bool
-  return first_child(node, name) !== nothing
-end
-
-function attr(node, name::AbstractString, default::AbstractString="")
-  try
-    return String(node[name])
-  catch
-    return String(default)
-  end
-end
-
-function parse_int_text(node, name::AbstractString, default::Int=0)::Int
-  txt = child_text(node, name, "")
-  isempty(txt) && return default
-  return parse(Int, txt)
-end
-
-function midi_pitch(note)::Union{Int,Nothing}
-  pitch = first_child(note, "pitch")
-  pitch === nothing && return nothing
-  step = child_text(pitch, "step", "")
-  octave_txt = child_text(pitch, "octave", "")
-  (isempty(step) || isempty(octave_txt)) && return nothing
-  base = Dict("C" => 0, "D" => 2, "E" => 4, "F" => 5, "G" => 7, "A" => 9, "B" => 11)
-  haskey(base, step) || return nothing
-  alter = parse_int_text(pitch, "alter", 0)
-  octave = parse(Int, octave_txt)
-  return (octave + 1) * 12 + base[step] + alter
-end
-
-function stream_key(part_id::AbstractString, staff::AbstractString, voice::AbstractString)
-  return (String(part_id), String(staff), String(voice))
-end
-
-function parse_part_names(score::EzXML.Node)::Dict{String,String}
-  names = Dict{String,String}()
-  for part_list in child_elements(score, "part-list")
-    for score_part in child_elements(part_list, "score-part")
-      id = attr(score_part, "id", "")
-      isempty(id) && continue
-      for pn in child_elements(score_part, "part-name")
-        names[id] = strip(nodecontent(pn))
-        break
-      end
-    end
-  end
-  return names
-end
-
 function parse_musicxml(score_path::AbstractString)
-  doc = readxml(score_path)
-  score = root(doc)
+  parsed = MusicXmlEvents.parse_document(EzXML.readxml(score_path))
+  scale = parsed.tick_scale
   streams = Dict{Tuple{String,String,String}, Vector{NoteEvent}}()
-  # measure_starts: (start_tick, measure_number)
-  measure_starts = Vector{Tuple{Int,String}}()
-  part_names = parse_part_names(score)
-
-  for part in child_elements(score, "part")
-    part_id = attr(part, "id", "P")
-    part_time = 0
-    for measure in child_elements(part, "measure")
-      measure_number = attr(measure, "number", string(length(measure_starts) + 1))
-      push!(measure_starts, (part_time, measure_number)) # Record the start tick of this measure
-      cursor = part_time # Current position in ticks for this measure
-      max_cursor = cursor
-      last_note_start = cursor
-
-      for element in eachelement(measure)
-        name = nodename(element)
-        if name == "backup"
-          cursor -= parse_int_text(element, "duration", 0)
-          cursor < part_time && (cursor = part_time)
-        elseif name == "forward"
-          cursor += parse_int_text(element, "duration", 0)
-          max_cursor = max(max_cursor, cursor)
-        elseif name == "note"
-          has_child(element, "grace") && continue
-          duration = parse_int_text(element, "duration", 0)
-          duration <= 0 && continue
-
-          is_chord = has_child(element, "chord") # If true, this note starts at the same time as the previous non-chord note
-          current_note_start_tick = is_chord ? last_note_start : cursor
-          staff = child_text(element, "staff", "1")
-          voice = child_text(element, "voice", "1")
-          pitch = has_child(element, "rest") ? nothing : midi_pitch(element)
-
-          if pitch !== nothing
-            key = stream_key(part_id, staff, voice)
-            push!(get!(streams, key, NoteEvent[]), NoteEvent(current_note_start_tick, duration, pitch, measure_number, current_note_start_tick - part_time))
-          end
-
-          if !is_chord
-            last_note_start = current_note_start_tick # For subsequent chord notes
-            cursor += duration
-            max_cursor = max(max_cursor, cursor)
-          end # if !is_chord
-        end # if name == "note"
-      end # for element in eachelement(measure)
-      part_time = max_cursor # Update part_time for the next measure
-    end # for measure in child_elements(part, "measure")
-  end # for part in child_elements(score, "part")
+  measure_starts = Tuple{Int,String}[(Int(start_q * scale), number)
+    for (_, start_q, number) in parsed.measure_starts]
+  for event in parsed.notes
+    key = (event.part_id, event.staff, event.voice)
+    start_tick = Int(event.start_q * scale)
+    duration = Int((event.end_q - event.start_q) * scale)
+    measure_tick = Int((event.start_q - event.measure_start_q) * scale)
+    push!(get!(streams, key, NoteEvent[]), NoteEvent(start_tick, duration,
+      event.pitch, event.measure_number, measure_tick))
+  end
 
   # Sort all events within each stream by start_tick
   for (key, events) in streams
@@ -384,16 +281,20 @@ function parse_musicxml(score_path::AbstractString)
 
   unique!(measure_starts)
   sort!(measure_starts, by = x -> x[1])
-  return streams, measure_starts, part_names
+  return streams, measure_starts, parsed.part_names
 end
 
-function measure_at(measure_starts::Vector{Tuple{Int,String}}, tick::Int)
+function measure_at(measure_starts::Vector{Tuple{Int,String}}, tick::Int,
+    measure_ticks::Vector{Int})
   isempty(measure_starts) && return ("", tick)
-  idx = searchsortedlast([m[1] for m in measure_starts], tick)
+  idx = searchsortedlast(measure_ticks, tick)
   idx <= 0 && return (measure_starts[1][2], tick - measure_starts[1][1])
   start_tick, number = measure_starts[idx]
   return (number, tick - start_tick) # Returns (measure_number_string, tick_within_measure)
 end
+
+measure_at(measure_starts::Vector{Tuple{Int,String}}, tick::Int) =
+  measure_at(measure_starts, tick, first.(measure_starts))
 
 function collapse_to_highest_notes(events::Vector{NoteEvent})::Vector{NoteEvent}
   isempty(events) && return NoteEvent[]
@@ -487,7 +388,8 @@ function split_phrase_events(events::Vector{NoteEvent}, measure_starts::Vector{T
   return phrases
 end
 
-function materialize_phrase_points(events::Vector{NoteEvent}, measure_starts::Vector{Tuple{Int,String}})
+function materialize_phrase_points(events::Vector{NoteEvent}, measure_starts::Vector{Tuple{Int,String}},
+    measure_ticks::Vector{Int}=first.(measure_starts))
   points = NamedTuple[]
   isempty(events) && return points
 
@@ -495,7 +397,7 @@ function materialize_phrase_points(events::Vector{NoteEvent}, measure_starts::Ve
 
   for (point_idx, event) in enumerate(events)
     # Each note event becomes a single point
-    measure_number, measure_tick = measure_at(measure_starts, event.start_tick)
+    measure_number, measure_tick = measure_at(measure_starts, event.start_tick, measure_ticks)
     push!(points, (
       note = event.pitch, # Only pitch field
       score_tick = event.start_tick,
@@ -510,9 +412,10 @@ end
 
 function phrase_points(events::Vector{NoteEvent}, measure_starts::Vector{Tuple{Int,String}})
   phrases_data = Vector{NamedTuple{(:points,), Tuple{Vector{NamedTuple}}}}()
+  measure_ticks = first.(measure_starts)
   highest_events = collapse_to_highest_notes(events)
   for phrase_events in split_phrase_events(highest_events, measure_starts)
-    points = materialize_phrase_points(phrase_events, measure_starts)
+    points = materialize_phrase_points(phrase_events, measure_starts, measure_ticks)
     isempty(points) && continue
     push!(phrases_data, (points = points,))
   end
@@ -608,6 +511,7 @@ function flush_lines!(lines::Vector{String}, state::WriteWindowState)
 end
 
 function main()
+  initialize_influx!()
   isdir(dataset_dir) || error("ASAP dataset directory was not found: $(dataset_dir)")
   scores = load_scores()
   println("Loaded ASAP scores: ", length(scores), " from ", dataset_dir)
