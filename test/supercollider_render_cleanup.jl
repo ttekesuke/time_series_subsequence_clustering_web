@@ -60,9 +60,10 @@ const _render_cleanup = Main.TimeseriesClusteringAPI.SupercollidersController
     _render_cleanup._RENDER_JOBS[expired_id] =
       (job_dir, time() - _render_cleanup._RENDER_JOB_TTL_SECONDS - 1)
   end
-  _render_cleanup._prune_render_jobs!()
+  trigger_id, _, _ = _render_cleanup._new_render_job()
   @test !ispath(expired_scd) && !ispath(expired_wav)
   @test !_render_cleanup._delete_render_job!(expired_id)
+  @test _render_cleanup._delete_render_job!(trigger_id; allow_active=true)
 
   rm(unrelated_dir; recursive=true)
 end

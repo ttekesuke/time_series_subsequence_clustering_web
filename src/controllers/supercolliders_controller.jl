@@ -432,6 +432,7 @@ const _RENDER_JOBS_LOCK = ReentrantLock()
 const _RENDER_JOB_TTL_SECONDS = 3600.0
 
 function _new_render_job()
+  _prune_render_jobs!()
   job_dir = mktempdir(_RENDER_ROOT; prefix="job_")
   job_id = string(uuid4())
   lock(_RENDER_JOBS_LOCK) do
@@ -481,14 +482,6 @@ function _prune_render_jobs!()
   end
   for id in expired
     _delete_render_job!(id)
-  end
-end
-
-const _RENDER_JOB_REAPER = Timer(60.0; interval=60.0) do _
-  try
-    _prune_render_jobs!()
-  catch e
-    @warn "SuperCollider render job cleanup failed" exception=(e, catch_backtrace())
   end
 end
 
@@ -765,6 +758,7 @@ function render_polyphonic()
 end
 
 function _cleanup_render_payload(payload)
+  _prune_render_jobs!()
   cleanup_payload = _to_string_dict(get(payload, "cleanup", payload))
   job_id = get(cleanup_payload, "render_job_id", nothing)
   deleted = job_id isa AbstractString && _delete_render_job!(String(job_id))
