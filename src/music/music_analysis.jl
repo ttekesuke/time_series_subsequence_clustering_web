@@ -4,6 +4,7 @@ using EzXML
 using ..Config
 using ..PolyphonicClusterManager
 using ..DissonanceStmManager
+using ..MusicXmlEvents
 
 struct RequestError <: Exception
   code::String
@@ -67,93 +68,11 @@ struct ParsedScore
   total_q::Rational{Int}
 end
 
-function _child_elements(node, name::AbstractString)
-  out = Any[]
-  for child in EzXML.eachelement(node)
-    EzXML.nodename(child) == name && push!(out, child)
-  end
-  return out
-end
-
-function _first_child(node, name::AbstractString)
-  xs = _child_elements(node, name)
-  return isempty(xs) ? nothing : xs[1]
-end
-
-function _child_text(node, name::AbstractString, default::AbstractString="")
-  child = _first_child(node, name)
-  child === nothing && return String(default)
-  return strip(EzXML.nodecontent(child))
-end
-
-_has_child(node, name::AbstractString) = _first_child(node, name) !== nothing
-
-function _attr(node, name::AbstractString, default::AbstractString="")
-  try
-    return String(node[name])
-  catch
-    return String(default)
-  end
-end
-
-function _parse_int_text(node, name::AbstractString, default::Int=0)::Int
-  txt = _child_text(node, name, "")
-  isempty(txt) && return default
-  parsed = tryparse(Int, txt)
-  return parsed === nothing ? default : parsed
-end
-
-function _parse_float_text(node, name::AbstractString, default::Float64=0.0)::Float64
-  txt = _child_text(node, name, "")
-  isempty(txt) && return default
-  parsed = tryparse(Float64, txt)
-  return parsed === nothing ? default : parsed
-end
-
-function _midi_pitch(note)::Union{Int,Nothing}
-  pitch = _first_child(note, "pitch")
-  pitch === nothing && return nothing
-  step = uppercase(_child_text(pitch, "step", ""))
-  octave_txt = _child_text(pitch, "octave", "")
-  isempty(step) && return nothing
-  octave = tryparse(Int, octave_txt)
-  octave === nothing && return nothing
-  base = Dict("C"=>0, "D"=>2, "E"=>4, "F"=>5, "G"=>7, "A"=>9, "B"=>11)
-  haskey(base, step) || return nothing
-  alter = _parse_float_text(pitch, "alter", 0.0)
-  return clamp((octave + 1) * 12 + base[step] + round(Int, alter), 0, 127)
-end
-
-function _parse_part_names(score)::Dict{String,String}
-  names = Dict{String,String}()
-  for part_list in _child_elements(score, "part-list")
-    for score_part in _child_elements(part_list, "score-part")
-      id = _attr(score_part, "id", "")
-      isempty(id) && continue
-      name = _child_text(score_part, "part-name", id)
-      names[id] = isempty(name) ? id : name
-    end
-  end
-  return names
-end
-
-function _tie_flags(note)::Tuple{Bool,Bool}
-  tie_start = false
-  tie_stop = false
-  for tie in _child_elements(note, "tie")
-    t = lowercase(_attr(tie, "type", ""))
-    t == "start" && (tie_start = true)
-    t == "stop" && (tie_stop = true)
-  end
-  for notations in _child_elements(note, "notations")
-    for tied in _child_elements(notations, "tied")
-      t = lowercase(_attr(tied, "type", ""))
-      t == "start" && (tie_start = true)
-      t == "stop" && (tie_stop = true)
-    end
-  end
-  return tie_start, tie_stop
-end
+const _child_elements = MusicXmlEvents.child_elements
+const _first_child = MusicXmlEvents.first_child
+const _child_text = MusicXmlEvents.child_text
+const _attr = MusicXmlEvents.attr
+const _parse_int_text = MusicXmlEvents.parse_int_text
 
 function _dynamic_from_direction(direction)::Union{Nothing,Float64}
   sound = _first_child(direction, "sound")
@@ -202,96 +121,39 @@ function _parse_document(doc)::ParsedScore
     "Only score-partwise MusicXML is supported.",
   ))
 
-  part_names = _parse_part_names(score)
-  notes = NoteEvent[]
   dynamics = DynamicEvent[]
   wedges = WedgeEvent[]
   tempos = TempoEvent[]
   open_wedges = Dict{Tuple{String,String},Tuple{Rational{Int},String}}()
-  total_q = 0 // 1
-
-  for part in _child_elements(score, "part")
-    part_id = _attr(part, "id", "P")
-    divisions = 1
-    part_time = 0 // 1
-
-    for measure in _child_elements(part, "measure")
-      cursor = part_time
-      max_cursor = cursor
-      last_note_start = cursor
-
-      for element in EzXML.eachelement(measure)
-        name = EzXML.nodename(element)
-        if name == "attributes"
-          div = _parse_int_text(element, "divisions", divisions)
-          div > 0 && (divisions = div)
-        elseif name == "backup"
-          duration = _parse_int_text(element, "duration", 0)
-          cursor -= duration // max(divisions, 1)
-          cursor < part_time && (cursor = part_time)
-        elseif name == "forward"
-          duration = _parse_int_text(element, "duration", 0)
-          cursor += duration // max(divisions, 1)
-          max_cursor = max(max_cursor, cursor)
-        elseif name == "direction"
-          offset = _parse_int_text(element, "offset", 0)
-          direction_time = cursor + offset // max(divisions, 1)
-          dyn = _dynamic_from_direction(element)
-          dyn === nothing || push!(dynamics, DynamicEvent(part_id, direction_time, dyn))
-          tempo = _tempo_from_direction(element)
-          tempo === nothing || push!(tempos, TempoEvent(direction_time, tempo))
-
-          for (typ, number) in _wedge_specs(element)
-            key = (part_id, number)
-            if typ == "crescendo" || typ == "diminuendo"
-              open_wedges[key] = (direction_time, typ)
-            elseif typ == "stop" && haskey(open_wedges, key)
-              start_q, kind = open_wedges[key]
-              direction_time > start_q && push!(wedges, WedgeEvent(part_id, start_q, direction_time, kind))
-              delete!(open_wedges, key)
-            end
-          end
-        elseif name == "note"
-          _has_child(element, "grace") && continue
-          duration_raw = _parse_int_text(element, "duration", 0)
-          duration_raw <= 0 && continue
-          duration_q = duration_raw // max(divisions, 1)
-          is_chord = _has_child(element, "chord")
-          start_q = is_chord ? last_note_start : cursor
-          end_q = start_q + duration_q
-
-          if !_has_child(element, "rest")
-            pitch = _midi_pitch(element)
-            if pitch !== nothing
-              staff = _child_text(element, "staff", "1")
-              voice = _child_text(element, "voice", "1")
-              tie_start, tie_stop = _tie_flags(element)
-              push!(notes, NoteEvent((part_id, staff, voice), part_id, start_q, end_q, pitch, tie_start, tie_stop))
-            end
-          end
-
-          if !is_chord
-            last_note_start = start_q
-            cursor += duration_q
-            max_cursor = max(max_cursor, cursor)
-          else
-            max_cursor = max(max_cursor, end_q)
-          end
-        end
+  parsed = MusicXmlEvents.parse_document(doc; on_direction=(part_id, cursor, divisions, element) -> begin
+    offset = _parse_int_text(element, "offset", 0)
+    direction_time = cursor + offset // divisions
+    dyn = _dynamic_from_direction(element)
+    dyn === nothing || push!(dynamics, DynamicEvent(part_id, direction_time, dyn))
+    tempo = _tempo_from_direction(element)
+    tempo === nothing || push!(tempos, TempoEvent(direction_time, tempo))
+    for (typ, number) in _wedge_specs(element)
+      key = (part_id, number)
+      if typ == "crescendo" || typ == "diminuendo"
+        open_wedges[key] = (direction_time, typ)
+      elseif typ == "stop" && haskey(open_wedges, key)
+        start_q, kind = open_wedges[key]
+        direction_time > start_q && push!(wedges, WedgeEvent(part_id, start_q, direction_time, kind))
+        delete!(open_wedges, key)
       end
-
-      part_time = max_cursor
-      total_q = max(total_q, part_time)
     end
-  end
+  end)
+  notes = NoteEvent[NoteEvent((event.part_id, event.staff, event.voice), event.part_id,
+    event.start_q, event.end_q, event.pitch, event.tie_start, event.tie_stop)
+    for event in parsed.notes]
 
   sort!(notes; by=e -> (e.start_q, e.stream_key, e.pitch, e.end_q))
   sort!(dynamics; by=e -> (e.time_q, e.part_id))
   sort!(wedges; by=e -> (e.start_q, e.part_id))
   sort!(tempos; by=e -> e.time_q)
   isempty(notes) && throw(RequestError("empty_score", "MusicXML contains no pitched notes."))
-  total_q > 0 || throw(RequestError("empty_score", "MusicXML has no positive duration."))
-  return ParsedScore(notes, dynamics, wedges, tempos, part_names, total_q)
+  parsed.total_q > 0 || throw(RequestError("empty_score", "MusicXML has no positive duration."))
+  return ParsedScore(notes, dynamics, wedges, tempos, parsed.part_names, parsed.total_q)
 end
 
 function parse_musicxml_text(xml_text::AbstractString)::ParsedScore
