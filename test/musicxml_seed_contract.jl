@@ -109,3 +109,21 @@ end
     @test [event.duration for event in streams[("P1", "1", "1")]] == [4, 2]
   end
 end
+
+@testset "ASAP BWV846 two-measure excerpt shares events" begin
+  path = joinpath(@__DIR__, "fixtures", "asap_bwv846_excerpt.musicxml")
+  xml = read(path, String)
+  analysis = _analyse_music.parse_musicxml_text(xml)
+  common = _xml_events.parse_document(EzXML.readxml(path))
+  streams, _, names = _seed_music.parse_musicxml(path)
+  @test common.tick_scale == 16
+  @test names == analysis.part_names
+  @test length(analysis.notes) > 10
+  @test sum(length, values(streams)) == length(analysis.notes)
+  expected = sort([(event.stream_key, event.start_q, event.end_q, event.pitch)
+    for event in analysis.notes])
+  actual = sort([(key, event.start_tick // common.tick_scale,
+    (event.start_tick + event.duration) // common.tick_scale, event.pitch)
+    for (key, events) in streams for event in events])
+  @test actual == expected
+end
