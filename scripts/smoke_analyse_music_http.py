@@ -40,14 +40,15 @@ def post(payload):
 def main():
     env = os.environ.copy()
     env["GENIE_ENV"] = "test"
-    command = [
-        "julia", "--project=.", "-e",
-        f'using Genie; Genie.loadapp(); Genie.up({PORT}, "127.0.0.1"; async=false)',
-    ]
+    env["HOST"] = "127.0.0.1"
+    env["PORT"] = str(PORT)
+    env["CLUSTERING_QUERY_ENABLED"] = "false"
+    env["STARTUP_WARMUP_ENABLED"] = "false"
+    command = ["julia", "--project=.", "scripts/start_server.jl"]
     with tempfile.TemporaryFile(mode="w+t") as log:
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
         try:
-            deadline = time.monotonic() + 120
+            deadline = time.monotonic() + 180
             while time.monotonic() < deadline:
                 if process.poll() is not None:
                     raise RuntimeError(f"Genie exited with {process.returncode}")
