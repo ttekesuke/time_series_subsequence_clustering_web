@@ -426,14 +426,23 @@ function _combine_bpm_series(initial_raw, future_raw, expected_len::Int; fallbac
   return _normalize_bpm_series(vcat(initial_series, future_series), expected_len; fallback=fallback, align_tail=true)
 end
 
-const _RENDER_ROOT = mktempdir(; prefix="supercollider_render_jobs_")
+const _RENDER_ROOT = Ref{String}("")
 const _RENDER_JOBS = Dict{String,Tuple{String,Float64}}()
 const _RENDER_JOBS_LOCK = ReentrantLock()
 const _RENDER_JOB_TTL_SECONDS = 3600.0
 
+function _render_root()
+  return lock(_RENDER_JOBS_LOCK) do
+    if isempty(_RENDER_ROOT[]) || !isdir(_RENDER_ROOT[])
+      _RENDER_ROOT[] = mktempdir(; prefix="supercollider_render_jobs_")
+    end
+    _RENDER_ROOT[]
+  end
+end
+
 function _new_render_job()
   _prune_render_jobs!()
-  job_dir = mktempdir(_RENDER_ROOT; prefix="job_")
+  job_dir = mktempdir(_render_root(); prefix="job_")
   job_id = string(uuid4())
   lock(_RENDER_JOBS_LOCK) do
     # Zero means that the render is still active and must not expire.
@@ -459,7 +468,7 @@ function _delete_render_job!(job_id::String; allow_active::Bool=false)::Bool
 
     # The registry is the only source of paths. Never follow a replaced job
     # directory or a symlinked output file, even if it has the expected name.
-    if islink(job_dir) || !isdir(job_dir) || dirname(realpath(job_dir)) != realpath(_RENDER_ROOT)
+    if islink(job_dir) || !isdir(job_dir) || dirname(realpath(job_dir)) != realpath(_render_root())
       return false
     end
     for name in ("score.scd", "audio.wav")
