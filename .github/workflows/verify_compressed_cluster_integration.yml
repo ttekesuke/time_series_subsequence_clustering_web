@@ -39,6 +39,8 @@ jobs:
         run: julia --project=. scripts/benchmark_dissonance_stm.jl
       - name: Compare MusicXML seed parsing and measure lookup (bounded fixture)
         run: julia --project=. scripts/benchmark_musicxml_seed.jl
+      - name: Compare observed quantity totals and cache scan (bounded fixture)
+        run: julia --project=. scripts/benchmark_observed_quantity_totals.jl
 
   frontend:
     runs-on: ubuntu-latest

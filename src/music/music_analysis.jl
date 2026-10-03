@@ -655,6 +655,7 @@ function _analyse_manager(
   distance_sums = Dict(window => sum(values(cache))
     for (window, cache) in manager.cluster_distance_cache)
   empty!(manager.cluster_distance_cache)
+  quantity_totals = PolyphonicClusterManager.observed_quantity_totals(manager)
 
   if n > min_window
     total_observed_steps = n - min_window
@@ -663,6 +664,8 @@ function _analyse_manager(
       :calibrator => 0.0,
       :prediction => 0.0,
       :metrics => 0.0,
+      :metrics_aggregate => 0.0,
+      :metrics_rebase => 0.0,
       :commit => 0.0,
       :cache => 0.0,
       :cache_collect => 0.0,
@@ -696,7 +699,8 @@ function _analyse_manager(
       observed = scoring.evaluate_observed_complexity!(manager, series[index];
         metric_weights=metric_weights, phase_timings=phase_timings,
         committed_metrics_ref=committed_metrics_ref,
-        observed_distance_sums=distance_sums)
+        observed_distance_sums=distance_sums,
+        observed_quantity_totals=quantity_totals)
       for key in keys(axes)
         axes[key][index] = get(observed, key, nothing)
       end
@@ -718,6 +722,7 @@ function _analyse_manager(
         @info "[analyse_music] distance detail" label=String(log_label) progress="$(percent)%" new_full_s=round(phase_timings[:cache_distance_new_full_s]; digits=2) new_full_pairs=Int(phase_timings[:cache_distance_new_full_pairs]) new_full_rows=Int(phase_timings[:cache_distance_new_full_rows]) new_prefix_s=round(phase_timings[:cache_distance_new_prefix_s]; digits=2) new_prefix_pairs=Int(phase_timings[:cache_distance_prefix_hits]) old_full_s=round(phase_timings[:cache_distance_old_full_s]; digits=2) old_full_pairs=Int(phase_timings[:cache_distance_old_full_pairs]) old_full_rows=Int(phase_timings[:cache_distance_old_full_rows]) old_prefix_s=round(phase_timings[:cache_distance_old_prefix_s]; digits=2) old_prefix_pairs=Int(phase_timings[:cache_distance_old_prefix_hits]) old_prefix_check_s=round(phase_timings[:cache_distance_old_prefix_check_s]; digits=2) revised_pairs=Int(phase_timings[:cache_distance_revised_pairs]) loop_s=round(max(phase_timings[:cache_distance] - distance_measured, 0.0); digits=2)
         complexity_measured = phase_timings[:cache_complexity_full_s] + phase_timings[:cache_complexity_prefix_s]
         @info "[analyse_music] quantity detail" label=String(log_label) progress="$(percent)%" complexity_full_s=round(phase_timings[:cache_complexity_full_s]; digits=2) complexity_full_rows=Int(phase_timings[:cache_complexity_full_rows]) complexity_prefix_s=round(phase_timings[:cache_complexity_prefix_s]; digits=2) complexity_prefix_hits=Int(phase_timings[:cache_complexity_prefix_hits]) other_quantity_s=round(max(phase_timings[:cache_quantity] - complexity_measured, 0.0); digits=2)
+        @info "[analyse_music] metrics aggregation" label=String(log_label) progress="$(percent)%" aggregate_s=round(phase_timings[:metrics_aggregate]; digits=3) rebase_s=round(phase_timings[:metrics_rebase]; digits=3) quantity_windows=length(quantity_totals.quantities) complexity_windows=length(quantity_totals.complexities) quantity_entries=sum(length, values(manager.cluster_quantity_cache)) complexity_entries=sum(length, values(manager.cluster_complexity_cache))
         for phase in keys(phase_timings)
           phase_timings[phase] = 0.0
         end
