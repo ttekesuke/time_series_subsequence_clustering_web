@@ -48,7 +48,7 @@ const _contract_xml = """
 </score-partwise>
 """
 
-function _seed_fixture(xml, work)
+function _seed_fixture(work::Function, xml::AbstractString)
   mktemp() do path, io
     write(io, xml)
     close(io)
