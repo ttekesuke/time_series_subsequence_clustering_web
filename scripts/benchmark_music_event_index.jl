@@ -1,6 +1,9 @@
 ENV["GENIE_ENV"] = "test"
 using Genie
 Genie.loadapp()
+benchmark_started_at = time()
+benchmark_sha = get(ENV, "GITHUB_SHA", "local")
+println("music_events_fixture,sha=$benchmark_sha,max_steps=512,parts=3")
 
 const MA = Main.TimeseriesClusteringAPI.MusicAnalysis
 
@@ -32,7 +35,6 @@ function old_values(parsed, times, parts)
   end
   return total
 end
-
 function indexed_values(index, times, parts)
   total = 0.0
   cursor = MA.ScoreEventCursor()
@@ -67,3 +69,4 @@ for step_count in (128, 256, 512)
     println("music_events,steps=$step_count,parts=$(length(parts)),mode=$label,allocated_bytes=$bytes,elapsed_s=$elapsed")
   end
 end
+println("music_events_summary,sha=$benchmark_sha,wall_s=$(round(time() - benchmark_started_at; digits=3))")
