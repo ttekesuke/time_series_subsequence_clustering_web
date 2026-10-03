@@ -40,6 +40,7 @@ jobs:
               "test/voice_token_generation.jl",
               "test/analyse_music.jl",
               "test/tie_rendering.jl",
+              "test/supercollider_render_cleanup.jl",
               "test/normalize_octave_invariance.jl",
             ]
               println("=== ", file, " ===");
