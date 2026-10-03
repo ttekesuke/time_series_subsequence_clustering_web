@@ -13,6 +13,33 @@ Rails 旧システム (f2da) の `app/models/dissonance_stm_manager.rb` を 1:1 
 
 using ..Config
 using ..Dissonance
+using ..DissonanceModels
+
+# A canonical pitch class has a fixed frequency at each partial.  Keep only
+# the frequency-dependent Sethares term here; amplitudes and their filtering
+# are evaluated for every chord exactly as in Dissonance.dissonance.
+struct CanonicalPartialKernel
+  frequencies::Vector{Float64}
+  roughness::Matrix{Float64}
+end
+
+const _kernel_lock = ReentrantLock()
+const _canonical_kernels = Dict{Int,CanonicalPartialKernel}()
+
+function canonical_partial_kernel(n_partials::Int)::CanonicalPartialKernel
+  return lock(_kernel_lock) do
+    get!(_canonical_kernels, n_partials) do
+      frequencies = [midi_to_freq(Config.MIDI_C4 + pc) * partial
+        for pc in 0:(Config.STEPS_PER_OCTAVE - 1) for partial in 1:n_partials]
+      roughness = Matrix{Float64}(undef, length(frequencies), length(frequencies))
+      for i in eachindex(frequencies), j in eachindex(frequencies)
+        f1, f2 = minmax(frequencies[i], frequencies[j])
+        roughness[i, j] = DissonanceModels.sethares1993_pair(f1, f2, 1.0, 1.0)
+      end
+      CanonicalPartialKernel(frequencies, roughness)
+    end
+  end
+end
 
 struct MemoryEvent
   onset::Float64
@@ -123,7 +150,7 @@ end
   return Config.A4_FREQ * (2.0 ^ ((float(midi) - float(Config.MIDI_A4)) / float(Config.STEPS_PER_OCTAVE)))
 end
 
-function dissonance_current(mgr::Manager, midi_notes::Vector{Int}, amps::Vector{Float64})::Float64
+function dissonance_current_uncached(mgr::Manager, midi_notes::Vector{Int}, amps::Vector{Float64})::Float64
   n = length(midi_notes)
   if n < 2 || n != length(amps)
     return 0.0
@@ -149,6 +176,48 @@ function dissonance_current(mgr::Manager, midi_notes::Vector{Int}, amps::Vector{
 
   length(freqs) < 2 && return 0.0
   return Dissonance.dissonance(freqs, a; model=mgr.model)
+end
+
+function dissonance_current(mgr::Manager, midi_notes::Vector{Int}, amps::Vector{Float64})::Float64
+  n = length(midi_notes)
+  if n < 2 || n != length(amps)
+    return 0.0
+  end
+
+  # Large/custom configurations use the original path without allocating an
+  # unbounded quadratic kernel.  evaluate/commit! always canonicalize notes;
+  # direct callers with other registers retain the original calculation.
+  if mgr.model != Config.DISSONANCE_MODEL_SETHARES1993 ||
+     !(1 <= mgr.n_partials <= 32) ||
+     any(note -> !(Config.MIDI_C4 <= note < Config.MIDI_C4 + Config.STEPS_PER_OCTAVE), midi_notes)
+    return dissonance_current_uncached(mgr, midi_notes, amps)
+  end
+
+  kernel = canonical_partial_kernel(mgr.n_partials)
+  pairs = Tuple{Float64,Float64,Int}[]
+  sizehint!(pairs, n * mgr.n_partials)
+  @inbounds for i in 1:n
+    amp = float(amps[i])
+    amp <= Config.AMP_EPS && continue
+    offset = (midi_notes[i] - Config.MIDI_C4) * mgr.n_partials
+    for partial in 1:mgr.n_partials
+      index = offset + partial
+      partial_amp = amp * (mgr.amp_profile ^ partial)
+      partial_amp >= Config.AMP_EPS && push!(pairs, (kernel.frequencies[index], partial_amp, index))
+    end
+  end
+
+  length(pairs) < 2 && return 0.0
+  sort!(pairs, by = x -> x[1])
+  total = 0.0
+  @inbounds for i in 1:(length(pairs) - 1)
+    a1, index1 = pairs[i][2], pairs[i][3]
+    for j in (i + 1):length(pairs)
+      a2, index2 = pairs[j][2], pairs[j][3]
+      total += (a1 * a2) * kernel.roughness[index1, index2]
+    end
+  end
+  return total
 end
 
 function memory_interference(mgr::Manager, midi_notes::Vector{Int}, amps::Vector{Float64}, onset::Float64, d_current::Float64)::Float64
