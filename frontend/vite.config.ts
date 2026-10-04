@@ -24,6 +24,7 @@ export default defineConfig({
     global: "window",
   },
   server: {
+    fs: { allow: [path.resolve(__dirname, "..")] },
     host: true,
     port: 5173,
     strictPort: true,

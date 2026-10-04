@@ -213,6 +213,7 @@ import { v4 as uuidv4 } from 'uuid'
 import GridContainer from '../grid/GridContainer.vue'
 import Fft from '../audio/Fft.vue'
 import VoiceEmbeddingDialog from './VoiceEmbeddingDialog.vue'
+import polyphonicDimensionContract from '../../../../config/polyphonic_dimensions.json'
 
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
@@ -310,14 +311,14 @@ type GridRowData = {
   disabled?: boolean;
 }
 
-type ManagedDimKey = 'area' | 'chord_range' | 'density' | 'vol' | 'brightness' | 'noise' | 'harmonicity' | 'attack' | 'decay_sustain' | 'release'
+type ManagedDimKey = keyof typeof polyphonicDimensionContract
 
 type DimensionPolicyConfig = {
   label: string
   min: number
   max: number
   step: number
-  isInt?: boolean
+  isInt: boolean
   defaultUseFixedValue: boolean
   defaultFixedValue: number
 }
@@ -330,20 +331,21 @@ type DimensionPolicyValue = {
   fixedValueSource: DimensionFixedValueSource
 }
 
-const managedDimPolicyConfigs: Record<ManagedDimKey, DimensionPolicyConfig> = {
-  area: { label: 'AREA', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
-  chord_range: { label: 'CR', min: 0, max: 24, step: 1, isInt: true, defaultUseFixedValue: false, defaultFixedValue: 0 },
-  density: { label: 'DEN', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0 },
-  vol: { label: 'VOL', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 1 },
-  brightness: { label: 'BRI', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
-  noise: { label: 'NOI', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.2 },
-  harmonicity: { label: 'HAR', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.5 },
-  attack: { label: 'ATK', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.05 },
-  decay_sustain: { label: 'DEC', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.20 },
-  release: { label: 'S/R', min: 0, max: 1, step: 0.01, defaultUseFixedValue: false, defaultFixedValue: 0.75 }
-}
-
-const managedDimKeys = Object.keys(managedDimPolicyConfigs) as ManagedDimKey[]
+const managedDimKeys = Object.keys(polyphonicDimensionContract) as ManagedDimKey[]
+const managedDimPolicyConfigs = Object.fromEntries(
+  managedDimKeys.map((key) => {
+    const contract = polyphonicDimensionContract[key]
+    return [key, {
+      label: contract.label,
+      min: contract.min,
+      max: contract.max,
+      step: contract.step,
+      isInt: contract.is_int,
+      defaultUseFixedValue: contract.ui_default_use_fixed_value,
+      defaultFixedValue: contract.ui_default_fixed_value,
+    }]
+  }),
+) as Record<ManagedDimKey, DimensionPolicyConfig>
 
 const canonicalizeDimensionFixedValueSource = (raw: unknown): DimensionFixedValueSource => {
   const key = String(raw ?? '').trim().toLowerCase()
@@ -359,18 +361,17 @@ const canonicalizeDimensionFixedValueSource = (raw: unknown): DimensionFixedValu
   return 'manual_input'
 }
 
-const createDefaultDimensionPolicy = (): Record<ManagedDimKey, DimensionPolicyValue> => ({
-  area: { useFixedValue: managedDimPolicyConfigs.area.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.area.defaultFixedValue, fixedValueSource: 'manual_input' },
-  chord_range: { useFixedValue: managedDimPolicyConfigs.chord_range.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.chord_range.defaultFixedValue, fixedValueSource: 'manual_input' },
-  density: { useFixedValue: managedDimPolicyConfigs.density.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.density.defaultFixedValue, fixedValueSource: 'manual_input' },
-  vol: { useFixedValue: managedDimPolicyConfigs.vol.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.vol.defaultFixedValue, fixedValueSource: 'manual_input' },
-  brightness: { useFixedValue: managedDimPolicyConfigs.brightness.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.brightness.defaultFixedValue, fixedValueSource: 'manual_input' },
-  noise: { useFixedValue: managedDimPolicyConfigs.noise.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.noise.defaultFixedValue, fixedValueSource: 'manual_input' },
-  harmonicity: { useFixedValue: managedDimPolicyConfigs.harmonicity.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.harmonicity.defaultFixedValue, fixedValueSource: 'manual_input' },
-  attack: { useFixedValue: managedDimPolicyConfigs.attack.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.attack.defaultFixedValue, fixedValueSource: 'manual_input' },
-  decay_sustain: { useFixedValue: managedDimPolicyConfigs.decay_sustain.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.decay_sustain.defaultFixedValue, fixedValueSource: 'manual_input' },
-  release: { useFixedValue: managedDimPolicyConfigs.release.defaultUseFixedValue, fixedValue: managedDimPolicyConfigs.release.defaultFixedValue, fixedValueSource: 'manual_input' }
-})
+const createDefaultDimensionPolicy = (): Record<ManagedDimKey, DimensionPolicyValue> =>
+  Object.fromEntries(
+    managedDimKeys.map((key) => {
+      const config = managedDimPolicyConfigs[key]
+      return [key, {
+        useFixedValue: config.defaultUseFixedValue,
+        fixedValue: config.defaultFixedValue,
+        fixedValueSource: 'manual_input' as const,
+      }]
+    }),
+  ) as Record<ManagedDimKey, DimensionPolicyValue>
 
 const dimensionPolicy = ref<Record<ManagedDimKey, DimensionPolicyValue>>(createDefaultDimensionPolicy())
 

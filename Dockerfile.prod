@@ -25,6 +25,7 @@ COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci --prefer-offline
 
 COPY frontend/ ./
+COPY config/polyphonic_dimensions.json /config/polyphonic_dimensions.json
 RUN npm run build
 # => /frontend/dist
 
