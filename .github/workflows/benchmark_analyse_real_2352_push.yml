@@ -1,0 +1,95 @@
+name: MusicAnalyse Real 2352 Benchmark
+
+on:
+  push:
+    branches:
+      - benchmark/analyse-real-2352
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+
+      - uses: julia-actions/cache@v2
+
+      - name: Instantiate
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Start Genie
+        run: |
+          export GENIE_ENV=test
+          export HOST=127.0.0.1
+          export PORT=19117
+          export CLUSTERING_QUERY_ENABLED=false
+          export STARTUP_WARMUP_ENABLED=false
+          nohup julia --project=. scripts/start_server.jl > /tmp/analyse-real-server.log 2>&1 &
+          echo $! > /tmp/analyse-real-server.pid
+          python3 - <<'PY'
+          import time
+          import urllib.request
+
+          url = "http://127.0.0.1:19117/api/health"
+          deadline = time.monotonic() + 180
+          while time.monotonic() < deadline:
+              try:
+                  with urllib.request.urlopen(url, timeout=2) as response:
+                      if response.status == 200:
+                          raise SystemExit(0)
+              except Exception:
+                  time.sleep(0.5)
+          raise SystemExit("Genie did not become ready within 180 seconds")
+          PY
+
+      - name: Run Bach Italian Concerto exact 2352-step benchmark
+        run: |
+          set -euo pipefail
+          python3 scripts/benchmark_analyse_music_job_http.py \
+            --asap-path Bach/Italian_concerto/xml_score.musicxml \
+            --base-url http://127.0.0.1:19117 \
+            --expected-steps 2352 \
+            --timeout 21600 \
+            2>&1 | tee /tmp/analyse-real-benchmark.log
+
+      - name: Save summary
+        if: always()
+        run: |
+          {
+            echo "## MusicAnalyse real 2352-step benchmark"
+            echo
+            echo "- score: `Bach/Italian_concerto/xml_score.musicxml`"
+            echo "- expected steps: `2352`"
+            echo "- commit: `$GITHUB_SHA`"
+            echo
+            if [ -f /tmp/analyse-real-benchmark.log ]; then
+              echo '~~~text'
+              grep 'analyse_music_job_benchmark=' /tmp/analyse-real-benchmark.log || true
+              echo '~~~'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop Genie
+        if: always()
+        run: |
+          if [ -f /tmp/analyse-real-server.pid ]; then
+            kill "$(cat /tmp/analyse-real-server.pid)" 2>/dev/null || true
+          fi
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analyse-real-2352-${{ github.run_id }}
+          path: |
+            /tmp/analyse-real-benchmark.log
+            /tmp/analyse-real-server.log
+          if-no-files-found: warn
