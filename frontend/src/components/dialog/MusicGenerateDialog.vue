@@ -771,7 +771,8 @@ const playSoundCheckTone = async () => {
       bpm,
       future_bpm: [bpm],
       initial_context_bpm: [bpm],
-      tail_pad_seconds: 0.05
+      tail_pad_seconds: 0.05,
+      return_audio_base64: false
     })
     renderJobId = String(response?.data?.render_job_id ?? '')
 
@@ -779,12 +780,19 @@ const playSoundCheckTone = async () => {
       console.error('Sound check render error:', response.data.error)
       return
     }
+    if (!renderJobId) throw new Error('Sound check render job ID was not returned.')
 
-    const audioData = String(response?.data?.audio_data ?? '')
-    if (!audioData) return
+    const audioResponse = await axios.post(
+      '/api/web/supercolliders/render_audio',
+      { render_job_id: renderJobId },
+      { responseType: 'blob' },
+    )
+    const blob = audioResponse.data instanceof Blob
+      ? audioResponse.data
+      : new Blob([audioResponse.data], { type: 'audio/wav' })
 
     cleanupSoundCheckAudio()
-    soundCheckAudioUrl = decodeBase64AudioToObjectUrl(audioData)
+    soundCheckAudioUrl = URL.createObjectURL(blob)
     const audio = new Audio(soundCheckAudioUrl)
     soundCheckAudioEl.value = audio
     const played = audio.play()
