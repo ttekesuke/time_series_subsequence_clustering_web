@@ -157,7 +157,9 @@ void axios.get('/api/features')
   .catch((error) => {
     console.warn('Runtime features could not be loaded; ClusteringQuery remains disabled.', error)
   })
-const selectedMode = ref('ClusteringAnalyse')
+const visualizerBenchmarkMode =
+  new URLSearchParams(window.location.search).get('visualizerBenchmark') === '1'
+const selectedMode = ref(visualizerBenchmarkMode ? 'MusicAnalyse' : 'ClusteringAnalyse')
 const analysedViewModes = ref(['Cluster', 'Complexity'])
 const analysedViewMode = ref('Complexity')
 const resultViewModes = ref(['pianoRoll', 'timbreRoll', 'volRoll', 'chordRangeRoll', 'densityRoll'])
