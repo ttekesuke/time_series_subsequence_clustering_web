@@ -51,7 +51,9 @@ type SpanRow = {
   detailHeight: number
   items: DetailItem[]
   summaryStarts: number[]
+  summaryMappedStarts: number[]
   summaryPositions: number[]
+  maxItemWidth: number
 }
 type DetailItem = {
   x: number
@@ -101,6 +103,54 @@ const summaryHeight = 24
 let rows: SpanRow[] = []
 let resizeObserver: ResizeObserver | null = null
 let rafId: number | null = null
+
+function lowerBound(values: number[], target: number) {
+  let lo = 0
+  let hi = values.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (values[mid] < target) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+function lowerBoundItemX(items: DetailItem[], target: number) {
+  let lo = 0
+  let hi = items.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (items[mid].x < target) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+function firstVisibleRowIndex(top: number) {
+  let lo = 0
+  let hi = rows.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    const row = rows[mid]
+    const bottom = row.y + summaryHeight + row.detailHeight
+    if (bottom < top) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+function rowAtY(y: number) {
+  let lo = 0
+  let hi = rows.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    const row = rows[mid]
+    if (y < row.y) hi = mid
+    else if (y >= row.y + summaryHeight + row.detailHeight) lo = mid + 1
+    else return row
+  }
+  return null
+}
 
 const resizeBy = (delta: number) => {
   if (container.value) emit('resize-height', Math.max(92, Math.round(container.value.getBoundingClientRect().height + delta)))
@@ -181,10 +231,14 @@ function calculateLayout() {
   rows = flattenSpans().map(({ key, span, depth }) => {
     const summaryY = y
     const summaryStarts = occurrences(span, span.window_min)
-    const summaryPositions = summaryStarts.flatMap(start => {
+    const summaryPairs = summaryStarts.flatMap(start => {
       const position = props.stepMap ? props.stepMap[start] : start
-      return position === undefined || !Number.isFinite(position) ? [] : [position]
-    })
+      return position === undefined || !Number.isFinite(position)
+        ? []
+        : [{ start, position }]
+    }).sort((a, b) => a.position - b.position)
+    const summaryMappedStarts = summaryPairs.map(pair => pair.start)
+    const summaryPositions = summaryPairs.map(pair => pair.position)
     y += summaryHeight
     let detailY = y
     let detailHeight = 0
@@ -196,7 +250,11 @@ function calculateLayout() {
       detailHeight = detail.height
       y += detailHeight
     }
-    return { key, span, depth, y: summaryY, detailY, detailHeight, items, summaryStarts, summaryPositions }
+    const maxItemWidth = items.reduce((maxWidth, item) => Math.max(maxWidth, item.width), 0)
+    return {
+      key, span, depth, y: summaryY, detailY, detailHeight, items,
+      summaryStarts, summaryMappedStarts, summaryPositions, maxItemWidth,
+    }
   })
   contentHeight.value = Math.max(viewportHeight.value, y + 8)
 }
@@ -225,17 +283,26 @@ function draw() {
     labelCtx.clearRect(0, 0, 80, height)
   }
 
-  for (const row of rows) {
-    if (row.y > top + height || row.y + summaryHeight + row.detailHeight < top) continue
+  const firstRow = firstVisibleRowIndex(top)
+  for (let rowIndex = firstRow; rowIndex < rows.length; rowIndex++) {
+    const row = rows[rowIndex]
+    if (row.y > top + height) break
     const sy = row.y - top
     ctx.fillStyle = row.key === selectedKey.value ? '#e3f2fd' : '#f5f8fb'
     ctx.fillRect(0, sy, width, summaryHeight - 2)
     ctx.fillStyle = '#1976d2'
     // The summary marks occurrences of the shortest logical window only.
     // Longer membership is displayed exactly after selecting a window size.
-    for (const position of row.summaryPositions) {
-      const x = position * props.stepWidth - left
-      if (x >= -2 && x < width) ctx.fillRect(x, sy + 5, 2, summaryHeight - 12)
+    const minPosition = (left - 2) / props.stepWidth
+    const maxPosition = (left + width + 2) / props.stepWidth
+    for (
+      let positionIndex = lowerBound(row.summaryPositions, minPosition);
+      positionIndex < row.summaryPositions.length &&
+        row.summaryPositions[positionIndex] <= maxPosition;
+      positionIndex++
+    ) {
+      const x = row.summaryPositions[positionIndex] * props.stepWidth - left
+      ctx.fillRect(x, sy + 5, 2, summaryHeight - 12)
     }
     if (labelCtx) {
       labelCtx.fillStyle = row.key === selectedKey.value ? '#e3f2fd' : '#f5f8fb'
@@ -258,10 +325,16 @@ function draw() {
     }
     ctx.fillStyle = 'rgba(100,181,246,0.45)'
     ctx.strokeStyle = '#1976d2'
-    for (const item of row.items) {
+    const detailStartX = Math.max(0, left - row.maxItemWidth)
+    for (
+      let itemIndex = lowerBoundItemX(row.items, detailStartX);
+      itemIndex < row.items.length && row.items[itemIndex].x <= left + width;
+      itemIndex++
+    ) {
+      const item = row.items[itemIndex]
       const x = item.x - left
       const iy = item.y - top
-      if (x + item.width < 0 || x > width || iy + props.rowHeight < 0 || iy > height) continue
+      if (x + item.width < 0 || iy + props.rowHeight < 0 || iy > height) continue
       ctx.fillRect(x, iy, item.width, props.rowHeight - 3)
       ctx.strokeRect(x, iy, item.width, props.rowHeight - 3)
     }
@@ -290,13 +363,22 @@ function hit(event: MouseEvent) {
   const rect = element.getBoundingClientRect()
   const x = event.clientX - rect.left + wrapper.scrollLeft
   const y = event.clientY - rect.top + wrapper.scrollTop
-  const row = rows.find(item => y >= item.y && y < item.y + summaryHeight + item.detailHeight)
+  const row = rowAtY(y)
   if (!row) return null
   if (y < row.detailY) return { row, item: null }
-  const item = row.items.find(entry =>
-    x >= entry.x && x <= entry.x + entry.width &&
-    y >= entry.y && y <= entry.y + props.rowHeight - 3)
-  return { row, item: item ?? null }
+  const startIndex = lowerBoundItemX(row.items, Math.max(0, x - row.maxItemWidth))
+  let item: DetailItem | null = null
+  for (let index = startIndex; index < row.items.length && row.items[index].x <= x; index++) {
+    const entry = row.items[index]
+    if (
+      x >= entry.x && x <= entry.x + entry.width &&
+      y >= entry.y && y <= entry.y + props.rowHeight - 3
+    ) {
+      item = entry
+      break
+    }
+  }
+  return { row, item }
 }
 function onMouseMove(event: MouseEvent) {
   const target = hit(event)
@@ -322,10 +404,20 @@ function onMouseMove(event: MouseEvent) {
     const x = event.clientX - canvas.value!.getBoundingClientRect().left +
       (scrollWrapper.value?.scrollLeft ?? 0)
     const starts = target.row.summaryStarts
-    const hovered = starts.find(start => {
-      const mapped = props.stepMap?.[start]
-      return mapped !== undefined && Math.abs(mapped * props.stepWidth - x) <= 4
-    })
+    const targetPosition = x / props.stepWidth
+    const insertion = lowerBound(target.row.summaryPositions, targetPosition)
+    const candidates = [insertion - 1, insertion].filter(
+      index => index >= 0 && index < target.row.summaryPositions.length,
+    )
+    const nearest = candidates.reduce<number | null>((best, index) => {
+      if (best === null) return index
+      return Math.abs(target.row.summaryPositions[index] - targetPosition) <
+        Math.abs(target.row.summaryPositions[best] - targetPosition) ? index : best
+    }, null)
+    const hovered = nearest !== null &&
+      Math.abs(target.row.summaryPositions[nearest] * props.stepWidth - x) <= 4
+        ? target.row.summaryMappedStarts[nearest]
+        : undefined
     const actualStart = hovered === undefined ? undefined : props.stepMap?.[hovered]
     const actualEnd = hovered === undefined ? undefined : props.stepMap?.[hovered + localWindow - 1]
     if (actualStart === undefined || actualEnd === undefined) {
@@ -359,8 +451,8 @@ function onLabelClick(event: MouseEvent) {
   const labels = labelsCanvas.value
   if (!wrapper || !labels) return
   const y = event.clientY - labels.getBoundingClientRect().top + wrapper.scrollTop
-  const row = rows.find(item => y >= item.y && y < item.y + summaryHeight)
-  if (row) toggleDetails(row)
+  const row = rowAtY(y)
+  if (row && y < row.y + summaryHeight) toggleDetails(row)
 }
 function toggleDetails(row: SpanRow) {
   if (selectedKey.value === row.key) closeDetails()
