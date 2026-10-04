@@ -144,13 +144,32 @@ def main() -> None:
     last_progress = None
 
     try:
+        poll_retry_count = 0
         while True:
-            status_code, _, status, _ = post_json(
-                args.base_url,
-                "/api/web/time_series/analyse_music_job_status",
-                {"job_id": job_id},
-                timeout=args.request_timeout,
-            )
+            try:
+                status_code, _, status, _ = post_json(
+                    args.base_url,
+                    "/api/web/time_series/analyse_music_job_status",
+                    {"job_id": job_id},
+                    timeout=args.request_timeout,
+                )
+            except (TimeoutError, urllib.error.URLError, ConnectionError, OSError) as exc:
+                poll_retry_count += 1
+                if time.monotonic() >= deadline:
+                    cancel_job(args.base_url, job_id)
+                    raise TimeoutError(
+                        f"MusicAnalyse job timed out after {args.timeout:.1f}s "
+                        f"while polling status ({poll_retry_count} transient poll failures)"
+                    ) from exc
+                if not args.quiet:
+                    print(
+                        "poll_retry,"
+                        f"count={poll_retry_count},error={type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                time.sleep(max(args.poll_interval, 0.05))
+                continue
+
             if status_code != 200:
                 raise RuntimeError(f"status failed HTTP {status_code}: {status}")
 
@@ -225,6 +244,7 @@ def main() -> None:
                 header(result_headers, "X-Analysis-Result-Read-Ms", "0") or 0
             ),
             "wall_seconds": round(wall_s, 6),
+            "poll_retry_count": poll_retry_count,
             "compact_cluster_view": not args.full_cluster_view,
             "merge_threshold_ratio": args.merge_threshold_ratio,
         }
