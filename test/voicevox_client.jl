@@ -56,6 +56,8 @@ end
           "Content-Type" => "audio/wav",
           "X-Voicevox-Stream-Id" => string(stream_id),
           "X-Voicevox-Backend" => "fake-binary",
+          "X-Voicevox-Audio-Bytes" => "4",
+          "X-Voicevox-Peak-Rss-Bytes" => "123456",
         ],
         Vector{UInt8}(codeunits(stream_id == 1 ? "RIFF" : "WAVE")),
       )
@@ -72,6 +74,9 @@ end
     @test read(stems[1]["path"], String) == "RIFF"
     @test read(stems[2]["path"], String) == "WAVE"
     @test all(stem["backend"] == "fake-binary" for stem in stems)
+    @test all(stem["audio_bytes"] == 4 for stem in stems)
+    @test all(stem["worker_peak_rss_bytes"] == 123456 for stem in stems)
+    @test all(stem["julia_peak_rss_bytes"] >= 0 for stem in stems)
     VVC.cleanup_stems!(stems)
     @test isempty(readdir(output_dir))
 
