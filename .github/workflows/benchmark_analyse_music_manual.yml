@@ -1,36 +1,9 @@
 name: MusicAnalyse Manual Benchmark
 
 on:
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: Benchmark source
-        required: true
-        default: repeat
-        type: choice
-        options:
-          - repeat
-          - asap
-      steps:
-        description: Exact repeat-fixture step count
-        required: true
-        default: "2352"
-        type: string
-      grid_denominator:
-        description: Repeat-fixture grid denominator
-        required: true
-        default: "16"
-        type: string
-      asap_path:
-        description: ASAP repository-relative MusicXML path
-        required: false
-        default: Bach/Fugue/bwv_846/xml_score.musicxml
-        type: string
-      timeout_seconds:
-        description: Benchmark timeout in seconds
-        required: true
-        default: "14400"
-        type: string
+  push:
+    branches:
+      - benchmark/music-repeat-final
 
 jobs:
   benchmark:
@@ -55,8 +28,8 @@ jobs:
       - name: Generate repeat fixture
         if: ${{ inputs.mode == 'repeat' }}
         env:
-          BENCH_STEPS: ${{ inputs.steps }}
-          BENCH_GRID_DENOMINATOR: ${{ inputs.grid_denominator }}
+          BENCH_STEPS: 2352
+          BENCH_GRID_DENOMINATOR: 16
         run: |
           python3 scripts/generate_analyse_music_repeat_fixture.py \
             /tmp/repeat-benchmark.musicxml \
@@ -91,8 +64,8 @@ jobs:
       - name: Run repeat benchmark
         if: ${{ inputs.mode == 'repeat' }}
         env:
-          BENCH_STEPS: ${{ inputs.steps }}
-          BENCH_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+          BENCH_STEPS: 2352
+          BENCH_TIMEOUT_SECONDS: 14400
         run: |
           python3 scripts/benchmark_analyse_music_job_http.py \
             /tmp/repeat-benchmark.musicxml \
@@ -104,8 +77,8 @@ jobs:
       - name: Run ASAP benchmark
         if: ${{ inputs.mode == 'asap' }}
         env:
-          BENCH_ASAP_PATH: ${{ inputs.asap_path }}
-          BENCH_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+          BENCH_ASAP_PATH: Bach/Fugue/bwv_846/xml_score.musicxml
+          BENCH_TIMEOUT_SECONDS: 14400
         run: |
           python3 scripts/benchmark_analyse_music_job_http.py \
             --asap-path "$BENCH_ASAP_PATH" \
@@ -116,7 +89,7 @@ jobs:
       - name: Save benchmark summary
         if: always()
         env:
-          BENCH_MODE: ${{ inputs.mode }}
+          BENCH_MODE: repeat
         run: |
           {
             echo "## MusicAnalyse manual benchmark"
