@@ -54,12 +54,15 @@ end
     result_path = _job_tc._analyse_music_job_result_path(id)
     @test isfile(result_path)
     job_result = JSON3.read(read(result_path, String))
+    # JSON numbers do not preserve Int-vs-Float64 representation. Normalize
+    # the synchronous oracle through the same JSON round-trip before comparing.
+    direct_json = JSON3.read(JSON3.write(direct))
 
     for key in (
       "metadata", "timing", "streams", "pianoRoll", "dimensionOrder",
       "dimensions", "streamCountSeries", "soundingNoteCountSeries",
     )
-      @test JSON3.write(job_result[key]) == JSON3.write(direct[key])
+      @test JSON3.write(job_result[key]) == JSON3.write(direct_json[key])
     end
   finally
     if old_dir === nothing
