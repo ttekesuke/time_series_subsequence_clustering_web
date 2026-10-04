@@ -7,7 +7,7 @@ end
 
 const _influx_mode_tc = Main.TimeseriesClusteringAPI.TimeSeriesController
 
-function _with_env_pair(key::String, value, f::Function)
+function _with_env_pair(f::Function, key::String, value)
   previous = get(ENV, key, nothing)
   try
     if value === nothing
