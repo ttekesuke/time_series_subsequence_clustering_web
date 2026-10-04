@@ -6,6 +6,29 @@ end
 
 const _render_cleanup = Main.TimeseriesClusteringAPI.SupercollidersController
 
+@testset "VOICEVOX render metrics aggregate without audio duplication" begin
+  metrics = _render_cleanup._voice_stem_metrics(Any[
+    Dict(
+      "audio_bytes" => 120,
+      "worker_peak_rss_bytes" => 1000,
+      "julia_peak_rss_bytes" => 2000,
+    ),
+    Dict(
+      "audio_bytes" => 80,
+      "worker_peak_rss_bytes" => 1500,
+      "julia_peak_rss_bytes" => 1800,
+    ),
+  ])
+  @test metrics["voiceAudioBytes"] == 200
+  @test metrics["voiceWorkerPeakRssBytes"] == 1500
+  @test metrics["voiceJuliaPeakRssBytes"] == 2000
+
+  empty_metrics = _render_cleanup._voice_stem_metrics(Any[])
+  @test empty_metrics["voiceAudioBytes"] == 0
+  @test empty_metrics["voiceWorkerPeakRssBytes"] == 0
+  @test empty_metrics["voiceJuliaPeakRssBytes"] == 0
+end
+
 @testset "SuperCollider cleanup is limited to its render job" begin
   unrelated_dir = mktempdir()
   unrelated = joinpath(unrelated_dir, "other.wav")
