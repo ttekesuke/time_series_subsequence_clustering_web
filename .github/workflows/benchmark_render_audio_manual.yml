@@ -133,10 +133,10 @@ jobs:
           {
             echo "## Render audio manual benchmark"
             echo
-            echo "- mode: `${{ inputs.mode }}`"
-            echo "- steps: `${{ inputs.steps }}`"
-            echo "- bpm: `${{ inputs.bpm }}`"
-            echo "- commit: `${GITHUB_SHA}`"
+            echo "- mode: \`${{ inputs.mode }}\`"
+            echo "- steps: \`${{ inputs.steps }}\`"
+            echo "- bpm: \`${{ inputs.bpm }}\`"
+            echo "- commit: \`${GITHUB_SHA}\`"
             echo
             if [ -f /tmp/render-audio-benchmark.log ]; then
               echo '~~~text'
