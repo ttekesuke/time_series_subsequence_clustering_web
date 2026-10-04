@@ -230,7 +230,6 @@ import {
 import {
   generationCandidateParam,
   generationSeriesLength,
-  legacyParamKeyForCanonical,
   normalizeGenerationArray,
   normalizeGenerationBpm,
   normalizeGenerationBpmSeries,
