@@ -225,7 +225,7 @@ const draw = () => {
   values.forEach((stream, sIdx) => {
     if (!Array.isArray(stream)) return
     const hue = (sIdx * 137.5) % 360
-    const baseColor = \`hsla(\${hue}, 70%, 45%, 1)\`
+    const baseColor = `hsla(${hue}, 70%, 45%, 1)`
     const streamLast = Math.min(lastStep, stream.length - 1)
 
     for (let step = firstStep; step <= streamLast; step++) {
