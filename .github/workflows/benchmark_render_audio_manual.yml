@@ -122,6 +122,7 @@ jobs:
           RENDER_BENCHMARK_BPM: "240"
           RENDER_BENCHMARK_TEXT: "あ"
         run: |
+          set -euo pipefail
           cd /tmp/render-browser-bench
           node benchmark.cjs 2>&1 | tee /tmp/render-browser-benchmark.log
 
