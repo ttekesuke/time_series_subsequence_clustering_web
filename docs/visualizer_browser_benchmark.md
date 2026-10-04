@@ -47,6 +47,17 @@ const report20kCluster = await runVisualizerBenchmark({
 
 fixture loaderは `visualizerBenchmark=1` のときだけ `window` に公開されます。通常利用時にはグローバル関数を追加しません。
 
+## GitHub Actionsで自動計測する
+
+Actions の **Visualizer Manual Browser Benchmark** を `workflow_dispatch` で実行すると、同じ headless Chromium / viewport で次の4条件を連続測定します。
+
+- 2352 step / Complexity
+- 2352 step / Cluster
+- 20,000 step / Complexity
+- 20,000 step / Cluster
+
+既定は6 stream、各roll 120 frameです。結果は `visualizer_browser_benchmark=...` の1行JSONとして Step Summary と artifact に保存されます。共有runnerの性能揺らぎがあるため、性能比較では同じcommitを複数回実行して中央値も確認してください。
+
 ## 実データで測る
 
 MusicAnalyseで実際の解析結果を表示した後はfixture loaderを使わず、そのまま計測できます。

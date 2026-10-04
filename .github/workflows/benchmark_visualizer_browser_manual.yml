@@ -1,0 +1,104 @@
+name: Visualizer Manual Browser Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: requestAnimationFrame samples per roll
+        required: true
+        default: "120"
+        type: string
+      streams:
+        description: Synthetic stream count
+        required: true
+        default: "6"
+        type: string
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Install Playwright runner
+        working-directory: frontend
+        run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Start Vite preview
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euxo pipefail
+          npm run preview -- --host 127.0.0.1 --port 4173 > /tmp/visualizer-preview.log 2>&1 &
+          echo $! > /tmp/visualizer-preview.pid
+          for i in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+
+      - name: Run browser benchmark
+        working-directory: frontend
+        env:
+          VISUALIZER_BENCHMARK_ITERATIONS: ${{ inputs.iterations }}
+          VISUALIZER_BENCHMARK_STREAMS: ${{ inputs.streams }}
+          VISUALIZER_BENCHMARK_BASE_URL: http://127.0.0.1:4173
+        run: |
+          node scripts/run_visualizer_browser_benchmark.mjs \
+            2>&1 | tee /tmp/visualizer-browser-benchmark.log
+
+      - name: Save benchmark summary
+        if: always()
+        env:
+          BENCH_ITERATIONS: ${{ inputs.iterations }}
+          BENCH_STREAMS: ${{ inputs.streams }}
+        run: |
+          {
+            echo "## Visualizer browser benchmark"
+            echo
+            echo "- iterations: \`$BENCH_ITERATIONS\`"
+            echo "- streams: \`$BENCH_STREAMS\`"
+            echo "- commit: \`$GITHUB_SHA\`"
+            echo
+            if [ -f /tmp/visualizer-browser-benchmark.log ]; then
+              echo '~~~text'
+              grep 'visualizer_browser_benchmark=' /tmp/visualizer-browser-benchmark.log || true
+              echo '~~~'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop Vite preview
+        if: always()
+        run: |
+          if [ -f /tmp/visualizer-preview.pid ]; then
+            kill "$(cat /tmp/visualizer-preview.pid)" 2>/dev/null || true
+          fi
+
+      - name: Upload benchmark logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visualizer-browser-benchmark-${{ github.run_id }}
+          path: |
+            /tmp/visualizer-browser-benchmark.log
+            /tmp/visualizer-preview.log
+          if-no-files-found: warn
