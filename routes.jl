@@ -114,6 +114,30 @@ route("/api/web/time_series/analyse_music", method=POST) do
   end
 end
 
+route("/api/web/time_series/analyse_music_job_start", method=POST) do
+  _with_analyse_music_request_errors() do
+    TimeSeriesController.analyse_music_job_start() |> json
+  end
+end
+
+route("/api/web/time_series/analyse_music_job_status", method=POST) do
+  _with_analyse_music_request_errors() do
+    TimeSeriesController.analyse_music_job_status() |> json
+  end
+end
+
+route("/api/web/time_series/analyse_music_job_cancel", method=POST) do
+  _with_analyse_music_request_errors() do
+    TimeSeriesController.analyse_music_job_cancel() |> json
+  end
+end
+
+route("/api/web/time_series/analyse_music_job_result", method=POST) do
+  _with_analyse_music_request_errors() do
+    TimeSeriesController.analyse_music_job_result_response()
+  end
+end
+
 route("/api/web/time_series/asap_musicxml_sources", method=POST) do
   _with_analyse_music_request_errors() do
     TimeSeriesController.asap_musicxml_sources() |> json
