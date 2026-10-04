@@ -41,6 +41,8 @@ jobs:
         run: julia --project=. scripts/benchmark_musicxml_seed.jl
       - name: Compare observed quantity totals and cache scan (bounded fixture)
         run: julia --project=. scripts/benchmark_observed_quantity_totals.jl
+      - name: Compare full and incremental observed distance prefixes
+        run: julia --project=. scripts/benchmark_observed_distance_prefix.jl
 
   frontend:
     runs-on: ubuntu-latest

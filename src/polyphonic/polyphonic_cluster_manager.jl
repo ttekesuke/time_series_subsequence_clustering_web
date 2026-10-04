@@ -1564,13 +1564,23 @@ function update_caches_permanently!(
   # distance by one row instead of traversing the entire prefix again.
   prefix_distances = Dict{Tuple{UInt,UInt},Tuple{Int,Float64}}()
   prefix_complexities = Dict{UInt,Tuple{Int,Float64}}()
-  function observed_pair_distance(node1::SpanClusterRef, node2::SpanClusterRef, window_size::Int)
+  function observed_pair_distance(
+    node1::SpanClusterRef,
+    node2::SpanClusterRef,
+    window_size::Int;
+    logical_prior_square::Float64=NaN,
+    logical_prefix_hit::Bool=false,
+  )
     started = phase_timings === nothing ? 0 : time_ns()
     id1, id2 = objectid(node1.span), objectid(node2.span)
     key = id1 < id2 ? (id1, id2) : (id2, id1)
     previous = get(prefix_distances, key, nothing)
-    prefix_hit = previous !== nothing && previous[1] + 1 == window_size
-    squared = if prefix_hit
+    physical_prefix_hit = previous !== nothing && previous[1] + 1 == window_size
+    prefix_hit = logical_prefix_hit || physical_prefix_hit
+    squared = if logical_prefix_hit
+      d = min_avg_distance(mgr, node1.span.as_max[window_size], node2.span.as_max[window_size])
+      logical_prior_square + d * d
+    elseif physical_prefix_hit
       d = min_avg_distance(mgr, node1.span.as_max[window_size], node2.span.as_max[window_size])
       previous[2] + d * d
     else
@@ -1588,7 +1598,7 @@ function update_caches_permanently!(
         phase_timings[:cache_distance_new_full_s] += (time_ns() - started) / 1.0e9
       end
     end
-    return result
+    return result, squared
   end
   function observed_cluster_complexity(node::SpanClusterRef, window_size::Int)
     started = phase_timings === nothing ? 0 : time_ns()
@@ -1618,6 +1628,9 @@ function update_caches_permanently!(
 
   window_sizes = observed_distance_sums === nothing ?
     collect(keys(clusters_each)) : sort!(collect(keys(clusters_each)))
+  previous_new_window = 0
+  previous_new_nodes = Dict{Int,SpanClusterRef}()
+  previous_new_pair_squares::Union{Nothing,Dict{Tuple{Int,Int},Float64}} = nothing
   previous_old_window = 0
   previous_old_nodes = Dict{Int,SpanClusterRef}()
   previous_old_pair_squares::Union{Nothing,Dict{Tuple{Int,Int},Float64}} = nothing
@@ -1625,6 +1638,70 @@ function update_caches_permanently!(
     same_ws = clusters_each[window_size]
     all_ids = collect(keys(same_ws))
     phase_started = phase_timings === nothing ? 0 : time_ns()
+
+    # New representatives can cross a physical span boundary even though the
+    # logical child representative is still the exact one-row extension of
+    # its parent. Keep only pair squares touched on the preceding logical
+    # window and follow parent IDs so those exact prefixes remain reusable.
+    current_new_pair_squares = observed_distance_sums === nothing ?
+      nothing : Dict{Tuple{Int,Int},Float64}()
+    new_parent_ids = observed_distance_sums === nothing ? nothing : Dict{Int,Int}()
+    new_prefix_matches = observed_distance_sums === nothing ? nothing : Dict{Int,Bool}()
+    if observed_distance_sums !== nothing &&
+        previous_new_pair_squares !== nothing &&
+        !isempty(previous_new_pair_squares) &&
+        previous_new_window + 1 == window_size
+      for (parent_id, parent) in previous_new_nodes
+        span = parent.span
+        if parent.offset < length(span.cluster_ids)
+          new_parent_ids[span.cluster_ids[parent.offset + 1]] = parent_id
+        else
+          for child in span.children
+            new_parent_ids[child.cluster_ids[1]] = parent_id
+          end
+        end
+      end
+    end
+
+    function new_prefix_matches_for(cid::Int, node::SpanClusterRef)::Bool
+      return get!(new_prefix_matches, cid) do
+        parent_id = get(new_parent_ids, cid, nothing)
+        parent_id === nothing && return false
+        previous_node = get(previous_new_nodes, parent_id, nothing)
+        previous_node === nothing && return false
+        return _observed_old_prefix_matches(
+          previous_node, node, nothing, nothing, window_size,
+        )
+      end
+    end
+
+    function new_distance_for_pair(
+      cid1::Int,
+      node1::SpanClusterRef,
+      cid2::Int,
+      node2::SpanClusterRef,
+    )::Float64
+      pair_key = cid1 < cid2 ? (cid1, cid2) : (cid2, cid1)
+      parent1 = get(new_parent_ids, cid1, nothing)
+      parent2 = get(new_parent_ids, cid2, nothing)
+      parent_key = parent1 === nothing || parent2 === nothing ?
+        nothing : (parent1 < parent2 ? (parent1, parent2) : (parent2, parent1))
+      prior_square = previous_new_pair_squares === nothing ||
+          parent_key === nothing || parent1 == parent2 ? NaN :
+        get(previous_new_pair_squares, parent_key, NaN)
+      logical_prefix_hit = previous_new_window + 1 == window_size &&
+        isfinite(prior_square) &&
+        new_prefix_matches_for(cid1, node1) &&
+        new_prefix_matches_for(cid2, node2)
+      distance, squared = observed_pair_distance(
+        node1, node2, window_size;
+        logical_prior_square=prior_square,
+        logical_prefix_hit=logical_prefix_hit,
+      )
+      current_new_pair_squares[pair_key] = squared
+      return distance
+    end
+
     has_old_revisions = observed_distance_sums !== nothing &&
       haskey(changed_by_window, window_size)
     current_old_pair_squares = has_old_revisions ? Dict{Tuple{Int,Int},Float64}() : nothing
@@ -1677,7 +1754,9 @@ function update_caches_permanently!(
           cid1 = all_ids[i]
           for j in (i+1):length(all_ids)
             cid2 = all_ids[j]
-            current_sum += observed_pair_distance(same_ws[cid1], same_ws[cid2], window_size)
+            current_sum += new_distance_for_pair(
+              cid1, same_ws[cid1], cid2, same_ws[cid2],
+            )
             phase_timings !== nothing && (phase_timings[:cache_distance_pairs] += 1.0)
           end
         end
@@ -1692,7 +1771,7 @@ function update_caches_permanently!(
           for cid2 in all_ids
             (cid1 == cid2 || (cid2 in affected_ids && cid2 < cid1)) && continue
             node2 = same_ws[cid2]
-            new_distance = observed_pair_distance(node1, node2, window_size)
+            new_distance = new_distance_for_pair(cid1, node1, cid2, node2)
             if cid1 < observed_first_new_id && cid2 < observed_first_new_id
               old1 = get(observed_old_representatives, (window_size, cid1), nothing)
               old2 = get(observed_old_representatives, (window_size, cid2), nothing)
@@ -1861,6 +1940,9 @@ function update_caches_permanently!(
       phase_timings[:cache_quantity] += (time_ns() - phase_started) / 1.0e9
     end
     if observed_distance_sums !== nothing
+      previous_new_window = window_size
+      previous_new_nodes = same_ws
+      previous_new_pair_squares = current_new_pair_squares
       previous_old_window = window_size
       previous_old_nodes = same_ws
       previous_old_pair_squares = current_old_pair_squares
