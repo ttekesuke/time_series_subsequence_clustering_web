@@ -104,6 +104,35 @@ const summaryHeight = 24
 let rows: SpanRow[] = []
 let resizeObserver: ResizeObserver | null = null
 let rafId: number | null = null
+let lastHoverIndices: number[] | null = null
+let lastHoverWindowSize: number | null = null
+let lastHoverId: string | null = null
+let hoverIsNull = true
+
+function emitHoverCluster(cluster: { indices: number[]; windowSize: number; id: string } | null) {
+  if (cluster === null) {
+    if (hoverIsNull) return
+    hoverIsNull = true
+    lastHoverIndices = null
+    lastHoverWindowSize = null
+    lastHoverId = null
+    emitHoverCluster(null)
+    return
+  }
+
+  if (
+    !hoverIsNull &&
+    lastHoverIndices === cluster.indices &&
+    lastHoverWindowSize === cluster.windowSize &&
+    lastHoverId === cluster.id
+  ) return
+
+  hoverIsNull = false
+  lastHoverIndices = cluster.indices
+  lastHoverWindowSize = cluster.windowSize
+  lastHoverId = cluster.id
+  emit('hover-cluster', cluster)
+}
 
 function lowerBound(values: number[], target: number) {
   let lo = 0
@@ -395,19 +424,19 @@ function hit(event: MouseEvent) {
 }
 function onMouseMove(event: MouseEvent) {
   const target = hit(event)
-  if (!target) { emit('hover-cluster', null); return }
+  if (!target) { emitHoverCluster(null); return }
   canvas.value!.style.cursor = 'pointer'
   if (target.item) {
-    emit('hover-cluster', {
+    emitHoverCluster({
       indices: target.item.indices,
       windowSize: target.item.windowSize,
       id: target.item.clusterId,
     })
   } else if (target.row.detailHeight && event.clientY - canvas.value!.getBoundingClientRect().top +
     (scrollWrapper.value?.scrollTop ?? 0) >= target.row.detailY) {
-    emit('hover-cluster', null)
+    emitHoverCluster(null)
   } else if (!props.stepMap?.length) {
-    emit('hover-cluster', {
+    emitHoverCluster({
       indices: target.row.summaryStarts,
       windowSize: target.row.span.window_min,
       id: String(target.row.span.cluster_ids[0]),
@@ -433,12 +462,12 @@ function onMouseMove(event: MouseEvent) {
     const actualStart = hovered === undefined ? undefined : props.stepMap?.[hovered]
     const actualEnd = hovered === undefined ? undefined : props.stepMap?.[hovered + localWindow - 1]
     if (actualStart === undefined || actualEnd === undefined) {
-      emit('hover-cluster', null)
+      emitHoverCluster(null)
       return
     }
     const actualWindow = actualEnd - actualStart + 1
     const indices = target.row.summaryIndicesByActualWindow.get(actualWindow) ?? []
-    emit('hover-cluster', {
+    emitHoverCluster({
       indices, windowSize: actualWindow,
       id: String(target.row.span.cluster_ids[0]),
     })
@@ -470,13 +499,13 @@ function toggleDetails(row: SpanRow) {
 }
 function closeDetails() {
   selectedKey.value = null
-  emit('hover-cluster', null)
+  emitHoverCluster(null)
 }
-function onMouseLeave() { emit('hover-cluster', null) }
+function onMouseLeave() { emitHoverCluster(null) }
 
 watch(() => [props.compressedData, props.stepMap], () => {
   selectedKey.value = null
-  emit('hover-cluster', null)
+  emitHoverCluster(null)
   calculateLayout()
   nextTick(scheduleDraw)
 })
