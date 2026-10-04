@@ -8,8 +8,9 @@
     "build": "vite build",
     "build:strict": "vue-tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "npm run check:dimension-contract && vue-tsc -b --noEmit",
-    "check:dimension-contract": "node scripts/check_dimension_contract.mjs"
+    "typecheck": "npm run check:dimension-contract && npm run check:benchmark-scripts && vue-tsc -b --noEmit",
+    "check:dimension-contract": "node scripts/check_dimension_contract.mjs",
+    "check:benchmark-scripts": "node --check scripts/run_visualizer_browser_benchmark.mjs"
   },
   "dependencies": {
     "@mdi/font": "^7.4.47",
