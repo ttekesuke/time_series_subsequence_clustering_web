@@ -109,7 +109,7 @@ function lowerBound(values: number[], target: number) {
   let hi = values.length
   while (lo < hi) {
     const mid = (lo + hi) >> 1
-    if (values[mid] < target) lo = mid + 1
+    if (values[mid]! < target) lo = mid + 1
     else hi = mid
   }
   return lo
@@ -120,7 +120,7 @@ function lowerBoundItemX(items: DetailItem[], target: number) {
   let hi = items.length
   while (lo < hi) {
     const mid = (lo + hi) >> 1
-    if (items[mid].x < target) lo = mid + 1
+    if (items[mid]!.x < target) lo = mid + 1
     else hi = mid
   }
   return lo
@@ -131,7 +131,7 @@ function firstVisibleRowIndex(top: number) {
   let hi = rows.length
   while (lo < hi) {
     const mid = (lo + hi) >> 1
-    const row = rows[mid]
+    const row = rows[mid]!
     const bottom = row.y + summaryHeight + row.detailHeight
     if (bottom < top) lo = mid + 1
     else hi = mid
@@ -144,7 +144,7 @@ function rowAtY(y: number) {
   let hi = rows.length
   while (lo < hi) {
     const mid = (lo + hi) >> 1
-    const row = rows[mid]
+    const row = rows[mid]!
     if (y < row.y) hi = mid
     else if (y >= row.y + summaryHeight + row.detailHeight) lo = mid + 1
     else return row
@@ -285,7 +285,7 @@ function draw() {
 
   const firstRow = firstVisibleRowIndex(top)
   for (let rowIndex = firstRow; rowIndex < rows.length; rowIndex++) {
-    const row = rows[rowIndex]
+    const row = rows[rowIndex]!
     if (row.y > top + height) break
     const sy = row.y - top
     ctx.fillStyle = row.key === selectedKey.value ? '#e3f2fd' : '#f5f8fb'
@@ -298,10 +298,10 @@ function draw() {
     for (
       let positionIndex = lowerBound(row.summaryPositions, minPosition);
       positionIndex < row.summaryPositions.length &&
-        row.summaryPositions[positionIndex] <= maxPosition;
+        row.summaryPositions[positionIndex]! <= maxPosition;
       positionIndex++
     ) {
-      const x = row.summaryPositions[positionIndex] * props.stepWidth - left
+      const x = row.summaryPositions[positionIndex]! * props.stepWidth - left
       ctx.fillRect(x, sy + 5, 2, summaryHeight - 12)
     }
     if (labelCtx) {
@@ -328,10 +328,10 @@ function draw() {
     const detailStartX = Math.max(0, left - row.maxItemWidth)
     for (
       let itemIndex = lowerBoundItemX(row.items, detailStartX);
-      itemIndex < row.items.length && row.items[itemIndex].x <= left + width;
+      itemIndex < row.items.length && row.items[itemIndex]!.x <= left + width;
       itemIndex++
     ) {
-      const item = row.items[itemIndex]
+      const item = row.items[itemIndex]!
       const x = item.x - left
       const iy = item.y - top
       if (x + item.width < 0 || iy + props.rowHeight < 0 || iy > height) continue
@@ -368,8 +368,8 @@ function hit(event: MouseEvent) {
   if (y < row.detailY) return { row, item: null }
   const startIndex = lowerBoundItemX(row.items, Math.max(0, x - row.maxItemWidth))
   let item: DetailItem | null = null
-  for (let index = startIndex; index < row.items.length && row.items[index].x <= x; index++) {
-    const entry = row.items[index]
+  for (let index = startIndex; index < row.items.length && row.items[index]!.x <= x; index++) {
+    const entry = row.items[index]!
     if (
       x >= entry.x && x <= entry.x + entry.width &&
       y >= entry.y && y <= entry.y + props.rowHeight - 3
@@ -411,12 +411,12 @@ function onMouseMove(event: MouseEvent) {
     )
     const nearest = candidates.reduce<number | null>((best, index) => {
       if (best === null) return index
-      return Math.abs(target.row.summaryPositions[index] - targetPosition) <
-        Math.abs(target.row.summaryPositions[best] - targetPosition) ? index : best
+      return Math.abs(target.row.summaryPositions[index]! - targetPosition) <
+        Math.abs(target.row.summaryPositions[best]! - targetPosition) ? index : best
     }, null)
     const hovered = nearest !== null &&
-      Math.abs(target.row.summaryPositions[nearest] * props.stepWidth - x) <= 4
-        ? target.row.summaryMappedStarts[nearest]
+      Math.abs(target.row.summaryPositions[nearest]! * props.stepWidth - x) <= 4
+        ? target.row.summaryMappedStarts[nearest]!
         : undefined
     const actualStart = hovered === undefined ? undefined : props.stepMap?.[hovered]
     const actualEnd = hovered === undefined ? undefined : props.stepMap?.[hovered + localWindow - 1]
