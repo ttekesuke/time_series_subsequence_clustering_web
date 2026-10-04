@@ -210,7 +210,7 @@ def main() -> None:
 
         metrics = {
             "job_id": job_id,
-            "filename": xml_path.name,
+            "filename": benchmark_name,
             "step_count": step_count,
             "processing_seconds": status.get("processingSeconds"),
             "serialize_seconds": status.get("serializeSeconds"),
