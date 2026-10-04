@@ -416,7 +416,6 @@ function onMouseMove(event: MouseEvent) {
     const localWindow = target.row.span.window_min
     const x = event.clientX - canvas.value!.getBoundingClientRect().left +
       (scrollWrapper.value?.scrollLeft ?? 0)
-    const starts = target.row.summaryStarts
     const targetPosition = x / props.stepWidth
     const insertion = lowerBound(target.row.summaryPositions, targetPosition)
     const candidates = [insertion - 1, insertion].filter(
