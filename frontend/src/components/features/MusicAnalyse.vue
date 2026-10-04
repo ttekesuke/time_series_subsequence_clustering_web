@@ -169,6 +169,7 @@ import axios from 'axios'
 import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
 import { useScrollSync } from '../../composables/useScrollSync'
+import { buildVisualizerBenchmarkFixture } from '../../composables/visualizerBenchmarkFixture'
 
 type CompressedSpan = {
   window_min: number; window_max: number; cluster_ids: number[]
@@ -230,6 +231,9 @@ const analysedViewMode = ref<'Cluster' | 'Complexity'>('Complexity')
 const analysisScope = ref('global')
 const topRollHeight = ref<number | null>(null)
 const analysisRowHeights = ref<Record<string, number>>({})
+
+const visualizerBenchmarkEnabled = () =>
+  new URLSearchParams(window.location.search).get('visualizerBenchmark') === '1'
 
 const containerRef = ref<HTMLElement | null>(null)
 const pianoRollRef = ref<any>(null)
@@ -528,6 +532,28 @@ const setAnalysedViewMode = (mode: string) => {
   analysisRollRefs.value = []
 }
 
+const loadVisualizerBenchmarkFixture = async (
+  steps = 2352,
+  streams = 6,
+  mode: 'Cluster' | 'Complexity' = 'Complexity',
+) => {
+  const fixture = buildVisualizerBenchmarkFixture(steps, streams)
+  result.value = fixture as MusicAnalysisResult
+  lastResultJson.value = fixture
+  analysisScope.value = 'global'
+  analysisRowHeights.value = {}
+  highlightIndices.value = []
+  highlightWindowSize.value = 0
+  errorMessage.value = ''
+  setAnalysedViewMode(mode)
+  await nextTick()
+  return {
+    steps: result.value.timing.stepCount,
+    streams: result.value.streams.length,
+    mode: analysedViewMode.value,
+  }
+}
+
 watch(sourceType, value => {
   if (value === 'asap') void loadAsapSources()
 })
@@ -547,18 +573,29 @@ onMounted(() => {
     })
     resizeObserver.observe(containerRef.value)
   }
+  if (visualizerBenchmarkEnabled()) {
+    ;(window as any).loadMusicAnalyseBenchmarkFixture = loadVisualizerBenchmarkFixture
+    console.info(
+      '[visualizer-benchmark] fixture loader enabled: '
+      + 'loadMusicAnalyseBenchmarkFixture(2352, 6, "Complexity")',
+    )
+  }
 })
 
 onUnmounted(() => {
   analysisPollToken += 1
   resizeObserver?.disconnect()
   resizeObserver = null
+  if ((window as any).loadMusicAnalyseBenchmarkFixture === loadVisualizerBenchmarkFixture) {
+    delete (window as any).loadMusicAnalyseBenchmarkFixture
+  }
 })
 
 defineExpose({
   openMusicXmlDialog,
   downloadAnalysisJson,
   setAnalysedViewMode,
+  loadVisualizerBenchmarkFixture,
 })
 </script>
 
