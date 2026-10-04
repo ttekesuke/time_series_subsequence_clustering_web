@@ -229,7 +229,6 @@ import {
 import {
   normalizeGenerationBpm,
   normalizeGenerationBpmSeries,
-  normalizeGenerationNumber,
 } from '../../composables/generationPayloadNormalization'
 import {
   buildGeneratePolyphonicPayload,
