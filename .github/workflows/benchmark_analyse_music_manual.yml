@@ -1,0 +1,126 @@
+name: MusicAnalyse Manual Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Benchmark source
+        required: true
+        default: repeat
+        type: choice
+        options:
+          - repeat
+          - asap
+      steps:
+        description: Exact repeat-fixture step count
+        required: true
+        default: "2352"
+        type: string
+      grid_denominator:
+        description: Repeat-fixture grid denominator
+        required: true
+        default: "16"
+        type: string
+      asap_path:
+        description: ASAP repository-relative MusicXML path
+        required: false
+        default: Bach/Fugue/bwv_846/xml_score.musicxml
+        type: string
+      timeout_seconds:
+        description: Benchmark timeout in seconds
+        required: true
+        default: "14400"
+        type: string
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+
+      - uses: julia-actions/cache@v2
+
+      - name: Instantiate
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Generate repeat fixture
+        if: ${{ inputs.mode == 'repeat' }}
+        run: |
+          python3 scripts/generate_analyse_music_repeat_fixture.py             /tmp/repeat-benchmark.musicxml             --steps "${{ inputs.steps }}"             --grid-denominator "${{ inputs.grid_denominator }}"
+
+      - name: Start Genie
+        run: |
+          export GENIE_ENV=test
+          export HOST=127.0.0.1
+          export PORT=19114
+          export CLUSTERING_QUERY_ENABLED=false
+          export STARTUP_WARMUP_ENABLED=false
+          nohup julia --project=. scripts/start_server.jl > /tmp/analyse-music-server.log 2>&1 &
+          echo $! > /tmp/analyse-music-server.pid
+          python3 - <<'PY'
+          import time
+          import urllib.request
+
+          url = "http://127.0.0.1:19114/api/health"
+          deadline = time.monotonic() + 180
+          while time.monotonic() < deadline:
+              try:
+                  with urllib.request.urlopen(url, timeout=2) as response:
+                      if response.status == 200:
+                          raise SystemExit(0)
+              except Exception:
+                  time.sleep(0.5)
+          raise SystemExit("Genie did not become ready within 180 seconds")
+          PY
+
+      - name: Run repeat benchmark
+        if: ${{ inputs.mode == 'repeat' }}
+        run: |
+          python3 scripts/benchmark_analyse_music_job_http.py             /tmp/repeat-benchmark.musicxml             --base-url http://127.0.0.1:19114             --expected-steps "${{ inputs.steps }}"             --timeout "${{ inputs.timeout_seconds }}"             2>&1 | tee /tmp/analyse-music-benchmark.log
+
+      - name: Run ASAP benchmark
+        if: ${{ inputs.mode == 'asap' }}
+        run: |
+          python3 scripts/benchmark_analyse_music_job_http.py             --asap-path "${{ inputs.asap_path }}"             --base-url http://127.0.0.1:19114             --timeout "${{ inputs.timeout_seconds }}"             2>&1 | tee /tmp/analyse-music-benchmark.log
+
+      - name: Save benchmark summary
+        if: always()
+        run: |
+          {
+            echo "## MusicAnalyse manual benchmark"
+            echo
+            echo "- mode: \`${{ inputs.mode }}\`"
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo
+            if [ -f /tmp/analyse-music-benchmark.log ]; then
+              echo '~~~text'
+              grep 'analyse_music_job_benchmark=' /tmp/analyse-music-benchmark.log || true
+              echo '~~~'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analyse-music-benchmark-${{ github.run_id }}
+          path: |
+            /tmp/analyse-music-benchmark.log
+            /tmp/analyse-music-server.log
+          if-no-files-found: warn
+
+      - name: Stop Genie
+        if: always()
+        run: |
+          if [ -f /tmp/analyse-music-server.pid ]; then
+            kill "$(cat /tmp/analyse-music-server.pid)" 2>/dev/null || true
+          fi
