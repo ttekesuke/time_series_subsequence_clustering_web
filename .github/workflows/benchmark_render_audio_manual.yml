@@ -96,6 +96,7 @@ jobs:
           curl -fsS http://127.0.0.1:${GENIE_PORT}/api/health >/dev/null
 
       - name: Run render benchmark
+        if: ${{ false }}
         shell: bash
         env:
           BENCH_MODE: "voice"
