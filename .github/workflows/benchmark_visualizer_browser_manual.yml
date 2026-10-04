@@ -1,18 +1,9 @@
 name: Visualizer Manual Browser Benchmark
 
 on:
-  workflow_dispatch:
-    inputs:
-      iterations:
-        description: requestAnimationFrame samples per roll
-        required: true
-        default: "120"
-        type: string
-      streams:
-        description: Synthetic stream count
-        required: true
-        default: "6"
-        type: string
+  push:
+    branches:
+      - benchmark/visualizer-correctness-final
 
 jobs:
   benchmark:
@@ -59,8 +50,8 @@ jobs:
       - name: Run browser benchmark
         working-directory: frontend
         env:
-          VISUALIZER_BENCHMARK_ITERATIONS: ${{ inputs.iterations }}
-          VISUALIZER_BENCHMARK_STREAMS: ${{ inputs.streams }}
+          VISUALIZER_BENCHMARK_ITERATIONS: "120"
+          VISUALIZER_BENCHMARK_STREAMS: "6"
           VISUALIZER_BENCHMARK_BASE_URL: http://127.0.0.1:4173
         run: |
           node scripts/run_visualizer_browser_benchmark.mjs \
@@ -69,8 +60,8 @@ jobs:
       - name: Save benchmark summary
         if: always()
         env:
-          BENCH_ITERATIONS: ${{ inputs.iterations }}
-          BENCH_STREAMS: ${{ inputs.streams }}
+          BENCH_ITERATIONS: "120"
+          BENCH_STREAMS: "6"
         run: |
           {
             echo "## Visualizer browser benchmark"
