@@ -113,11 +113,13 @@ end
 
 @testset "#16/#18/#21 source contracts" begin
   controller = read(joinpath(pwd(), "src", "controllers", "time_series_controller.jl"), String)
+  polyphonic_generation = read(joinpath(pwd(), "src", "controllers", "time_series", "polyphonic_generation.jl"), String)
+  controller_sources = string(controller, "\n", polyphonic_generation)
   dialog = read(joinpath(pwd(), "frontend", "src", "components", "dialog", "MusicGenerateDialog.vue"), String)
-  @test occursin("initial_last_step_snapshot", controller)
-  @test !occursin("haskey(managers, \"vol\") ? managers[\"vol\"][:stream] : managers[\"note\"][:stream]", controller)
-  @test occursin("lifecycle_mgr = managers[\"vol\"][:stream]", controller)
-  @test occursin("stream_strengths_report(managers[\"vol\"][:stream])", controller)
+  @test occursin("initial_last_step_snapshot", controller_sources)
+  @test !occursin("haskey(managers, \"vol\") ? managers[\"vol\"][:stream] : managers[\"note\"][:stream]", controller_sources)
+  @test occursin("lifecycle_mgr = managers[\"vol\"][:stream]", controller_sources)
+  @test occursin("stream_strengths_report(managers[\"vol\"][:stream])", controller_sources)
   @test !occursin("use_recent_position_weight:", dialog)
   @test !occursin("debug_score_key:", dialog)
   @test !occursin("debug_score_top_n:", dialog)
