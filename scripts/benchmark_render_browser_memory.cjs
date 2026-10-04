@@ -17,12 +17,13 @@ const payload = {
   ...(mode === 'binary' ? { return_audio_base64: false } : {}),
 }
 
-const browser = await chromium.launch({
-  headless: true,
-  args: ['--enable-precise-memory-info'],
-})
+async function main() {
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--enable-precise-memory-info'],
+  })
 
-try {
+  try {
   const page = await browser.newPage()
   await page.goto(baseUrl + '/api/health', { waitUntil: 'load', timeout: 120000 })
 
@@ -124,5 +125,11 @@ try {
     estimated_duration_seconds: steps * 60 / bpm + 0.05,
   }))
 } finally {
-  await browser.close()
+    await browser.close()
+  }
 }
+
+main().catch(error => {
+  console.error(error)
+  process.exitCode = 1
+})
