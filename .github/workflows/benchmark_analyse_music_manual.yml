@@ -62,7 +62,6 @@ jobs:
           PY
 
       - name: Run repeat benchmark
-        if: ${{ inputs.mode == 'repeat' }}
         env:
           BENCH_STEPS: 2352
           BENCH_TIMEOUT_SECONDS: 14400
