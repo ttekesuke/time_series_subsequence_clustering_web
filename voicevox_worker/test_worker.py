@@ -64,6 +64,8 @@ class WorkerHttpTests(unittest.TestCase):
         self.assertEqual(headers["Content-Type"], "audio/wav")
         self.assertEqual(headers["X-Voicevox-Stream-Id"], "7")
         self.assertEqual(headers["X-Voicevox-Backend"], "fake-binary")
+        self.assertEqual(headers["X-Voicevox-Audio-Bytes"], str(len(b"RIFF-WAVE")))
+        self.assertGreaterEqual(int(headers["X-Voicevox-Peak-Rss-Bytes"]), 0)
         self.assertEqual(render.call_count, 1)
 
         status, body = self.post(
