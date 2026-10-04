@@ -218,7 +218,6 @@ import {
   canonicalizeManagedDimKey,
   clampDimensionFixedValue,
   coerceBoolean,
-  coerceFiniteNumber,
   createDefaultDimensionPolicy,
   managedDimKeys,
   managedDimPolicyConfigs,
@@ -242,6 +241,14 @@ import {
   buildInitialContextVoicePlan,
   tieParamKeys,
 } from '../../composables/generationPayloadBuilder'
+import {
+  buildInitialContextFromRows,
+  buildStrictContextVoiceFromRows,
+  contextInputIndexByKey,
+  formatAbsNoteCell,
+  resolveInitialContextFixedValue,
+  strictContextIndexByKey,
+} from '../../composables/initialContext'
 
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
@@ -483,49 +490,6 @@ const contextInputDimensions = [
 // Default values still keep strict indices for payload assembly.
 const defaultContextInputBase = [60, 1, 0.5, 0.2, 0.8, 0.05, 0.20, 0.75, 0]
 const defaultContextBase = [60, 1, 0.5, 0.2, 0.8, 0.05, 0.20, 0.75, 0, 0, 0]
-const areaBandSize = 4
-const areaBandLowMin = 24
-const areaBandLowMax = 120
-
-const contextManagedDimensionIndex: Record<Exclude<ManagedDimKey, 'area'>, number> = {
-  vol: 1,
-  brightness: 2,
-  noise: 3,
-  harmonicity: 4,
-  attack: 5,
-  decay_sustain: 6,
-  release: 7,
-  chord_range: -1,
-  density: -1
-}
-
-const strictContextIndexByKey = {
-  abs_note: 0,
-  vol: 1,
-  brightness: 2,
-  noise: 3,
-  harmonicity: 4,
-  attack: 5,
-  decay_sustain: 6,
-  release: 7,
-  chord_range: 8,
-  density: 9,
-  tie: 10
-} as const
-
-const contextInputIndexByKey = {
-  abs_note: 0,
-  vol: 1,
-  brightness: 2,
-  noise: 3,
-  harmonicity: 4,
-  attack: 5,
-  decay_sustain: 6,
-  release: 7,
-  tie: 8,
-  lyrics: 9
-} as const
-
 const contextSteps = ref(3)
 const contextStreamCount = ref(1)
 const contextRows = ref<GridRowData[]>([])
@@ -625,39 +589,6 @@ const cleanupSoundCheckAudio = () => {
     URL.revokeObjectURL(soundCheckAudioUrl)
     soundCheckAudioUrl = ''
   }
-}
-
-const buildStrictContextVoiceFromRows = (rows: GridRowData[], streamIdx: number, stepIdx: number) => {
-  const dimsLen = contextInputDimensions.length
-  const baseIndex = streamIdx * dimsLen
-  const getRowValue = (key: keyof typeof contextInputIndexByKey, fallback: unknown) => {
-    const row = rows[baseIndex + contextInputIndexByKey[key]]
-    return row?.data?.[stepIdx] ?? fallback
-  }
-
-  const absNotes = parseAbsNoteCell(getRowValue('abs_note', ''))
-  const vol = Number(getRowValue('vol', 1))
-  const brightness = Number(getRowValue('brightness', 0.5))
-  const noise = Number(getRowValue('noise', 0.2))
-  const harmonicity = Number(getRowValue('harmonicity', 0.5))
-  const attack = Number(getRowValue('attack', 0.05))
-  const decaySustain = Number(getRowValue('decay_sustain', 0.20))
-  const release = Number(getRowValue('release', 0.75))
-  const tie = Number(getRowValue('tie', 0))
-
-  return [
-    absNotes,
-    Math.max(0, Math.min(1, vol)),
-    Math.max(0, Math.min(1, brightness)),
-    Math.max(0, Math.min(1, noise)),
-    Math.max(0, Math.min(1, harmonicity)),
-    Math.max(0, Math.min(1, attack)),
-    Math.max(0, Math.min(1, decaySustain)),
-    Math.max(0, Math.min(1, release)),
-    0,
-    0,
-    Math.round(Math.max(0, Math.min(1, tie)) * 2) / 2
-  ]
 }
 
 const buildSoundCheckVoice = (streamIdx: number) => {
@@ -775,122 +706,15 @@ const makeContextRow = (streamIdx: number, dimIdx: number): GridRowData => {
   }
 }
 
-const parseAbsNoteCell = (raw: unknown): number[] => {
-  if (Array.isArray(raw)) {
-    return raw
-      .map((value) => Number(value))
-      .filter((value) => isFinite(value))
-      .map((value) => Math.round(value))
-  }
-
-  const text = String(raw ?? '').trim()
-  if (text === '') return []
-
-  const hasBracketWrapper = text.charAt(0) === '[' && text.charAt(text.length - 1) === ']'
-  const body = hasBracketWrapper ? text.slice(1, -1) : text
-  return body
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .map((part) => Number(part))
-    .filter((part) => isFinite(part))
-    .map((part) => Math.round(part))
-}
-
-const formatAbsNoteCell = (notes: unknown): string => {
-  const parsed = parseAbsNoteCell(notes)
-  return parsed.length > 0 ? `[${parsed.join(', ')}]` : ''
-}
-
-const getLastContextStepIndex = () => Math.max(contextSteps.value - 1, 0)
-
-const getObservedChordRangeAndDensity = (rawNotes: unknown) => {
-  const parsed = parseAbsNoteCell(rawNotes)
-  if (parsed.length === 0) {
-    return { chordRange: 0, density: 0 }
-  }
-
-  const uniqueSorted = [...parsed].sort((left, right) => left - right).filter((value, idx, arr) => (
-    idx === 0 || value !== arr[idx - 1]
-  ))
-  const minNote = uniqueSorted[0]
-  const maxNote = uniqueSorted[uniqueSorted.length - 1]
-  if (minNote === undefined || maxNote === undefined) return { chordRange: 0, density: 0 }
-  const chordRange = Math.max(0, Math.round(maxNote - minNote))
-  const slotCount = Math.max(1, chordRange + 1)
-  const density = Math.max(0, Math.min(1, uniqueSorted.length / slotCount))
-
-  return { chordRange, density }
-}
-
-const getLastContextAreaFixedValue = () => {
-  const lastStepIndex = getLastContextStepIndex()
-  const absNotes: number[] = []
-
-  for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
-    const rowIndex = streamIdx * contextInputDimensions.length
-    const row = contextRows.value[rowIndex]
-    const notes = parseAbsNoteCell(row?.data[lastStepIndex] ?? '')
-    absNotes.push(...notes)
-  }
-
-  if (absNotes.length === 0) {
-    return managedDimPolicyConfigs.area.defaultFixedValue
-  }
-
-  const sorted = [...absNotes].sort((left, right) => left - right)
-  const anchor = sorted[Math.ceil(sorted.length / 2) - 1] ?? defaultContextBase[0] ?? 60
-  const bandLow = Math.min(areaBandLowMax, Math.max(areaBandLowMin, Math.floor(anchor / areaBandSize) * areaBandSize))
-  const bandCount = Math.max(Math.floor((areaBandLowMax - areaBandLowMin) / areaBandSize), 0)
-  if (bandCount === 0) return 0
-
-  return clampDimensionFixedValue('area', (bandLow - areaBandLowMin) / bandCount)
-}
-
-const getLastContextManagedDimensionFixedValue = (key: Exclude<ManagedDimKey, 'area'>) => {
-  if (key === 'chord_range' || key === 'density') {
-    const lastStepIndex = getLastContextStepIndex()
-    const values: number[] = []
-
-    for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
-      const rowIndex = streamIdx * contextInputDimensions.length
-      const row = contextRows.value[rowIndex]
-      const observed = getObservedChordRangeAndDensity(row?.data[lastStepIndex] ?? '')
-      values.push(key === 'chord_range' ? observed.chordRange : observed.density)
-    }
-
-    if (values.length === 0) {
-      return managedDimPolicyConfigs[key].defaultFixedValue
-    }
-
-    const average = values.reduce((sum, value) => sum + value, 0) / values.length
-    return clampDimensionFixedValue(key, average)
-  }
-
-  const dimIndex = contextManagedDimensionIndex[key]
-  const lastStepIndex = getLastContextStepIndex()
-  const values: number[] = []
-
-  for (let streamIdx = 0; streamIdx < contextStreamCount.value; streamIdx++) {
-    const rowIndex = streamIdx * contextInputDimensions.length + dimIndex
-    const row = contextRows.value[rowIndex]
-    values.push(coerceFiniteNumber(row?.data[lastStepIndex], managedDimPolicyConfigs[key].defaultFixedValue))
-  }
-
-  if (values.length === 0) {
-    return managedDimPolicyConfigs[key].defaultFixedValue
-  }
-
-  const average = values.reduce((sum, value) => sum + value, 0) / values.length
-  return clampDimensionFixedValue(key, average)
-}
-
 const getResolvedDimensionPolicyFixedValue = (key: ManagedDimKey) => {
   const policy = dimensionPolicy.value[key]
   if (policy.fixedValueSource === 'initial_context_last_step') {
-    return key === 'area'
-      ? getLastContextAreaFixedValue()
-      : getLastContextManagedDimensionFixedValue(key)
+    return resolveInitialContextFixedValue(
+      key,
+      contextRows.value,
+      contextSteps.value,
+      contextStreamCount.value,
+    )
   }
   return clampDimensionFixedValue(key, policy.fixedValue)
 }
@@ -947,24 +771,12 @@ watch(
   }
 )
 
-/** 初期コンテキストを [step][stream][dim] に再構成 */
 /** 初期コンテキストを [step][stream][dim] に再構成（strict） */
-const buildInitialContext = () => {
-  const steps = contextSteps.value
-  const streams = contextStreamCount.value
-
-  const initial: any[] = []
-
-  for (let step = 0; step < steps; step++) {
-    const stepArr: any[] = []
-    for (let s = 0; s < streams; s++) {
-      stepArr.push(buildStrictContextVoiceFromRows(contextRows.value, s, step))
-    }
-    initial.push(stepArr)
-  }
-
-  return initial
-}
+const buildInitialContext = () => buildInitialContextFromRows(
+  contextRows.value,
+  contextSteps.value,
+  contextStreamCount.value,
+)
 
 
 /** ========== 2. Generation Parameters 用定義 ========== */
