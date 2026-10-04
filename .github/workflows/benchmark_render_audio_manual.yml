@@ -43,7 +43,7 @@ jobs:
           sudo apt-get install -y supercollider
 
       - name: Start VOICEVOX services
-        if: ${{ inputs.mode == 'voice' }}
+        if: ${{ true }}
         shell: bash
         run: |
           set -euxo pipefail
