@@ -385,6 +385,47 @@ mutable struct Manager <: AbstractClusterManager
   snapshot_state::Union{Nothing,PolySnapshot}
 end
 
+"""MusicAnalyse-only totals for permanently committed quantity caches.
+
+This state lives outside Manager, so candidate simulations and rollback never
+see it. Rebaseline occasionally to limit floating-point drift from repeated
+replacement of the same cluster's complexity value.
+"""
+mutable struct ObservedQuantityTotals
+  quantities::Dict{Int,Float64}
+  complexities::Dict{Int,Float64}
+  quantity::Float64
+  complexity::Float64
+  commits::Int
+end
+
+function observed_quantity_totals(mgr::Manager)::ObservedQuantityTotals
+  quantities = Dict{Int,Float64}()
+  complexities = Dict{Int,Float64}()
+  quantity = 0.0
+  complexity = 0.0
+  for (window, cache) in mgr.cluster_quantity_cache
+    value = sum(values(cache))
+    quantities[window] = value
+    quantity += value
+  end
+  for (window, cache) in mgr.cluster_complexity_cache
+    value = sum(values(cache))
+    complexities[window] = value
+    complexity += value
+  end
+  return ObservedQuantityTotals(quantities, complexities, quantity, complexity, 0)
+end
+
+function rebaseline_observed_quantity_totals!(totals::ObservedQuantityTotals, mgr::Manager)
+  fresh = observed_quantity_totals(mgr)
+  totals.quantities = fresh.quantities
+  totals.complexities = fresh.complexities
+  totals.quantity = fresh.quantity
+  totals.complexity = fresh.complexity
+  return nothing
+end
+
 # Constructors
 
 """Deep-copy a PolySeq."""
@@ -1488,7 +1529,11 @@ function update_caches_permanently!(
   observed_distance_sums::Union{Nothing,Dict{Int,Float64}}=nothing,
   observed_old_representatives::Union{Nothing,Dict{Tuple{Int,Int},PolySeq}}=nothing,
   observed_first_new_id::Int=typemax(Int),
+  observed_quantity_totals::Union{Nothing,ObservedQuantityTotals}=nothing,
 )
+  observed_quantity_totals !== nothing &&
+    (observed_distance_sums === nothing || mgr.recency > 0.0) &&
+    error("Observed quantity totals require non-recency committed analysis.")
   observed_distance_sums !== nothing &&
     mgr.calculate_distance_when_added_subsequence_to_cluster &&
     error("Observed distance sums require new-cluster-only distance updates.")
@@ -1735,6 +1780,18 @@ function update_caches_permanently!(
     # ----------------------------------------------------------
     q_cache = get!(mgr.cluster_quantity_cache, window_size, Dict{Int,Float64}())
     c_cache = get!(mgr.cluster_complexity_cache, window_size, Dict{Int,Float64}())
+    if observed_quantity_totals !== nothing
+      if !haskey(observed_quantity_totals.quantities, window_size)
+        initial = sum(values(q_cache))
+        observed_quantity_totals.quantities[window_size] = initial
+        observed_quantity_totals.quantity += initial
+      end
+      if !haskey(observed_quantity_totals.complexities, window_size)
+        initial = sum(values(c_cache))
+        observed_quantity_totals.complexities[window_size] = initial
+        observed_quantity_totals.complexity += initial
+      end
+    end
     updated_quant_set = get(mgr.updated_cluster_ids_per_window_for_calculate_quantities, window_size, nothing)
     if observed_distance_sums !== nothing && updated_ids_set !== nothing
       # A newly created child can already have several occurrences. The
@@ -1760,10 +1817,20 @@ function update_caches_permanently!(
         _cluster_si_count(node) <= 1 && continue
 
         q = cluster_quantity_score(_cluster_si_count(node), window_size)
+        old_q = get(q_cache, cid, 0.0)
+        old_c = get(c_cache, cid, 0.0)
         q_cache[cid] = q
-        c_cache[cid] = observed_distance_sums === nothing ?
+        c = observed_distance_sums === nothing ?
           calculate_cluster_complexity(mgr, _cluster_as_view(node)) :
           observed_cluster_complexity(node, window_size)
+        c_cache[cid] = c
+        if observed_quantity_totals !== nothing
+          q_delta, c_delta = q - old_q, c - old_c
+          observed_quantity_totals.quantities[window_size] += q_delta
+          observed_quantity_totals.complexities[window_size] += c_delta
+          observed_quantity_totals.quantity += q_delta
+          observed_quantity_totals.complexity += c_delta
+        end
         phase_timings !== nothing && (phase_timings[:cache_complexity_evals] += 1.0)
       end
     elseif updated_quant_set !== nothing && !isempty(updated_quant_set)
@@ -1773,10 +1840,20 @@ function update_caches_permanently!(
         _cluster_si_count(node) > 1 || continue
 
         q = cluster_quantity_score(_cluster_si_count(node), window_size)
+        old_q = get(q_cache, cid, 0.0)
+        old_c = get(c_cache, cid, 0.0)
         q_cache[cid] = q
-        c_cache[cid] = observed_distance_sums === nothing ?
+        c = observed_distance_sums === nothing ?
           calculate_cluster_complexity(mgr, _cluster_as_view(node)) :
           observed_cluster_complexity(node, window_size)
+        c_cache[cid] = c
+        if observed_quantity_totals !== nothing
+          q_delta, c_delta = q - old_q, c - old_c
+          observed_quantity_totals.quantities[window_size] += q_delta
+          observed_quantity_totals.complexities[window_size] += c_delta
+          observed_quantity_totals.quantity += q_delta
+          observed_quantity_totals.complexity += c_delta
+        end
         phase_timings !== nothing && (phase_timings[:cache_complexity_evals] += 1.0)
       end
     end
@@ -1803,6 +1880,17 @@ function update_caches_permanently!(
   end
   if phase_timings !== nothing
     phase_timings[:cache_occurrence] += (time_ns() - phase_started) / 1.0e9
+  end
+
+  if observed_quantity_totals !== nothing
+    observed_quantity_totals.commits += 1
+    if observed_quantity_totals.commits % 256 == 0
+      started = phase_timings === nothing ? 0 : time_ns()
+      rebaseline_observed_quantity_totals!(observed_quantity_totals, mgr)
+      phase_timings !== nothing &&
+        (phase_timings[:metrics_rebase] = get(phase_timings, :metrics_rebase, 0.0) +
+          (time_ns() - started) / 1.0e9)
+    end
   end
 
   # reset updated ids (Rails behavior)
@@ -2664,11 +2752,14 @@ function calculate_all_extended_current_state(
   mgr::Manager;
   occurrence_intervals::Union{Nothing,OccurrenceIntervalMetrics}=nothing,
   observed_distance_sums::Union{Nothing,Dict{Int,Float64}}=nothing,
+  observed_quantity_totals::Union{Nothing,ObservedQuantityTotals}=nothing,
+  phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
 )::ExtendedClusterMetrics
   # MusicAnalyse has already captured the occurrence preview and uses no
   # recency weighting. The cache sums are the same sums used by candidate
   # simulation, so there is no need to expand logical cluster refs again.
   if mgr.recency <= 0.0 && occurrence_intervals !== nothing
+    aggregate_started = phase_timings === nothing ? 0 : time_ns()
     sum_distances = 0.0
     sum_quantities = 0.0
     sum_complexities = 0.0
@@ -2681,12 +2772,20 @@ function calculate_all_extended_current_state(
         sum_distances += distance_sum / float(window_size)
       end
     end
-    for cache in values(mgr.cluster_quantity_cache)
-      isempty(cache) || (sum_quantities += sum(values(cache)))
+    if observed_quantity_totals === nothing
+      for cache in values(mgr.cluster_quantity_cache)
+        isempty(cache) || (sum_quantities += sum(values(cache)))
+      end
+      for cache in values(mgr.cluster_complexity_cache)
+        isempty(cache) || (sum_complexities += sum(values(cache)))
+      end
+    else
+      sum_quantities = observed_quantity_totals.quantity
+      sum_complexities = observed_quantity_totals.complexity
     end
-    for cache in values(mgr.cluster_complexity_cache)
-      isempty(cache) || (sum_complexities += sum(values(cache)))
-    end
+    phase_timings !== nothing &&
+      (phase_timings[:metrics_aggregate] = get(phase_timings, :metrics_aggregate, 0.0) +
+        (time_ns() - aggregate_started) / 1.0e9)
     return ExtendedClusterMetrics(
       sum_distances, sum_quantities, sum_complexities, occurrence_intervals,
     )
@@ -2750,6 +2849,7 @@ function add_observed_and_calculate_all_extended!(
   phase_timings::Union{Nothing,Dict{Symbol,Float64}}=nothing,
   next_calibration_metrics_ref::Union{Nothing,Base.RefValue{ExtendedClusterMetrics}}=nothing,
   observed_distance_sums::Union{Nothing,Dict{Int,Float64}}=nothing,
+  observed_quantity_totals::Union{Nothing,ObservedQuantityTotals}=nothing,
 )::ExtendedClusterMetrics
   started = phase_timings === nothing ? 0 : time_ns()
   old_representatives = observed_distance_sums === nothing ? nothing :
@@ -2779,13 +2879,15 @@ function add_observed_and_calculate_all_extended!(
   update_caches_permanently!(mgr; phase_timings=phase_timings,
     observed_distance_sums=observed_distance_sums,
     observed_old_representatives=old_representatives,
-    observed_first_new_id=first_new_id)
+    observed_first_new_id=first_new_id,
+    observed_quantity_totals=observed_quantity_totals)
   if phase_timings !== nothing
     phase_timings[:cache] += (time_ns() - started) / 1.0e9
     started = time_ns()
   end
   metrics = calculate_all_extended_current_state(mgr;
-    occurrence_intervals=temporal, observed_distance_sums=observed_distance_sums)
+    occurrence_intervals=temporal, observed_distance_sums=observed_distance_sums,
+    observed_quantity_totals=observed_quantity_totals, phase_timings=phase_timings)
   if next_calibration_metrics_ref !== nothing
     # Before the interval-history limit, previewing the just-observed gap
     # yields exactly the committed interval metric: the same prefix, scale,
