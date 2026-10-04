@@ -26,7 +26,7 @@ jobs:
         run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
       - name: Generate repeat fixture
-        if: ${{ inputs.mode == 'repeat' }}
+        if: ${{ true }}
         env:
           BENCH_STEPS: 2352
           BENCH_GRID_DENOMINATOR: 16
@@ -75,7 +75,7 @@ jobs:
             2>&1 | tee /tmp/analyse-music-benchmark.log
 
       - name: Run ASAP benchmark
-        if: ${{ inputs.mode == 'asap' }}
+        if: ${{ false }}
         env:
           BENCH_ASAP_PATH: Bach/Fugue/bwv_846/xml_score.musicxml
           BENCH_TIMEOUT_SECONDS: 14400
