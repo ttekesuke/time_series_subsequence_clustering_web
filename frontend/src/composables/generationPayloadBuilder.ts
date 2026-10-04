@@ -181,6 +181,7 @@ export const buildGeneratePolyphonicPayload = ({
   initialContext,
   initialContextVoicePlan,
   initialContextBpm,
+  initialContextSteps,
   dimensionPolicy,
   mergeThresholdRatio,
   voicevoxEnabled,
@@ -193,6 +194,7 @@ export const buildGeneratePolyphonicPayload = ({
   initialContext: unknown
   initialContextVoicePlan: unknown
   initialContextBpm: unknown
+  initialContextSteps: number
   dimensionPolicy: unknown
   mergeThresholdRatio: number
   voicevoxEnabled: boolean
@@ -210,7 +212,7 @@ export const buildGeneratePolyphonicPayload = ({
     recency_spread: genParams.recency_spread,
     initial_context: initialContext,
     initial_context_voice_plan: initialContextVoicePlan,
-    initial_context_bpm: normalizeGenerationBpmSeries(initialContextBpm, Array.isArray(initialContext) ? initialContext.length : 1),
+    initial_context_bpm: normalizeGenerationBpmSeries(initialContextBpm, initialContextSteps),
     dimension_policy: dimensionPolicy,
     merge_threshold_ratio: mergeThresholdRatio,
     compact_cluster_view: true,
