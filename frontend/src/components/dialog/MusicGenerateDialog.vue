@@ -229,7 +229,6 @@ import {
 import {
   normalizeGenerationBpm,
   normalizeGenerationBpmSeries,
-  normalizeGenerationNumber,
 } from '../../composables/generationPayloadNormalization'
 import {
   buildGeneratePolyphonicPayload,
@@ -241,15 +240,17 @@ import {
   buildInitialContextFromRows,
   buildStrictContextVoiceFromRows,
   contextInputIndexByKey,
-  formatAbsNoteCell,
   resolveInitialContextFixedValue,
-  strictContextIndexByKey,
 } from '../../composables/initialContext'
 import {
   renderSoundCheckBlob,
   submitGeneratePolyphonic,
 } from '../../composables/generationApi'
 import { hydrateGenerationPayload } from '../../composables/generationPayloadHydration'
+import {
+  hydrateInitialContextLyrics,
+  hydrateInitialContextPayload,
+} from '../../composables/initialContextHydration'
 
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
@@ -1778,60 +1779,34 @@ const buildGenParamsFromRows = () => buildGenerationParamsFromRows({
 })
 
 const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
-  if (!Array.isArray(ctxRaw)) return
-  const steps = Math.max(1, ctxRaw.length)
-  const streamCount = Math.max(
-    1,
-    ...ctxRaw.map((step: any) => (Array.isArray(step) ? step.length : 0))
-  )
+  const specs = contextInputDimensions.map((dimension) => {
+    const config = makeContextConfig(dimension.key)
+    return {
+      key: dimension.key,
+      min: config.min,
+      max: config.max,
+      isInt: config.isInt,
+    }
+  })
+  const hydrated = hydrateInitialContextPayload({
+    contextRaw: ctxRaw,
+    bpmRaw,
+    specs,
+    strictDefaults: defaultContextBase,
+  })
+  if (!hydrated) return
 
   suppressContextWatch.value = true
-  contextSteps.value = steps
-  contextStreamCount.value = streamCount
-
-  const rows: GridRowData[] = []
-  for (let s = 0; s < streamCount; s++) {
-    for (let d = 0; d < contextInputDimensions.length; d++) {
-      const row = makeContextRow(s, d)
-      const key = contextInputDimensions[d]?.key ?? ''
-      if (key === 'lyrics') {
-        row.data = Array.from({ length: steps }, () => '')
-        rows.push(row)
-        continue
-      }
-      const strictIndex = strictContextIndexByKey[key as keyof typeof strictContextIndexByKey]
-      const base = defaultContextBase[strictIndex] ?? 0
-      const data: Array<number | string> = []
-      for (let step = 0; step < steps; step++) {
-        const stepArr = ctxRaw[step]
-        const streamArr = Array.isArray(stepArr) ? stepArr[s] : null
-        let rawVal: any = null
-        if (Array.isArray(streamArr)) {
-          if (streamArr.length === 11) {
-            rawVal = streamArr[strictIndex]
-          }
-        }
-        if (d === 0) {
-          data.push(formatAbsNoteCell(rawVal))
-          continue
-        }
-        let v = normalizeGenerationNumber(rawVal, base)
-        if (key === 'tie') v = Math.round(v * 2) / 2
-        const cfg = row.config
-        if (cfg) {
-          if (cfg.isInt) v = Math.round(v)
-          if (v < cfg.min) v = cfg.min
-          if (v > cfg.max) v = cfg.max
-        }
-        data.push(v)
-      }
-      row.data = data
-      rows.push(row)
-    }
-  }
-
-  contextRows.value = rows
-  initialContextBpm.value = normalizeGenerationBpmSeries(bpmRaw, steps)
+  contextSteps.value = hydrated.steps
+  contextStreamCount.value = hydrated.streamCount
+  contextRows.value = hydrated.rowData.map((data, index) => {
+    const streamIndex = Math.floor(index / contextInputDimensions.length)
+    const dimensionIndex = index % contextInputDimensions.length
+    const row = makeContextRow(streamIndex, dimensionIndex)
+    row.data = data
+    return row
+  })
+  initialContextBpm.value = hydrated.bpm
   await nextTick()
   suppressContextWatch.value = false
 }
@@ -1899,16 +1874,17 @@ const applyParamsPayload = async (payload: any) => {
   if (!payload || typeof payload !== 'object') return
   const candidate = payload.generate_polyphonic ?? payload
   await applyInitialContextFromPayload(candidate.initial_context, candidate.initial_context_bpm ?? candidate.bpm)
-  if (Array.isArray(candidate.initial_context_voice_plan)) {
-    candidate.initial_context_voice_plan.forEach((stepPlan: any[], stepIdx: number) => {
-      if (!Array.isArray(stepPlan)) return
-      stepPlan.forEach((entry: any) => {
-        const streamIdx = Number(entry?.streamId) - 1
-        const row = contextRows.value[streamIdx * contextInputDimensions.length + contextInputIndexByKey.lyrics]
-        if (row && stepIdx < contextSteps.value) row.data[stepIdx] = typeof entry?.text === 'string' ? entry.text : ''
-      })
-    })
-  }
+  const hydratedLyrics = hydrateInitialContextLyrics({
+    rowData: contextRows.value.map((row) => row.data),
+    voicePlan: candidate.initial_context_voice_plan,
+    steps: contextSteps.value,
+    dimensionCount: contextInputDimensions.length,
+    lyricsIndex: contextInputIndexByKey.lyrics,
+  })
+  contextRows.value = contextRows.value.map((row, index) => ({
+    ...row,
+    data: hydratedLyrics[index] ?? row.data,
+  }))
   await applyGenParamsFromPayload(candidate)
 }
 
