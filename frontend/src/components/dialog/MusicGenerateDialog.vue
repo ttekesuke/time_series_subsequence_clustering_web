@@ -236,6 +236,12 @@ import {
   normalizeGenerationNumber,
   normalizeLegacyTieSeries,
 } from '../../composables/generationPayloadNormalization'
+import {
+  buildGeneratePolyphonicPayload,
+  buildGenerationParamsFromRows,
+  buildInitialContextVoicePlan,
+  tieParamKeys,
+} from '../../composables/generationPayloadBuilder'
 
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
@@ -1897,40 +1903,11 @@ const canonicalizeGeneratedDimensionMeta = (meta: GenRowMeta) => {
   }
 }
 
-const complexityParamKeys = (key: string) => key === 'area'
-  ? {
-      global: 'area_global',
-      center: 'area_center',
-      span: 'area_spread',
-      concordance: 'area_conc',
-    }
-  : {
-      global: `${key}_global_complexity_target`,
-      center: `${key}_stream_complexity_center`,
-      span: `${key}_stream_complexity_span`,
-      concordance: `${key}_concordance`,
-    }
-
-const valueParamKeys = (key: string) => ({
-  target: `${key}_value_target`,
-  radius: `${key}_value_radius`,
-})
-
 genRowMetas.forEach((meta) => {
   canonicalizeGeneratedDimensionMeta(meta)
   meta.help = buildGenHelp(meta)
 })
 
-const complexityDimensionKeys = ['area', 'chord_range', 'density', 'vol', 'brightness', 'noise', 'harmonicity', 'attack', 'decay_sustain', 'release'] as const
-const targetWindowDimensionKeys = ['vol', 'chord_range', 'density', 'brightness', 'noise', 'harmonicity', 'attack', 'decay_sustain', 'release'] as const
-const tieParamKeys = [
-  'tie_global_complexity_target',
-  'tie_stream_complexity_center',
-  'tie_stream_complexity_span',
-  'tie_concordance',
-  'tie_value_target',
-  'tie_value_radius',
-] as const
 const legacyTieParams = ref<{ tie_center: number[]; tie_spread: number[] } | null>(null)
 
 const makeGenRowData = (meta: GenRowMeta, data: number[]): GridRowData => ({
@@ -2008,80 +1985,12 @@ watch(genSteps, (len) => {
 
 watch(dimensionPolicy, syncGenRowsDisabledState, { deep: true })
 
-// meta を key で引くマップ
-const genMetaByKey: Record<string, GenRowMeta> = {}
-genRowMetas.forEach((m) => { genMetaByKey[m.key] = m })
-
-// rows からサーバ送信用パラメータ構築
-const buildGenParamsFromRows = () => {
-  const len = genSteps.value
-
-  const ensureLen = (arr: Array<number | string> | undefined, meta: GenRowMeta) => {
-    const fallback = meta.defaultFactory(len)
-    const out: number[] = []
-    for (let i = 0; i < len; i++) {
-      let v = (arr && i < arr.length && arr[i] != null)
-        ? Number(arr[i])
-        : Number(fallback[i] ?? meta.min)
-
-      if (meta.isInt) v = Math.round(v)
-      else v = Number(v.toFixed(2))
-
-      if (v < meta.min) v = meta.min
-      if (v > meta.max) v = meta.max
-
-      out.push(v)
-    }
-    return out
-  }
-
-  const get = (key: string): number[] => {
-    const meta = genMetaByKey[key]
-    if (!meta) throw new Error(`Unknown generation parameter: ${key}`)
-    const idx = genRowMetas.indexOf(meta)
-    const row = genRows.value[idx]
-    return ensureLen(row?.data, meta)
-  }
-
-  const result: any = {}
-
-  result.stream_counts = get('stream_counts')
-  if (voicevoxEnabled.value) {
-    result.voice_stream_counts = get('voice_stream_counts')
-    result.voice_token_global_complexity_target = get('voice_token_global_complexity_target')
-    result.voice_token_stream_complexity_center = get('voice_token_stream_complexity_center')
-    result.voice_token_stream_complexity_span = get('voice_token_stream_complexity_span')
-    result.voice_token_concordance = get('voice_token_concordance')
-    result.voice_transition_weight = get('voice_transition_weight')
-  }
-
-  result.stream_strength_target = get('stream_strength_target')
-  result.stream_strength_spread = get('stream_strength_spread')
-  result.note_register_freedom  = get('note_register_freedom')
-  result.dissonance_target      = get('dissonance_target')
-  result.future_bpm             = get('future_bpm')
-  tieParamKeys.forEach((key) => {
-    result[key] = get(key)
-  })
-  result.recency_center         = get('recency_center')
-  result.recency_spread         = get('recency_spread')
-
-  complexityDimensionKeys.forEach((key) => {
-    const keys = complexityParamKeys(key)
-    result[keys.global] = get(keys.global)
-    result[keys.center] = get(keys.center)
-    result[keys.span] = get(keys.span)
-    result[keys.concordance] = get(keys.concordance)
-  })
-
-  targetWindowDimensionKeys.forEach((key) => {
-    const keys = valueParamKeys(key)
-    result[keys.target] = get(keys.target)
-    result[keys.radius] = get(keys.radius)
-  })
-
-  return result
-}
+const buildGenParamsFromRows = () => buildGenerationParamsFromRows({
+  steps: genSteps.value,
+  metas: genRowMetas,
+  rows: genRows.value,
+  voicevoxEnabled: voicevoxEnabled.value,
+})
 
 const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
   if (!Array.isArray(ctxRaw)) return
@@ -2217,72 +2126,29 @@ const applyGenParamsFromPayload = async (payload: any) => {
 const buildParamsPayload = (jobIdOverride?: string) => {
   const genParams = buildGenParamsFromRows()
   const initialContext = buildInitialContext()
-  const futureBpm = normalizeGenerationBpmSeries(genParams.future_bpm, genSteps.value)
   const jobId = jobIdOverride || uuidv4()
-
-  const payload: any = {
-    generate_polyphonic: {
-      job_id: jobId,
-      bpm: futureBpm[0] ?? DEFAULT_BPM,
-      future_bpm: futureBpm,
-      stream_counts: genParams.stream_counts,
-      recency_center: genParams.recency_center,
-      recency_spread: genParams.recency_spread,
-      initial_context: initialContext,
-      initial_context_voice_plan: Array.from({ length: contextSteps.value }, (_, stepIdx) =>
-        Array.from({ length: contextStreamCount.value }, (_, streamIdx) => {
-          const lyricsRow = contextRows.value[streamIdx * contextInputDimensions.length + contextInputIndexByKey.lyrics]
-          const text = String(lyricsRow?.data?.[stepIdx] ?? '').trim()
-          return { streamId: streamIdx + 1, mode: text ? 'voice' : 'synth', text: text || null }
-        })
-      ),
-      initial_context_bpm: normalizeGenerationBpmSeries(initialContextBpm.value, contextSteps.value),
-      dimension_policy: buildDimensionPolicyPayload(),
-      merge_threshold_ratio: mergeThresholdRatio.value,
-      compact_cluster_view: true,
-      stream_strength_target: genParams.stream_strength_target,
-      stream_strength_spread: genParams.stream_strength_spread,
-      note_register_freedom: genParams.note_register_freedom,
-      dissonance_target: genParams.dissonance_target
-    }
-  }
-
-  if (voicevoxEnabled.value) {
-    Object.assign(payload.generate_polyphonic, {
-      voice_stream_counts: genParams.voice_stream_counts.map((value: number, index: number) =>
-        Math.min(value, genParams.stream_counts[index] ?? value)
-      ),
-      voice_inventory_id: voiceInventoryId.value || 'ja_voicevox_all',
-      voice_token_global_complexity_target: genParams.voice_token_global_complexity_target,
-      voice_token_stream_complexity_center: genParams.voice_token_stream_complexity_center,
-      voice_token_stream_complexity_span: genParams.voice_token_stream_complexity_span,
-      voice_token_concordance: genParams.voice_token_concordance,
-      voice_transition_weight: genParams.voice_transition_weight,
-    })
-  }
-
-  if (legacyTieParams.value) {
-    payload.generate_polyphonic.tie_center = [...legacyTieParams.value.tie_center]
-    payload.generate_polyphonic.tie_spread = [...legacyTieParams.value.tie_spread]
-  } else {
-    tieParamKeys.forEach((key) => {
-      payload.generate_polyphonic[key] = genParams[key]
-    })
-  }
-  complexityDimensionKeys.forEach((k) => {
-    const keys = complexityParamKeys(k)
-    payload.generate_polyphonic[keys.global] = genParams[keys.global]
-    payload.generate_polyphonic[keys.center] = genParams[keys.center]
-    payload.generate_polyphonic[keys.span] = genParams[keys.span]
-    payload.generate_polyphonic[keys.concordance] = genParams[keys.concordance]
-  })
-  targetWindowDimensionKeys.forEach((k) => {
-    const keys = valueParamKeys(k)
-    payload.generate_polyphonic[keys.target] = genParams[keys.target]
-    payload.generate_polyphonic[keys.radius] = genParams[keys.radius]
+  const initialContextVoicePlan = buildInitialContextVoicePlan({
+    rows: contextRows.value,
+    steps: contextSteps.value,
+    streamCount: contextStreamCount.value,
+    dimensionCount: contextInputDimensions.length,
+    lyricsIndex: contextInputIndexByKey.lyrics,
   })
 
-  return payload
+  return buildGeneratePolyphonicPayload({
+    jobId,
+    genParams,
+    genSteps: genSteps.value,
+    initialContext,
+    initialContextVoicePlan,
+    initialContextBpm: initialContextBpm.value,
+    initialContextSteps: contextSteps.value,
+    dimensionPolicy: buildDimensionPolicyPayload(),
+    mergeThresholdRatio: mergeThresholdRatio.value,
+    voicevoxEnabled: voicevoxEnabled.value,
+    voiceInventoryId: voiceInventoryId.value,
+    legacyTieParams: legacyTieParams.value,
+  })
 }
 
 const applyParamsPayload = async (payload: any) => {
