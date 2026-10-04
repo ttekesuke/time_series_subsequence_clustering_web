@@ -8,6 +8,8 @@
 - Frontend: **Vue 3 + Vite + Vuetify**
 - Production: **Nginx (static + reverse proxy) + Genie**
 
+Backend responsibility/dependency map: [`docs/time_series_controller_architecture.md`](docs/time_series_controller_architecture.md)
+
 VOICEVOX voice rendering is available through the Compose worker. See
 [`docs/voicevox_voice_tokens.md`](docs/voicevox_voice_tokens.md) for voice
 inventory, speaker settings, and synchronized SuperCollider mixing.
