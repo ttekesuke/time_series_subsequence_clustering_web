@@ -185,11 +185,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def _wav(self, audio: bytes, *, stream_id: int, backend: str) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(len(audio)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Voicevox-Stream-Id", str(stream_id))
+        self.send_header("X-Voicevox-Backend", backend)
+        self.end_headers()
+        self.wfile.write(audio)
+
     def do_GET(self) -> None:  # noqa: N802
         self._json(200 if self.path == "/health" else 404, {"status": "ok", "backend": "voicevox"} if self.path == "/health" else {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/render":
+        if self.path not in ("/render", "/render-stem"):
             self._json(404, {"error": "not found"})
             return
         try:
@@ -197,6 +207,27 @@ class Handler(BaseHTTPRequestHandler):
             if length <= 0 or length > MAX_BODY_BYTES:
                 raise ValueError("invalid request size")
             stems = _validate_request(json.loads(self.rfile.read(length).decode("utf-8")))
+
+            if self.path == "/render-stem":
+                if len(stems) != 1:
+                    raise ValueError("render-stem requires exactly one stem")
+                stem = stems[0]
+                print(
+                    f"[voicevox-worker] render-stem request stream={stem['stream_id']} "
+                    f"start_time={stem['start_time']} segments="
+                    f"{[(segment['text'], segment['duration']) for segment in stem['segments']]}",
+                    flush=True,
+                )
+                audio, backend = _render_stem(
+                    stem["segments"], stem["controls"], stem["start_time"])
+                print(
+                    f"[voicevox-worker] render-stem complete stream={stem['stream_id']} "
+                    f"bytes={len(audio)}",
+                    flush=True,
+                )
+                self._wav(audio, stream_id=stem["stream_id"], backend=backend)
+                return
+
             print(f"[voicevox-worker] render request stems={len(stems)} streams={[stem['stream_id'] for stem in stems]} start_times={[stem['start_time'] for stem in stems]} segments={[(segment['text'], segment['duration']) for stem in stems for segment in stem['segments']]} song_keys={[max(0, min(127, int(control.get('carrier_note', 60) or 60))) for stem in stems for control in stem['controls']]}", flush=True)
             rendered = []
             rendered_bytes = []
