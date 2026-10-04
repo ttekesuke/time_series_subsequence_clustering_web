@@ -199,10 +199,12 @@ class Handler(BaseHTTPRequestHandler):
             stems = _validate_request(json.loads(self.rfile.read(length).decode("utf-8")))
             print(f"[voicevox-worker] render request stems={len(stems)} streams={[stem['stream_id'] for stem in stems]} start_times={[stem['start_time'] for stem in stems]} segments={[(segment['text'], segment['duration']) for stem in stems for segment in stem['segments']]} song_keys={[max(0, min(127, int(control.get('carrier_note', 60) or 60))) for stem in stems for control in stem['controls']]}", flush=True)
             rendered = []
+            rendered_bytes = []
             for stem in stems:
                 audio, backend = _render_stem(stem["segments"], stem["controls"], stem["start_time"])
+                rendered_bytes.append(len(audio))
                 rendered.append({"stream_id": stem["stream_id"], "audio_base64": base64.b64encode(audio).decode("ascii"), "backend": backend})
-            print(f"[voicevox-worker] render complete bytes={[len(base64.b64decode(item['audio_base64'])) for item in rendered]}", flush=True)
+            print(f"[voicevox-worker] render complete bytes={rendered_bytes}", flush=True)
             self._json(200, {"backend": rendered[0]["backend"] if rendered else "voicevox", "stems": rendered})
         except Exception as exc:
             self._json(400, {"error": str(exc)})

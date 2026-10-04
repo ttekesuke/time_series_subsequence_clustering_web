@@ -28,6 +28,17 @@ const _render_cleanup = Main.TimeseriesClusteringAPI.SupercollidersController
   ))["ok"]
   @test isfile(unrelated)
   @test isfile(first_wav) && isfile(second_wav)
+
+  audio_response = _render_cleanup._render_audio_response(first_id)
+  @test audio_response.status == 200
+  @test String(audio_response.body) == "audio"
+  @test any(header -> header.first == "Content-Type" && header.second == "audio/wav", audio_response.headers)
+
+  active_audio_id, active_audio_scd, active_audio_wav = _render_cleanup._new_render_job()
+  write(active_audio_scd, "score")
+  write(active_audio_wav, "active-audio")
+  @test _render_cleanup._render_audio_response(active_audio_id).status == 404
+  @test _render_cleanup._delete_render_job!(active_audio_id; allow_active=true)
   @test _render_cleanup._cleanup_render_payload(Dict(
     "cleanup" => Dict("render_job_id" => first_id,
       "scd_file_path" => unrelated, "sound_file_path" => second_wav),

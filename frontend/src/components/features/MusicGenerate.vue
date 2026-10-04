@@ -720,7 +720,7 @@ const expandTimeSeries = (ts: any[], rawStreamIds?: number[][]) => {
   }
 }
 
-const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any, streamIds?: number[][], voicePlan?: any[][]) => {
+const renderPolyphonicAudio = async (timeSeries: any[][], bpmArg?: any, streamIds?: number[][], voicePlan?: any[][]) => {
   progress.value.status = 'rendering'
 
   const normalizeRenderPayload = (ts: any[][], ids?: number[][]) => {
@@ -773,45 +773,47 @@ const renderPolyphonicAudio = (timeSeries: any[][], bpmArg?: any, streamIds?: nu
   const { out, streamIds: normalizedStreamIds } = normalizeRenderPayload(timeSeries, streamIds)
   const bpmSeries = resolveGenerationBpmSeries(bpmArg, out.length)
   const bpm = bpmSeries[0] ?? DEFAULT_BPM
-  axios.post('/api/web/supercolliders/render_polyphonic', {
-    time_series: out,
-    stream_ids: normalizedStreamIds,
-    voice_plan: voicePlan,
-    bpm,
-    future_bpm: bpmSeries,
-    initial_context_bpm: bpmSeries.slice(0, Math.min(1, bpmSeries.length)),
-    tail_pad_seconds: 0.05,
-  })
-    .then(response => {
-      if (response?.data?.error) {
-        console.error("Rendering error:", response.data.error)
-        progress.value.status = 'idle'
-        return
-      }
+  let renderJobId = ''
 
-      const { render_job_id, audio_data } = response.data
-      try {
-        // base64 wav -> Blob URL (browser playback)
-        const base64 = audio_data.includes(',') ? audio_data.split(',')[1] : audio_data
-        const binary = atob(base64)
-        const len = binary.length
-        const bytes = new Uint8Array(len)
-        for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
+  try {
+    const { data } = await axios.post('/api/web/supercolliders/render_polyphonic', {
+      time_series: out,
+      stream_ids: normalizedStreamIds,
+      voice_plan: voicePlan,
+      bpm,
+      future_bpm: bpmSeries,
+      initial_context_bpm: bpmSeries.slice(0, Math.min(1, bpmSeries.length)),
+      tail_pad_seconds: 0.05,
+      return_audio_base64: false,
+    })
 
-        const blob = new Blob([bytes.buffer], { type: "audio/wav" })
-        generatedAudioBlob = blob
-        if (generatedAudioObjectUrl) URL.revokeObjectURL(generatedAudioObjectUrl)
-        generatedAudioObjectUrl = URL.createObjectURL(blob)
-        soundFilePath.value = generatedAudioObjectUrl
-        progress.value.status = 'idle'
-      } finally {
-        if (typeof render_job_id === 'string') cleanup(render_job_id)
-      }
-    })
-    .catch(error => {
-      console.error("Rendering error:", error)
-      progress.value.status = 'idle'
-    })
+    if (data?.error) {
+      console.error('Rendering error:', data.error)
+      return
+    }
+
+    renderJobId = String(data?.render_job_id ?? '')
+    if (!renderJobId) throw new Error('Render job ID was not returned.')
+
+    const audioResponse = await axios.post(
+      '/api/web/supercolliders/render_audio',
+      { render_job_id: renderJobId },
+      { responseType: 'blob' },
+    )
+    const blob = audioResponse.data instanceof Blob
+      ? audioResponse.data
+      : new Blob([audioResponse.data], { type: 'audio/wav' })
+
+    generatedAudioBlob = blob
+    if (generatedAudioObjectUrl) URL.revokeObjectURL(generatedAudioObjectUrl)
+    generatedAudioObjectUrl = URL.createObjectURL(blob)
+    soundFilePath.value = generatedAudioObjectUrl
+  } catch (error) {
+    console.error('Rendering error:', error)
+  } finally {
+    if (renderJobId) cleanup(renderJobId)
+    progress.value.status = 'idle'
+  }
 }
 
 const cleanup = (renderJobId: string) => {
