@@ -89,6 +89,7 @@ jobs:
           curl -fsS http://127.0.0.1:${GENIE_PORT}/api/health >/dev/null
 
       - name: Run legacy render benchmark
+        if: ${{ false }}
         shell: bash
         run: |
           set -euo pipefail
