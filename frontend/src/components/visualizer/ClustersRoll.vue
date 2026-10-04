@@ -53,6 +53,7 @@ type SpanRow = {
   summaryStarts: number[]
   summaryMappedStarts: number[]
   summaryPositions: number[]
+  summaryIndicesByActualWindow: Map<number, number[]>
   maxItemWidth: number
 }
 type DetailItem = {
@@ -239,6 +240,18 @@ function calculateLayout() {
     }).sort((a, b) => a.position - b.position)
     const summaryMappedStarts = summaryPairs.map(pair => pair.start)
     const summaryPositions = summaryPairs.map(pair => pair.position)
+    const summaryIndicesByActualWindow = new Map<number, number[]>()
+    if (props.stepMap?.length) {
+      for (const start of summaryStarts) {
+        const first = props.stepMap[start]
+        const last = props.stepMap[start + span.window_min - 1]
+        if (first === undefined || last === undefined) continue
+        const actualWindow = last - first + 1
+        const indices = summaryIndicesByActualWindow.get(actualWindow) ?? []
+        indices.push(first)
+        summaryIndicesByActualWindow.set(actualWindow, indices)
+      }
+    }
     y += summaryHeight
     let detailY = y
     let detailHeight = 0
@@ -253,7 +266,7 @@ function calculateLayout() {
     const maxItemWidth = items.reduce((maxWidth, item) => Math.max(maxWidth, item.width), 0)
     return {
       key, span, depth, y: summaryY, detailY, detailHeight, items,
-      summaryStarts, summaryMappedStarts, summaryPositions, maxItemWidth,
+      summaryStarts, summaryMappedStarts, summaryPositions, summaryIndicesByActualWindow, maxItemWidth,
     }
   })
   contentHeight.value = Math.max(viewportHeight.value, y + 8)
@@ -403,7 +416,6 @@ function onMouseMove(event: MouseEvent) {
     const localWindow = target.row.span.window_min
     const x = event.clientX - canvas.value!.getBoundingClientRect().left +
       (scrollWrapper.value?.scrollLeft ?? 0)
-    const starts = target.row.summaryStarts
     const targetPosition = x / props.stepWidth
     const insertion = lowerBound(target.row.summaryPositions, targetPosition)
     const candidates = [insertion - 1, insertion].filter(
@@ -425,12 +437,7 @@ function onMouseMove(event: MouseEvent) {
       return
     }
     const actualWindow = actualEnd - actualStart + 1
-    const indices = starts.flatMap(start => {
-      const first = props.stepMap?.[start]
-      const last = props.stepMap?.[start + localWindow - 1]
-      return first !== undefined && last !== undefined && last - first + 1 === actualWindow
-        ? [first] : []
-    })
+    const indices = target.row.summaryIndicesByActualWindow.get(actualWindow) ?? []
     emit('hover-cluster', {
       indices, windowSize: actualWindow,
       id: String(target.row.span.cluster_ids[0]),
