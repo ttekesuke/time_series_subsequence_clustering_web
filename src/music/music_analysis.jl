@@ -12,6 +12,21 @@ struct RequestError <: Exception
 end
 Base.showerror(io::IO, err::RequestError) = print(io, err.message)
 
+struct AnalysisCancelled <: Exception end
+Base.showerror(io::IO, ::AnalysisCancelled) = print(io, "Music analysis was cancelled.")
+
+@inline function _check_analysis_cancel(cancel_check)::Nothing
+  if cancel_check !== nothing && cancel_check() === true
+    throw(AnalysisCancelled())
+  end
+  return nothing
+end
+
+function _notify_analysis_progress(progress_callback, payload::Dict{String,Any})::Nothing
+  progress_callback === nothing || progress_callback(payload)
+  return nothing
+end
+
 const MAX_RHYTHM_DENOMINATOR = 60
 const MAX_XML_BYTES = 10_000_000
 const MAX_ANALYSIS_STEPS = 200_000
@@ -604,10 +619,20 @@ function _analyse_manager(
   stream_axis_capacity::Int=1,
   compact_cluster_view::Bool=false,
   log_label::AbstractString="",
+  progress_callback=nothing,
+  cancel_check=nothing,
 )
+  _check_analysis_cancel(cancel_check)
   n = length(series)
   min_window = Config.POLYPHONIC_MIN_WINDOW_SIZE
   log_started_at = time()
+  _notify_analysis_progress(progress_callback, Dict{String,Any}(
+    "phase" => "clustering",
+    "label" => String(log_label),
+    "processed" => 0,
+    "total" => max(n - min_window, 0),
+    "percent" => 0,
+  ))
   if !isempty(log_label)
     empty_steps = count(isempty, series)
     zero_steps = count(row -> !isempty(row) && all(iszero, row), series)
@@ -696,6 +721,7 @@ function _analyse_manager(
     last_progress_time = time()
     last_progress_steps = 0
     for index in (min_window + 1):n
+      _check_analysis_cancel(cancel_check)
       observed = scoring.evaluate_observed_complexity!(manager, series[index];
         metric_weights=metric_weights, phase_timings=phase_timings,
         committed_metrics_ref=committed_metrics_ref,
@@ -723,6 +749,13 @@ function _analyse_manager(
         complexity_measured = phase_timings[:cache_complexity_full_s] + phase_timings[:cache_complexity_prefix_s]
         @info "[analyse_music] quantity detail" label=String(log_label) progress="$(percent)%" complexity_full_s=round(phase_timings[:cache_complexity_full_s]; digits=2) complexity_full_rows=Int(phase_timings[:cache_complexity_full_rows]) complexity_prefix_s=round(phase_timings[:cache_complexity_prefix_s]; digits=2) complexity_prefix_hits=Int(phase_timings[:cache_complexity_prefix_hits]) other_quantity_s=round(max(phase_timings[:cache_quantity] - complexity_measured, 0.0); digits=2)
         @info "[analyse_music] metrics aggregation" label=String(log_label) progress="$(percent)%" aggregate_s=round(phase_timings[:metrics_aggregate]; digits=3) rebase_s=round(phase_timings[:metrics_rebase]; digits=3) quantity_windows=length(quantity_totals.quantities) complexity_windows=length(quantity_totals.complexities) quantity_entries=sum(length, values(manager.cluster_quantity_cache)) complexity_entries=sum(length, values(manager.cluster_complexity_cache))
+        _notify_analysis_progress(progress_callback, Dict{String,Any}(
+          "phase" => "clustering",
+          "label" => String(log_label),
+          "processed" => processed,
+          "total" => total_observed_steps,
+          "percent" => percent,
+        ))
         for phase in keys(phase_timings)
           phase_timings[phase] = 0.0
         end
@@ -732,7 +765,15 @@ function _analyse_manager(
     end
   end
 
+  _check_analysis_cancel(cancel_check)
   !isempty(log_label) && @info "[analyse_music] clustering done" label=String(log_label) elapsed_s=round(time() - log_started_at; digits=2)
+  _notify_analysis_progress(progress_callback, Dict{String,Any}(
+    "phase" => "clustering",
+    "label" => String(log_label),
+    "processed" => max(n - min_window, 0),
+    "total" => max(n - min_window, 0),
+    "percent" => 100,
+  ))
   payload_started_at = time()
   clusters_payload = compact_cluster_view ? Any[] : PolyphonicClusterManager.clusters_to_timeline(manager)
   timeline_s = time() - payload_started_at
@@ -748,13 +789,34 @@ function _analyse_manager(
   )
 end
 
-function analyse_music_payload(params, scoring)
+function analyse_music_payload(
+  params,
+  scoring;
+  progress_callback=nothing,
+  cancel_check=nothing,
+)
   analysis_started_at = time()
+  _check_analysis_cancel(cancel_check)
+  _notify_analysis_progress(progress_callback, Dict{String,Any}(
+    "phase" => "parsing",
+    "label" => "MusicXML",
+    "processed" => 0,
+    "total" => 1,
+    "percent" => 0,
+  ))
   compact_cluster_view = get(params, "compact_cluster_view", false) == true
   xml_text = string(get(params, "musicxml_text", ""))
   @info "[analyse_music] parsing MusicXML" source_type=string(get(params, "source_type", "upload")) xml_bytes=sizeof(xml_text)
   parsed = parse_musicxml_text(xml_text)
+  _check_analysis_cancel(cancel_check)
   @info "[analyse_music] MusicXML parsed" note_events=length(parsed.notes) total_quarters=float(parsed.total_q) parts=length(parsed.part_names)
+  _notify_analysis_progress(progress_callback, Dict{String,Any}(
+    "phase" => "parsing",
+    "label" => "MusicXML",
+    "processed" => 1,
+    "total" => 1,
+    "percent" => 100,
+  ))
 
   grid_den = rhythm_denominator(parsed)
   total_steps_r = parsed.total_q * grid_den
@@ -840,6 +902,7 @@ function analyse_music_payload(params, scoring)
   extraction_started_at = time()
   extraction_progress_interval = max(cld(step_count, 10), 1)
   for step in 1:step_count
+    _check_analysis_cancel(cancel_check)
     t_q = (step - 1) // grid_den
     onset_seconds, bpm = _step_timing!(event_index, event_cursor, t_q)
     push!(tempo_series, bpm)
@@ -915,8 +978,16 @@ function analyse_music_payload(params, scoring)
     if step == step_count || step % extraction_progress_interval == 0
       percent = round(Int, 100 * step / step_count)
       @info "[analyse_music] dimension extraction progress" progress="$(percent)%" processed=step total=step_count elapsed_s=round(time() - extraction_started_at; digits=2)
+      _notify_analysis_progress(progress_callback, Dict{String,Any}(
+        "phase" => "extracting",
+        "label" => "score dimensions",
+        "processed" => step,
+        "total" => step_count,
+        "percent" => percent,
+      ))
     end
   end
+  _check_analysis_cancel(cancel_check)
   @info "[analyse_music] score dimensions extracted" elapsed_s=round(time() - extraction_started_at; digits=2)
 
   scalar_streams = Dict(
@@ -952,8 +1023,16 @@ function analyse_music_payload(params, scoring)
   ]
 
   for (dim_index, dim) in enumerate(dimension_order)
+    _check_analysis_cancel(cancel_check)
     dimension_started_at = time()
     @info "[analyse_music] dimension analysis start" dimension=dim position="$(dim_index)/$(length(dimension_order))"
+    _notify_analysis_progress(progress_callback, Dict{String,Any}(
+      "phase" => "dimension",
+      "label" => dim,
+      "processed" => dim_index - 1,
+      "total" => length(dimension_order),
+      "percent" => round(Int, 100 * (dim_index - 1) / length(dimension_order)),
+    ))
     range_min, range_max = dimension_ranges[dim]
     global_display = Any[nothing for _ in 1:step_count]
     concordance = Any[nothing for _ in 1:step_count]
@@ -1007,7 +1086,8 @@ function analyse_music_payload(params, scoring)
         range_min=range_min, range_max=range_max,
         merge_threshold_ratio=merge_threshold_ratio,
         metric_weights=Config.POLYPHONIC_STREAM_METRIC_WEIGHTS,
-        compact_cluster_view=compact_cluster_view, log_label="$(dim)/stream=$(id):$(stream_labels[id])")
+        compact_cluster_view=compact_cluster_view, log_label="$(dim)/stream=$(id):$(stream_labels[id])",
+        progress_callback=progress_callback, cancel_check=cancel_check)
       stream_analysis_payload[string(id)] = Dict("axes"=>analysed_stream["axes"], "raw"=>analysed_stream["raw"])
       stream_clusters_payload[string(id)] = analysed_stream["clusters"]
       stream_compressed_payload[string(id)] = analysed_stream["compressedClusters"]
@@ -1023,7 +1103,8 @@ function analyse_music_payload(params, scoring)
         range_min=range_min, range_max=range_max,
         merge_threshold_ratio=merge_threshold_ratio,
         metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
-        compact_cluster_view=compact_cluster_view, log_label="$(dim)/global")
+        compact_cluster_view=compact_cluster_view, log_label="$(dim)/global",
+        progress_callback=progress_callback, cancel_check=cancel_check)
       dimensions[dim] = Dict(
         "values"=>Dict("global"=>global_display, "streams"=>stream_values_payload, "concordance"=>concordance),
         "analysis"=>Dict("global"=>Dict("axes"=>analysed_global["axes"], "raw"=>analysed_global["raw"]), "streams"=>stream_analysis_payload),
@@ -1076,7 +1157,15 @@ function analyse_music_payload(params, scoring)
       delete!(dimension, "clusters")
     end
   end
+  _check_analysis_cancel(cancel_check)
   @info "[analyse_music] all dimensions analysed" elapsed_s=round(time() - analysis_started_at; digits=2)
+  _notify_analysis_progress(progress_callback, Dict{String,Any}(
+    "phase" => "finalizing",
+    "label" => "result",
+    "processed" => length(dimension_order),
+    "total" => length(dimension_order),
+    "percent" => 100,
+  ))
   piano_streams = Any[
     Any[isempty(notes_by_stream[id][step]) ? nothing : copy(notes_by_stream[id][step]) for step in 1:step_count]
     for id in stream_ids

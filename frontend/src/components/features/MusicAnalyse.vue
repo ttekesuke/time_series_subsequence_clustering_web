@@ -94,7 +94,7 @@
       <v-card>
         <v-card-title class="d-flex align-center justify-space-between">
           <span>SET MusicXML</span>
-          <v-btn icon @click="dialogOpen = false"><v-icon>mdi-close</v-icon></v-btn>
+          <v-btn icon :disabled="submitting" @click="dialogOpen = false"><v-icon>mdi-close</v-icon></v-btn>
         </v-card-title>
         <v-card-text>
           <v-radio-group v-model="sourceType" inline>
@@ -134,12 +134,28 @@
             label="Merge threshold ratio"
           />
 
+          <v-alert v-if="analysisProgressMessage" type="info" variant="tonal" class="mt-3">
+            <div>{{ analysisProgressMessage }}</div>
+            <v-progress-linear
+              v-if="submitting"
+              class="mt-2"
+              :model-value="analysisProgressPercent"
+              :indeterminate="analysisProgressPercent <= 0"
+            />
+          </v-alert>
+
           <v-alert v-if="dialogError" type="error" variant="tonal" class="mt-3">
             {{ dialogError }}
           </v-alert>
         </v-card-text>
         <v-card-actions class="justify-end">
-          <v-btn variant="text" @click="dialogOpen = false">CANCEL</v-btn>
+          <v-btn
+            variant="text"
+            :disabled="submitting && cancellationRequested"
+            @click="submitting ? cancelAnalysisJob() : (dialogOpen = false)"
+          >
+            {{ submitting ? (cancellationRequested ? 'STOPPING…' : 'STOP') : 'CANCEL' }}
+          </v-btn>
           <v-btn color="primary" :loading="submitting" :disabled="submitting" @click="submitMusicXml">SUBMIT</v-btn>
         </v-card-actions>
       </v-card>
@@ -204,6 +220,11 @@ const selectedAsap = ref<any | null>(null)
 const asapSourcesRaw = ref<any[]>([])
 const loadingAsap = ref(false)
 const submitting = ref(false)
+const analysisJobId = ref('')
+const analysisProgressMessage = ref('')
+const analysisProgressPercent = ref(0)
+const cancellationRequested = ref(false)
+let analysisPollToken = 0
 const mergeThresholdRatio = ref(0.02)
 const analysedViewMode = ref<'Cluster' | 'Complexity'>('Complexity')
 const analysisScope = ref('global')
@@ -374,11 +395,45 @@ const onFileChange = (event: Event) => {
   dialogError.value = ''
 }
 
+const sleep = (milliseconds: number) =>
+  new Promise(resolve => window.setTimeout(resolve, milliseconds))
+
+const updateAnalysisJobProgress = (status: any) => {
+  const phase = String(status?.phase ?? status?.status ?? '')
+  const label = String(status?.label ?? '')
+  const processed = Number(status?.processed ?? 0)
+  const total = Number(status?.total ?? 0)
+  const percent = Number(status?.percent ?? 0)
+  analysisProgressPercent.value = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0
+  const count = total > 0 ? ` ${processed}/${total}` : ''
+  const labelText = label ? ` — ${label}` : ''
+  analysisProgressMessage.value = `${phase || 'running'}${labelText}${count}`
+}
+
+const cancelAnalysisJob = async () => {
+  if (!analysisJobId.value || cancellationRequested.value) return
+  cancellationRequested.value = true
+  analysisProgressMessage.value = 'cancelling…'
+  try {
+    const { data } = await axios.post('/api/web/time_series/analyse_music_job_cancel', {
+      job_id: analysisJobId.value,
+    })
+    updateAnalysisJobProgress(data)
+  } catch (error: any) {
+    cancellationRequested.value = false
+    dialogError.value = error?.response?.data?.message ?? error?.message ?? 'Cancellation failed.'
+  }
+}
+
 const submitMusicXml = async () => {
   if (submitting.value) return
   dialogError.value = ''
   errorMessage.value = ''
+  analysisProgressMessage.value = ''
+  analysisProgressPercent.value = 0
+  cancellationRequested.value = false
   submitting.value = true
+  const pollToken = ++analysisPollToken
   try {
     const payload: any = {
       source_type: sourceType.value,
@@ -403,24 +458,54 @@ const submitMusicXml = async () => {
       payload.xml_score = selected.xml_score
     }
 
-    const { data } = await axios.post('/api/web/time_series/analyse_music', {
+    const startResponse = await axios.post('/api/web/time_series/analyse_music_job_start', {
       analyse_music: { ...payload, compact_cluster_view: true },
     })
-    result.value = data as MusicAnalysisResult
-    lastResultJson.value = data
-    analysisScope.value = 'global'
-    analysisRowHeights.value = {}
-    highlightIndices.value = []
-    highlightWindowSize.value = 0
-    errorMessage.value = ''
-    dialogOpen.value = false
-    await nextTick()
+    const jobId = String(startResponse.data?.jobId ?? '')
+    if (!jobId) throw new Error('MusicAnalyse job ID was not returned.')
+    analysisJobId.value = jobId
+    updateAnalysisJobProgress(startResponse.data)
+
+    while (pollToken === analysisPollToken) {
+      const { data: status } = await axios.post('/api/web/time_series/analyse_music_job_status', {
+        job_id: jobId,
+      })
+      updateAnalysisJobProgress(status)
+      const state = String(status?.status ?? '')
+
+      if (state === 'completed') {
+        const { data } = await axios.post('/api/web/time_series/analyse_music_job_result', {
+          job_id: jobId,
+        })
+        result.value = data as MusicAnalysisResult
+        lastResultJson.value = data
+        analysisScope.value = 'global'
+        analysisRowHeights.value = {}
+        highlightIndices.value = []
+        highlightWindowSize.value = 0
+        errorMessage.value = ''
+        dialogOpen.value = false
+        await nextTick()
+        return
+      }
+
+      if (state === 'failed' || state === 'cancelled' || state === 'interrupted') {
+        const backendMessage = String(status?.errorMessage ?? '')
+        throw new Error(backendMessage || `MusicXML analysis ${state}.`)
+      }
+
+      await sleep(600)
+    }
   } catch (error: any) {
     const message = error?.response?.data?.message ?? error?.message ?? 'MusicXML analysis failed.'
     dialogError.value = message
     errorMessage.value = message
   } finally {
-    submitting.value = false
+    if (pollToken === analysisPollToken) {
+      submitting.value = false
+      analysisJobId.value = ''
+      cancellationRequested.value = false
+    }
   }
 }
 
@@ -465,6 +550,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  analysisPollToken += 1
   resizeObserver?.disconnect()
   resizeObserver = null
 })
