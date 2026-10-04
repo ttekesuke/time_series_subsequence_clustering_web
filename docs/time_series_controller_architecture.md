@@ -15,6 +15,7 @@ module, so existing callers and endpoint names remain unchanged.
 | `generate_polyphonic_validation.jl` | `generate_polyphonic` request/resource/evaluation-budget validation. |
 | `polyphonic_generation.jl` | Polyphonic generation parameter handling, candidate evaluation orchestration, stream lifecycle, voice-token planning, cache commits, and response assembly. |
 | `github_dispatch.jl` | GitHub Actions workflow dispatch, run discovery, payload compression, and dispatch endpoint response handling. |
+| `musicxml_response.jl` | ASAP MusicXML file access, phrase slicing, match highlighting, note-position extraction, and DB-point-to-score mapping endpoints. |
 | `scalar_actions.jl` | Scalar `analyse` and `generate` endpoints. |
 | `generation_scoring.jl` | Metric calibration, predictive/occurrence/structural scoring, dissonance candidate selection, and initial scoring-cache setup. |
 | `similarity_search.jl` | `query_db` orchestration, note/volume query strategy, and octave-invariant matching strategy. |
