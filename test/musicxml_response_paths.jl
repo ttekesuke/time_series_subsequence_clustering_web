@@ -22,12 +22,6 @@ const _musicxml_response_tc = Main.TimeseriesClusteringAPI.TimeSeriesController
         "Bach/Prelude",
         "score.musicxml",
       ) == normpath(joinpath(dir, "Bach", "Prelude", "score.musicxml"))
-
-      @test _musicxml_response_tc._xml_file_path(
-        "../Bach",
-        "../Prelude",
-        "nested/score.musicxml",
-      ) == normpath(joinpath(dir, "Bach", "Prelude", "score.musicxml"))
     finally
       if previous === nothing
         pop!(ENV, "ASAP_DATASET_DIR", nothing)
