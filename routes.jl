@@ -190,6 +190,10 @@ route("/api/web/supercolliders/render_polyphonic", method=POST) do
   SupercollidersController.render_polyphonic() |> json
 end
 
+route("/api/web/supercolliders/render_audio", method=POST) do
+  SupercollidersController.render_audio()
+end
+
 route("/api/web/supercolliders/cleanup", method=DELETE) do
   SupercollidersController.cleanup() |> json
 end
