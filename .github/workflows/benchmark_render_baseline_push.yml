@@ -38,6 +38,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y supercollider
 
+      - name: Setup browser benchmark
+        run: |
+          mkdir -p /tmp/render-browser-bench
+          cd /tmp/render-browser-bench
+          npm init -y
+          npm install playwright@1.55.0
+          npx playwright install chromium
+          cp "$GITHUB_WORKSPACE/scripts/benchmark_render_browser_memory.cjs" benchmark.cjs
+
       - name: Start VOICEVOX services
         shell: bash
         run: |
@@ -99,6 +108,17 @@ jobs:
           echo "legacy_worker_peak_rss_bytes=$((worker_peak_kb * 1024))" | tee -a /tmp/legacy-render-benchmark.log
           echo "legacy_voice_audio_bytes=${worker_bytes:-0}" | tee -a /tmp/legacy-render-benchmark.log
 
+      - name: Run browser heap benchmark
+        env:
+          RENDER_BROWSER_MODE: legacy
+          RENDER_BENCHMARK_BASE_URL: http://127.0.0.1:19116
+          RENDER_BENCHMARK_STEPS: "500"
+          RENDER_BENCHMARK_BPM: "240"
+          RENDER_BENCHMARK_TEXT: "あ"
+        run: |
+          cd /tmp/render-browser-bench
+          node benchmark.cjs 2>&1 | tee /tmp/legacy-browser-benchmark.log
+
       - name: Save summary
         if: always()
         run: |
@@ -112,6 +132,7 @@ jobs:
             if [ -f /tmp/legacy-render-benchmark.log ]; then
               echo '~~~text'
               cat /tmp/legacy-render-benchmark.log
+              grep 'render_browser_memory_benchmark=' /tmp/legacy-browser-benchmark.log || true
               echo '~~~'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
@@ -137,6 +158,7 @@ jobs:
           name: legacy-render-baseline-${{ github.run_id }}
           path: |
             /tmp/legacy-render-benchmark.log
+            /tmp/legacy-browser-benchmark.log
             /tmp/legacy-server.log
             /tmp/legacy-voicevox-worker.log
             /tmp/legacy-voicevox-engine.log
