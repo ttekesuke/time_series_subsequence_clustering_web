@@ -42,6 +42,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y supercollider
 
+      - name: Setup browser benchmark
+        run: |
+          mkdir -p /tmp/render-browser-bench
+          cd /tmp/render-browser-bench
+          npm init -y
+          npm install playwright@1.55.0
+          npx playwright install chromium
+          cp "$GITHUB_WORKSPACE/scripts/benchmark_render_browser_memory.cjs" benchmark.cjs
+
       - name: Start VOICEVOX services
         if: ${{ true }}
         shell: bash
@@ -105,13 +114,24 @@ jobs:
             --timeout "$BENCH_TIMEOUT_SECONDS" \
             2>&1 | tee /tmp/render-audio-benchmark.log
 
+      - name: Run browser heap benchmark
+        env:
+          RENDER_BROWSER_MODE: binary
+          RENDER_BENCHMARK_BASE_URL: http://127.0.0.1:19115
+          RENDER_BENCHMARK_STEPS: "500"
+          RENDER_BENCHMARK_BPM: "240"
+          RENDER_BENCHMARK_TEXT: "あ"
+        run: |
+          cd /tmp/render-browser-bench
+          node benchmark.cjs 2>&1 | tee /tmp/render-browser-benchmark.log
+
       - name: Save benchmark summary
         if: always()
         shell: bash
         env:
-          BENCH_MODE: ${{ inputs.mode }}
-          BENCH_STEPS: ${{ inputs.steps }}
-          BENCH_BPM: ${{ inputs.bpm }}
+          BENCH_MODE: "voice"
+          BENCH_STEPS: "500"
+          BENCH_BPM: "240"
         run: |
           {
             echo "## Render audio manual benchmark"
@@ -124,6 +144,7 @@ jobs:
             if [ -f /tmp/render-audio-benchmark.log ]; then
               echo '~~~text'
               grep 'render_audio_benchmark=' /tmp/render-audio-benchmark.log || true
+              grep 'render_browser_memory_benchmark=' /tmp/render-browser-benchmark.log || true
               echo '~~~'
             fi
           } >> "${GITHUB_STEP_SUMMARY}"
@@ -151,6 +172,7 @@ jobs:
           name: render-audio-benchmark-${{ github.run_id }}
           path: |
             /tmp/render-audio-benchmark.log
+            /tmp/render-browser-benchmark.log
             /tmp/render-benchmark-server.log
             /tmp/voicevox-worker.log
             /tmp/voicevox-engine.log
