@@ -75,7 +75,13 @@ def main() -> None:
             "result-transfer, result bytes, and peak RSS separately."
         )
     )
-    parser.add_argument("musicxml", type=Path, help="MusicXML file to analyse")
+    parser.add_argument("musicxml", nargs="?", type=Path, help="Local MusicXML file to analyse")
+    parser.add_argument(
+        "--asap-path",
+        help="ASAP repository-relative MusicXML path, e.g. Bach/Fugue/bwv_846/xml_score.musicxml",
+    )
+    parser.add_argument("--asap-composer", default="")
+    parser.add_argument("--asap-folder", default="")
     parser.add_argument(
         "--base-url",
         default=os.getenv("ANALYSE_MUSIC_BASE_URL", "http://127.0.0.1:8000"),
@@ -84,21 +90,44 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=4 * 60 * 60)
     parser.add_argument("--request-timeout", type=float, default=120.0)
     parser.add_argument("--merge-threshold-ratio", type=float, default=0.02)
+    parser.add_argument("--expected-steps", type=int)
     parser.add_argument("--full-cluster-view", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
-    xml_path = args.musicxml.resolve()
-    xml_text = xml_path.read_text(encoding="utf-8")
-    payload = {
-        "analyse_music": {
-            "source_type": "upload",
-            "filename": xml_path.name,
-            "musicxml_text": xml_text,
-            "compact_cluster_view": not args.full_cluster_view,
-            "merge_threshold_ratio": args.merge_threshold_ratio,
+    if bool(args.musicxml) == bool(args.asap_path):
+        parser.error("Specify exactly one of local musicxml or --asap-path")
+
+    if args.asap_path:
+        asap_path = str(args.asap_path).replace("\\\\", "/").strip("/")
+        parts = [part for part in asap_path.split("/") if part]
+        composer = args.asap_composer or (parts[0] if parts else "")
+        folder = args.asap_folder or "/".join(parts[:-1])
+        payload = {
+            "analyse_music": {
+                "source_type": "asap",
+                "filename": parts[-1] if parts else "xml_score.musicxml",
+                "composer": composer,
+                "folder": folder,
+                "xml_score": asap_path,
+                "compact_cluster_view": not args.full_cluster_view,
+                "merge_threshold_ratio": args.merge_threshold_ratio,
+            }
         }
-    }
+        benchmark_name = asap_path
+    else:
+        xml_path = args.musicxml.resolve()
+        xml_text = xml_path.read_text(encoding="utf-8")
+        benchmark_name = xml_path.name
+        payload = {
+            "analyse_music": {
+                "source_type": "upload",
+                "filename": benchmark_name,
+                "musicxml_text": xml_text,
+                "compact_cluster_view": not args.full_cluster_view,
+                "merge_threshold_ratio": args.merge_threshold_ratio,
+            }
+        }
 
     wall_started = time.monotonic()
     status_code, _, started, _ = post_json(
@@ -173,11 +202,16 @@ def main() -> None:
         result = json.loads(result_raw)
         wall_s = time.monotonic() - wall_started
         timing = result.get("timing", {}) if isinstance(result, dict) else {}
+        step_count = timing.get("stepCount")
+        if args.expected_steps is not None and step_count != args.expected_steps:
+            raise AssertionError(
+                f"expected stepCount={args.expected_steps}, got {step_count}"
+            )
 
         metrics = {
             "job_id": job_id,
             "filename": xml_path.name,
-            "step_count": timing.get("stepCount"),
+            "step_count": step_count,
             "processing_seconds": status.get("processingSeconds"),
             "serialize_seconds": status.get("serializeSeconds"),
             "result_bytes_status": status.get("resultBytes"),
