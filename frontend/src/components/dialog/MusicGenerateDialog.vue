@@ -748,15 +748,6 @@ const buildSoundCheckVoice = (streamIdx: number) => {
   return buildStrictContextVoiceFromRows(soundCheckRows.value.slice(1), streamIdx, 0)
 }
 
-const decodeBase64AudioToObjectUrl = (audioData: string) => {
-  const base64 = audioData.includes(',') ? audioData.split(',')[1] : audioData
-  const binary = atob(base64 ?? '')
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  const blob = new Blob([bytes.buffer], { type: 'audio/wav' })
-  return URL.createObjectURL(blob)
-}
-
 const playSoundCheckTone = async () => {
   if (!soundCheckDialog.value) return
 
