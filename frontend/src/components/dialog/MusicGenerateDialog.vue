@@ -240,11 +240,7 @@ import {
   buildGeneratePolyphonicPayload,
   buildGenerationParamsFromRows,
   buildInitialContextVoicePlan,
-  complexityDimensionKeys,
-  complexityParamKeys,
-  targetWindowDimensionKeys,
   tieParamKeys,
-  valueParamKeys,
 } from '../../composables/generationPayloadBuilder'
 
 /** ========== props / emit / dialog開閉 ========== */
@@ -1906,6 +1902,11 @@ const canonicalizeGeneratedDimensionMeta = (meta: GenRowMeta) => {
     return
   }
 }
+
+genRowMetas.forEach((meta) => {
+  canonicalizeGeneratedDimensionMeta(meta)
+  meta.help = buildGenHelp(meta)
+})
 
 const legacyTieParams = ref<{ tie_center: number[]; tie_spread: number[] } | null>(null)
 
