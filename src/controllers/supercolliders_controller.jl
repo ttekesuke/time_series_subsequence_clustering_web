@@ -5,6 +5,7 @@ using UUIDs
 using Base64
 using Dates
 using Printf
+using HTTP
 import ..Config
 import ..VoicevoxClient
 
@@ -494,6 +495,44 @@ function _prune_render_jobs!()
   end
 end
 
+function _finished_render_wav_path(job_id::AbstractString)
+  _prune_render_jobs!()
+  return lock(_RENDER_JOBS_LOCK) do
+    job = get(_RENDER_JOBS, String(job_id), nothing)
+    job === nothing && return nothing
+    job_dir, finished_at = job
+    finished_at > 0.0 || return nothing
+    if islink(job_dir) || !isdir(job_dir) || dirname(realpath(job_dir)) != realpath(_render_root())
+      return nothing
+    end
+    wav_path = joinpath(job_dir, "audio.wav")
+    if islink(wav_path) || !isfile(wav_path) || realpath(dirname(wav_path)) != realpath(job_dir)
+      return nothing
+    end
+    return wav_path
+  end
+end
+
+function _render_audio_response(job_id::AbstractString)
+  wav_path = _finished_render_wav_path(job_id)
+  wav_path === nothing && return HTTP.Response(
+    404,
+    ["Content-Type" => "application/json; charset=utf-8", "Cache-Control" => "no-store"],
+    "{\"error\":\"render job audio not found\"}",
+  )
+  body = read(wav_path)
+  return HTTP.Response(
+    200,
+    [
+      "Content-Type" => "audio/wav",
+      "Content-Length" => string(length(body)),
+      "Cache-Control" => "no-store",
+      "Content-Disposition" => "inline; filename=\"result.wav\"",
+    ],
+    body,
+  )
+end
+
 function _render_timeout_seconds(render_duration::Real)::Float64
   estimated = float(render_duration) * Config.SC_RENDER_TIMEOUT_DURATION_MULTIPLIER + Config.SC_RENDER_TIMEOUT_EXTRA_SECONDS
   configured_minimum = try
@@ -666,6 +705,7 @@ function render_polyphonic()
   step_durations = _step_durations_from_bpm_series(bpm_series)
   raw_tail_pad_seconds = get(payload, "tail_pad_seconds", get(gp, "tail_pad_seconds", Config.SC_DEFAULT_TAIL_PAD_SECONDS))
   tail_pad_seconds = clamp(_parse_float(raw_tail_pad_seconds), Config.UNIT_MIN, Config.SC_MAX_TAIL_PAD_SECONDS)
+  return_audio_base64 = get(payload, "return_audio_base64", true) != false
 
   job_id, scd_path, wav_path = _new_render_job()
   voice_stems = Any[]
@@ -728,10 +768,8 @@ function render_polyphonic()
       )
     end
 
-    audio_b64 = base64encode(read(wav_path))
     _finish_render_job!(job_id)
-    return Dict(
-      "audio_data" => "data:audio/wav;base64,$audio_b64",
+    response = Dict{String,Any}(
       "render_job_id" => job_id,
       "bpm" => (isempty(bpm_series) ? bpm : bpm_series[1]),
       "bpmSeries" => bpm_series,
@@ -742,6 +780,12 @@ function render_polyphonic()
       "voiceStemCount" => length(voice_requests),
       "voicePreRollSeconds" => isempty(voice_requests) ? 0.0 : Config.SC_VOICEVOX_BUFFER_PREROLL_SECONDS,
     )
+    if return_audio_base64
+      response["audio_data"] = "data:audio/wav;base64,$(base64encode(read(wav_path)))"
+    else
+      response["audio_bytes"] = filesize(wav_path)
+    end
+    return response
   catch e
     VoicevoxClient.cleanup_stems!(voice_stems)
     empty!(voice_stems)
@@ -775,5 +819,11 @@ function _cleanup_render_payload(payload)
 end
 
 cleanup() = _cleanup_render_payload(_payload())
+
+function render_audio()
+  payload = _to_string_dict(_payload())
+  job_id = get(payload, "render_job_id", "")
+  return _render_audio_response(string(job_id))
+end
 
 end # module
