@@ -90,6 +90,7 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=4 * 60 * 60)
     parser.add_argument("--request-timeout", type=float, default=120.0)
     parser.add_argument("--merge-threshold-ratio", type=float, default=0.02)
+    parser.add_argument("--expected-steps", type=int)
     parser.add_argument("--full-cluster-view", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
@@ -201,11 +202,16 @@ def main() -> None:
         result = json.loads(result_raw)
         wall_s = time.monotonic() - wall_started
         timing = result.get("timing", {}) if isinstance(result, dict) else {}
+        step_count = timing.get("stepCount")
+        if args.expected_steps is not None and step_count != args.expected_steps:
+            raise AssertionError(
+                f"expected stepCount={args.expected_steps}, got {step_count}"
+            )
 
         metrics = {
             "job_id": job_id,
             "filename": xml_path.name,
-            "step_count": timing.get("stepCount"),
+            "step_count": step_count,
             "processing_seconds": status.get("processingSeconds"),
             "serialize_seconds": status.get("serializeSeconds"),
             "result_bytes_status": status.get("resultBytes"),
