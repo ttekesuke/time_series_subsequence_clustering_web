@@ -145,9 +145,10 @@ the same normalized series-stat/grouped-series shapes regardless of mode.
 
 The structural refactor is covered by the full regression suite on every PR.
 A live external Influx instance is intentionally not required by normal CI.
-If #36 is to be closed under the strict interpretation of “all DB modes response
-equivalence”, add deterministic HTTP fixtures for InfluxQL, SQL, and Flux and
-exercise `query_db` through each mode before closing the issue.
+`test/influx_mode_contract.jl` supplies deterministic InfluxQL JSON, SQL JSONL,
+and Flux CSV fixtures and locks query-mode dispatch plus the normalized meaning
+of series stats, scalar grouped series, and note/volume grouped series across
+all three modes.
 
 ## Adding new code
 
