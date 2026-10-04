@@ -2,6 +2,11 @@
 # Polyphonic helpers
 # ------------------------------------------------------------
 
+function _voice_inventory_dir()::String
+  return normpath(joinpath(@__DIR__, "..", "..", "..", "config", "voice_inventories"))
+end
+
+
 # 0-based index read (Rails compatible)
 function array_param(raw::Dict{String,Any}, key::String, idx0::Int)
   raw === nothing && return nothing
@@ -1547,7 +1552,7 @@ function generate_polyphonic()
     occursin(r"^[A-Za-z0-9_-]+$", inventory_id) || error(
       "generate_polyphonic.voice_inventory_id may contain only letters, digits, underscore, and hyphen.",
     )
-    inventory_dir = normpath(joinpath(@__DIR__, "..", "..", "..", "config", "voice_inventories"))
+    inventory_dir = _voice_inventory_dir()
     inventory_path = joinpath(inventory_dir, "$(inventory_id).json")
     voice_inventory = VoiceTokenGeneration.load_inventory(inventory_path)
     voice_inventory.id == inventory_id || error(
