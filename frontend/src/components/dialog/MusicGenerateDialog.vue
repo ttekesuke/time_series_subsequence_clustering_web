@@ -227,13 +227,9 @@ import {
   type ManagedDimKey,
 } from '../../composables/dimensionPolicy'
 import {
-  generationCandidateParam,
-  generationSeriesLength,
-  normalizeGenerationArray,
   normalizeGenerationBpm,
   normalizeGenerationBpmSeries,
   normalizeGenerationNumber,
-  normalizeLegacyTieSeries,
 } from '../../composables/generationPayloadNormalization'
 import {
   buildGeneratePolyphonicPayload,
@@ -253,6 +249,7 @@ import {
   renderSoundCheckBlob,
   submitGeneratePolyphonic,
 } from '../../composables/generationApi'
+import { hydrateGenerationPayload } from '../../composables/generationPayloadHydration'
 
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
@@ -1841,71 +1838,30 @@ const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
 
 const applyGenParamsFromPayload = async (payload: any) => {
   const candidate = payload?.generate_polyphonic ?? payload ?? {}
-  if (voicevoxEnabled.value && typeof candidate.voice_inventory_id === 'string') {
-    const sanitized = candidate.voice_inventory_id.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
-    if (sanitized) voiceInventoryId.value = sanitized
+  const hydrated = hydrateGenerationPayload({
+    candidate,
+    metas: genRowMetas,
+    voicevoxEnabled: voicevoxEnabled.value,
+    mergeThresholdFallback: mergeThresholdRatio.value,
+  })
+
+  if (hydrated.voiceInventoryId) {
+    voiceInventoryId.value = hydrated.voiceInventoryId
   }
-  if (candidate.merge_threshold_ratio != null) {
-    const v = normalizeGenerationNumber(candidate.merge_threshold_ratio, mergeThresholdRatio.value)
-    mergeThresholdRatio.value = Math.min(1, Math.max(0, Number(v)))
+  if (hydrated.mergeThresholdRatio != null) {
+    mergeThresholdRatio.value = hydrated.mergeThresholdRatio
   }
   applyDimensionPolicyFromPayload(candidate.dimension_policy)
-
-  const getCandidateParam = (key: string) => generationCandidateParam(candidate, key)
-
-  const hasCanonicalTieParams = tieParamKeys.some((key) => candidate[key] != null) || candidate.tie_rate_target != null
-  const hasLegacyTieParams = !hasCanonicalTieParams && (
-    candidate.tie_center != null || candidate.tie_spread != null
-  )
-  legacyTieParams.value = null
-
-  const lengths = genRowMetas.map((meta) => {
-    const val = getCandidateParam(meta.key)
-    return generationSeriesLength(val)
-  })
-  if (hasLegacyTieParams) {
-    for (const val of [candidate.tie_center, candidate.tie_spread]) {
-      lengths.push(generationSeriesLength(val))
-    }
-  }
-  const steps = Math.max(1, ...lengths)
-
-  if (hasLegacyTieParams) {
-    legacyTieParams.value = {
-      tie_center: normalizeLegacyTieSeries(candidate.tie_center, steps),
-      tie_spread: normalizeLegacyTieSeries(candidate.tie_spread, steps),
-    }
-  }
+  legacyTieParams.value = hydrated.legacyTieParams
 
   suppressGenWatch.value = true
-  genSteps.value = steps
-
-  genRows.value = genRowMetas.map((meta) => {
-    const rawVal = getCandidateParam(meta.key)
-    const arr = normalizeGenerationArray(rawVal).map((v: any) => (
-      meta.key === 'future_bpm'
-        ? normalizeGenerationBpm(v)
-        : normalizeGenerationNumber(v, meta.isInt ? meta.min : 0)
-    ))
-    const defaults = meta.defaultFactory(steps)
-    const data: number[] = []
-    for (let i = 0; i < steps; i++) {
-      let v = arr[i]
-      if (v == null) {
-        v = (arr.length > 0 ? arr[arr.length - 1] : defaults[i]) ?? 0
-      }
-      if (meta.key === 'tie_value_target' || meta.key === 'tie_value_radius') {
-        v = Math.round(Number(v) * 2) / 2
-      }
-      if (meta.isInt) v = Math.round(v)
-      else v = Number(Number(v).toFixed(2))
-      if (v < meta.min) v = meta.min
-      if (v > meta.max) v = meta.max
-      data.push(v)
-    }
-
-    return makeGenRowData(meta, data)
-  })
+  genSteps.value = hydrated.steps
+  genRows.value = genRowMetas.map((meta, index) =>
+    makeGenRowData(
+      meta,
+      hydrated.rows[index] ?? meta.defaultFactory(hydrated.steps),
+    )
+  )
 
   await nextTick()
   suppressGenWatch.value = false
