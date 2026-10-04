@@ -91,12 +91,79 @@ function build_stem_requests(time_series, stream_ids, voice_plan, step_durations
   return requests, voice_keys
 end
 
-function render_stems(requests; worker_url::AbstractString=get(ENV, "VOICEVOX_URL", "http://voicevox-worker:9120"))
+function _response_header(response, name::AbstractString, fallback::AbstractString="")
+  wanted = lowercase(String(name))
+  for (key, value) in response.headers
+    lowercase(String(key)) == wanted && return String(value)
+  end
+  return String(fallback)
+end
+
+function _write_binary_stem(response, request; output_dir::AbstractString=tempdir())
+  response.status == 200 ||
+    error("VOICEVOX worker returned HTTP $(response.status): $(String(response.body))")
+
+  content_type = lowercase(_response_header(response, "Content-Type"))
+  startswith(content_type, "audio/wav") ||
+    error("VOICEVOX worker returned unexpected content type: $(content_type)")
+
+  bytes = response.body
+  isempty(bytes) && error("VOICEVOX worker returned an empty binary stem")
+
+  stream_id = Int(request["stream_id"])
+  response_stream_id = _response_header(response, "X-Voicevox-Stream-Id")
+  if !isempty(response_stream_id)
+    parsed = tryparse(Int, response_stream_id)
+    parsed == stream_id ||
+      error("VOICEVOX worker returned stream $(response_stream_id); expected $(stream_id)")
+  end
+
+  path = joinpath(output_dir, "voicevox_stem_$(uuid4()).wav")
+  try
+    open(path, "w") do io
+      write(io, bytes)
+    end
+  catch
+    isfile(path) && rm(path; force=true)
+    rethrow()
+  end
+
+  return Dict(
+    "stream_id" => stream_id,
+    "path" => path,
+    "controls" => get(request, "controls", Any[]),
+    "backend" => _response_header(response, "X-Voicevox-Backend", "voicevox"),
+  )
+end
+
+function render_stems(
+  requests;
+  worker_url::AbstractString=get(ENV, "VOICEVOX_URL", "http://voicevox-worker:9120"),
+  output_dir::AbstractString=tempdir(),
+  post_fn=HTTP.post,
+)
   isempty(requests) && return Any[]
-  response = HTTP.post(rstrip(String(worker_url), '/') * "/render", ["Content-Type" => "application/json"], JSON3.write(Dict("stems" => requests)); readtimeout=600, status_exception=false)
-  response.status == 200 || error("VOICEVOX worker returned HTTP $(response.status): $(String(response.body))")
-  result = _string_dict(JSON3.read(String(response.body)))
-  return _decode_stems(result, requests)
+  stems = Any[]
+  endpoint = rstrip(String(worker_url), '/') * "/render-stem"
+  try
+    for request in requests
+      response = post_fn(
+        endpoint,
+        ["Content-Type" => "application/json"],
+        JSON3.write(Dict("stems" => [request]));
+        readtimeout=600,
+        status_exception=false,
+      )
+      push!(stems, _write_binary_stem(response, request; output_dir=output_dir))
+    end
+    length(stems) == length(requests) ||
+      error("VOICEVOX worker returned $(length(stems)) stems; expected $(length(requests))")
+    @info "VOICEVOX stems rendered" request_count=length(requests) stem_count=length(stems) stem_stream_ids=[stem["stream_id"] for stem in stems]
+    return stems
+  catch
+    cleanup_stems!(stems)
+    rethrow()
+  end
 end
 
 function _decode_stems(result, requests; output_dir::AbstractString=tempdir())
