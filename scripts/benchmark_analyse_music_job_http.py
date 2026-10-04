@@ -1,0 +1,205 @@
+"""Measure MusicAnalyse job compute/serialize/transfer time without CI-running a long score."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+TERMINAL_STATES = {"completed", "failed", "cancelled", "interrupted"}
+
+
+def post_json(base_url: str, path: str, payload: dict, timeout: float = 90.0):
+    request = urllib.request.Request(
+        base_url.rstrip("/") + path,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+            return response.status, raw, json.loads(raw), dict(response.headers.items())
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError:
+            decoded = {"raw": raw.decode("utf-8", errors="replace")}
+        return exc.code, raw, decoded, dict(exc.headers.items())
+
+
+def post_raw(base_url: str, path: str, payload: dict, timeout: float = 90.0):
+    request = urllib.request.Request(
+        base_url.rstrip("/") + path,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, response.read(), dict(response.headers.items())
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(), dict(exc.headers.items())
+
+
+def header(headers: dict[str, str], name: str, default: str = "") -> str:
+    wanted = name.lower()
+    for key, value in headers.items():
+        if key.lower() == wanted:
+            return value
+    return default
+
+
+def cancel_job(base_url: str, job_id: str) -> None:
+    try:
+        post_json(
+            base_url,
+            "/api/web/time_series/analyse_music_job_cancel",
+            {"job_id": job_id},
+            timeout=15,
+        )
+    except Exception:
+        pass
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run one persisted MusicAnalyse job and print compute, serialize, "
+            "result-transfer, result bytes, and peak RSS separately."
+        )
+    )
+    parser.add_argument("musicxml", type=Path, help="MusicXML file to analyse")
+    parser.add_argument(
+        "--base-url",
+        default=os.getenv("ANALYSE_MUSIC_BASE_URL", "http://127.0.0.1:8000"),
+    )
+    parser.add_argument("--poll-interval", type=float, default=1.0)
+    parser.add_argument("--timeout", type=float, default=4 * 60 * 60)
+    parser.add_argument("--request-timeout", type=float, default=120.0)
+    parser.add_argument("--merge-threshold-ratio", type=float, default=0.02)
+    parser.add_argument("--full-cluster-view", action="store_true")
+    parser.add_argument("--quiet", action="store_true")
+    args = parser.parse_args()
+
+    xml_path = args.musicxml.resolve()
+    xml_text = xml_path.read_text(encoding="utf-8")
+    payload = {
+        "analyse_music": {
+            "source_type": "upload",
+            "filename": xml_path.name,
+            "musicxml_text": xml_text,
+            "compact_cluster_view": not args.full_cluster_view,
+            "merge_threshold_ratio": args.merge_threshold_ratio,
+        }
+    }
+
+    wall_started = time.monotonic()
+    status_code, _, started, _ = post_json(
+        args.base_url,
+        "/api/web/time_series/analyse_music_job_start",
+        payload,
+        timeout=args.request_timeout,
+    )
+    if status_code != 200:
+        raise RuntimeError(f"job start failed HTTP {status_code}: {started}")
+
+    job_id = str(started["jobId"])
+    deadline = wall_started + args.timeout
+    last_progress = None
+
+    try:
+        while True:
+            status_code, _, status, _ = post_json(
+                args.base_url,
+                "/api/web/time_series/analyse_music_job_status",
+                {"job_id": job_id},
+                timeout=args.request_timeout,
+            )
+            if status_code != 200:
+                raise RuntimeError(f"status failed HTTP {status_code}: {status}")
+
+            state = str(status.get("status", ""))
+            progress = (
+                state,
+                str(status.get("phase", "")),
+                str(status.get("label", "")),
+                int(status.get("processed") or 0),
+                int(status.get("total") or 0),
+                int(status.get("percent") or 0),
+            )
+            if not args.quiet and progress != last_progress:
+                print(
+                    "progress,"
+                    f"status={progress[0]},phase={progress[1]},label={progress[2]},"
+                    f"processed={progress[3]},total={progress[4]},percent={progress[5]}",
+                    flush=True,
+                )
+                last_progress = progress
+
+            if state in TERMINAL_STATES:
+                break
+            if time.monotonic() >= deadline:
+                cancel_job(args.base_url, job_id)
+                raise TimeoutError(f"MusicAnalyse job timed out after {args.timeout:.1f}s")
+            time.sleep(max(args.poll_interval, 0.05))
+
+        if state != "completed":
+            raise RuntimeError(
+                f"MusicAnalyse job ended as {state}: "
+                f"{status.get('errorCode')} {status.get('errorMessage')}"
+            )
+
+        transfer_started = time.monotonic()
+        result_status, result_raw, result_headers = post_raw(
+            args.base_url,
+            "/api/web/time_series/analyse_music_job_result",
+            {"job_id": job_id},
+            timeout=args.request_timeout,
+        )
+        transfer_s = time.monotonic() - transfer_started
+        if result_status != 200:
+            raise RuntimeError(
+                f"result failed HTTP {result_status}: "
+                f"{result_raw.decode('utf-8', errors='replace')}"
+            )
+
+        result = json.loads(result_raw)
+        wall_s = time.monotonic() - wall_started
+        timing = result.get("timing", {}) if isinstance(result, dict) else {}
+
+        metrics = {
+            "job_id": job_id,
+            "filename": xml_path.name,
+            "step_count": timing.get("stepCount"),
+            "processing_seconds": status.get("processingSeconds"),
+            "serialize_seconds": status.get("serializeSeconds"),
+            "result_bytes_status": status.get("resultBytes"),
+            "peak_rss_bytes": status.get("peakRssBytes"),
+            "result_transfer_seconds": round(transfer_s, 6),
+            "result_response_bytes": len(result_raw),
+            "result_bytes_header": int(
+                header(result_headers, "X-Analysis-Result-Bytes", "0") or 0
+            ),
+            "result_read_ms_header": float(
+                header(result_headers, "X-Analysis-Result-Read-Ms", "0") or 0
+            ),
+            "wall_seconds": round(wall_s, 6),
+            "compact_cluster_view": not args.full_cluster_view,
+            "merge_threshold_ratio": args.merge_threshold_ratio,
+        }
+
+        print("analyse_music_job_benchmark=" + json.dumps(metrics, ensure_ascii=False))
+    except KeyboardInterrupt:
+        cancel_job(args.base_url, job_id)
+        raise
+
+
+if __name__ == "__main__":
+    main()
