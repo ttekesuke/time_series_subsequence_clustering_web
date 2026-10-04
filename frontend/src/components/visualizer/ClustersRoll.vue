@@ -116,7 +116,7 @@ function emitHoverCluster(cluster: { indices: number[]; windowSize: number; id: 
     lastHoverIndices = null
     lastHoverWindowSize = null
     lastHoverId = null
-    emitHoverCluster(null)
+    emit('hover-cluster', null)
     return
   }
 
