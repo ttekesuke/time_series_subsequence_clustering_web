@@ -1,0 +1,48 @@
+name: Find ASAP 2352-step Scores
+
+on:
+  push:
+    branches:
+      - benchmark/find-asap-2352
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Clone ASAP dataset
+        run: git clone --depth 1 https://github.com/fosfrancesco/asap-dataset.git /tmp/asap-dataset
+      - name: Find exact 2352-step real scores
+        run: |
+          julia --project=. scripts/find_asap_step_count.jl /tmp/asap-dataset 2352 \
+            2>&1 | tee /tmp/asap-2352-find.log
+      - name: Save summary
+        if: always()
+        run: |
+          {
+            echo "## ASAP exact 2352-step candidates"
+            echo
+            if [ -f /tmp/asap-2352-find.log ]; then
+              echo '~~~text'
+              grep -E 'asap_2352_(match|summary)=' /tmp/asap-2352-find.log || true
+              echo '~~~'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asap-2352-find-${{ github.run_id }}
+          path: /tmp/asap-2352-find.log
+          if-no-files-found: warn
