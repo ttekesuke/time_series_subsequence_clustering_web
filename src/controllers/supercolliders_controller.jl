@@ -554,6 +554,32 @@ function _render_audio_response(job_id::AbstractString)
   )
 end
 
+function _voice_stem_metrics(voice_stems)::Dict{String,Int}
+  stems = voice_stems isa AbstractVector ? voice_stems : Any[]
+  total_audio_bytes = 0
+  worker_peak_rss_bytes = 0
+  julia_peak_rss_bytes = 0
+
+  for raw_stem in stems
+    stem = _to_string_dict(raw_stem)
+    total_audio_bytes += max(_parse_int(get(stem, "audio_bytes", 0)), 0)
+    worker_peak_rss_bytes = max(
+      worker_peak_rss_bytes,
+      max(_parse_int(get(stem, "worker_peak_rss_bytes", 0)), 0),
+    )
+    julia_peak_rss_bytes = max(
+      julia_peak_rss_bytes,
+      max(_parse_int(get(stem, "julia_peak_rss_bytes", 0)), 0),
+    )
+  end
+
+  return Dict(
+    "voiceAudioBytes" => total_audio_bytes,
+    "voiceWorkerPeakRssBytes" => worker_peak_rss_bytes,
+    "voiceJuliaPeakRssBytes" => julia_peak_rss_bytes,
+  )
+end
+
 function _render_timeout_seconds(render_duration::Real)::Float64
   estimated = float(render_duration) * Config.SC_RENDER_TIMEOUT_DURATION_MULTIPLIER + Config.SC_RENDER_TIMEOUT_EXTRA_SECONDS
   configured_minimum = try
@@ -762,7 +788,8 @@ function render_polyphonic()
     timeout_seconds = _render_timeout_seconds(render_duration)
     sclang_result = _run_sclang_with_timeout(scd_path, timeout_seconds)
     rendered_voice_stem_count = length(voice_stems)
-    @info "Polyphonic SuperCollider render finished" ok=sclang_result.ok exit_code=sclang_result.exit_code voice_stem_count=rendered_voice_stem_count wav_path=wav_path
+    voice_stem_metrics = _voice_stem_metrics(voice_stems)
+    @info "Polyphonic SuperCollider render finished" ok=sclang_result.ok exit_code=sclang_result.exit_code voice_stem_count=rendered_voice_stem_count wav_path=wav_path voice_audio_bytes=voice_stem_metrics["voiceAudioBytes"] voice_worker_peak_rss_bytes=voice_stem_metrics["voiceWorkerPeakRssBytes"] voice_julia_peak_rss_bytes=voice_stem_metrics["voiceJuliaPeakRssBytes"]
     VoicevoxClient.cleanup_stems!(voice_stems)
     empty!(voice_stems)
 
@@ -798,7 +825,10 @@ function render_polyphonic()
       "stepDurations" => step_durations,
       "tailPadSeconds" => tail_pad_seconds,
       "voiceBackend" => voice_backend,
-      "voiceStemCount" => length(voice_requests),
+      "voiceStemCount" => rendered_voice_stem_count,
+      "voiceAudioBytes" => voice_stem_metrics["voiceAudioBytes"],
+      "voiceWorkerPeakRssBytes" => voice_stem_metrics["voiceWorkerPeakRssBytes"],
+      "voiceJuliaPeakRssBytes" => voice_stem_metrics["voiceJuliaPeakRssBytes"],
       "voicePreRollSeconds" => isempty(voice_requests) ? 0.0 : Config.SC_VOICEVOX_BUFFER_PREROLL_SECONDS,
     )
     if return_audio_base64
