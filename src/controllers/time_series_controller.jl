@@ -20,7 +20,7 @@ import ..VoiceTokenGeneration
 import ..MusicAnalysis
 
 const _POLYPHONIC_DIMENSION_CONTRACT_PATH = normpath(joinpath(
-  @__DIR__, "..", "..", "frontend", "src", "contracts", "polyphonic_dimensions.json",
+  @__DIR__, "..", "..", "config", "polyphonic_dimensions.json",
 ))
 const _POLYPHONIC_DIMENSION_CONTRACT = JSON3.read(
   read(_POLYPHONIC_DIMENSION_CONTRACT_PATH, String),
