@@ -33,6 +33,12 @@ const _render_cleanup = Main.TimeseriesClusteringAPI.SupercollidersController
   @test audio_response.status == 200
   @test String(audio_response.body) == "audio"
   @test any(header -> header.first == "Content-Type" && header.second == "audio/wav", audio_response.headers)
+  @test any(header -> header.first == "X-Audio-Bytes" && header.second == "5", audio_response.headers)
+  peak_header = findfirst(header -> header.first == "X-Server-Peak-Rss-Bytes", audio_response.headers)
+  @test peak_header !== nothing
+  if peak_header !== nothing
+    @test parse(Int, audio_response.headers[peak_header].second) >= 0
+  end
 
   active_audio_id, active_audio_scd, active_audio_wav = _render_cleanup._new_render_job()
   write(active_audio_scd, "score")
