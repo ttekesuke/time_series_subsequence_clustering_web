@@ -513,6 +513,22 @@ function _finished_render_wav_path(job_id::AbstractString)
   end
 end
 
+function _supercollider_peak_rss_bytes()::Int
+  status_path = "/proc/self/status"
+  isfile(status_path) || return 0
+  try
+    for line in eachline(status_path)
+      startswith(line, "VmHWM:") || continue
+      fields = split(strip(line))
+      length(fields) >= 2 || return 0
+      kb = tryparse(Int, fields[2])
+      return kb === nothing ? 0 : kb * 1024
+    end
+  catch
+  end
+  return 0
+end
+
 function _render_audio_response(job_id::AbstractString)
   wav_path = _finished_render_wav_path(job_id)
   wav_path === nothing && return HTTP.Response(
@@ -521,13 +537,18 @@ function _render_audio_response(job_id::AbstractString)
     "{\"error\":\"render job audio not found\"}",
   )
   body = read(wav_path)
+  audio_bytes = length(body)
+  peak_rss_bytes = _supercollider_peak_rss_bytes()
+  @info "SuperCollider final WAV response" job_id=String(job_id) audio_bytes=audio_bytes peak_rss_bytes=peak_rss_bytes
   return HTTP.Response(
     200,
     [
       "Content-Type" => "audio/wav",
-      "Content-Length" => string(length(body)),
+      "Content-Length" => string(audio_bytes),
       "Cache-Control" => "no-store",
       "Content-Disposition" => "inline; filename=\"result.wav\"",
+      "X-Audio-Bytes" => string(audio_bytes),
+      "X-Server-Peak-Rss-Bytes" => string(peak_rss_bytes),
     ],
     body,
   )
