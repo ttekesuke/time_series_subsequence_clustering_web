@@ -94,6 +94,7 @@ jobs:
           BENCH_STEPS: ${{ inputs.steps }}
           BENCH_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
         run: |
+          set -euo pipefail
           python3 scripts/benchmark_analyse_music_job_http.py \
             /tmp/repeat-benchmark.musicxml \
             --base-url http://127.0.0.1:19114 \
@@ -107,6 +108,7 @@ jobs:
           BENCH_ASAP_PATH: ${{ inputs.asap_path }}
           BENCH_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
         run: |
+          set -euo pipefail
           python3 scripts/benchmark_analyse_music_job_http.py \
             --asap-path "$BENCH_ASAP_PATH" \
             --base-url http://127.0.0.1:19114 \
