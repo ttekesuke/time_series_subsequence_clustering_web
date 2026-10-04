@@ -1598,7 +1598,7 @@ function update_caches_permanently!(
         phase_timings[:cache_distance_new_full_s] += (time_ns() - started) / 1.0e9
       end
     end
-    return result
+    return result, squared
   end
   function observed_cluster_complexity(node::SpanClusterRef, window_size::Int)
     started = phase_timings === nothing ? 0 : time_ns()
@@ -1693,12 +1693,12 @@ function update_caches_permanently!(
         isfinite(prior_square) &&
         new_prefix_matches_for(cid1, node1) &&
         new_prefix_matches_for(cid2, node2)
-      distance = observed_pair_distance(
+      distance, squared = observed_pair_distance(
         node1, node2, window_size;
         logical_prior_square=prior_square,
         logical_prefix_hit=logical_prefix_hit,
       )
-      current_new_pair_squares[pair_key] = distance * distance
+      current_new_pair_squares[pair_key] = squared
       return distance
     end
 
