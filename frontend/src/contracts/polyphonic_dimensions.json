@@ -1,0 +1,112 @@
+{
+  "area": {
+    "label": "AREA",
+    "min": 0.0,
+    "max": 1.0,
+    "step": 0.01,
+    "is_int": false,
+    "ui_default_use_fixed_value": false,
+    "ui_default_fixed_value": 0.5,
+    "server_default_accept_params": false,
+    "server_default_fixed_value": 0.5
+  },
+  "chord_range": {
+    "label": "CR",
+    "min": 0,
+    "max": 24,
+    "step": 1,
+    "is_int": true,
+    "ui_default_use_fixed_value": false,
+    "ui_default_fixed_value": 0,
+    "server_default_accept_params": false,
+    "server_default_fixed_value": 0
+  },
+  "density": {
+    "label": "DEN",
+    "min": 0.0,
+    "max": 1.0,
+    "step": 0.01,
+    "is_int": false,
+    "ui_default_use_fixed_value": false,
+    "ui_default_fixed_value": 0.0,
+    "server_default_accept_params": false,
+    "server_default_fixed_value": 0.0
+  },
+  "vol": {
+    "label": "VOL",
+    "min": 0.0,
+    "max": 1.0,
+    "step": 0.01,
+    "is_int": false,
+    "ui_default_use_fixed_value": false,
+    "ui_default_fixed_value": 1.0,
+    "server_default_accept_params": true,
+    "server_default_fixed_value": 1.0
+  },
+  "brightness": {
+    "label": "BRI",
+    "min": 0.0,
+    "max": 1.0,
+    "step": 0.01,
+    "is_int": false,
+    "ui_default_use_fixed_value": false,
+    "ui_default_fixed_value": 0.5,
+    "server_default_accept_params": false,
+    "server_default_fixed_value": 0.5
+  },
+  "noise": {
+    "label": "NOI",
+    "min": 0.0,
+    "max": 1.0,
+    "step": 0.01,
+    "is_int": false,
+    "ui_default_use_fixed_value": false,
+    "ui_default_fixed_value": 0.2,
+    "server_default_accept_params": false,
+    "server_default_fixed_value": 0.5
+  },
+  "harmonicity": {
+    "label": "HAR",
+    "min": 0.0,
+    "max": 1.0,
+    "step": 0.01,
+    "is_int": false,
+    "ui_default_use_fixed_value": false,
+    "ui_default_fixed_value": 0.5,
+    "server_default_accept_params": false,
+    "server_default_fixed_value": 0.5
+  },
+  "attack": {
+    "label": "ATK",
+    "min": 0.0,
+    "max": 1.0,
+    "step": 0.01,
+    "is_int": false,
+    "ui_default_use_fixed_value": false,
+    "ui_default_fixed_value": 0.05,
+    "server_default_accept_params": false,
+    "server_default_fixed_value": 0.5
+  },
+  "decay_sustain": {
+    "label": "DEC",
+    "min": 0.0,
+    "max": 1.0,
+    "step": 0.01,
+    "is_int": false,
+    "ui_default_use_fixed_value": false,
+    "ui_default_fixed_value": 0.2,
+    "server_default_accept_params": false,
+    "server_default_fixed_value": 0.5
+  },
+  "release": {
+    "label": "S/R",
+    "min": 0.0,
+    "max": 1.0,
+    "step": 0.01,
+    "is_int": false,
+    "ui_default_use_fixed_value": false,
+    "ui_default_fixed_value": 0.75,
+    "server_default_accept_params": false,
+    "server_default_fixed_value": 0.5
+  }
+}
