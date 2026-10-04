@@ -575,6 +575,17 @@ onMounted(() => {
   }
   if (visualizerBenchmarkEnabled()) {
     ;(window as any).loadMusicAnalyseBenchmarkFixture = loadVisualizerBenchmarkFixture
+    ;(window as any).getMusicAnalyseBenchmarkState = () => ({
+      steps: stepCount.value,
+      mode: analysedViewMode.value,
+      highlightIndices: [...highlightIndices.value],
+      highlightWindowSize: highlightWindowSize.value,
+      scrollLefts: [
+        pianoRollRef.value?.scrollWrapper?.scrollLeft ?? null,
+        ...analysisRollRefs.value.map(roll => roll?.scrollWrapper?.scrollLeft ?? null),
+        bottomScrollRef.value?.scrollLeft ?? null,
+      ],
+    })
     console.info(
       '[visualizer-benchmark] fixture loader enabled: '
       + 'loadMusicAnalyseBenchmarkFixture(2352, 6, "Complexity")',
@@ -589,6 +600,7 @@ onUnmounted(() => {
   if ((window as any).loadMusicAnalyseBenchmarkFixture === loadVisualizerBenchmarkFixture) {
     delete (window as any).loadMusicAnalyseBenchmarkFixture
   }
+  delete (window as any).getMusicAnalyseBenchmarkState
 })
 
 defineExpose({
