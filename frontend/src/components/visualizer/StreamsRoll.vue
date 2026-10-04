@@ -180,11 +180,6 @@ const plotMetrics = () => {
   return { scale, rangeMin, rangeMax, scaledMin, scaledRes, stepsY, slotHeight, barHeight }
 }
 
-const isHighlightedStep = (step: number) =>
-  props.highlightWindowSize > 0 && props.highlightIndices.some(
-    start => step >= start && step < start + props.highlightWindowSize
-  )
-
 const draw = () => {
   if (!canvas.value || !scrollWrapper.value) return
   updateGeometry()
@@ -208,6 +203,23 @@ const draw = () => {
   const values = props.streamValues as StreamCellValue[][]
   const velocities = props.streamVelocities as any[]
   const metrics = plotMetrics()
+
+  const visibleStepCount = Math.max(0, lastStep - firstStep + 1)
+  const highlightedVisibleSteps = new Uint8Array(visibleStepCount)
+  const visibleHighlightStarts: number[] = []
+  if (props.highlightIndices.length > 0 && props.highlightWindowSize > 0) {
+    const windowSize = props.highlightWindowSize
+    for (const start of props.highlightIndices) {
+      const end = start + windowSize - 1
+      if (end < firstStep || start > lastStep) continue
+      visibleHighlightStarts.push(start)
+      const overlapStart = Math.max(firstStep, start)
+      const overlapEnd = Math.min(lastStep, end)
+      for (let step = overlapStart; step <= overlapEnd; step++) {
+        highlightedVisibleSteps[step - firstStep] = 1
+      }
+    }
+  }
 
   ctx.fillStyle = '#f9f9f9'
   ctx.fillRect(0, 0, width, height)
@@ -245,7 +257,7 @@ const draw = () => {
       const xBase = step * stepWidth - left
       const fullBarWidth = Math.max(1, stepWidth - 2)
       const rectX = xBase + 1
-      ctx.fillStyle = isHighlightedStep(step) ? 'red' : baseColor
+      ctx.fillStyle = highlightedVisibleSteps[step - firstStep] ? 'red' : baseColor
       ctx.globalAlpha = alpha
 
       for (const numVal of notes) {
@@ -262,12 +274,12 @@ const draw = () => {
     }
   })
 
-  if (props.highlightIndices.length > 0 && props.highlightWindowSize > 0) {
+  if (visibleHighlightStarts.length > 0 && props.highlightWindowSize > 0) {
     ctx.fillStyle = 'rgba(255, 200, 200, 0.25)'
-    for (const index of props.highlightIndices) {
+    const w = props.highlightWindowSize * stepWidth
+    for (const index of visibleHighlightStarts) {
       const x = index * stepWidth - left
-      const w = props.highlightWindowSize * stepWidth
-      if (x + w >= 0 && x <= width) ctx.fillRect(x, 0, w, height)
+      ctx.fillRect(x, 0, w, height)
     }
   }
 
