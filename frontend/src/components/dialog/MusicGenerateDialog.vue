@@ -227,6 +227,16 @@ import {
   type DimensionPolicyValue,
   type ManagedDimKey,
 } from '../../composables/dimensionPolicy'
+import {
+  generationCandidateParam,
+  generationSeriesLength,
+  legacyParamKeyForCanonical,
+  normalizeGenerationArray,
+  normalizeGenerationBpm,
+  normalizeGenerationBpmSeries,
+  normalizeGenerationNumber,
+  normalizeLegacyTieSeries,
+} from '../../composables/generationPayloadNormalization'
 
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
@@ -544,7 +554,7 @@ const contextRowsForGrid = computed<GridRowData[]>({
   set: (rows: GridRowData[]) => {
     const nextRows = Array.isArray(rows) ? [...rows] : []
     const bpmRow = nextRows.shift()
-    initialContextBpm.value = normalizeBpmSeries(bpmRow?.data, contextSteps.value)
+    initialContextBpm.value = normalizeGenerationBpmSeries(bpmRow?.data, contextSteps.value)
     contextRows.value = nextRows
   }
 })
@@ -655,7 +665,7 @@ const playSoundCheckTone = async () => {
   if (!soundCheckDialog.value) return
 
   const streamIdx = Math.max(0, Math.min(contextStreamCount.value - 1, Number(soundCheckStreamIndex.value) || 0))
-  const bpm = normalizeBpm(soundCheckRows.value[0]?.data?.[0] ?? DEFAULT_BPM)
+  const bpm = normalizeGenerationBpm(soundCheckRows.value[0]?.data?.[0] ?? DEFAULT_BPM)
   const voice = buildSoundCheckVoice(streamIdx)
   soundCheckPlaying.value = true
   let renderJobId = ''
@@ -906,7 +916,7 @@ watch(contextSteps, (len) => {
     if (data.length > len) data.splice(len)
     return { ...row, data }
   })
-  initialContextBpm.value = normalizeBpmSeries(initialContextBpm.value, len)
+  initialContextBpm.value = normalizeGenerationBpmSeries(initialContextBpm.value, len)
 })
 
 // Streams が増減したとき: 7行単位で追加/削除
@@ -1888,14 +1898,6 @@ const canonicalizeGeneratedDimensionMeta = (meta: GenRowMeta) => {
   }
 }
 
-const legacyParamKeyForCanonical = (key: string) => key
-  .replace(/_global_complexity_target$/, '_global')
-  .replace(/_stream_complexity_center$/, '_center')
-  .replace(/_stream_complexity_span$/, '_spread')
-  .replace(/_concordance$/, '_conc')
-  .replace(/_value_target$/, '_target')
-  .replace(/_value_radius$/, '_target_spread')
-
 const complexityParamKeys = (key: string) => key === 'area'
   ? {
       global: 'area_global',
@@ -2082,39 +2084,6 @@ const buildGenParamsFromRows = () => {
   return result
 }
 
-const normalizeNumber = (val: any, fallback: number) => {
-  const num = Number(val)
-  return Number.isFinite(num) ? num : fallback
-}
-
-const normalizeBpm = (val: any) => {
-  const bpm = normalizeNumber(val, DEFAULT_BPM)
-  if (!Number.isFinite(bpm) || bpm < 1) return DEFAULT_BPM
-  return Math.round(bpm)
-}
-
-const normalizeBpmSeries = (val: any, expectedLength: number) => {
-  const source = Array.isArray(val)
-    ? val
-    : (val == null ? [] : [val])
-  const targetLength = Math.max(1, expectedLength)
-  const fallback = source.length > 0 ? source[source.length - 1] : DEFAULT_BPM
-  const out: number[] = []
-
-  for (let i = 0; i < targetLength; i++) {
-    const raw = i < source.length ? source[i] : fallback
-    out.push(normalizeBpm(raw))
-  }
-
-  return out
-}
-
-const normalizeArray = (val: any) => {
-  if (Array.isArray(val)) return val
-  if (val == null) return []
-  return [val]
-}
-
 const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
   if (!Array.isArray(ctxRaw)) return
   const steps = Math.max(1, ctxRaw.length)
@@ -2153,7 +2122,7 @@ const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
           data.push(formatAbsNoteCell(rawVal))
           continue
         }
-        let v = normalizeNumber(rawVal, base)
+        let v = normalizeGenerationNumber(rawVal, base)
         if (key === 'tie') v = Math.round(v * 2) / 2
         const cfg = row.config
         if (cfg) {
@@ -2169,7 +2138,7 @@ const applyInitialContextFromPayload = async (ctxRaw: any, bpmRaw?: any) => {
   }
 
   contextRows.value = rows
-  initialContextBpm.value = normalizeBpmSeries(bpmRaw, steps)
+  initialContextBpm.value = normalizeGenerationBpmSeries(bpmRaw, steps)
   await nextTick()
   suppressContextWatch.value = false
 }
@@ -2181,21 +2150,12 @@ const applyGenParamsFromPayload = async (payload: any) => {
     if (sanitized) voiceInventoryId.value = sanitized
   }
   if (candidate.merge_threshold_ratio != null) {
-    const v = normalizeNumber(candidate.merge_threshold_ratio, mergeThresholdRatio.value)
+    const v = normalizeGenerationNumber(candidate.merge_threshold_ratio, mergeThresholdRatio.value)
     mergeThresholdRatio.value = Math.min(1, Math.max(0, Number(v)))
   }
   applyDimensionPolicyFromPayload(candidate.dimension_policy)
 
-  const getCandidateParam = (key: string) => {
-    if (key === 'future_bpm') return candidate.future_bpm ?? candidate.bpm
-    if (key === 'recency_center') return candidate.recency_center
-    if (key === 'recency_spread') return candidate.recency_spread
-    if (key === 'tie_value_target') return candidate.tie_value_target ?? candidate.tie_rate_target
-    if (key === 'tie_value_radius' && candidate.tie_value_radius == null && candidate.tie_rate_target != null) return 0
-    const canonicalValue = candidate[key]
-    if (canonicalValue != null) return canonicalValue
-    return candidate[legacyParamKeyForCanonical(key)]
-  }
+  const getCandidateParam = (key: string) => generationCandidateParam(candidate, key)
 
   const hasCanonicalTieParams = tieParamKeys.some((key) => candidate[key] != null) || candidate.tie_rate_target != null
   const hasLegacyTieParams = !hasCanonicalTieParams && (
@@ -2205,26 +2165,19 @@ const applyGenParamsFromPayload = async (payload: any) => {
 
   const lengths = genRowMetas.map((meta) => {
     const val = getCandidateParam(meta.key)
-    return Array.isArray(val) ? val.length : (val != null ? 1 : 0)
+    return generationSeriesLength(val)
   })
   if (hasLegacyTieParams) {
     for (const val of [candidate.tie_center, candidate.tie_spread]) {
-      lengths.push(Array.isArray(val) ? val.length : (val != null ? 1 : 0))
+      lengths.push(generationSeriesLength(val))
     }
   }
   const steps = Math.max(1, ...lengths)
 
   if (hasLegacyTieParams) {
-    const normalizeLegacyTieSeries = (raw: any) => {
-      const source = normalizeArray(raw)
-      const fallback = source.length > 0 ? source[source.length - 1] : 0
-      return Array.from({ length: steps }, (_, idx) => (
-        Math.max(0, Math.min(1, normalizeNumber(source[idx] ?? fallback, 0)))
-      ))
-    }
     legacyTieParams.value = {
-      tie_center: normalizeLegacyTieSeries(candidate.tie_center),
-      tie_spread: normalizeLegacyTieSeries(candidate.tie_spread),
+      tie_center: normalizeLegacyTieSeries(candidate.tie_center, steps),
+      tie_spread: normalizeLegacyTieSeries(candidate.tie_spread, steps),
     }
   }
 
@@ -2233,10 +2186,10 @@ const applyGenParamsFromPayload = async (payload: any) => {
 
   genRows.value = genRowMetas.map((meta) => {
     const rawVal = getCandidateParam(meta.key)
-    const arr = normalizeArray(rawVal).map((v: any) => (
+    const arr = normalizeGenerationArray(rawVal).map((v: any) => (
       meta.key === 'future_bpm'
-        ? normalizeBpm(v)
-        : normalizeNumber(v, meta.isInt ? meta.min : 0)
+        ? normalizeGenerationBpm(v)
+        : normalizeGenerationNumber(v, meta.isInt ? meta.min : 0)
     ))
     const defaults = meta.defaultFactory(steps)
     const data: number[] = []
@@ -2265,7 +2218,7 @@ const applyGenParamsFromPayload = async (payload: any) => {
 const buildParamsPayload = (jobIdOverride?: string) => {
   const genParams = buildGenParamsFromRows()
   const initialContext = buildInitialContext()
-  const futureBpm = normalizeBpmSeries(genParams.future_bpm, genSteps.value)
+  const futureBpm = normalizeGenerationBpmSeries(genParams.future_bpm, genSteps.value)
   const jobId = jobIdOverride || uuidv4()
 
   const payload: any = {
@@ -2284,7 +2237,7 @@ const buildParamsPayload = (jobIdOverride?: string) => {
           return { streamId: streamIdx + 1, mode: text ? 'voice' : 'synth', text: text || null }
         })
       ),
-      initial_context_bpm: normalizeBpmSeries(initialContextBpm.value, contextSteps.value),
+      initial_context_bpm: normalizeGenerationBpmSeries(initialContextBpm.value, contextSteps.value),
       dimension_policy: buildDimensionPolicyPayload(),
       merge_threshold_ratio: mergeThresholdRatio.value,
       compact_cluster_view: true,
