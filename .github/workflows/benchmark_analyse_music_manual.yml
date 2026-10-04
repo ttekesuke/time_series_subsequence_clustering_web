@@ -54,8 +54,14 @@ jobs:
 
       - name: Generate repeat fixture
         if: ${{ inputs.mode == 'repeat' }}
+        env:
+          BENCH_STEPS: ${{ inputs.steps }}
+          BENCH_GRID_DENOMINATOR: ${{ inputs.grid_denominator }}
         run: |
-          python3 scripts/generate_analyse_music_repeat_fixture.py             /tmp/repeat-benchmark.musicxml             --steps "${{ inputs.steps }}"             --grid-denominator "${{ inputs.grid_denominator }}"
+          python3 scripts/generate_analyse_music_repeat_fixture.py \
+            /tmp/repeat-benchmark.musicxml \
+            --steps "$BENCH_STEPS" \
+            --grid-denominator "$BENCH_GRID_DENOMINATOR"
 
       - name: Start Genie
         run: |
@@ -84,22 +90,39 @@ jobs:
 
       - name: Run repeat benchmark
         if: ${{ inputs.mode == 'repeat' }}
+        env:
+          BENCH_STEPS: ${{ inputs.steps }}
+          BENCH_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
         run: |
-          python3 scripts/benchmark_analyse_music_job_http.py             /tmp/repeat-benchmark.musicxml             --base-url http://127.0.0.1:19114             --expected-steps "${{ inputs.steps }}"             --timeout "${{ inputs.timeout_seconds }}"             2>&1 | tee /tmp/analyse-music-benchmark.log
+          python3 scripts/benchmark_analyse_music_job_http.py \
+            /tmp/repeat-benchmark.musicxml \
+            --base-url http://127.0.0.1:19114 \
+            --expected-steps "$BENCH_STEPS" \
+            --timeout "$BENCH_TIMEOUT_SECONDS" \
+            2>&1 | tee /tmp/analyse-music-benchmark.log
 
       - name: Run ASAP benchmark
         if: ${{ inputs.mode == 'asap' }}
+        env:
+          BENCH_ASAP_PATH: ${{ inputs.asap_path }}
+          BENCH_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
         run: |
-          python3 scripts/benchmark_analyse_music_job_http.py             --asap-path "${{ inputs.asap_path }}"             --base-url http://127.0.0.1:19114             --timeout "${{ inputs.timeout_seconds }}"             2>&1 | tee /tmp/analyse-music-benchmark.log
+          python3 scripts/benchmark_analyse_music_job_http.py \
+            --asap-path "$BENCH_ASAP_PATH" \
+            --base-url http://127.0.0.1:19114 \
+            --timeout "$BENCH_TIMEOUT_SECONDS" \
+            2>&1 | tee /tmp/analyse-music-benchmark.log
 
       - name: Save benchmark summary
         if: always()
+        env:
+          BENCH_MODE: ${{ inputs.mode }}
         run: |
           {
             echo "## MusicAnalyse manual benchmark"
             echo
-            echo "- mode: \`${{ inputs.mode }}\`"
-            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- mode: \`$BENCH_MODE\`"
+            echo "- commit: \`$GITHUB_SHA\`"
             echo
             if [ -f /tmp/analyse-music-benchmark.log ]; then
               echo '~~~text'

@@ -99,7 +99,7 @@ def main() -> None:
         parser.error("Specify exactly one of local musicxml or --asap-path")
 
     if args.asap_path:
-        asap_path = str(args.asap_path).replace("\\\\", "/").strip("/")
+        asap_path = str(args.asap_path).replace("\\", "/").strip("/")
         parts = [part for part in asap_path.split("/") if part]
         composer = args.asap_composer or (parts[0] if parts else "")
         folder = args.asap_folder or "/".join(parts[:-1])

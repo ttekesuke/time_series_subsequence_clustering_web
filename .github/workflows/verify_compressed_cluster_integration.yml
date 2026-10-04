@@ -68,6 +68,25 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: Check benchmark helper scripts
+        run: |
+          python3 -m py_compile \
+            scripts/benchmark_analyse_music_job_http.py \
+            scripts/generate_analyse_music_repeat_fixture.py \
+            scripts/benchmark_render_audio_http.py
+          python3 scripts/generate_analyse_music_repeat_fixture.py \
+            /tmp/repeat-fixture-smoke.musicxml \
+            --steps 96 \
+            --grid-denominator 8
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse('/tmp/repeat-fixture-smoke.musicxml').getroot()
+          notes = root.findall('.//note')
+          divisions = root.findtext('.//divisions')
+          assert len(notes) == 96, len(notes)
+          assert divisions == '8', divisions
+          print('benchmark helper smoke OK: notes=96 divisions=8')
+          PY
       - name: Run VOICEVOX worker HTTP tests
         run: python3 -m unittest discover -s voicevox_worker -p 'test_*.py'
 

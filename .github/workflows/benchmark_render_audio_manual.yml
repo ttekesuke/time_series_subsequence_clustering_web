@@ -115,28 +115,38 @@ jobs:
 
       - name: Run render benchmark
         shell: bash
+        env:
+          BENCH_MODE: ${{ inputs.mode }}
+          BENCH_STEPS: ${{ inputs.steps }}
+          BENCH_BPM: ${{ inputs.bpm }}
+          BENCH_TEXT: ${{ inputs.text }}
+          BENCH_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
         run: |
           set -euo pipefail
           python3 scripts/benchmark_render_audio_http.py \
             --base-url http://127.0.0.1:${GENIE_PORT} \
-            --mode "${{ inputs.mode }}" \
-            --steps "${{ inputs.steps }}" \
-            --bpm "${{ inputs.bpm }}" \
-            --text "${{ inputs.text }}" \
-            --timeout "${{ inputs.timeout_seconds }}" \
+            --mode "$BENCH_MODE" \
+            --steps "$BENCH_STEPS" \
+            --bpm "$BENCH_BPM" \
+            --text "$BENCH_TEXT" \
+            --timeout "$BENCH_TIMEOUT_SECONDS" \
             2>&1 | tee /tmp/render-audio-benchmark.log
 
       - name: Save benchmark summary
         if: always()
         shell: bash
+        env:
+          BENCH_MODE: ${{ inputs.mode }}
+          BENCH_STEPS: ${{ inputs.steps }}
+          BENCH_BPM: ${{ inputs.bpm }}
         run: |
           {
             echo "## Render audio manual benchmark"
             echo
-            echo "- mode: `${{ inputs.mode }}`"
-            echo "- steps: `${{ inputs.steps }}`"
-            echo "- bpm: `${{ inputs.bpm }}`"
-            echo "- commit: `${GITHUB_SHA}`"
+            echo "- mode: \`$BENCH_MODE\`"
+            echo "- steps: \`$BENCH_STEPS\`"
+            echo "- bpm: \`$BENCH_BPM\`"
+            echo "- commit: \`$GITHUB_SHA\`"
             echo
             if [ -f /tmp/render-audio-benchmark.log ]; then
               echo '~~~text'
