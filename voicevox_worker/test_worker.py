@@ -18,7 +18,7 @@ def stem(stream_id=1):
 
 
 class WorkerHttpTests(unittest.TestCase):
-    def post(self, body, path="/render"):
+    def post_raw(self, body, path="/render"):
         data = json.dumps(body).encode("utf-8")
         handler = object.__new__(worker.Handler)
         handler.path = path
@@ -29,7 +29,19 @@ class WorkerHttpTests(unittest.TestCase):
         handler.send_header = mock.Mock()
         handler.end_headers = mock.Mock()
         handler.do_POST()
-        return handler.send_response.call_args.args[0], json.loads(handler.wfile.getvalue())
+        headers = {
+            call.args[0]: call.args[1]
+            for call in handler.send_header.call_args_list
+        }
+        return (
+            handler.send_response.call_args.args[0],
+            handler.wfile.getvalue(),
+            headers,
+        )
+
+    def post(self, body, path="/render"):
+        status, raw, _ = self.post_raw(body, path)
+        return status, json.loads(raw)
 
     def test_request_validation(self):
         for invalid in ({}, {"stems": []}, {"stems": [stem() | {"start_time": -1}]},
@@ -39,6 +51,25 @@ class WorkerHttpTests(unittest.TestCase):
                 self.assertEqual(status, 400)
                 self.assertIn("error", body)
         self.assertEqual(self.post({"stems": [stem()]}, "/missing")[0], 404)
+
+    def test_binary_single_stem_endpoint(self):
+        payload = {"stems": [stem(7)]}
+        with mock.patch.object(
+            worker, "_render_stem", return_value=(b"RIFF-WAVE", "fake-binary")
+        ) as render:
+            status, raw, headers = self.post_raw(payload, "/render-stem")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(raw, b"RIFF-WAVE")
+        self.assertEqual(headers["Content-Type"], "audio/wav")
+        self.assertEqual(headers["X-Voicevox-Stream-Id"], "7")
+        self.assertEqual(headers["X-Voicevox-Backend"], "fake-binary")
+        self.assertEqual(render.call_count, 1)
+
+        status, body = self.post(
+            {"stems": [stem(1), stem(2)]}, "/render-stem")
+        self.assertEqual(status, 400)
+        self.assertIn("exactly one stem", body["error"])
 
     def test_success_and_second_stem_failure_never_return_partial_audio(self):
         payload = {"stems": [stem(1), stem(2)]}

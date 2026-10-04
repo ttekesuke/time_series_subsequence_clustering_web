@@ -1,5 +1,6 @@
 using Test
 using Base64
+using HTTP
 using Main.TimeseriesClusteringAPI
 
 const VVC = Main.TimeseriesClusteringAPI.VoicevoxClient
@@ -32,5 +33,75 @@ end
       @test_throws Exception VVC._decode_stems(result, requests; output_dir=output_dir)
       @test isempty(readdir(output_dir))
     end
+  end
+end
+
+
+@testset "VOICEVOX binary stem transfer writes and cleans files" begin
+  requests = [
+    Dict("stream_id" => 1, "controls" => Any[]),
+    Dict("stream_id" => 2, "controls" => Any[]),
+  ]
+
+  mktempdir() do output_dir
+    calls = Ref(0)
+    seen_urls = String[]
+    success_post = function (url, headers, body; kwargs...)
+      calls[] += 1
+      push!(seen_urls, String(url))
+      stream_id = calls[]
+      return HTTP.Response(
+        200,
+        [
+          "Content-Type" => "audio/wav",
+          "X-Voicevox-Stream-Id" => string(stream_id),
+          "X-Voicevox-Backend" => "fake-binary",
+        ],
+        Vector{UInt8}(codeunits(stream_id == 1 ? "RIFF" : "WAVE")),
+      )
+    end
+
+    stems = VVC.render_stems(
+      requests;
+      worker_url="http://voicevox.test",
+      output_dir=output_dir,
+      post_fn=success_post,
+    )
+    @test length(stems) == 2
+    @test all(endswith(url, "/render-stem") for url in seen_urls)
+    @test read(stems[1]["path"], String) == "RIFF"
+    @test read(stems[2]["path"], String) == "WAVE"
+    @test all(stem["backend"] == "fake-binary" for stem in stems)
+    VVC.cleanup_stems!(stems)
+    @test isempty(readdir(output_dir))
+
+    calls[] = 0
+    failing_post = function (url, headers, body; kwargs...)
+      calls[] += 1
+      if calls[] == 1
+        return HTTP.Response(
+          200,
+          [
+            "Content-Type" => "audio/wav",
+            "X-Voicevox-Stream-Id" => "1",
+            "X-Voicevox-Backend" => "fake-binary",
+          ],
+          Vector{UInt8}(codeunits("RIFF")),
+        )
+      end
+      return HTTP.Response(
+        500,
+        ["Content-Type" => "application/json"],
+        Vector{UInt8}(codeunits("{\"error\":\"engine failed\"}")),
+      )
+    end
+
+    @test_throws Exception VVC.render_stems(
+      requests;
+      worker_url="http://voicevox.test",
+      output_dir=output_dir,
+      post_fn=failing_post,
+    )
+    @test isempty(readdir(output_dir))
   end
 end
