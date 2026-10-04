@@ -13,6 +13,10 @@ responsibilities are being moved to focused source files incrementally.
   - persistent MusicAnalyse job registry;
   - job metadata/result file lifecycle;
   - progress, cancellation, restart recovery and result response handling.
+- `src/controllers/time_series/generate_polyphonic_validation.jl`
+  - generate_polyphonic finite-number and shape validation;
+  - configured resource limits;
+  - run-local evaluation-budget accounting.
 
 The job file is included **inside the `TimeSeriesController` module**. This is a
 physical responsibility split only: function names, module globals, routes and
