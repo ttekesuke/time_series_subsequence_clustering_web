@@ -1,0 +1,143 @@
+name: Legacy Render Baseline Benchmark
+
+on:
+  push:
+    branches:
+      - benchmark/render-baseline-97566aa
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GENIE_ENV: prod
+      GENIE_HOST: 127.0.0.1
+      GENIE_PORT: "19116"
+      HOST: 127.0.0.1
+      PORT: "19116"
+      JULIA_NUM_THREADS: "auto"
+      VOICEVOX_ENABLED: "true"
+      VOICEVOX_URL: "http://127.0.0.1:9120"
+      SC_RENDER_TIMEOUT_SECONDS: "3600"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+      - uses: julia-actions/cache@v2
+
+      - name: Instantiate
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Install SuperCollider
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y supercollider
+
+      - name: Start VOICEVOX services
+        shell: bash
+        run: |
+          set -euxo pipefail
+          docker run -d --name voicevox-engine -p 50021:50021 \
+            voicevox/voicevox_engine:cpu-ubuntu20.04-latest
+          docker build -t local-voicevox-worker -f voicevox_worker/Dockerfile .
+          docker run -d --name voicevox-worker --network host \
+            -e VOICEVOX_ENGINE_URL=http://127.0.0.1:50021 \
+            -e VOICEVOX_SPEAKER=2 \
+            -e VOICEVOX_RENDER_MODE=sing \
+            -e VOICEVOX_SINGING_TEACHER=6000 \
+            -e VOICEVOX_SINGER=3003 \
+            -e VOICEVOX_WORKER_PORT=9120 \
+            local-voicevox-worker
+          for i in $(seq 1 180); do
+            if curl -fsS http://127.0.0.1:9120/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:9120/health >/dev/null
+
+      - name: Start Genie
+        shell: bash
+        run: |
+          set -euxo pipefail
+          julia --project=. scripts/start_server.jl > /tmp/legacy-server.log 2>&1 &
+          echo $! > /tmp/legacy-server.pid
+          for i in $(seq 1 600); do
+            if ! kill -0 "$(cat /tmp/legacy-server.pid)" 2>/dev/null; then
+              tail -n 300 /tmp/legacy-server.log || true
+              exit 1
+            fi
+            if curl -fsS http://127.0.0.1:${GENIE_PORT}/api/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:${GENIE_PORT}/api/health >/dev/null
+
+      - name: Run legacy render benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/benchmark_render_audio_legacy_http.py \
+            --base-url http://127.0.0.1:${GENIE_PORT} \
+            --steps 500 \
+            --bpm 240 \
+            --text "あ" \
+            --timeout 3600 \
+            2>&1 | tee /tmp/legacy-render-benchmark.log
+
+          server_pid="$(cat /tmp/legacy-server.pid)"
+          server_peak_kb="$(awk '/^VmHWM:/ {print $2}' /proc/${server_pid}/status)"
+          worker_peak_kb="$(docker exec voicevox-worker sh -c "awk '/^VmHWM:/ {print \$2}' /proc/1/status")"
+          worker_bytes="$(docker logs voicevox-worker 2>&1 | sed -n 's/.*render complete bytes=\[\([0-9][0-9]*\)\].*/\1/p' | tail -n 1)"
+          echo "legacy_server_peak_rss_bytes=$((server_peak_kb * 1024))" | tee -a /tmp/legacy-render-benchmark.log
+          echo "legacy_worker_peak_rss_bytes=$((worker_peak_kb * 1024))" | tee -a /tmp/legacy-render-benchmark.log
+          echo "legacy_voice_audio_bytes=${worker_bytes:-0}" | tee -a /tmp/legacy-render-benchmark.log
+
+      - name: Save summary
+        if: always()
+        run: |
+          {
+            echo "## Legacy render baseline benchmark"
+            echo
+            echo "- baseline: `97566aabf99503323711b8469b9cf328fe7c73f0`"
+            echo "- steps: `500`"
+            echo "- bpm: `240`"
+            echo
+            if [ -f /tmp/legacy-render-benchmark.log ]; then
+              echo '~~~text'
+              cat /tmp/legacy-render-benchmark.log
+              echo '~~~'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect logs
+        if: always()
+        run: |
+          docker logs voicevox-worker > /tmp/legacy-voicevox-worker.log 2>&1 || true
+          docker logs voicevox-engine > /tmp/legacy-voicevox-engine.log 2>&1 || true
+
+      - name: Stop services
+        if: always()
+        run: |
+          if [ -f /tmp/legacy-server.pid ]; then
+            kill "$(cat /tmp/legacy-server.pid)" 2>/dev/null || true
+          fi
+          docker rm -f voicevox-worker voicevox-engine >/dev/null 2>&1 || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-render-baseline-${{ github.run_id }}
+          path: |
+            /tmp/legacy-render-benchmark.log
+            /tmp/legacy-server.log
+            /tmp/legacy-voicevox-worker.log
+            /tmp/legacy-voicevox-engine.log
+          if-no-files-found: warn
