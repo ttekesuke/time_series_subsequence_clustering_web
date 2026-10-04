@@ -25,6 +25,20 @@ MAX_BODY_BYTES = int(os.getenv("VOICEVOX_MAX_BODY_BYTES", str(32 * 1024 * 1024))
 DEFAULT_FRAME_RATE = 93.75
 _frame_rate: float | None = None
 
+def _peak_rss_bytes() -> int:
+    """Best-effort process peak RSS on Linux; 0 when unavailable."""
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as status:
+            for line in status:
+                if line.startswith("VmHWM:"):
+                    fields = line.split()
+                    if len(fields) >= 2:
+                        return int(fields[1]) * 1024
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
 
 def _validate_request(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, dict) or not isinstance(raw.get("stems"), list):
@@ -192,6 +206,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Voicevox-Stream-Id", str(stream_id))
         self.send_header("X-Voicevox-Backend", backend)
+        self.send_header("X-Voicevox-Audio-Bytes", str(len(audio)))
+        self.send_header("X-Voicevox-Peak-Rss-Bytes", str(_peak_rss_bytes()))
         self.end_headers()
         self.wfile.write(audio)
 
@@ -222,7 +238,7 @@ class Handler(BaseHTTPRequestHandler):
                     stem["segments"], stem["controls"], stem["start_time"])
                 print(
                     f"[voicevox-worker] render-stem complete stream={stem['stream_id']} "
-                    f"bytes={len(audio)}",
+                    f"bytes={len(audio)} peak_rss_bytes={_peak_rss_bytes()}",
                     flush=True,
                 )
                 self._wav(audio, stream_id=stem["stream_id"], backend=backend)
