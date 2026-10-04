@@ -223,8 +223,13 @@ export const buildGeneratePolyphonicPayload = ({
   }
 
   if (voicevoxEnabled) {
-    generatePolyphonic.voice_stream_counts = genParams.voice_stream_counts.map(
-      (value: number, index: number) => Math.min(value, genParams.stream_counts[index] ?? value),
+    const voiceStreamCounts = genParams.voice_stream_counts
+    const streamCounts = genParams.stream_counts
+    if (!voiceStreamCounts || !streamCounts) {
+      throw new Error('VOICEVOX payload requires voice_stream_counts and stream_counts')
+    }
+    generatePolyphonic.voice_stream_counts = voiceStreamCounts.map(
+      (value: number, index: number) => Math.min(value, streamCounts[index] ?? value),
     )
     generatePolyphonic.voice_inventory_id = voiceInventoryId || 'ja_voicevox_all'
     generatePolyphonic.voice_token_global_complexity_target = genParams.voice_token_global_complexity_target
