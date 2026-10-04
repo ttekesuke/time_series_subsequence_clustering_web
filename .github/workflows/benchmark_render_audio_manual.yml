@@ -1,36 +1,9 @@
 name: Render Audio Manual Benchmark
 
 on:
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: Render mode
-        required: true
-        default: voice
-        type: choice
-        options:
-          - voice
-          - synth
-      steps:
-        description: Number of deterministic render steps
-        required: true
-        default: "500"
-        type: string
-      bpm:
-        description: Constant BPM
-        required: true
-        default: "240"
-        type: string
-      text:
-        description: VOICEVOX lyric per step
-        required: false
-        default: あ
-        type: string
-      timeout_seconds:
-        description: Render/request timeout in seconds
-        required: true
-        default: "3600"
-        type: string
+  push:
+    branches:
+      - benchmark/render-final
 
 jobs:
   benchmark:
@@ -116,11 +89,11 @@ jobs:
       - name: Run render benchmark
         shell: bash
         env:
-          BENCH_MODE: ${{ inputs.mode }}
-          BENCH_STEPS: ${{ inputs.steps }}
-          BENCH_BPM: ${{ inputs.bpm }}
-          BENCH_TEXT: ${{ inputs.text }}
-          BENCH_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+          BENCH_MODE: "voice"
+          BENCH_STEPS: "500"
+          BENCH_BPM: "240"
+          BENCH_TEXT: "あ"
+          BENCH_TIMEOUT_SECONDS: "3600"
         run: |
           set -euo pipefail
           python3 scripts/benchmark_render_audio_http.py \
