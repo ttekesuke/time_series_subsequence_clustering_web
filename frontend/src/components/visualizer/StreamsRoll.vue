@@ -7,11 +7,14 @@
       @scroll="onScroll"
       :style="{ cursor: cursorStyle }"
     >
-      <canvas
-        ref="canvas"
-        @mousemove="onMouseMove"
-        @mouseleave="onMouseLeave"
-      ></canvas>
+      <div class="canvas-space" :style="{ width: contentWidth + 'px', height: viewportHeight + 'px' }">
+        <canvas
+          ref="canvas"
+          :style="{ width: viewportWidth + 'px', height: viewportHeight + 'px' }"
+          @mousemove="onMouseMove"
+          @mouseleave="onMouseLeave"
+        ></canvas>
+      </div>
     </div>
 
     <div
@@ -71,23 +74,29 @@ const container = ref<HTMLElement | null>(null)
 const scrollWrapper = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const tooltipEl = ref<HTMLElement | null>(null)
+const viewportWidth = ref(1)
+const viewportHeight = ref(1)
+const contentWidth = ref(1)
+const effectiveStepWidth = ref(1)
+const maxStepCount = ref(0)
 
-type RectInfo = {
-  x: number
-  y: number
-  width: number
-  height: number
-  step: number
-  value: number
-  streamIndex: number
-}
-
-const rects = ref<RectInfo[]>([])
 const hoverInfo = ref<null | { x: number; y: number; step: number; value: number; streamIndex: number }>(null)
 const cursorStyle = ref<string>('default')
 let resizeObserver: ResizeObserver | null = null
+let rafId: number | null = null
 
-const onScroll = (e: Event) => emit('scroll', e)
+const scheduleDraw = () => {
+  if (rafId !== null) cancelAnimationFrame(rafId)
+  rafId = requestAnimationFrame(() => {
+    rafId = null
+    draw()
+  })
+}
+
+const onScroll = (e: Event) => {
+  emit('scroll', e)
+  scheduleDraw()
+}
 const getStreamLabel = (streamIndex: number) => {
   const label = props.streamLabels?.[streamIndex]
   return (typeof label === 'string' && label.length > 0) ? label : `S${streamIndex + 1}`
@@ -138,203 +147,202 @@ const calcScale = (step: number) => {
   return s
 }
 
-const draw = () => {
-  if (!canvas.value || !scrollWrapper.value) return
-  const ctx = canvas.value.getContext('2d')
-  if (!ctx) return
-
+const updateGeometry = () => {
+  if (!scrollWrapper.value) return
   const values = props.streamValues as StreamCellValue[][]
-  const velocities = props.streamVelocities as any[]
-
-  rects.value = []
-
-  const maxStep = Math.max(0, ...values.map(s => (Array.isArray(s) ? s.length : 0)))
-
+  maxStepCount.value = Math.max(0, ...values.map(stream => Array.isArray(stream) ? stream.length : 0))
   const rawStepWidth = Number(props.stepWidth)
   const safeStepWidth = Number.isFinite(rawStepWidth) && rawStepWidth > 0 ? rawStepWidth : 1
-  const effectiveStepWidth = maxStep > 0
-    ? Math.max(1, Math.min(safeStepWidth, MAX_CANVAS_WIDTH / maxStep))
+  effectiveStepWidth.value = maxStepCount.value > 0
+    ? Math.max(1, Math.min(safeStepWidth, MAX_CANVAS_WIDTH / maxStepCount.value))
     : safeStepWidth
+  viewportWidth.value = Math.max(1, scrollWrapper.value.clientWidth)
+  viewportHeight.value = Math.max(1, scrollWrapper.value.clientHeight || 200)
+  contentWidth.value = Math.max(viewportWidth.value, maxStepCount.value * effectiveStepWidth.value)
+}
 
-  const wrapperWidth = scrollWrapper.value.clientWidth
-  const contentWidth = Math.max(1, maxStep * effectiveStepWidth)
-  const width = Math.max(1, wrapperWidth, contentWidth)
-
-  const baseCanvasHeight = scrollWrapper.value.clientHeight || 200
-
-  // =========================
-  // 小数 valueResolution を安定処理
-  // =========================
+const plotMetrics = () => {
   const valueRes = Number(props.valueResolution)
   const safeValueRes = Number.isFinite(valueRes) && valueRes > 0 ? valueRes : 1
-
   const scale = calcScale(safeValueRes)
-
   const minV = Number(props.minValue)
   const maxV = Number(props.maxValue)
   const minRaw = Number.isFinite(minV) ? minV : 0
   const maxRaw = Number.isFinite(maxV) ? maxV : 0
-
   const rangeMin = Math.min(minRaw, maxRaw)
   const rangeMax = Math.max(minRaw, maxRaw)
-
   const scaledMin = Math.round(rangeMin * scale)
   const scaledMax = Math.round(rangeMax * scale)
   const scaledRes = Math.max(1, Math.round(safeValueRes * scale))
-
-  // Y方向の段数（整数で計算するのでズレない）
   const stepsY = Math.max(1, Math.floor((scaledMax - scaledMin) / scaledRes) + 1)
+  const slotHeight = viewportHeight.value / stepsY
+  const barHeight = Math.min(slotHeight, Math.max(0.5, slotHeight * 0.8))
+  return { scale, rangeMin, rangeMax, scaledMin, scaledRes, stepsY, slotHeight, barHeight }
+}
 
-  const slotHeight = baseCanvasHeight / stepsY
-  const actualPlotHeight = baseCanvasHeight
+const isHighlightedStep = (step: number) =>
+  props.highlightWindowSize > 0 && props.highlightIndices.some(
+    start => step >= start && step < start + props.highlightWindowSize
+  )
 
-  canvas.value.width = width
-  canvas.value.height = actualPlotHeight
-  // ensure layout uses the same size (prevent element baseline/layout shifts)
-  canvas.value.style.width = width + 'px'
-  canvas.value.style.height = actualPlotHeight + 'px'
-  const canvasHeight = actualPlotHeight
+const draw = () => {
+  if (!canvas.value || !scrollWrapper.value) return
+  updateGeometry()
+  const ctx = canvas.value.getContext('2d')
+  if (!ctx) return
 
-  // 背景
+  const ratio = Math.min(window.devicePixelRatio || 1, 2)
+  const width = viewportWidth.value
+  const height = viewportHeight.value
+  canvas.value.width = Math.ceil(width * ratio)
+  canvas.value.height = Math.ceil(height * ratio)
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
+
+  const left = scrollWrapper.value.scrollLeft
+  const stepWidth = effectiveStepWidth.value
+  const firstStep = Math.max(0, Math.floor(left / stepWidth) - 1)
+  const lastStep = Math.min(
+    maxStepCount.value - 1,
+    Math.ceil((left + width) / stepWidth) + 1,
+  )
+  const values = props.streamValues as StreamCellValue[][]
+  const velocities = props.streamVelocities as any[]
+  const metrics = plotMetrics()
+
   ctx.fillStyle = '#f9f9f9'
-  ctx.fillRect(0, 0, width, canvasHeight)
+  ctx.fillRect(0, 0, width, height)
 
-  // グリッド線（縦）
   ctx.strokeStyle = '#eeeeee'
   ctx.lineWidth = 1
-  for (let i = 0; i <= maxStep; i++) {
-    const x = i * effectiveStepWidth
+  for (let step = firstStep; step <= lastStep + 1; step++) {
+    const x = step * stepWidth - left
     ctx.beginPath()
     ctx.moveTo(x, 0)
-    ctx.lineTo(x, canvasHeight)
+    ctx.lineTo(x, height)
     ctx.stroke()
   }
 
-  // 矩形描画（val が number[] の場合は複数描画）
   values.forEach((stream, sIdx) => {
+    if (!Array.isArray(stream)) return
     const hue = (sIdx * 137.5) % 360
-    const baseColor = `hsla(${hue}, 70%, 45%, 1)`
+    const baseColor = \`hsla(\${hue}, 70%, 45%, 1)\`
+    const streamLast = Math.min(lastStep, stream.length - 1)
 
-    stream.forEach((cellVal: StreamCellValue, step: number) => {
-      if (cellVal == null) return
-
-      const notes: number[] = Array.isArray(cellVal)
+    for (let step = firstStep; step <= streamLast; step++) {
+      const cellVal = stream[step]
+      if (cellVal == null) continue
+      const notes = Array.isArray(cellVal)
         ? cellVal.map(n => Number(n)).filter(n => Number.isFinite(n))
         : [Number(cellVal)].filter(n => Number.isFinite(n))
-
-      if (notes.length === 0) return
-
-      const xBase = step * effectiveStepWidth
+      if (notes.length === 0) continue
 
       let alpha = 0.8
       if (velocities[sIdx] && velocities[sIdx][step] !== undefined) {
         const vel = Number(velocities[sIdx][step])
-        if (!isNaN(vel)) alpha = 0.3 + vel * 0.7
+        if (!Number.isNaN(vel)) alpha = 0.3 + vel * 0.7
       }
 
-      const isHighlighted = props.highlightIndices.some(
-        hIdx => step >= hIdx && step < hIdx + props.highlightWindowSize
-      )
-
-      const fullBarWidth = Math.max(1, effectiveStepWidth - 2)
+      const xBase = step * stepWidth - left
+      const fullBarWidth = Math.max(1, stepWidth - 2)
       const rectX = xBase + 1
-      const barHeight = Math.min(slotHeight, Math.max(0.5, slotHeight * 0.8))
+      ctx.fillStyle = isHighlightedStep(step) ? 'red' : baseColor
+      ctx.globalAlpha = alpha
 
-      notes.forEach((numVal) => {
-        // 値をレンジにクランプ
-        const clampedVal = clamp(numVal, rangeMin, rangeMax)
-
-        // ここが重要：整数スケールで index を出す
-        const scaledVal = Math.round(clampedVal * scale)
-        const rawIndex = Math.round((scaledVal - scaledMin) / scaledRes)
-        const normalizedIndex = clamp(rawIndex, 0, stepsY - 1)
-
-        const slotIndex = (stepsY - 1) - normalizedIndex
-        const yCenter = slotIndex * slotHeight + slotHeight / 2
-        const rectY = yCenter - barHeight / 2
-
-        ctx.fillStyle = isHighlighted ? 'red' : baseColor
-        ctx.globalAlpha = alpha
-        ctx.fillRect(rectX, rectY, fullBarWidth, barHeight)
-        ctx.globalAlpha = 1.0
-
-        rects.value.push({
-          x: rectX,
-          y: rectY,
-          width: fullBarWidth,
-          height: barHeight,
-          step,
-          value: numVal,
-          streamIndex: sIdx
-        })
-      })
-    })
+      for (const numVal of notes) {
+        const clampedVal = clamp(numVal, metrics.rangeMin, metrics.rangeMax)
+        const scaledVal = Math.round(clampedVal * metrics.scale)
+        const rawIndex = Math.round((scaledVal - metrics.scaledMin) / metrics.scaledRes)
+        const normalizedIndex = clamp(rawIndex, 0, metrics.stepsY - 1)
+        const slotIndex = (metrics.stepsY - 1) - normalizedIndex
+        const yCenter = slotIndex * metrics.slotHeight + metrics.slotHeight / 2
+        const rectY = yCenter - metrics.barHeight / 2
+        ctx.fillRect(rectX, rectY, fullBarWidth, metrics.barHeight)
+      }
+      ctx.globalAlpha = 1
+    }
   })
 
-  // ハイライト領域
   if (props.highlightIndices.length > 0 && props.highlightWindowSize > 0) {
     ctx.fillStyle = 'rgba(255, 200, 200, 0.25)'
-    props.highlightIndices.forEach(idx => {
-      const x = idx * effectiveStepWidth
-      const w = props.highlightWindowSize * effectiveStepWidth
-      ctx.fillRect(x, 0, w, canvasHeight)
-    })
+    for (const index of props.highlightIndices) {
+      const x = index * stepWidth - left
+      const w = props.highlightWindowSize * stepWidth
+      if (x + w >= 0 && x <= width) ctx.fillRect(x, 0, w, height)
+    }
   }
 
-  // Playback step cursor (discrete per-step)
   if (props.playheadStep >= 0) {
-    const x = props.playheadStep * effectiveStepWidth
-    ctx.save()
-    ctx.beginPath()
-    ctx.moveTo(x, 0)
-    ctx.lineTo(x, canvasHeight)
-    ctx.strokeStyle = 'rgba(20, 20, 20, 0.9)'
-    ctx.lineWidth = 2
-    ctx.stroke()
-    ctx.restore()
+    const x = props.playheadStep * stepWidth - left
+    if (x >= -2 && x <= width + 2) {
+      ctx.save()
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, height)
+      ctx.strokeStyle = 'rgba(20, 20, 20, 0.9)'
+      ctx.lineWidth = 2
+      ctx.stroke()
+      ctx.restore()
+    }
   }
 }
 
-/** マウス移動 → ヒットテスト + ツールチップ位置 */
+/** マウス移動 → step を逆算し、その step の値だけをヒットテスト */
 const onMouseMove = (e: MouseEvent) => {
-  if (!canvas.value || !container.value) return
+  if (!canvas.value || !container.value || !scrollWrapper.value) return
 
   const canvasRect = canvas.value.getBoundingClientRect()
   const containerRect = container.value.getBoundingClientRect()
-
-  const xInCanvas = e.clientX - canvasRect.left
+  const xInViewport = e.clientX - canvasRect.left
   const yInCanvas = e.clientY - canvasRect.top
+  const xInContent = xInViewport + scrollWrapper.value.scrollLeft
+  const stepWidth = effectiveStepWidth.value
+  const step = Math.floor(xInContent / stepWidth)
 
-  const hit = rects.value.find(r =>
-    xInCanvas >= r.x &&
-    xInCanvas <= r.x + r.width &&
-    yInCanvas >= r.y &&
-    yInCanvas <= r.y + r.height
-  )
+  let hit: { step: number; value: number; streamIndex: number } | null = null
+  if (step >= 0 && step < maxStepCount.value) {
+    const metrics = plotMetrics()
+    const values = props.streamValues as StreamCellValue[][]
+    const withinBarX = xInContent - step * stepWidth
+    if (withinBarX >= 1 && withinBarX <= Math.max(1, stepWidth - 1)) {
+      for (let sIdx = 0; sIdx < values.length && !hit; sIdx++) {
+        const stream = values[sIdx]
+        if (!Array.isArray(stream)) continue
+        const cellVal = stream[step]
+        if (cellVal == null) continue
+        const notes = Array.isArray(cellVal)
+          ? cellVal.map(n => Number(n)).filter(n => Number.isFinite(n))
+          : [Number(cellVal)].filter(n => Number.isFinite(n))
+
+        for (const numVal of notes) {
+          const clampedVal = clamp(numVal, metrics.rangeMin, metrics.rangeMax)
+          const scaledVal = Math.round(clampedVal * metrics.scale)
+          const rawIndex = Math.round((scaledVal - metrics.scaledMin) / metrics.scaledRes)
+          const normalizedIndex = clamp(rawIndex, 0, metrics.stepsY - 1)
+          const slotIndex = (metrics.stepsY - 1) - normalizedIndex
+          const yCenter = slotIndex * metrics.slotHeight + metrics.slotHeight / 2
+          const rectY = yCenter - metrics.barHeight / 2
+          if (yInCanvas >= rectY && yInCanvas <= rectY + metrics.barHeight) {
+            hit = { step, value: numVal, streamIndex: sIdx }
+            break
+          }
+        }
+      }
+    }
+  }
 
   if (hit) {
     cursorStyle.value = 'pointer'
     const baseOffset = 10
     const tooltipHeight = tooltipEl.value?.offsetHeight ?? 24
-
     const mouseXInContainer = e.clientX - containerRect.left
     const mouseYInContainer = e.clientY - containerRect.top
     const canvasBottomInContainer = canvasRect.bottom - containerRect.top
-
-    let tipX = mouseXInContainer + baseOffset
+    const tipX = mouseXInContainer + baseOffset
     let tipY = mouseYInContainer + baseOffset
     if (tipY + tooltipHeight > canvasBottomInContainer) {
-      tipY = mouseYInContainer - tooltipHeight - baseOffset
-      if (tipY < 0) tipY = 0
+      tipY = Math.max(0, mouseYInContainer - tooltipHeight - baseOffset)
     }
-
-    hoverInfo.value = {
-      step: hit.step,
-      value: hit.value,
-      streamIndex: hit.streamIndex,
-      x: tipX,
-      y: tipY
-    }
+    hoverInfo.value = { ...hit, x: tipX, y: tipY }
   } else {
     cursorStyle.value = 'default'
     hoverInfo.value = null
@@ -350,7 +358,7 @@ const scrollToStep = (step: number, windowSize = 1) => {
   if (!scrollWrapper.value) return
   const safeStep = Math.max(0, Number(step) || 0)
   const safeWindow = Math.max(1, Number(windowSize) || 1)
-  const highlightCenter = (safeStep + safeWindow / 2) * props.stepWidth
+  const highlightCenter = (safeStep + safeWindow / 2) * effectiveStepWidth.value
   const nextLeft = highlightCenter - scrollWrapper.value.clientWidth / 2
   const maxLeft = Math.max(0, scrollWrapper.value.scrollWidth - scrollWrapper.value.clientWidth)
   scrollWrapper.value.scrollLeft = clamp(nextLeft, 0, maxLeft)
@@ -361,22 +369,28 @@ watch(
     props.streamValues,
     props.streamVelocities,
     props.highlightIndices,
+    props.highlightWindowSize,
     props.playheadStep,
     props.stepWidth,
     props.minValue,
     props.maxValue,
     props.valueResolution,
-    props.title
+    props.title,
   ],
-  () => { nextTick(draw) },
-  { deep: true }
+  () => { nextTick(() => { updateGeometry(); scheduleDraw() }) },
 )
 
 onMounted(() => {
-  setTimeout(draw, 100)
+  nextTick(() => {
+    updateGeometry()
+    scheduleDraw()
+  })
   if (scrollWrapper.value) {
     resizeObserver = new ResizeObserver(() => {
-      nextTick(draw)
+      nextTick(() => {
+        updateGeometry()
+        scheduleDraw()
+      })
     })
     resizeObserver.observe(scrollWrapper.value)
   }
@@ -386,6 +400,7 @@ onBeforeUnmount(() => {
   stopResize()
   resizeObserver?.disconnect()
   resizeObserver = null
+  if (rafId !== null) cancelAnimationFrame(rafId)
 })
 
 defineExpose({ scrollWrapper, redraw: draw, scrollToStep })
@@ -428,7 +443,13 @@ defineExpose({ scrollWrapper, redraw: draw, scrollToStep })
   scrollbar-width: none;
 }
 
+.canvas-space {
+  position: relative;
+}
 .scroll-wrapper canvas {
+  position: sticky;
+  top: 0;
+  left: 0;
   display: block;
 }
 
