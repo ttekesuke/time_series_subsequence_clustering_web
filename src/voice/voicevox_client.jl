@@ -91,6 +91,22 @@ function build_stem_requests(time_series, stream_ids, voice_plan, step_durations
   return requests, voice_keys
 end
 
+function _process_peak_rss_bytes()::Int
+  status_path = "/proc/self/status"
+  isfile(status_path) || return 0
+  try
+    for line in eachline(status_path)
+      startswith(line, "VmHWM:") || continue
+      fields = split(strip(line))
+      length(fields) >= 2 || return 0
+      kb = tryparse(Int, fields[2])
+      return kb === nothing ? 0 : kb * 1024
+    end
+  catch
+  end
+  return 0
+end
+
 function _response_header(response, name::AbstractString, fallback::AbstractString="")
   wanted = lowercase(String(name))
   for (key, value) in response.headers
@@ -128,11 +144,16 @@ function _write_binary_stem(response, request; output_dir::AbstractString=tempdi
     rethrow()
   end
 
+  audio_bytes_header = tryparse(Int, _response_header(response, "X-Voicevox-Audio-Bytes"))
+  worker_peak_rss = tryparse(Int, _response_header(response, "X-Voicevox-Peak-Rss-Bytes"))
   return Dict(
     "stream_id" => stream_id,
     "path" => path,
     "controls" => get(request, "controls", Any[]),
     "backend" => _response_header(response, "X-Voicevox-Backend", "voicevox"),
+    "audio_bytes" => (audio_bytes_header === nothing ? length(bytes) : audio_bytes_header),
+    "worker_peak_rss_bytes" => (worker_peak_rss === nothing ? 0 : worker_peak_rss),
+    "julia_peak_rss_bytes" => _process_peak_rss_bytes(),
   )
 end
 
@@ -158,7 +179,9 @@ function render_stems(
     end
     length(stems) == length(requests) ||
       error("VOICEVOX worker returned $(length(stems)) stems; expected $(length(requests))")
-    @info "VOICEVOX stems rendered" request_count=length(requests) stem_count=length(stems) stem_stream_ids=[stem["stream_id"] for stem in stems]
+    total_audio_bytes = sum(Int(get(stem, "audio_bytes", 0)) for stem in stems)
+    worker_peak_rss_bytes = isempty(stems) ? 0 : maximum(Int(get(stem, "worker_peak_rss_bytes", 0)) for stem in stems)
+    @info "VOICEVOX stems rendered" request_count=length(requests) stem_count=length(stems) stem_stream_ids=[stem["stream_id"] for stem in stems] total_audio_bytes=total_audio_bytes worker_peak_rss_bytes=worker_peak_rss_bytes julia_peak_rss_bytes=_process_peak_rss_bytes()
     return stems
   catch
     cleanup_stems!(stems)
