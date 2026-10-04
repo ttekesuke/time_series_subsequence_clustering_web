@@ -1,0 +1,100 @@
+name: MusicAnalyse Repeat 2352 Benchmark
+
+on:
+  push:
+    branches:
+      - benchmark/analyse-repeat-2352-retry
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11.6"
+
+      - uses: julia-actions/cache@v2
+
+      - name: Instantiate
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Generate exact repeat fixture
+        run: |
+          python3 scripts/generate_analyse_music_repeat_fixture.py \
+            /tmp/repeat-2352.musicxml \
+            --steps 2352 \
+            --grid-denominator 16
+
+      - name: Start Genie
+        run: |
+          export GENIE_ENV=test
+          export HOST=127.0.0.1
+          export PORT=19114
+          export CLUSTERING_QUERY_ENABLED=false
+          export STARTUP_WARMUP_ENABLED=false
+          nohup julia --project=. scripts/start_server.jl > /tmp/analyse-repeat-server.log 2>&1 &
+          echo $! > /tmp/analyse-repeat-server.pid
+          python3 - <<'PY'
+          import time
+          import urllib.request
+
+          url = "http://127.0.0.1:19114/api/health"
+          deadline = time.monotonic() + 180
+          while time.monotonic() < deadline:
+              try:
+                  with urllib.request.urlopen(url, timeout=2) as response:
+                      if response.status == 200:
+                          raise SystemExit(0)
+              except Exception:
+                  time.sleep(0.5)
+          raise SystemExit("Genie did not become ready within 180 seconds")
+          PY
+
+      - name: Run 2352-step repeat benchmark
+        run: |
+          set -euo pipefail
+          python3 scripts/benchmark_analyse_music_job_http.py \
+            /tmp/repeat-2352.musicxml \
+            --base-url http://127.0.0.1:19114 \
+            --expected-steps 2352 \
+            --timeout 21600 \
+            2>&1 | tee /tmp/analyse-repeat-benchmark.log
+
+      - name: Save summary
+        if: always()
+        run: |
+          {
+            echo "## MusicAnalyse exact repeat 2352 benchmark"
+            echo
+            echo "- commit: `$GITHUB_SHA`"
+            echo
+            if [ -f /tmp/analyse-repeat-benchmark.log ]; then
+              echo '~~~text'
+              grep 'analyse_music_job_benchmark=' /tmp/analyse-repeat-benchmark.log || true
+              echo '~~~'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop Genie
+        if: always()
+        run: |
+          if [ -f /tmp/analyse-repeat-server.pid ]; then
+            kill "$(cat /tmp/analyse-repeat-server.pid)" 2>/dev/null || true
+          fi
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analyse-repeat-2352-${{ github.run_id }}
+          path: |
+            /tmp/analyse-repeat-benchmark.log
+            /tmp/analyse-repeat-server.log
+          if-no-files-found: warn
