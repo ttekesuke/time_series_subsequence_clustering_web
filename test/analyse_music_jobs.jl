@@ -33,6 +33,45 @@ function _wait_job_terminal(id; timeout_s=20.0)
   error("MusicAnalyse job did not finish before timeout")
 end
 
+function _job_long_request(note_count=48)
+  notes = join(
+    [
+      "<note><pitch><step>$(isodd(i) ? "C" : "E")</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice></note>"
+      for i in 1:note_count
+    ],
+  )
+  xml = """
+  <score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes>
+  $(notes)
+  </measure></part></score-partwise>
+  """
+  return Dict{String,Any}(
+    "source_type" => "upload",
+    "filename" => "job-running-cancel.musicxml",
+    "musicxml_text" => xml,
+    "compact_cluster_view" => true,
+  )
+end
+
+function _wait_job_running_progress(id; timeout_s=20.0)
+  deadline = time() + timeout_s
+  while time() < deadline
+    status = _job_tc._analyse_music_job_status(id)
+    state = string(status["status"])
+    phase = string(get(status, "phase", ""))
+    processed = Int(get(status, "processed", 0))
+    if state == "running" && (phase != "preparing" || processed > 0)
+      return status
+    end
+    state in ("completed", "failed", "cancelled", "interrupted") &&
+      error("MusicAnalyse job reached terminal state before running cancellation: $(status)")
+    sleep(0.005)
+  end
+  error("MusicAnalyse job did not report running progress before timeout")
+end
+
 @testset "MusicAnalyse job result matches synchronous result" begin
   old_dir = get(ENV, "ANALYSE_MUSIC_JOB_DIR", nothing)
   root = mktempdir()
@@ -85,6 +124,39 @@ end
     status = _wait_job_terminal(id)
     @test status["status"] == "cancelled"
     @test status["errorCode"] == "cancelled"
+    @test !isfile(_job_tc._analyse_music_job_result_path(id))
+  finally
+    if old_dir === nothing
+      delete!(ENV, "ANALYSE_MUSIC_JOB_DIR")
+    else
+      ENV["ANALYSE_MUSIC_JOB_DIR"] = old_dir
+    end
+    rm(root; recursive=true, force=true)
+  end
+end
+
+
+@testset "MusicAnalyse running job can be cancelled cooperatively" begin
+  old_dir = get(ENV, "ANALYSE_MUSIC_JOB_DIR", nothing)
+  root = mktempdir()
+  ENV["ANALYSE_MUSIC_JOB_DIR"] = root
+  try
+    started = _job_tc._create_analyse_music_job!(_job_long_request())
+    id = string(started["jobId"])
+    running = _wait_job_running_progress(id)
+    @test running["status"] == "running"
+
+    cancelling = _job_tc._update_analyse_music_job!(
+      id;
+      cancelRequested=true,
+      phase="cancelling",
+    )
+    @test cancelling["cancelRequested"] == true
+
+    status = _wait_job_terminal(id)
+    @test status["status"] == "cancelled"
+    @test status["errorCode"] == "cancelled"
+    @test status["completedAt"] !== nothing
     @test !isfile(_job_tc._analyse_music_job_result_path(id))
   finally
     if old_dir === nothing
