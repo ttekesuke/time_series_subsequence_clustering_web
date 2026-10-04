@@ -213,7 +213,7 @@ import { v4 as uuidv4 } from 'uuid'
 import GridContainer from '../grid/GridContainer.vue'
 import Fft from '../audio/Fft.vue'
 import VoiceEmbeddingDialog from './VoiceEmbeddingDialog.vue'
-import polyphonicDimensionContract from '../../contracts/polyphonic_dimensions.json'
+import polyphonicDimensionContract from '../../../../config/polyphonic_dimensions.json'
 
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
