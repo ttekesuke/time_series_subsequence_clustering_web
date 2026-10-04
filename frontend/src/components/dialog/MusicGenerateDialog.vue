@@ -249,6 +249,10 @@ import {
   resolveInitialContextFixedValue,
   strictContextIndexByKey,
 } from '../../composables/initialContext'
+import {
+  renderSoundCheckBlob,
+  submitGeneratePolyphonic,
+} from '../../composables/generationApi'
 
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
@@ -604,35 +608,16 @@ const playSoundCheckTone = async () => {
   const bpm = normalizeGenerationBpm(soundCheckRows.value[0]?.data?.[0] ?? DEFAULT_BPM)
   const voice = buildSoundCheckVoice(streamIdx)
   soundCheckPlaying.value = true
-  let renderJobId = ''
   try {
-    const response = await axios.post('/api/web/supercolliders/render_polyphonic', {
-      time_series: [[voice]],
-      bpm,
-      future_bpm: [bpm],
-      initial_context_bpm: [bpm],
-      tail_pad_seconds: 0.05,
-      return_audio_base64: false
-    })
-    renderJobId = String(response?.data?.render_job_id ?? '')
-
-    if (response?.data?.error) {
-      console.error('Sound check render error:', response.data.error)
+    const result = await renderSoundCheckBlob(voice, bpm)
+    if (result.error) {
+      console.error('Sound check render error:', result.error)
       return
     }
-    if (!renderJobId) throw new Error('Sound check render job ID was not returned.')
-
-    const audioResponse = await axios.post(
-      '/api/web/supercolliders/render_audio',
-      { render_job_id: renderJobId },
-      { responseType: 'blob' },
-    )
-    const blob = audioResponse.data instanceof Blob
-      ? audioResponse.data
-      : new Blob([audioResponse.data], { type: 'audio/wav' })
+    if (!result.blob) throw new Error('Sound check audio was not returned.')
 
     cleanupSoundCheckAudio()
-    soundCheckAudioUrl = URL.createObjectURL(blob)
+    soundCheckAudioUrl = URL.createObjectURL(result.blob)
     const audio = new Audio(soundCheckAudioUrl)
     soundCheckAudioEl.value = audio
     const played = audio.play()
@@ -644,15 +629,6 @@ const playSoundCheckTone = async () => {
   } catch (err) {
     console.error('Sound check request failed:', err)
   } finally {
-    if (renderJobId) {
-      try {
-        await axios.delete('/api/web/supercolliders/cleanup', {
-          data: { cleanup: { render_job_id: renderJobId } }
-        })
-      } catch (err) {
-        console.error('Sound check cleanup failed:', err)
-      }
-    }
     soundCheckPlaying.value = false
   }
 }
@@ -1990,18 +1966,14 @@ const handleGeneratePolyphonic = async () => {
     // This flag controls where the whole job runs. Voice streams are included
     // in the dispatched payload and rendered by the workflow's VOICEVOX worker.
     const dispatchToGithub = runOnGithubActions.value
-    const endpoint = dispatchToGithub
-      ? '/api/web/time_series/dispatch_generate_polyphonic'
-      : '/api/web/time_series/generate_polyphonic'
-
-    const resp = await axios.post(endpoint, payload)
+    const data = await submitGeneratePolyphonic(payload, dispatchToGithub)
 
     if (dispatchToGithub) {
-      emit('dispatched-polyphonic', resp.data)
-      emit('dispatched', resp.data)
+      emit('dispatched-polyphonic', data)
+      emit('dispatched', data)
     } else {
-      emit('generated-polyphonic', resp.data)
-      emit('generated', resp.data)
+      emit('generated-polyphonic', data)
+      emit('generated', data)
     }
 
     open.value = false
