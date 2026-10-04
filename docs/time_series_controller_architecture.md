@@ -11,8 +11,9 @@ module, so existing callers and endpoint names remain unchanged.
 
 | File | Responsibility |
 | --- | --- |
-| `time_series_controller.jl` | Public module shell, shared low-level polyphonic helpers, and the still-large polyphonic generation orchestration. |
+| `time_series_controller.jl` | Public module shell, shared low-level utilities/types, GitHub dispatch, and MusicXML response helpers. |
 | `generate_polyphonic_validation.jl` | `generate_polyphonic` request/resource/evaluation-budget validation. |
+| `polyphonic_generation.jl` | Polyphonic generation parameter handling, candidate evaluation orchestration, stream lifecycle, voice-token planning, cache commits, and response assembly. |
 | `scalar_actions.jl` | Scalar `analyse` and `generate` endpoints. |
 | `generation_scoring.jl` | Metric calibration, predictive/occurrence/structural scoring, dissonance candidate selection, and initial scoring-cache setup. |
 | `similarity_search.jl` | `query_db` orchestration, note/volume query strategy, and octave-invariant matching strategy. |
@@ -70,6 +71,16 @@ For scalar generation:
 ```text
 scalar_actions
   -> generation_scoring
+  -> PolyphonicClusterManager
+```
+
+For polyphonic generation:
+
+```text
+polyphonic_generation
+  -> generate_polyphonic_validation
+  -> generation_scoring
+  -> MultiStreamManager / DissonanceStmManager / VoiceTokenGeneration
   -> PolyphonicClusterManager
 ```
 
