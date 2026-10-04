@@ -213,7 +213,20 @@ import { v4 as uuidv4 } from 'uuid'
 import GridContainer from '../grid/GridContainer.vue'
 import Fft from '../audio/Fft.vue'
 import VoiceEmbeddingDialog from './VoiceEmbeddingDialog.vue'
-import polyphonicDimensionContract from '../../../../config/polyphonic_dimensions.json'
+import {
+  canonicalizeDimensionFixedValueSource,
+  canonicalizeManagedDimKey,
+  clampDimensionFixedValue,
+  coerceBoolean,
+  coerceFiniteNumber,
+  createDefaultDimensionPolicy,
+  managedDimKeys,
+  managedDimPolicyConfigs,
+  resolveManagedDimKey,
+  type DimensionFixedValueSource,
+  type DimensionPolicyValue,
+  type ManagedDimKey,
+} from '../../composables/dimensionPolicy'
 
 /** ========== props / emit / dialog開閉 ========== */
 const props = defineProps({
@@ -311,96 +324,7 @@ type GridRowData = {
   disabled?: boolean;
 }
 
-type ManagedDimKey = keyof typeof polyphonicDimensionContract
-
-type DimensionPolicyConfig = {
-  label: string
-  min: number
-  max: number
-  step: number
-  isInt: boolean
-  defaultUseFixedValue: boolean
-  defaultFixedValue: number
-}
-
-type DimensionFixedValueSource = 'initial_context_last_step' | 'manual_input'
-
-type DimensionPolicyValue = {
-  useFixedValue: boolean
-  fixedValue: number
-  fixedValueSource: DimensionFixedValueSource
-}
-
-const managedDimKeys = Object.keys(polyphonicDimensionContract) as ManagedDimKey[]
-const managedDimPolicyConfigs = Object.fromEntries(
-  managedDimKeys.map((key) => {
-    const contract = polyphonicDimensionContract[key]
-    return [key, {
-      label: contract.label,
-      min: contract.min,
-      max: contract.max,
-      step: contract.step,
-      isInt: contract.is_int,
-      defaultUseFixedValue: contract.ui_default_use_fixed_value,
-      defaultFixedValue: contract.ui_default_fixed_value,
-    }]
-  }),
-) as Record<ManagedDimKey, DimensionPolicyConfig>
-
-const canonicalizeDimensionFixedValueSource = (raw: unknown): DimensionFixedValueSource => {
-  const key = String(raw ?? '').trim().toLowerCase()
-  if (
-    key === 'initial_context_last_step' ||
-    key === 'initial_context' ||
-    key === 'context_last_step' ||
-    key === 'last_step' ||
-    key === 'last-step'
-  ) {
-    return 'initial_context_last_step'
-  }
-  return 'manual_input'
-}
-
-const createDefaultDimensionPolicy = (): Record<ManagedDimKey, DimensionPolicyValue> =>
-  Object.fromEntries(
-    managedDimKeys.map((key) => {
-      const config = managedDimPolicyConfigs[key]
-      return [key, {
-        useFixedValue: config.defaultUseFixedValue,
-        fixedValue: config.defaultFixedValue,
-        fixedValueSource: 'manual_input' as const,
-      }]
-    }),
-  ) as Record<ManagedDimKey, DimensionPolicyValue>
-
 const dimensionPolicy = ref<Record<ManagedDimKey, DimensionPolicyValue>>(createDefaultDimensionPolicy())
-
-const coerceFiniteNumber = (val: unknown, fallback: number) => {
-  const num = Number(val)
-  return isFinite(num) ? num : fallback
-}
-
-const coerceBoolean = (val: unknown, fallback: boolean) => {
-  if (typeof val === 'boolean') return val
-  if (typeof val === 'number') return val !== 0
-  if (typeof val === 'string') {
-    const normalized = val.trim().toLowerCase()
-    if (normalized === 'true') return true
-    if (normalized === 'false') return false
-    if (normalized === '1') return true
-    if (normalized === '0') return false
-  }
-  return fallback
-}
-
-const clampDimensionFixedValue = (key: ManagedDimKey, raw: unknown) => {
-  const config = managedDimPolicyConfigs[key]
-  let value = coerceFiniteNumber(raw, config.defaultFixedValue)
-  if (config.isInt) value = Math.round(value)
-  if (value < config.min) value = config.min
-  if (value > config.max) value = config.max
-  return value
-}
 
 const onDimensionPolicyAcceptChange = (key: ManagedDimKey, e: Event) => {
   const target = e.target as HTMLInputElement
@@ -435,28 +359,6 @@ const onDimensionPolicyFixedValueSourceChange = (key: ManagedDimKey, e: Event) =
     }
   }
 }
-
-const dimensionPolicyAliases: Record<string, ManagedDimKey> = {
-  area: 'area',
-  chord_range: 'chord_range',
-  density: 'density',
-  vol: 'vol',
-  brightness: 'brightness',
-  noise: 'noise',
-  harmonicity: 'harmonicity',
-  attack: 'attack',
-  decay_sustain: 'decay_sustain',
-  release: 'release'
-}
-
-const canonicalizeManagedDimKey = (raw: unknown): ManagedDimKey | null => {
-  const key = String(raw ?? '').trim().toLowerCase()
-  return dimensionPolicyAliases[key] ?? null
-}
-
-const resolveManagedDimKey = (raw: unknown): ManagedDimKey => (
-  canonicalizeManagedDimKey(raw) ?? 'area'
-)
 
 const getDimensionPolicyConfig = (raw: unknown) => {
   const key = resolveManagedDimKey(raw)
