@@ -117,6 +117,7 @@ def main() -> None:
     else:
         xml_path = args.musicxml.resolve()
         xml_text = xml_path.read_text(encoding="utf-8")
+        benchmark_name = xml_path.name
         payload = {
             "analyse_music": {
                 "source_type": "upload",
@@ -126,7 +127,6 @@ def main() -> None:
                 "merge_threshold_ratio": args.merge_threshold_ratio,
             }
         }
-        benchmark_name = xml_path.name
 
     wall_started = time.monotonic()
     status_code, _, started, _ = post_json(
