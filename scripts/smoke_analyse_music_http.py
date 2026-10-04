@@ -7,6 +7,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 
@@ -45,7 +46,8 @@ def main():
     env["CLUSTERING_QUERY_ENABLED"] = "false"
     env["STARTUP_WARMUP_ENABLED"] = "false"
     command = ["julia", "--project=.", "scripts/start_server.jl"]
-    with tempfile.TemporaryFile(mode="w+t") as log:
+    with tempfile.TemporaryDirectory() as job_dir, tempfile.TemporaryFile(mode="w+t") as log:
+        env["ANALYSE_MUSIC_JOB_DIR"] = job_dir
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
         try:
             deadline = time.monotonic() + 180
@@ -107,6 +109,74 @@ def main():
             assert job_status["serializeSeconds"] >= 0
             assert job_status["peakRssBytes"] >= 0
 
+            # Result retrieval failure contracts: unknown job, terminal-but-not-ready,
+            # and completed metadata whose result.json disappeared.
+            unknown_id = str(uuid.uuid4())
+            unknown_status, _, unknown_error = post(
+                "/api/web/time_series/analyse_music_job_result",
+                {"job_id": unknown_id},
+            )
+            assert unknown_status == 422, (unknown_status, unknown_error)
+            assert unknown_error["code"] == "job_not_found", unknown_error
+
+            not_ready_id = str(uuid.uuid4())
+            not_ready_dir = Path(job_dir) / not_ready_id
+            not_ready_dir.mkdir(parents=True, exist_ok=True)
+            (not_ready_dir / "metadata.json").write_text(json.dumps({
+                "jobId": not_ready_id,
+                "status": "failed",
+                "phase": "failed",
+                "label": "fixture",
+                "processed": 0,
+                "total": 1,
+                "percent": 0,
+                "createdAt": "2026-10-04T00:00:00",
+                "startedAt": "2026-10-04T00:00:01",
+                "completedAt": "2026-10-04T00:00:02",
+                "cancelRequested": False,
+                "errorCode": "fixture_failure",
+                "errorMessage": "fixture",
+                "processingSeconds": None,
+                "serializeSeconds": None,
+                "resultBytes": None,
+                "peakRssBytes": 0,
+            }), encoding="utf-8")
+            not_ready_status, _, not_ready_error = post(
+                "/api/web/time_series/analyse_music_job_result",
+                {"job_id": not_ready_id},
+            )
+            assert not_ready_status == 422, (not_ready_status, not_ready_error)
+            assert not_ready_error["code"] == "job_not_ready", not_ready_error
+
+            missing_id = str(uuid.uuid4())
+            missing_dir = Path(job_dir) / missing_id
+            missing_dir.mkdir(parents=True, exist_ok=True)
+            (missing_dir / "metadata.json").write_text(json.dumps({
+                "jobId": missing_id,
+                "status": "completed",
+                "phase": "completed",
+                "label": "result ready",
+                "processed": 1,
+                "total": 1,
+                "percent": 100,
+                "createdAt": "2026-10-04T00:00:00",
+                "startedAt": "2026-10-04T00:00:01",
+                "completedAt": "2026-10-04T00:00:02",
+                "cancelRequested": False,
+                "errorCode": None,
+                "errorMessage": None,
+                "processingSeconds": 0.1,
+                "serializeSeconds": 0.01,
+                "resultBytes": 123,
+                "peakRssBytes": 0,
+            }), encoding="utf-8")
+            missing_status, _, missing_error = post(
+                "/api/web/time_series/analyse_music_job_result",
+                {"job_id": missing_id},
+            )
+            assert missing_status == 422, (missing_status, missing_error)
+            assert missing_error["code"] == "job_result_missing", missing_error
+
             invalid = {"analyse_music": {"source_type": "upload", "filename": "wrong.txt",
                                          "musicxml_text": XML}}
             error_status, _, error = post("/api/web/time_series/analyse_music", invalid)
@@ -114,7 +184,8 @@ def main():
             print(f"analyse_music_http,sha={os.getenv('GITHUB_SHA', 'local')},"
                   f"steps=2,response_bytes={len(raw)},elapsed_s={elapsed:.3f},invalid_status={error_status},"
                   f"job_bytes={len(job_raw)},job_elapsed_s={time.monotonic() - job_started:.3f},"
-                  f"job_serialize_s={job_status['serializeSeconds']},peak_rss_bytes={job_status['peakRssBytes']}")
+                  f"job_serialize_s={job_status['serializeSeconds']},peak_rss_bytes={job_status['peakRssBytes']},"
+                  f"result_failure_codes=job_not_found|job_not_ready|job_result_missing")
         except Exception:
             log.seek(0)
             print(log.read()[-12000:])
