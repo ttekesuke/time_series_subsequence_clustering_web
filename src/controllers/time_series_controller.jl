@@ -19,6 +19,14 @@ import ..DissonanceStmManager
 import ..VoiceTokenGeneration
 import ..MusicAnalysis
 
+const _POLYPHONIC_DIMENSION_CONTRACT_PATH = normpath(joinpath(
+  @__DIR__, "..", "..", "frontend", "src", "contracts", "polyphonic_dimensions.json",
+))
+const _POLYPHONIC_DIMENSION_CONTRACT = JSON3.read(
+  read(_POLYPHONIC_DIMENSION_CONTRACT_PATH, String),
+  Dict{String,Dict{String,Any}},
+)
+
 struct GeneratePolyphonicRequestError <: Exception
   code::String
   message::String
@@ -4899,30 +4907,21 @@ function generate_polyphonic()
 
   function _canonical_dim_key(raw_key)::Union{Nothing,String}
     s = lowercase(strip(string(raw_key)))
-    s in ("area",) && return "area"
-    s in ("chord_range",) && return "chord_range"
-    s in ("density",) && return "density"
-    s in ("vol",) && return "vol"
-    s in ("brightness",) && return "brightness"
-    s in ("noise",) && return "noise"
-    s in ("harmonicity",) && return "harmonicity"
-    s in ("attack",) && return "attack"
-    s in ("decay_sustain",) && return "decay_sustain"
-    s in ("release",) && return "release"
-    return nothing
+    return haskey(_POLYPHONIC_DIMENSION_CONTRACT, s) ? s : nothing
   end
 
   function _normalize_fixed_value_for_dim(key::String, raw)
-    if key == "chord_range"
-      return float(clamp(_parse_int(raw), CHORD_RANGE_MIN, CHORD_RANGE_MAX))
-    elseif key == "area" || key == "density" || key == "vol" || key == "brightness" || key == "noise" || key == "harmonicity" || key == "attack" || key == "decay_sustain" || key == "release"
-      return clamp(_parse_float(raw), 0.0, 1.0)
-    else
-      return _parse_float(raw)
+    contract = get(_POLYPHONIC_DIMENSION_CONTRACT, key, nothing)
+    contract === nothing && return _parse_float(raw)
+    min_value = float(contract["min"])
+    max_value = float(contract["max"])
+    if Bool(contract["is_int"])
+      return float(clamp(_parse_int(raw), Int(round(min_value)), Int(round(max_value))))
     end
+    return clamp(_parse_float(raw), min_value, max_value)
   end
 
-  managed_dims = ["area", "chord_range", "density", "vol", "brightness", "noise", "harmonicity", "attack", "decay_sustain", "release"]
+  managed_dims = collect(keys(_POLYPHONIC_DIMENSION_CONTRACT))
   dim_accept = Dict{String,Bool}()
   dim_fixed = Dict{String,Float64}()
   dim_fixed_source = Dict{String,String}()
@@ -4933,20 +4932,14 @@ function generate_polyphonic()
     return "manual_input"
   end
 
-  # Internal default policy:
-  # - sound/timbre dimensions: disabled by default to reduce clustering/search cost in pitch-focused experiments
-  # - others: enabled
+  # Internal defaults and UI metadata share one JSON contract. UI defaults
+  # remain separate fields so server-only requests preserve their historical policy.
   default_dim_policy = Dict{String,Dict{String,Any}}(
-    "area" => Dict("accept_params" => false,  "fixed_value" => 0.5),
-    "chord_range" => Dict("accept_params" => false, "fixed_value" => 0.0),
-    "density" => Dict("accept_params" => false, "fixed_value" => 0.0),
-    "vol" => Dict("accept_params" => true, "fixed_value" => 1.0),
-    "brightness" => Dict("accept_params" => false, "fixed_value" => 0.5),
-    "noise" => Dict("accept_params" => false, "fixed_value" => 0.5),
-    "harmonicity" => Dict("accept_params" => false, "fixed_value" => 0.5),
-    "attack" => Dict("accept_params" => false, "fixed_value" => 0.5),
-    "decay_sustain" => Dict("accept_params" => false, "fixed_value" => 0.5),
-    "release" => Dict("accept_params" => false, "fixed_value" => 0.5),
+    key => Dict(
+      "accept_params" => Bool(contract["server_default_accept_params"]),
+      "fixed_value" => contract["server_default_fixed_value"],
+    )
+    for (key, contract) in _POLYPHONIC_DIMENSION_CONTRACT
   )
   for key in managed_dims
     d = default_dim_policy[key]
