@@ -99,6 +99,7 @@ services:
 
     volumes:
       - ./frontend:/app
+      - ./config:/config:ro
       - web_node_modules:/app/node_modules
 
     command:
