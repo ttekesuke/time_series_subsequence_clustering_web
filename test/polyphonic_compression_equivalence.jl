@@ -368,6 +368,17 @@ const _compression_equivalence_scenarios = [
     candidates=[Float64[0.05], Float64[0.15]],
   ),
   (
+    name="contextual-global-halves",
+    data=[Float64[x] for x in [0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1]],
+    threshold=0.12,
+    kwargs=(
+      max_set_size=1,
+      scale_mode=:contextual_global_halves,
+      contextual_min_width=1.0,
+    ),
+    candidates=[Float64[0.0], Float64[2.0]],
+  ),
+  (
     name="ordered-vector",
     data=[
       Float64[60,0.5],Float64[62,0.8],Float64[60,0.5],Float64[62,0.8],Float64[60,0.5],Float64[64,0.3],
@@ -447,6 +458,47 @@ const _compression_equivalence_scenarios = [
   end
 end
 
+
+@testset "long child clusters retain a repeated immediate parent" begin
+  # Two exact length-5 prefixes followed by different sixth values. The
+  # length-5 cluster must first contain both starts; extending to length 6 then
+  # legitimately branches into singleton children because the continuations
+  # differ. This is the shape that can look like "6 ·1, 6 ·1" in the
+  # compressed UI even though the logical window-5 parent has two occurrences.
+  data = [Float64[x] for x in [
+    1,2,3,4,5,9,
+    1,2,3,4,5,8,
+    7,7,
+  ]]
+  mgr = _ProdPCM.Manager(
+    data,
+    0.0,
+    2,
+    true;
+    max_set_size=1,
+    scale_mode=:contextual_global_halves,
+    contextual_min_width=1.0,
+  )
+  _ProdPCM.process_data!(mgr)
+
+  rows = _ProdPCM.logical_virtual_nodes(mgr)
+  by_id = Dict(row.cluster_id => row for row in rows)
+  length6 = [row for row in rows if row.window_size == 6]
+  @test !isempty(length6)
+
+  singleton_length6 = [row for row in length6 if length(row.si) == 1]
+  @test length(singleton_length6) >= 2
+  for child in singleton_length6
+    @test child.parent_id !== nothing
+    parent = by_id[child.parent_id]
+    @test parent.window_size == 5
+    @test length(parent.si) >= 2
+  end
+
+  # The physical compressed representation must reconstruct exactly the same
+  # logical ancestry and occurrence sets.
+  @test _ProdPCM.compressed_virtual_nodes(mgr.cluster_spans) == rows
+end
 
 function _count_compressed_spans(spans)
   total = length(spans)
