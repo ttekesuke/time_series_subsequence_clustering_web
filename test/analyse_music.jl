@@ -514,7 +514,7 @@ end
   raw = result["dimensions"]["note"]["analysis"]["global"]["raw"]
   @test Set(keys(axes)) == Set(["prediction", "diversity", "shape", "mass"])
   @test Set(keys(raw)) == Set(["distance", "quantity", "complexity"])
-  for dim in ("chord_range", "density", "tie", "dissonance", "stream_count")
+  for dim in ("area", "vol", "chord_range", "density", "tie", "dissonance", "stream_count")
     @test Set(keys(result["dimensions"][dim])) == Set(["values"])
     @test length(result["dimensions"][dim]["values"]["global"]) == result["timing"]["stepCount"]
   end

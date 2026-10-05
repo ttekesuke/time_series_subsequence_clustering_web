@@ -102,7 +102,7 @@
               :stepWidth="computedStepWidth"
               :minValue="0"
               :maxValue="maxValueForSection(section)"
-              :valueResolution="analysisScope !== 'concordance' && (section.key === 'stream_count' || section.key === 'chord_range') ? 1 : 0.01"
+              :valueResolution="analysisScope !== 'concordance' && (section.key === 'stream_count' || section.key === 'chord_range' || section.key === 'area') ? 1 : 0.01"
               :title="section.title + (analysisScope === 'concordance' ? ' Concordance' : isDirectValueDimension(section.key) ? ' Value' : ' Complexity')"
               resizable
               @resize-height="height => analysisRowHeights[section.key] = height"
@@ -368,7 +368,7 @@ const titleMap: Record<string, string> = {
   stream_count: 'STREAM COUNT',
 }
 const isDirectValueDimension = (key: string) =>
-  ['chord_range', 'density', 'tie', 'dissonance', 'stream_count'].includes(key)
+  ['area', 'vol', 'chord_range', 'density', 'tie', 'dissonance', 'stream_count'].includes(key)
 
 const sections = computed(() => {
   const data = result.value
@@ -415,6 +415,7 @@ const complexityLabels = (section: { key: string }) =>
 
 const maxValueForSection = (section: { key: string; dimension: DimensionResult }) => {
   if (section.key === 'stream_count') return Math.max(result.value?.streams.length ?? 0, 1)
+  if (section.key === 'area' && analysisScope.value !== 'concordance') return 127
   if (section.key !== 'chord_range' || analysisScope.value === 'concordance') return 1
   const values = analysisScope.value === 'global'
     ? section.dimension.values.global
