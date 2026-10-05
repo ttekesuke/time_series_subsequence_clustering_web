@@ -101,6 +101,7 @@ const selectedSpan = computed(() => {
   return key === null ? null : rows.find(row => row.key === key)?.span ?? null
 })
 const summaryHeight = 24
+const labelColumnWidth = 260
 let rows: SpanRow[] = []
 let resizeObserver: ResizeObserver | null = null
 let rafId: number | null = null
@@ -193,6 +194,33 @@ function occurrences(span: CompressedSpan, windowSize: number) {
   const fitLimit = span.fit_limits[offset]
   if (fitLimit === undefined || !Number.isFinite(fitLimit)) return []
   return span.indices.filter(start => start + windowSize <= fitLimit)
+}
+
+function logicalWindowCountLabel(span: CompressedSpan) {
+  const entries: string[] = []
+  for (let windowSize = span.window_min; windowSize <= span.window_max; windowSize++) {
+    entries.push(`${windowSize}·${occurrences(span, windowSize).length}`)
+  }
+  if (entries.length <= 5) return entries.join('  ')
+  return [...entries.slice(0, 2), '…', ...entries.slice(-2)].join('  ')
+}
+
+function immediateParentInfo(span: CompressedSpan) {
+  if (span.parent_index === null) return null
+  const parent = props.compressedData[span.parent_index]
+  if (!parent) return null
+  const windowSize = parent.window_max
+  return {
+    windowSize,
+    count: occurrences(parent, windowSize).length,
+  }
+}
+
+function summaryLabel(row: SpanRow) {
+  const parent = immediateParentInfo(row.span)
+  const warning = parent && parent.count < 2 ? ' ⚠' : ''
+  const parentText = parent ? `  ← parent ${parent.windowSize}·${parent.count}${warning}` : ''
+  return `${row.key === selectedKey.value ? '▾' : '▸'} ${logicalWindowCountLabel(row.span)}${parentText}`
 }
 
 function detailItems(span: CompressedSpan, windowSize: number, y: number): { items: DetailItem[]; height: number } {
@@ -290,10 +318,10 @@ function draw() {
   const labels = labelsCanvas.value
   const labelCtx = labels?.getContext('2d')
   if (labels && labelCtx) {
-    labels.width = Math.ceil(80 * ratio)
+    labels.width = Math.ceil(labelColumnWidth * ratio)
     labels.height = Math.ceil(height * ratio)
     labelCtx.setTransform(ratio, 0, 0, ratio, 0, 0)
-    labelCtx.clearRect(0, 0, 80, height)
+    labelCtx.clearRect(0, 0, labelColumnWidth, height)
   }
 
   const firstRow = firstVisibleRowIndex(top)
@@ -319,12 +347,14 @@ function draw() {
     }
     if (labelCtx) {
       labelCtx.fillStyle = row.key === selectedKey.value ? '#e3f2fd' : '#f5f8fb'
-      labelCtx.fillRect(0, sy, 80, summaryHeight - 2)
-      labelCtx.fillStyle = '#37474f'
+      labelCtx.fillRect(0, sy, labelColumnWidth, summaryHeight - 2)
+      const parent = immediateParentInfo(row.span)
+      labelCtx.fillStyle = parent && parent.count < 2 ? '#c62828' : '#37474f'
       labelCtx.font = '10px sans-serif'
       labelCtx.fillText(
-        `${row.key === selectedKey.value ? '▾' : '▸'} ${row.span.window_min}${row.span.window_max > row.span.window_min ? '–' + row.span.window_max : ''} ·${row.summaryStarts.length}`,
-        Math.min(row.depth * 5, 15) + 2, sy + 15,
+        summaryLabel(row),
+        Math.min(row.depth * 8, 32) + 2, sy + 15,
+        labelColumnWidth - Math.min(row.depth * 8, 32) - 6,
       )
     }
     if (!row.detailHeight) continue
@@ -501,11 +531,11 @@ defineExpose({ scrollWrapper })
 
 <style scoped>
 .roll-container { display: flex; border: 1px solid #ccc; background: white; height: 100%; position: relative; }
-.resize-handle { position: absolute; bottom: 0; left: 80px; right: 0; height: 9px;
+.resize-handle { position: absolute; bottom: 0; left: 260px; right: 0; height: 9px;
   cursor: ns-resize; touch-action: none; z-index: 3;
   background: linear-gradient(to bottom, transparent 3px, #999 4px, transparent 5px); }
 .resize-handle:focus-visible { outline: 2px solid #1976d2; outline-offset: -2px; }
-.label-column { width: 80px; min-width: 80px; position: relative; border-right: 1px solid #eee; overflow: hidden; }
+.label-column { width: 260px; min-width: 260px; position: relative; border-right: 1px solid #eee; overflow: hidden; }
 .label-column canvas { position: absolute; top: 0; left: 0; cursor: pointer; }
 .title-label { position: absolute; top: 0; left: 0; right: 0; height: 21px;
   display: flex; align-items: center; padding: 0 4px; color: #666; font-size: 10px;
