@@ -1105,13 +1105,26 @@ function analyse_music_payload(
       continue
     end
 
-    if dim in ("chord_range", "density", "tie")
+    if dim in ("area", "vol", "chord_range", "density", "tie")
       for id in stream_ids
         stream_values_payload[string(id)] = stream_source[id]
       end
       for step in 1:step_count
-        active_vals = Float64[float(stream_source[id][step]) for id in stream_ids if !isempty(notes_by_stream[id][step])]
-        global_display[step] = isempty(active_vals) ? (dim == "tie" ? 0.0 : nothing) : sum(active_vals) / float(length(active_vals))
+        active_vals = if dim == "vol"
+          Float64[
+            float(stream_source[id][step])
+            for id in stream_ids
+            if stream_source[id][step] !== nothing
+          ]
+        else
+          Float64[
+            float(stream_source[id][step])
+            for id in stream_ids
+            if !isempty(notes_by_stream[id][step]) && stream_source[id][step] !== nothing
+          ]
+        end
+        global_display[step] = isempty(active_vals) ? (dim in ("vol", "tie") ? 0.0 : nothing) :
+          sum(active_vals) / float(length(active_vals))
         concordance[step] = _concordance(active_vals, range_max - range_min)
       end
       dimensions[dim] = Dict(
