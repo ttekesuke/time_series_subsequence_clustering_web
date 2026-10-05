@@ -248,22 +248,8 @@ function logicalWindowCountLabel(span: CompressedSpan) {
   return [...entries.slice(0, 2), '…', ...entries.slice(-2)].join('  ')
 }
 
-function immediateParentInfo(span: CompressedSpan) {
-  if (span.parent_index === null) return null
-  const parent = props.compressedData[span.parent_index]
-  if (!parent) return null
-  const windowSize = parent.window_max
-  return {
-    windowSize,
-    count: occurrences(parent, windowSize).length,
-  }
-}
-
 function summaryLabel(row: SpanRow) {
-  const parent = immediateParentInfo(row.span)
-  const warning = parent && parent.count < 2 ? ' ⚠' : ''
-  const parentText = parent ? `  ← parent ${parent.windowSize}·${parent.count}${warning}` : ''
-  return `${row.key === selectedKey.value ? '▾' : '▸'} ${logicalWindowCountLabel(row.span)}${parentText}`
+  return `${row.key === selectedKey.value ? '▾' : '▸'} ${logicalWindowCountLabel(row.span)}`
 }
 
 function detailItems(span: CompressedSpan, windowSize: number, y: number): { items: DetailItem[]; height: number } {
@@ -391,8 +377,7 @@ function draw() {
     if (labelCtx) {
       labelCtx.fillStyle = row.key === selectedKey.value ? '#e3f2fd' : '#f5f8fb'
       labelCtx.fillRect(0, sy, labelColumnWidth, summaryHeight - 2)
-      const parent = immediateParentInfo(row.span)
-      labelCtx.fillStyle = parent && parent.count < 2 ? '#c62828' : '#37474f'
+      labelCtx.fillStyle = '#37474f'
       labelCtx.font = '10px sans-serif'
       labelCtx.fillText(
         summaryLabel(row),
