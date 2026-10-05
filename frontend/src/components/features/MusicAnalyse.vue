@@ -4,22 +4,50 @@
 
     <div v-if="result" class="viz-container" :style="topRollHeight == null ? undefined : { gridTemplateRows: `${topRollHeight}px minmax(0, 1fr)` }">
       <div class="top-roll">
-        <StreamsRoll
-          ref="pianoRollRef"
-          :streamValues="pianoStreams"
-          :streamVelocities="pianoVelocities"
-          :streamLabels="pianoLabels"
-          :stepWidth="computedStepWidth"
-          :minValue="0"
-          :maxValue="127"
-          :valueResolution="1"
-          :highlightIndices="highlightIndices"
-          :highlightWindowSize="highlightWindowSize"
-          resizable
-          title="MusicXML Piano Roll"
-          @resize-height="resizeTopRoll"
-          @scroll="onScroll"
-        />
+        <div class="piano-stream-toolbar" aria-label="MusicXML Piano Roll streams">
+          <span class="piano-stream-toolbar-label">Streams</span>
+          <button
+            type="button"
+            class="piano-stream-all-button"
+            :disabled="hiddenPianoStreamIndices.length === 0"
+            @click="showAllPianoStreams"
+          >
+            ALL
+          </button>
+          <label
+            v-for="stream in pianoStreamMetas"
+            :key="stream.id"
+            class="piano-stream-item"
+            :title="stream.label"
+          >
+            <input
+              type="checkbox"
+              :checked="!hiddenPianoStreamIndices.includes(stream.index)"
+              @change="togglePianoStream(stream.index)"
+            >
+            <i class="piano-stream-swatch" :style="{ backgroundColor: stream.color }"></i>
+            <span>{{ stream.label }}</span>
+          </label>
+        </div>
+        <div class="piano-roll-body">
+          <StreamsRoll
+            ref="pianoRollRef"
+            :streamValues="pianoStreams"
+            :streamVelocities="pianoVelocities"
+            :streamLabels="pianoLabels"
+            :hiddenStreamIndices="hiddenPianoStreamIndices"
+            :stepWidth="computedStepWidth"
+            :minValue="0"
+            :maxValue="127"
+            :valueResolution="1"
+            :highlightIndices="highlightIndices"
+            :highlightWindowSize="highlightWindowSize"
+            resizable
+            title="MusicXML Piano Roll"
+            @resize-height="resizeTopRoll"
+            @scroll="onScroll"
+          />
+        </div>
       </div>
 
       <div class="analysis-area">
@@ -231,6 +259,7 @@ const analysedViewMode = ref<'Cluster' | 'Complexity'>('Complexity')
 const analysisScope = ref('global')
 const topRollHeight = ref<number | null>(null)
 const analysisRowHeights = ref<Record<string, number>>({})
+const hiddenPianoStreamIndices = ref<number[]>([])
 
 const visualizerBenchmarkEnabled = () =>
   new URLSearchParams(window.location.search).get('visualizerBenchmark') === '1'
@@ -267,7 +296,47 @@ const globalScrollTrackWidth = computed(() =>
 
 const pianoStreams = computed(() => result.value?.pianoRoll?.streams ?? [])
 const pianoVelocities = computed(() => result.value?.pianoRoll?.velocities ?? [])
-const pianoLabels = computed(() => result.value?.pianoRoll?.streamLabels ?? [])
+const pianoStreamColor = (index: number) => `hsl(${(index * 137.5) % 360}, 70%, 45%)`
+const pianoStreamMetas = computed(() => {
+  const data = result.value
+  if (!data) return []
+  const streamById = new Map(data.streams.map(stream => [String(stream.id), stream]))
+  return data.pianoRoll.streamIds.map((id, index) => {
+    const stream = streamById.get(String(id))
+    const voices = Array.isArray(stream?.sourceVoices) && stream.sourceVoices.length > 0
+      ? stream.sourceVoices
+      : stream?.voice ? [stream.voice] : []
+    const fallbackLabel = [
+      stream?.partId || `stream ${id}`,
+      stream?.staff ? `staff ${stream.staff}` : '',
+      stream?.lane ? `lane ${stream.lane}` : '',
+    ].filter(Boolean).join(' / ') + (voices.length > 0 ? ` (voices ${voices.join(', ')})` : '')
+    return {
+      id,
+      index,
+      label: stream?.label?.trim() || data.pianoRoll.streamLabels[index] || fallbackLabel,
+      color: pianoStreamColor(index),
+    }
+  })
+})
+const pianoLabels = computed(() => pianoStreamMetas.value.map(stream => stream.label))
+const togglePianoStream = (index: number) => {
+  if (hiddenPianoStreamIndices.value.includes(index)) {
+    hiddenPianoStreamIndices.value = hiddenPianoStreamIndices.value.filter(value => value !== index)
+  } else {
+    hiddenPianoStreamIndices.value = [...hiddenPianoStreamIndices.value, index].sort((a, b) => a - b)
+  }
+}
+const showAllPianoStreams = () => {
+  hiddenPianoStreamIndices.value = []
+}
+
+watch(
+  () => result.value?.pianoRoll?.streamIds?.map(id => String(id)).join('|') ?? '',
+  () => {
+    hiddenPianoStreamIndices.value = []
+  },
+)
 
 const titleMap: Record<string, string> = {
   note: 'NOTE / PITCH',
@@ -628,6 +697,65 @@ defineExpose({
 .analysis-area {
   min-height: 0;
   overflow: hidden;
+}
+.top-roll {
+  display: flex;
+  flex-direction: column;
+}
+.piano-stream-toolbar {
+  flex: 0 0 auto;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid #ddd;
+  background: #fafafa;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.piano-stream-toolbar-label {
+  color: #666;
+  font-weight: 600;
+}
+.piano-stream-all-button {
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  padding: 1px 6px;
+  background: #fff;
+  color: #444;
+  font-size: 10px;
+  cursor: pointer;
+}
+.piano-stream-all-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.piano-stream-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  max-width: 320px;
+}
+.piano-stream-item input {
+  margin: 0;
+}
+.piano-stream-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.piano-stream-swatch {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  display: inline-block;
+  border-radius: 2px;
+}
+.piano-roll-body {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .analysis-area {
   display: flex;
