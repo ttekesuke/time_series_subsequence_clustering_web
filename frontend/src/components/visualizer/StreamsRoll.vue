@@ -208,13 +208,11 @@ const draw = () => {
 
   const visibleStepCount = Math.max(0, lastStep - firstStep + 1)
   const highlightedVisibleSteps = new Uint8Array(visibleStepCount)
-  const visibleHighlightStarts: number[] = []
   if (props.highlightIndices.length > 0 && props.highlightWindowSize > 0) {
     const windowSize = props.highlightWindowSize
     for (const start of props.highlightIndices) {
       const end = start + windowSize - 1
       if (end < firstStep || start > lastStep) continue
-      visibleHighlightStarts.push(start)
       const overlapStart = Math.max(firstStep, start)
       const overlapEnd = Math.min(lastStep, end)
       for (let step = overlapStart; step <= overlapEnd; step++) {
@@ -234,6 +232,23 @@ const draw = () => {
     ctx.moveTo(x, 0)
     ctx.lineTo(x, height)
     ctx.stroke()
+  }
+
+  // Paint the union of highlighted windows exactly once. Overlapping matches
+  // therefore keep a flat tint instead of becoming progressively darker.
+  if (visibleStepCount > 0) {
+    ctx.fillStyle = 'rgba(255, 200, 200, 0.25)'
+    let runStart = -1
+    for (let offset = 0; offset <= visibleStepCount; offset++) {
+      const highlighted = offset < visibleStepCount && highlightedVisibleSteps[offset] === 1
+      if (highlighted && runStart < 0) runStart = offset
+      if (!highlighted && runStart >= 0) {
+        const x = (firstStep + runStart) * stepWidth - left
+        const w = (offset - runStart) * stepWidth
+        ctx.fillRect(x, 0, w, height)
+        runStart = -1
+      }
+    }
   }
 
   values.forEach((stream, sIdx) => {
@@ -276,14 +291,6 @@ const draw = () => {
     }
   })
 
-  if (visibleHighlightStarts.length > 0 && props.highlightWindowSize > 0) {
-    ctx.fillStyle = 'rgba(255, 200, 200, 0.25)'
-    const w = props.highlightWindowSize * stepWidth
-    for (const index of visibleHighlightStarts) {
-      const x = index * stepWidth - left
-      ctx.fillRect(x, 0, w, height)
-    }
-  }
 
   if (props.playheadStep >= 0) {
     const x = props.playheadStep * stepWidth - left
@@ -337,7 +344,10 @@ const onMouseMove = (e: MouseEvent) => {
           const slotIndex = (metrics.stepsY - 1) - normalizedIndex
           const yCenter = slotIndex * metrics.slotHeight + metrics.slotHeight / 2
           const rectY = yCenter - metrics.barHeight / 2
-          if (yInCanvas >= rectY && yInCanvas <= rectY + metrics.barHeight) {
+          // Thin piano-roll bars can be only a pixel or two high. Give hover
+          // a small vertical tolerance while still reporting the exact value.
+          const hoverPadding = Math.max(2, Math.min(5, metrics.slotHeight * 0.4))
+          if (yInCanvas >= rectY - hoverPadding && yInCanvas <= rectY + metrics.barHeight + hoverPadding) {
             hit = { step, value: numVal, streamIndex: sIdx }
             break
           }

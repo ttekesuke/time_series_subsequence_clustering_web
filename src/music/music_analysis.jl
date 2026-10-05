@@ -606,6 +606,30 @@ function _make_poly_series(values)::Vector{Vector{Float64}}
   return Vector{Float64}[value === nothing ? Float64[] : Float64[float(value)] for value in values]
 end
 
+"""Pitch contour used for transposition-invariant MusicAnalyse note clustering.
+
+Each active run is represented by adjacent semitone differences. The first
+active step after a rest is zero, so a phrase transposed by a fifth, octave, or
+any other constant interval produces the same contour while rests still split
+phrases at the same grid positions.
+"""
+function _pitch_interval_series(values)
+  out = Any[]
+  sizehint!(out, length(values))
+  previous = nothing
+  for value in values
+    if value === nothing
+      push!(out, nothing)
+      previous = nothing
+      continue
+    end
+    current = float(value)
+    push!(out, previous === nothing ? 0.0 : current - previous)
+    previous = current
+  end
+  return out
+end
+
 function _analyse_manager(
   series::Vector{Vector{Float64}},
   scoring;
@@ -617,6 +641,8 @@ function _analyse_manager(
   streamwise::Bool=false,
   stream_axis_offset::Float64=1.0,
   stream_axis_capacity::Int=1,
+  scale_mode::Symbol=:range_fixed,
+  contextual_min_width::Float64=Config.DEFAULT_CONTEXTUAL_MIN_WIDTH,
   compact_cluster_view::Bool=false,
   log_label::AbstractString="",
   progress_callback=nothing,
@@ -666,6 +692,8 @@ function _analyse_manager(
     use_streamwise_surface_average=streamwise,
     stream_axis_offset=stream_axis_offset,
     stream_axis_capacity=max(stream_axis_capacity, 1),
+    scale_mode=scale_mode,
+    contextual_min_width=contextual_min_width,
     recency=0.0,
     enable_occurrence_intervals=false,
   )
@@ -805,6 +833,11 @@ function analyse_music_payload(
     "percent" => 0,
   ))
   compact_cluster_view = get(params, "compact_cluster_view", false) == true
+  pitch_cluster_mode = lowercase(strip(string(get(params, "pitch_cluster_mode", "absolute"))))
+  pitch_cluster_mode in ("absolute", "interval") || throw(RequestError(
+    "invalid_pitch_cluster_mode",
+    "pitch_cluster_mode must be absolute or interval.",
+  ))
   xml_text = string(get(params, "musicxml_text", ""))
   @info "[analyse_music] parsing MusicXML" source_type=string(get(params, "source_type", "upload")) xml_bytes=sizeof(xml_text)
   parsed = parse_musicxml_text(xml_text)
@@ -999,6 +1032,10 @@ function analyse_music_payload(
     "tie" => ties,
     "dissonance" => dissonances,
   )
+  note_interval_streams = Dict(
+    id => _pitch_interval_series(notes_anchor[id])
+    for id in stream_ids
+  )
   dimension_ranges = Dict(
     "note" => (0.0, 127.0),
     "area" => (0.0, 127.0),
@@ -1050,6 +1087,9 @@ function analyse_music_payload(
     end
 
     stream_source = scalar_streams[dim]
+    cluster_stream_source = dim == "note" && pitch_cluster_mode == "interval" ? note_interval_streams : stream_source
+    stream_scale_mode = dim in ("note", "area", "vol") ? :contextual_global_halves : :range_fixed
+    stream_contextual_min_width = dim == "vol" ? 0.01 : Config.DEFAULT_CONTEXTUAL_MIN_WIDTH
     if dim == "dissonance"
       global_display = copy(global_dissonance)
       for id in stream_ids
@@ -1082,10 +1122,12 @@ function analyse_music_payload(
 
     for id in stream_ids
       stream_values_payload[string(id)] = stream_source[id]
-      analysed_stream = _analyse_manager(_make_poly_series(stream_source[id]), scoring;
+      analysed_stream = _analyse_manager(_make_poly_series(cluster_stream_source[id]), scoring;
         range_min=range_min, range_max=range_max,
         merge_threshold_ratio=merge_threshold_ratio,
         metric_weights=Config.POLYPHONIC_STREAM_METRIC_WEIGHTS,
+        scale_mode=stream_scale_mode,
+        contextual_min_width=stream_contextual_min_width,
         compact_cluster_view=compact_cluster_view, log_label="$(dim)/stream=$(id):$(stream_labels[id])",
         progress_callback=progress_callback, cancel_check=cancel_check)
       stream_analysis_payload[string(id)] = Dict("axes"=>analysed_stream["axes"], "raw"=>analysed_stream["raw"])
@@ -1099,10 +1141,13 @@ function analyse_music_payload(
         vals = Float64[float(stream_source[id][step]) for id in stream_ids if stream_source[id][step] !== nothing]
         concordance[step] = _concordance(vals, range_max - range_min)
       end
-      analysed_global = _analyse_manager(_make_poly_series(global_display), scoring;
+      note_global_cluster_source = pitch_cluster_mode == "interval" ? _pitch_interval_series(global_display) : global_display
+      analysed_global = _analyse_manager(_make_poly_series(note_global_cluster_source), scoring;
         range_min=range_min, range_max=range_max,
         merge_threshold_ratio=merge_threshold_ratio,
         metric_weights=Config.POLYPHONIC_GLOBAL_METRIC_WEIGHTS,
+        scale_mode=:contextual_global_halves,
+        contextual_min_width=Config.DEFAULT_CONTEXTUAL_MIN_WIDTH,
         compact_cluster_view=compact_cluster_view, log_label="$(dim)/global",
         progress_callback=progress_callback, cancel_check=cancel_check)
       dimensions[dim] = Dict(
@@ -1179,7 +1224,9 @@ function analyse_music_payload(
       "composer"=>string(get(params, "composer", "")),
       "title"=>string(get(params, "title", "")),
       "folder"=>string(get(params, "folder", "")),
-      "xmlScore"=>string(get(params, "xml_score", ""))),
+      "xmlScore"=>string(get(params, "xml_score", "")),
+      "pitchClusterMode"=>pitch_cluster_mode,
+      "pitchScaleMode"=>"contextual_global_halves"),
     "timing" => Dict(
       "exact"=>true,
       "gridDenominator"=>grid_den,
