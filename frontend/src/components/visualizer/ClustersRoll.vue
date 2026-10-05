@@ -110,7 +110,7 @@ const selectedSpan = computed(() => {
   return key === null ? null : rows.find(row => row.key === key)?.span ?? null
 })
 const summaryHeight = 24
-const labelColumnWidth = 260
+const labelColumnWidth = 80
 let rows: SpanRow[] = []
 let resizeObserver: ResizeObserver | null = null
 let rafId: number | null = null
@@ -563,11 +563,11 @@ defineExpose({ scrollWrapper })
 
 <style scoped>
 .roll-container { display: flex; border: 1px solid #ccc; background: white; height: 100%; position: relative; }
-.resize-handle { position: absolute; bottom: 0; left: 260px; right: 0; height: 9px;
+.resize-handle { position: absolute; bottom: 0; left: 80px; right: 0; height: 9px;
   cursor: ns-resize; touch-action: none; z-index: 3;
   background: linear-gradient(to bottom, transparent 3px, #999 4px, transparent 5px); }
 .resize-handle:focus-visible { outline: 2px solid #1976d2; outline-offset: -2px; }
-.label-column { width: 260px; min-width: 260px; position: relative; border-right: 1px solid #eee; overflow: hidden; }
+.label-column { width: 80px; min-width: 80px; position: relative; border-right: 1px solid #eee; overflow: hidden; }
 .label-column canvas { position: absolute; top: 0; left: 0; cursor: pointer; }
 .title-label { position: absolute; top: 0; left: 0; right: 0; height: 21px;
   display: flex; align-items: center; padding: 0 4px; color: #666; font-size: 10px;
