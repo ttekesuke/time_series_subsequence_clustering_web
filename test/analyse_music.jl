@@ -592,3 +592,30 @@ Bach,Fugue_bwv_846,Bach/Fugue/bwv_846,Bach/Fugue/bwv_846/xml_score.musicxml
   @test sources[1]["composer"] == "Bach"
   @test sources[1]["xml_score"] == "Bach/Fugue/bwv_846/xml_score.musicxml"
 end
+
+
+@testset "MusicAnalyse pitch contour is transposition invariant" begin
+  absolute = Any[60.0, 62.0, 64.0, 64.0, nothing, 67.0, 65.0]
+  fifth_up = Any[67.0, 69.0, 71.0, 71.0, nothing, 74.0, 72.0]
+  octave_up = Any[72.0, 74.0, 76.0, 76.0, nothing, 79.0, 77.0]
+
+  expected = Any[0.0, 2.0, 2.0, 0.0, nothing, 0.0, -2.0]
+  @test MA._pitch_interval_series(absolute) == expected
+  @test MA._pitch_interval_series(fifth_up) == expected
+  @test MA._pitch_interval_series(octave_up) == expected
+end
+
+@testset "MusicAnalyse pitch clustering mode validation" begin
+  params = Dict{String,Any}(
+    "pitch_cluster_mode" => "not-a-mode",
+    "musicxml_text" => "",
+  )
+  err = try
+    MA.analyse_music_payload(params, TC)
+    nothing
+  catch caught
+    caught
+  end
+  @test err isa MA.RequestError
+  @test err.code == "invalid_pitch_cluster_mode"
+end
