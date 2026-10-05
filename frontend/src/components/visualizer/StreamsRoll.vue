@@ -56,6 +56,7 @@ const props = defineProps({
   highlightWindowSize: { type: Number, default: 0 },
   playheadStep: { type: Number, default: -1 },
   streamLabels: { type: Array as () => string[], default: () => [] },
+  hiddenStreamIndices: { type: Array as () => number[], default: () => [] },
   resizable: { type: Boolean, default: false },
 
   // Left label text
@@ -202,6 +203,7 @@ const draw = () => {
   )
   const values = props.streamValues as StreamCellValue[][]
   const velocities = props.streamVelocities as any[]
+  const hiddenStreams = new Set(props.hiddenStreamIndices.map(index => Number(index)))
   const metrics = plotMetrics()
 
   const visibleStepCount = Math.max(0, lastStep - firstStep + 1)
@@ -235,7 +237,7 @@ const draw = () => {
   }
 
   values.forEach((stream, sIdx) => {
-    if (!Array.isArray(stream)) return
+    if (hiddenStreams.has(sIdx) || !Array.isArray(stream)) return
     const hue = (sIdx * 137.5) % 360
     const baseColor = `hsla(${hue}, 70%, 45%, 1)`
     const streamLast = Math.min(lastStep, stream.length - 1)
@@ -314,9 +316,11 @@ const onMouseMove = (e: MouseEvent) => {
   if (step >= 0 && step < maxStepCount.value) {
     const metrics = plotMetrics()
     const values = props.streamValues as StreamCellValue[][]
+    const hiddenStreams = new Set(props.hiddenStreamIndices.map(index => Number(index)))
     const withinBarX = xInContent - step * stepWidth
     if (withinBarX >= 1 && withinBarX <= Math.max(1, stepWidth - 1)) {
       for (let sIdx = 0; sIdx < values.length && !hit; sIdx++) {
+        if (hiddenStreams.has(sIdx)) continue
         const stream = values[sIdx]
         if (!Array.isArray(stream)) continue
         const cellVal = stream[step]
@@ -383,6 +387,7 @@ watch(
     props.highlightIndices,
     props.highlightWindowSize,
     props.playheadStep,
+    props.hiddenStreamIndices,
     props.stepWidth,
     props.minValue,
     props.maxValue,
