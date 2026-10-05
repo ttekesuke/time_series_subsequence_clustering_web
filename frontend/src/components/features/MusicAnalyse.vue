@@ -65,6 +65,9 @@
           <span class="timing-info">
             exact grid: {{ result.timing.quarterUnit }} quarter / {{ result.timing.stepCount }} steps
           </span>
+          <span v-if="result.metadata?.pitchClusterMode" class="timing-info">
+            pitch cluster: {{ result.metadata.pitchClusterMode === 'interval' ? 'interval / transposition-invariant' : 'absolute' }}
+          </span>
           <div v-if="analysedViewMode === 'Complexity'" class="metric-legend">
             <span v-for="(label, index) in visibleMetricLabels" :key="label">
               <i :style="{ backgroundColor: metricColor(index) }"></i>{{ label }}
@@ -162,6 +165,21 @@
             label="Merge threshold ratio"
           />
 
+          <v-radio-group
+            v-model="pitchClusterMode"
+            label="Pitch clustering"
+            inline
+            hide-details
+            class="mt-1"
+          >
+            <v-radio label="Absolute pitch" value="absolute" />
+            <v-radio label="Interval contour (transposition-invariant)" value="interval" />
+          </v-radio-group>
+          <div class="text-caption text-medium-emphasis mb-2">
+            Interval mode clusters adjacent pitch differences, so the same phrase transposed by a fifth,
+            octave, or another constant interval can match.
+          </div>
+
           <v-alert v-if="analysisProgressMessage" type="info" variant="tonal" class="mt-3">
             <div>{{ analysisProgressMessage }}</div>
             <v-progress-linear
@@ -255,6 +273,7 @@ const analysisProgressPercent = ref(0)
 const cancellationRequested = ref(false)
 let analysisPollToken = 0
 const mergeThresholdRatio = ref(0.02)
+const pitchClusterMode = ref<'absolute' | 'interval'>('absolute')
 const analysedViewMode = ref<'Cluster' | 'Complexity'>('Complexity')
 const analysisScope = ref('global')
 const topRollHeight = ref<number | null>(null)
@@ -511,6 +530,7 @@ const submitMusicXml = async () => {
     const payload: any = {
       source_type: sourceType.value,
       merge_threshold_ratio: Number(mergeThresholdRatio.value),
+      pitch_cluster_mode: pitchClusterMode.value,
     }
 
     if (sourceType.value === 'upload') {
