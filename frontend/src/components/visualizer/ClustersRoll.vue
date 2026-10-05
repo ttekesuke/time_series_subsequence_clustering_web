@@ -15,6 +15,14 @@
       <span>Window {{ selectedWindow }} / {{ selectedSpan.window_min }}–{{ selectedSpan.window_max }}</span>
       <input v-model.number="selectedWindow" type="range" :min="selectedSpan.window_min"
         :max="selectedSpan.window_max" step="1" aria-label="Cluster window size" />
+      <button
+        v-if="lineageRootKey !== null"
+        type="button"
+        class="show-all-button"
+        @click="showAllClusters"
+      >
+        Show all clusters
+      </button>
       <button type="button" aria-label="Close cluster details" @click="closeDetails">×</button>
     </div>
     <div
@@ -95,6 +103,7 @@ const viewportHeight = ref(1)
 const contentHeight = ref(1)
 const contentWidth = computed(() => Math.max(viewportWidth.value, props.maxSteps * props.stepWidth))
 const selectedKey = ref<string | null>(null)
+const lineageRootKey = ref<string | null>(null)
 const selectedWindow = ref(2)
 const selectedSpan = computed(() => {
   const key = selectedKey.value
@@ -178,12 +187,46 @@ const startResize = (event: PointerEvent) => {
   window.addEventListener('pointercancel', stopResize)
 }
 
+function lineageIndices(rootIndex: number) {
+  const visible = new Set<number>([rootIndex])
+
+  // Ancestors.
+  let parentIndex = props.compressedData[rootIndex]?.parent_index ?? null
+  while (parentIndex !== null && !visible.has(parentIndex)) {
+    visible.add(parentIndex)
+    parentIndex = props.compressedData[parentIndex]?.parent_index ?? null
+  }
+
+  // Descendants.
+  const children = new Map<number, number[]>()
+  props.compressedData.forEach((span, index) => {
+    if (span.parent_index === null) return
+    const siblings = children.get(span.parent_index) ?? []
+    siblings.push(index)
+    children.set(span.parent_index, siblings)
+  })
+  const stack = [...(children.get(rootIndex) ?? [])]
+  while (stack.length > 0) {
+    const index = stack.pop()!
+    if (visible.has(index)) continue
+    visible.add(index)
+    stack.push(...(children.get(index) ?? []))
+  }
+  return visible
+}
+
 function flattenSpans(): Array<{ key: string; span: CompressedSpan; depth: number }> {
   const result: Array<{ key: string; span: CompressedSpan; depth: number }> = []
   const depths: number[] = []
+  const rootIndex = lineageRootKey.value === null ? null : Number(lineageRootKey.value)
+  const visibleIndices = rootIndex === null || !Number.isInteger(rootIndex)
+    ? null
+    : lineageIndices(rootIndex)
+
   props.compressedData.forEach((span, index) => {
     const depth = span.parent_index === null ? 0 : (depths[span.parent_index] ?? -1) + 1
     depths.push(depth)
+    if (visibleIndices && !visibleIndices.has(index)) return
     result.push({ key: String(index), span, depth })
   })
   return result.sort((a, b) => a.span.window_min - b.span.window_min || a.depth - b.depth)
@@ -492,25 +535,29 @@ function onLabelClick(event: MouseEvent) {
   if (row && y < row.y + summaryHeight) toggleDetails(row)
 }
 function toggleDetails(row: SpanRow) {
-  if (selectedKey.value === row.key) closeDetails()
-  else {
-    selectedKey.value = row.key
-    selectedWindow.value = row.span.window_min
-  }
+  selectedKey.value = row.key
+  lineageRootKey.value = row.key
+  selectedWindow.value = row.span.window_min
+}
+function showAllClusters() {
+  lineageRootKey.value = null
+  emit('hover-cluster', null)
 }
 function closeDetails() {
   selectedKey.value = null
+  lineageRootKey.value = null
   emit('hover-cluster', null)
 }
 function onMouseLeave() { emit('hover-cluster', null) }
 
 watch(() => [props.compressedData, props.stepMap], () => {
   selectedKey.value = null
+  lineageRootKey.value = null
   emit('hover-cluster', null)
   calculateLayout()
   nextTick(scheduleDraw)
 })
-watch(() => [props.stepWidth, props.rowHeight, props.maxSteps, selectedKey.value, selectedWindow.value], () => {
+watch(() => [props.stepWidth, props.rowHeight, props.maxSteps, selectedKey.value, selectedWindow.value, lineageRootKey.value], () => {
   calculateLayout()
   nextTick(scheduleDraw)
 }, { immediate: true })
@@ -550,4 +597,13 @@ canvas { position: sticky; top: 0; left: 0; display: block; }
   border-radius: 4px; color: #263238; font: 11px sans-serif; z-index: 2; }
 .length-control input { width: 110px; }
 .length-control button { border: 0; background: transparent; cursor: pointer; font-size: 16px; }
+.length-control .show-all-button {
+  border: 1px solid #90caf9;
+  border-radius: 3px;
+  background: #fff;
+  color: #1565c0;
+  padding: 2px 7px;
+  font-size: 11px;
+  white-space: nowrap;
+}
 </style>
