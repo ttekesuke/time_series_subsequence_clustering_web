@@ -1,30 +1,35 @@
 <template>
   <div class="roll-container" ref="container">
     <div class="label-column">
-      <canvas ref="labelsCanvas" :style="{ height: viewportHeight + 'px' }"
-        @click="onLabelClick" />
+      <canvas
+        ref="labelsCanvas"
+        :style="{ height: viewportHeight + 'px' }"
+        @mousemove="onLabelMouseMove"
+        @mouseleave="onMouseLeave"
+        @click="onLabelClick"
+      />
       <span class="title-label" :title="title">{{ title }}</span>
     </div>
+
     <div ref="scrollWrapper" class="scroll-wrapper" @scroll="onScroll">
       <div class="canvas-space" :style="{ width: contentWidth + 'px', height: contentHeight + 'px' }">
-        <canvas ref="canvas" :style="{ width: viewportWidth + 'px', height: viewportHeight + 'px' }"
-          @mousemove="onMouseMove" @mouseleave="onMouseLeave" @click="onClick" />
+        <canvas
+          ref="canvas"
+          :style="{ width: viewportWidth + 'px', height: viewportHeight + 'px' }"
+          @mousemove="onMouseMove"
+          @mouseleave="onMouseLeave"
+          @click="onClick"
+        />
       </div>
     </div>
-    <div v-if="selectedSpan" class="length-control" @click.stop>
-      <span>Window {{ selectedWindow }} / {{ selectedSpan.window_min }}–{{ selectedSpan.window_max }}</span>
-      <input v-model.number="selectedWindow" type="range" :min="selectedSpan.window_min"
-        :max="selectedSpan.window_max" step="1" aria-label="Cluster window size" />
-      <button
-        v-if="lineageRootKey !== null"
-        type="button"
-        class="show-all-button"
-        @click="showAllClusters"
-      >
+
+    <div v-if="focusedSpan" class="focus-control" @click.stop>
+      <span>Focus {{ spanLabel(focusedSpan) }}</span>
+      <button type="button" class="show-all-button" @click="showAllClusters">
         Show all clusters
       </button>
-      <button type="button" aria-label="Close cluster details" @click="closeDetails">×</button>
     </div>
+
     <div
       v-if="resizable"
       class="resize-handle"
@@ -50,27 +55,23 @@ type CompressedSpan = {
   fit_limits: number[]
   parent_index: number | null
 }
-type SpanRow = {
-  key: string
-  span: CompressedSpan
-  depth: number
-  y: number
-  detailY: number
-  detailHeight: number
-  items: DetailItem[]
-  summaryStarts: number[]
-  summaryMappedStarts: number[]
-  summaryPositions: number[]
-  summaryIndicesByActualWindow: Map<number, number[]>
-  maxItemWidth: number
-}
-type DetailItem = {
+
+type OccurrenceItem = {
   x: number
   width: number
-  y: number
   windowSize: number
   indices: number[]
   clusterId: string
+}
+
+type SpanRow = {
+  key: string
+  index: number
+  span: CompressedSpan
+  depth: number
+  y: number
+  items: OccurrenceItem[]
+  maxItemWidth: number
 }
 
 const props = withDefaults(defineProps<{
@@ -88,6 +89,7 @@ const props = withDefaults(defineProps<{
   maxSteps: 100,
   resizable: false,
 })
+
 const emit = defineEmits<{
   scroll: [event: Event]
   'hover-cluster': [cluster: { indices: number[]; windowSize: number; id: string } | null]
@@ -98,35 +100,31 @@ const container = ref<HTMLElement | null>(null)
 const scrollWrapper = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const labelsCanvas = ref<HTMLCanvasElement | null>(null)
+
 const viewportWidth = ref(1)
 const viewportHeight = ref(1)
 const contentHeight = ref(1)
 const contentWidth = computed(() => Math.max(viewportWidth.value, props.maxSteps * props.stepWidth))
-const selectedKey = ref<string | null>(null)
-const lineageRootKey = ref<string | null>(null)
-const selectedWindow = ref(2)
-const selectedSpan = computed(() => {
-  const key = selectedKey.value
-  return key === null ? null : rows.find(row => row.key === key)?.span ?? null
+
+const hoveredKey = ref<string | null>(null)
+const focusedKey = ref<string | null>(null)
+const focusedSpan = computed(() => {
+  if (focusedKey.value === null) return null
+  const index = Number(focusedKey.value)
+  return Number.isInteger(index) ? props.compressedData[index] ?? null : null
 })
+
 const summaryHeight = 24
 const labelColumnWidth = 80
+const treeIndent = 7
+const treeBaseX = 6
+const treeMaxX = 30
+
 let rows: SpanRow[] = []
 let resizeObserver: ResizeObserver | null = null
 let rafId: number | null = null
 
-function lowerBound(values: number[], target: number) {
-  let lo = 0
-  let hi = values.length
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1
-    if (values[mid]! < target) lo = mid + 1
-    else hi = mid
-  }
-  return lo
-}
-
-function lowerBoundItemX(items: DetailItem[], target: number) {
+function lowerBoundItemX(items: OccurrenceItem[], target: number) {
   let lo = 0
   let hi = items.length
   while (lo < hi) {
@@ -142,9 +140,7 @@ function firstVisibleRowIndex(top: number) {
   let hi = rows.length
   while (lo < hi) {
     const mid = (lo + hi) >> 1
-    const row = rows[mid]!
-    const bottom = row.y + summaryHeight + row.detailHeight
-    if (bottom < top) lo = mid + 1
+    if (rows[mid]!.y + summaryHeight < top) lo = mid + 1
     else hi = mid
   }
   return lo
@@ -157,25 +153,463 @@ function rowAtY(y: number) {
     const mid = (lo + hi) >> 1
     const row = rows[mid]!
     if (y < row.y) hi = mid
-    else if (y >= row.y + summaryHeight + row.detailHeight) lo = mid + 1
+    else if (y >= row.y + summaryHeight) lo = mid + 1
     else return row
   }
   return null
 }
 
-const resizeBy = (delta: number) => {
-  if (container.value) emit('resize-height', Math.max(92, Math.round(container.value.getBoundingClientRect().height + delta)))
+function occurrences(span: CompressedSpan, windowSize: number) {
+  const offset = windowSize - span.window_min
+  const fitLimit = span.fit_limits[offset]
+  if (fitLimit === undefined || !Number.isFinite(fitLimit)) return []
+  return span.indices.filter(start => start + windowSize <= fitLimit)
 }
+
+function spanLabel(span: CompressedSpan) {
+  const count = occurrences(span, span.window_max).length
+  return span.window_min === span.window_max
+    ? `${span.window_max}×${count}`
+    : `${span.window_min}–${span.window_max}×${count}`
+}
+
+function buildChildren() {
+  const children = new Map<number, number[]>()
+  props.compressedData.forEach((_, index) => children.set(index, []))
+  props.compressedData.forEach((span, index) => {
+    if (span.parent_index === null) return
+    const siblings = children.get(span.parent_index)
+    if (siblings) siblings.push(index)
+  })
+
+  for (const siblings of children.values()) {
+    siblings.sort((a, b) => {
+      const aSpan = props.compressedData[a]!
+      const bSpan = props.compressedData[b]!
+      const aStart = occurrences(aSpan, aSpan.window_max)[0] ?? Number.MAX_SAFE_INTEGER
+      const bStart = occurrences(bSpan, bSpan.window_max)[0] ?? Number.MAX_SAFE_INTEGER
+      return aStart - bStart || aSpan.window_min - bSpan.window_min || a - b
+    })
+  }
+  return children
+}
+
+function computeDepth(index: number, memo: number[], visiting = new Set<number>()): number {
+  if (memo[index] !== undefined) return memo[index]!
+  if (visiting.has(index)) return 0
+  visiting.add(index)
+  const parent = props.compressedData[index]?.parent_index ?? null
+  const depth = parent === null || !props.compressedData[parent]
+    ? 0
+    : computeDepth(parent, memo, visiting) + 1
+  visiting.delete(index)
+  memo[index] = depth
+  return depth
+}
+
+function lineageIndices(rootIndex: number) {
+  const visible = new Set<number>([rootIndex])
+
+  let parent = props.compressedData[rootIndex]?.parent_index ?? null
+  while (parent !== null && !visible.has(parent)) {
+    visible.add(parent)
+    parent = props.compressedData[parent]?.parent_index ?? null
+  }
+
+  const children = buildChildren()
+  const stack = [...(children.get(rootIndex) ?? [])]
+  while (stack.length > 0) {
+    const index = stack.pop()!
+    if (visible.has(index)) continue
+    visible.add(index)
+    stack.push(...(children.get(index) ?? []))
+  }
+  return visible
+}
+
+function dfsOrder() {
+  const children = buildChildren()
+  const depths: number[] = []
+  props.compressedData.forEach((_, index) => computeDepth(index, depths))
+
+  const roots = props.compressedData
+    .map((span, index) => ({ span, index }))
+    .filter(({ span }) => span.parent_index === null || !props.compressedData[span.parent_index])
+    .sort((a, b) => {
+      const aStart = occurrences(a.span, a.span.window_max)[0] ?? Number.MAX_SAFE_INTEGER
+      const bStart = occurrences(b.span, b.span.window_max)[0] ?? Number.MAX_SAFE_INTEGER
+      return aStart - bStart || a.index - b.index
+    })
+
+  const order: Array<{ index: number; depth: number }> = []
+  const seen = new Set<number>()
+
+  const visit = (index: number) => {
+    if (seen.has(index)) return
+    seen.add(index)
+    order.push({ index, depth: depths[index] ?? 0 })
+    for (const child of children.get(index) ?? []) visit(child)
+  }
+
+  for (const root of roots) visit(root.index)
+  props.compressedData.forEach((_, index) => {
+    if (!seen.has(index)) visit(index)
+  })
+  return order
+}
+
+function visibleOrder() {
+  const order = dfsOrder()
+  if (focusedKey.value === null) return order
+  const rootIndex = Number(focusedKey.value)
+  if (!Number.isInteger(rootIndex) || !props.compressedData[rootIndex]) return order
+  const lineage = lineageIndices(rootIndex)
+  return order.filter(item => lineage.has(item.index))
+}
+
+function makeOccurrenceItems(span: CompressedSpan): OccurrenceItem[] {
+  const logicalWindow = span.window_max
+  const starts = occurrences(span, logicalWindow)
+  const groups = new Map<number, number[]>()
+
+  const mapped = starts.flatMap(start => {
+    if (!props.stepMap?.length) {
+      const windowSize = logicalWindow
+      const indices = groups.get(windowSize) ?? []
+      indices.push(start)
+      groups.set(windowSize, indices)
+      return [{
+        start,
+        end: start + logicalWindow,
+        windowSize,
+      }]
+    }
+
+    const actualStart = props.stepMap[start]
+    const actualEnd = props.stepMap[start + logicalWindow - 1]
+    if (
+      actualStart === undefined || actualEnd === undefined ||
+      !Number.isFinite(actualStart) || !Number.isFinite(actualEnd) ||
+      actualEnd < actualStart
+    ) return []
+
+    const windowSize = actualEnd - actualStart + 1
+    const indices = groups.get(windowSize) ?? []
+    indices.push(actualStart)
+    groups.set(windowSize, indices)
+    return [{
+      start: actualStart,
+      end: actualEnd + 1,
+      windowSize,
+    }]
+  }).sort((a, b) => a.start - b.start || a.end - b.end)
+
+  const clusterId = String(span.cluster_ids[span.cluster_ids.length - 1] ?? span.cluster_ids[0] ?? '')
+  return mapped.map(item => ({
+    x: item.start * props.stepWidth,
+    width: Math.max(props.stepWidth, (item.end - item.start) * props.stepWidth),
+    windowSize: item.windowSize,
+    indices: groups.get(item.windowSize) ?? [],
+    clusterId,
+  }))
+}
+
+function calculateLayout() {
+  let y = 28
+  rows = visibleOrder().map(({ index, depth }) => {
+    const span = props.compressedData[index]!
+    const items = makeOccurrenceItems(span)
+    const row: SpanRow = {
+      key: String(index),
+      index,
+      span,
+      depth,
+      y,
+      items,
+      maxItemWidth: items.reduce((max, item) => Math.max(max, item.width), 0),
+    }
+    y += summaryHeight
+    return row
+  })
+  contentHeight.value = Math.max(viewportHeight.value, y + 8)
+}
+
+function treeX(depth: number) {
+  return Math.min(treeBaseX + depth * treeIndent, treeMaxX)
+}
+
+function activeLineage() {
+  const key = hoveredKey.value ?? focusedKey.value
+  if (key === null) return null
+  const index = Number(key)
+  if (!Number.isInteger(index) || !props.compressedData[index]) return null
+  return lineageIndices(index)
+}
+
+function drawTree(labelCtx: CanvasRenderingContext2D, top: number, height: number) {
+  const active = activeLineage()
+  const rowByIndex = new Map(rows.map(row => [row.index, row]))
+
+  for (const row of rows) {
+    const parentIndex = row.span.parent_index
+    if (parentIndex === null) continue
+    const parentRow = rowByIndex.get(parentIndex)
+    if (!parentRow) continue
+
+    const parentY = parentRow.y + summaryHeight / 2 - top
+    const childY = row.y + summaryHeight / 2 - top
+    if (Math.max(parentY, childY) < -summaryHeight || Math.min(parentY, childY) > height + summaryHeight) continue
+
+    const parentX = treeX(parentRow.depth)
+    const childX = treeX(row.depth)
+    const related = !active || (active.has(parentIndex) && active.has(row.index))
+
+    labelCtx.save()
+    labelCtx.globalAlpha = related ? 1 : 0.16
+    labelCtx.strokeStyle = related && active ? '#1976d2' : '#78909c'
+    labelCtx.lineWidth = related && active ? 2 : 1.4
+    labelCtx.beginPath()
+    labelCtx.moveTo(parentX, parentY)
+    labelCtx.lineTo(parentX, childY)
+    labelCtx.lineTo(childX, childY)
+    labelCtx.stroke()
+    labelCtx.restore()
+  }
+}
+
+function draw() {
+  const element = canvas.value
+  const wrapper = scrollWrapper.value
+  if (!element || !wrapper) return
+
+  const ratio = Math.min(window.devicePixelRatio || 1, 2)
+  element.width = Math.ceil(viewportWidth.value * ratio)
+  element.height = Math.ceil(viewportHeight.value * ratio)
+  const ctx = element.getContext('2d')
+  if (!ctx) return
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
+
+  const left = wrapper.scrollLeft
+  const top = wrapper.scrollTop
+  const width = viewportWidth.value
+  const height = viewportHeight.value
+  ctx.clearRect(0, 0, width, height)
+
+  const labels = labelsCanvas.value
+  const labelCtx = labels?.getContext('2d')
+  if (labels && labelCtx) {
+    labels.width = Math.ceil(labelColumnWidth * ratio)
+    labels.height = Math.ceil(height * ratio)
+    labelCtx.setTransform(ratio, 0, 0, ratio, 0, 0)
+    labelCtx.clearRect(0, 0, labelColumnWidth, height)
+    drawTree(labelCtx, top, height)
+  }
+
+  const active = activeLineage()
+  const firstRow = firstVisibleRowIndex(top)
+
+  for (let rowIndex = firstRow; rowIndex < rows.length; rowIndex++) {
+    const row = rows[rowIndex]!
+    if (row.y > top + height) break
+
+    const sy = row.y - top
+    const isHovered = hoveredKey.value === row.key
+    const isFocused = focusedKey.value === row.key
+    const related = !active || active.has(row.index)
+
+    ctx.save()
+    ctx.globalAlpha = related ? 1 : 0.16
+    ctx.fillStyle = isHovered || isFocused ? '#e3f2fd' : '#f5f8fb'
+    ctx.fillRect(0, sy, width, summaryHeight - 2)
+
+    ctx.fillStyle = isHovered || isFocused ? 'rgba(66, 165, 245, 0.8)' : 'rgba(144, 202, 249, 0.72)'
+    ctx.strokeStyle = isHovered || isFocused ? '#0d47a1' : '#1976d2'
+    ctx.lineWidth = isHovered || isFocused ? 1.2 : 1
+
+    const detailStartX = Math.max(0, left - row.maxItemWidth)
+    for (
+      let itemIndex = lowerBoundItemX(row.items, detailStartX);
+      itemIndex < row.items.length && row.items[itemIndex]!.x <= left + width;
+      itemIndex++
+    ) {
+      const item = row.items[itemIndex]!
+      const x = item.x - left
+      if (x + item.width < 0) continue
+      ctx.fillRect(x, sy + 6, item.width, summaryHeight - 12)
+      ctx.strokeRect(x, sy + 6, item.width, summaryHeight - 12)
+    }
+    ctx.restore()
+
+    if (labelCtx) {
+      labelCtx.save()
+      labelCtx.globalAlpha = related ? 1 : 0.16
+      labelCtx.fillStyle = isHovered || isFocused ? '#e3f2fd' : '#f5f8fb'
+      labelCtx.fillRect(0, sy, labelColumnWidth, summaryHeight - 2)
+
+      const x = treeX(row.depth)
+      labelCtx.beginPath()
+      labelCtx.arc(x, sy + summaryHeight / 2, 3.7, 0, Math.PI * 2)
+      labelCtx.fillStyle = isHovered || isFocused ? '#1976d2' : '#ffffff'
+      labelCtx.fill()
+      labelCtx.strokeStyle = isHovered || isFocused ? '#0d47a1' : '#607d8b'
+      labelCtx.lineWidth = 1.3
+      labelCtx.stroke()
+
+      labelCtx.fillStyle = '#37474f'
+      labelCtx.font = '10px sans-serif'
+      labelCtx.fillText(
+        spanLabel(row.span),
+        x + 7,
+        sy + 15,
+        Math.max(8, labelColumnWidth - x - 9),
+      )
+      labelCtx.restore()
+    }
+  }
+}
+
+function scheduleDraw() {
+  if (rafId !== null) cancelAnimationFrame(rafId)
+  rafId = requestAnimationFrame(() => {
+    rafId = null
+    draw()
+  })
+}
+
+function updateViewport() {
+  if (!scrollWrapper.value) return
+  viewportWidth.value = Math.max(1, scrollWrapper.value.clientWidth)
+  viewportHeight.value = Math.max(1, scrollWrapper.value.clientHeight)
+  calculateLayout()
+  scheduleDraw()
+}
+
+function onScroll(event: Event) {
+  emit('scroll', event)
+  scheduleDraw()
+}
+
+function rowOccurrenceForHover(row: SpanRow, x: number | null = null) {
+  if (row.items.length === 0) return null
+
+  let item = row.items[0]!
+  if (x !== null) {
+    const startIndex = lowerBoundItemX(row.items, Math.max(0, x - row.maxItemWidth))
+    for (let index = startIndex; index < row.items.length && row.items[index]!.x <= x; index++) {
+      const candidate = row.items[index]!
+      if (x >= candidate.x && x <= candidate.x + candidate.width) {
+        item = candidate
+        break
+      }
+    }
+  }
+
+  return {
+    indices: item.indices,
+    windowSize: item.windowSize,
+    id: item.clusterId,
+  }
+}
+
+function applyHover(row: SpanRow | null, x: number | null = null) {
+  const nextKey = row?.key ?? null
+  const changed = hoveredKey.value !== nextKey
+  hoveredKey.value = nextKey
+
+  if (row) {
+    emit('hover-cluster', rowOccurrenceForHover(row, x))
+  } else if (focusedKey.value !== null) {
+    const focusedRow = rows.find(candidate => candidate.key === focusedKey.value)
+    emit('hover-cluster', focusedRow ? rowOccurrenceForHover(focusedRow) : null)
+  } else {
+    emit('hover-cluster', null)
+  }
+
+  if (changed) scheduleDraw()
+}
+
+function onMouseMove(event: MouseEvent) {
+  const wrapper = scrollWrapper.value
+  const element = canvas.value
+  if (!wrapper || !element) return
+
+  const rect = element.getBoundingClientRect()
+  const x = event.clientX - rect.left + wrapper.scrollLeft
+  const y = event.clientY - rect.top + wrapper.scrollTop
+  const row = rowAtY(y)
+  element.style.cursor = row ? 'pointer' : 'default'
+  applyHover(row, x)
+}
+
+function onLabelMouseMove(event: MouseEvent) {
+  const wrapper = scrollWrapper.value
+  const labels = labelsCanvas.value
+  if (!wrapper || !labels) return
+
+  const y = event.clientY - labels.getBoundingClientRect().top + wrapper.scrollTop
+  const row = rowAtY(y)
+  labels.style.cursor = row ? 'pointer' : 'default'
+  applyHover(row)
+}
+
+function focusRow(row: SpanRow) {
+  focusedKey.value = row.key
+  hoveredKey.value = null
+  calculateLayout()
+  const focusedRow = rows.find(candidate => candidate.key === row.key)
+  emit('hover-cluster', focusedRow ? rowOccurrenceForHover(focusedRow) : null)
+  nextTick(scheduleDraw)
+}
+
+function onClick(event: MouseEvent) {
+  const wrapper = scrollWrapper.value
+  const element = canvas.value
+  if (!wrapper || !element) return
+  const y = event.clientY - element.getBoundingClientRect().top + wrapper.scrollTop
+  const row = rowAtY(y)
+  if (row) focusRow(row)
+}
+
+function onLabelClick(event: MouseEvent) {
+  const wrapper = scrollWrapper.value
+  const labels = labelsCanvas.value
+  if (!wrapper || !labels) return
+  const y = event.clientY - labels.getBoundingClientRect().top + wrapper.scrollTop
+  const row = rowAtY(y)
+  if (row) focusRow(row)
+}
+
+function showAllClusters() {
+  focusedKey.value = null
+  hoveredKey.value = null
+  emit('hover-cluster', null)
+  calculateLayout()
+  nextTick(scheduleDraw)
+}
+
+function onMouseLeave() {
+  applyHover(null)
+}
+
+const resizeBy = (delta: number) => {
+  if (container.value) {
+    emit('resize-height', Math.max(92, Math.round(container.value.getBoundingClientRect().height + delta)))
+  }
+}
+
 let resizeStartY = 0
 let resizeStartHeight = 0
+
 const stopResize = () => {
   window.removeEventListener('pointermove', moveResize)
   window.removeEventListener('pointerup', stopResize)
   window.removeEventListener('pointercancel', stopResize)
 }
+
 const moveResize = (event: PointerEvent) => {
   emit('resize-height', Math.max(92, Math.round(resizeStartHeight + event.clientY - resizeStartY)))
 }
+
 const startResize = (event: PointerEvent) => {
   if (event.button !== 0 || !container.value) return
   event.preventDefault()
@@ -187,365 +621,23 @@ const startResize = (event: PointerEvent) => {
   window.addEventListener('pointercancel', stopResize)
 }
 
-function lineageIndices(rootIndex: number) {
-  const visible = new Set<number>([rootIndex])
-
-  // Ancestors.
-  let parentIndex = props.compressedData[rootIndex]?.parent_index ?? null
-  while (parentIndex !== null && !visible.has(parentIndex)) {
-    visible.add(parentIndex)
-    parentIndex = props.compressedData[parentIndex]?.parent_index ?? null
-  }
-
-  // Descendants.
-  const children = new Map<number, number[]>()
-  props.compressedData.forEach((span, index) => {
-    if (span.parent_index === null) return
-    const siblings = children.get(span.parent_index) ?? []
-    siblings.push(index)
-    children.set(span.parent_index, siblings)
-  })
-  const stack = [...(children.get(rootIndex) ?? [])]
-  while (stack.length > 0) {
-    const index = stack.pop()!
-    if (visible.has(index)) continue
-    visible.add(index)
-    stack.push(...(children.get(index) ?? []))
-  }
-  return visible
-}
-
-function flattenSpans(): Array<{ key: string; span: CompressedSpan; depth: number }> {
-  const result: Array<{ key: string; span: CompressedSpan; depth: number }> = []
-  const depths: number[] = []
-  const rootIndex = lineageRootKey.value === null ? null : Number(lineageRootKey.value)
-  const visibleIndices = rootIndex === null || !Number.isInteger(rootIndex)
-    ? null
-    : lineageIndices(rootIndex)
-
-  props.compressedData.forEach((span, index) => {
-    const depth = span.parent_index === null ? 0 : (depths[span.parent_index] ?? -1) + 1
-    depths.push(depth)
-    if (visibleIndices && !visibleIndices.has(index)) return
-    result.push({ key: String(index), span, depth })
-  })
-  return result.sort((a, b) => a.span.window_min - b.span.window_min || a.depth - b.depth)
-}
-
-function occurrences(span: CompressedSpan, windowSize: number) {
-  const offset = windowSize - span.window_min
-  const fitLimit = span.fit_limits[offset]
-  if (fitLimit === undefined || !Number.isFinite(fitLimit)) return []
-  return span.indices.filter(start => start + windowSize <= fitLimit)
-}
-
-function logicalWindowCountLabel(span: CompressedSpan) {
-  const entries: string[] = []
-  for (let windowSize = span.window_min; windowSize <= span.window_max; windowSize++) {
-    entries.push(`${windowSize}·${occurrences(span, windowSize).length}`)
-  }
-  if (entries.length <= 5) return entries.join('  ')
-  return [...entries.slice(0, 2), '…', ...entries.slice(-2)].join('  ')
-}
-
-function summaryLabel(row: SpanRow) {
-  return `${row.key === selectedKey.value ? '▾' : '▸'} ${logicalWindowCountLabel(row.span)}`
-}
-
-function detailItems(span: CompressedSpan, windowSize: number, y: number): { items: DetailItem[]; height: number } {
-  const starts = occurrences(span, windowSize)
-  const mapped = starts.flatMap(start => {
-    const actualStart = props.stepMap ? props.stepMap[start] : start
-    const actualEnd = props.stepMap ? props.stepMap[start + windowSize - 1] : start + windowSize - 1
-    if (actualStart === undefined || actualEnd === undefined ||
-      !Number.isFinite(actualStart) || !Number.isFinite(actualEnd) || actualEnd < actualStart) return []
-    return [{ start: actualStart, end: actualEnd + 1, windowSize: actualEnd - actualStart + 1 }]
-  }).sort((a, b) => a.start - b.start || a.end - b.end)
-  const groups = new Map<number, number[]>()
-  mapped.forEach(item => {
-    const indices = groups.get(item.windowSize) ?? []
-    indices.push(item.start)
-    groups.set(item.windowSize, indices)
-  })
-  const lanes: number[] = []
-  const items = mapped.map(item => {
-    let lane = lanes.findIndex(end => end <= item.start)
-    if (lane < 0) { lane = lanes.length; lanes.push(0) }
-    lanes[lane] = item.end + 0.5
-    return {
-      x: item.start * props.stepWidth,
-      width: (item.end - item.start) * props.stepWidth,
-      y: y + lane * props.rowHeight,
-      windowSize: item.windowSize,
-      indices: groups.get(item.windowSize) ?? [],
-      clusterId: String(span.cluster_ids[windowSize - span.window_min]),
-    }
-  })
-  return { items, height: Math.max(lanes.length, 1) * props.rowHeight + 6 }
-}
-
-function calculateLayout() {
-  let y = 28
-  rows = flattenSpans().map(({ key, span, depth }) => {
-    const summaryY = y
-    const summaryStarts = occurrences(span, span.window_min)
-    const summaryPairs = summaryStarts.flatMap(start => {
-      const position = props.stepMap ? props.stepMap[start] : start
-      return position === undefined || !Number.isFinite(position)
-        ? []
-        : [{ start, position }]
-    }).sort((a, b) => a.position - b.position)
-    const summaryMappedStarts = summaryPairs.map(pair => pair.start)
-    const summaryPositions = summaryPairs.map(pair => pair.position)
-    const summaryIndicesByActualWindow = new Map<number, number[]>()
-    if (props.stepMap?.length) {
-      for (const start of summaryStarts) {
-        const first = props.stepMap[start]
-        const last = props.stepMap[start + span.window_min - 1]
-        if (first === undefined || last === undefined) continue
-        const actualWindow = last - first + 1
-        const indices = summaryIndicesByActualWindow.get(actualWindow) ?? []
-        indices.push(first)
-        summaryIndicesByActualWindow.set(actualWindow, indices)
-      }
-    }
-    y += summaryHeight
-    let detailY = y
-    let detailHeight = 0
-    let items: DetailItem[] = []
-    if (key === selectedKey.value) {
-      selectedWindow.value = Math.max(span.window_min, Math.min(span.window_max, selectedWindow.value))
-      const detail = detailItems(span, selectedWindow.value, detailY)
-      items = detail.items
-      detailHeight = detail.height
-      y += detailHeight
-    }
-    const maxItemWidth = items.reduce((maxWidth, item) => Math.max(maxWidth, item.width), 0)
-    return {
-      key, span, depth, y: summaryY, detailY, detailHeight, items,
-      summaryStarts, summaryMappedStarts, summaryPositions, summaryIndicesByActualWindow, maxItemWidth,
-    }
-  })
-  contentHeight.value = Math.max(viewportHeight.value, y + 8)
-}
-
-function draw() {
-  const element = canvas.value
-  const wrapper = scrollWrapper.value
-  if (!element || !wrapper) return
-  const ratio = Math.min(window.devicePixelRatio || 1, 2)
-  element.width = Math.ceil(viewportWidth.value * ratio)
-  element.height = Math.ceil(viewportHeight.value * ratio)
-  const ctx = element.getContext('2d')
-  if (!ctx) return
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
-  const left = wrapper.scrollLeft
-  const top = wrapper.scrollTop
-  const width = viewportWidth.value
-  const height = viewportHeight.value
-  ctx.clearRect(0, 0, width, height)
-  const labels = labelsCanvas.value
-  const labelCtx = labels?.getContext('2d')
-  if (labels && labelCtx) {
-    labels.width = Math.ceil(labelColumnWidth * ratio)
-    labels.height = Math.ceil(height * ratio)
-    labelCtx.setTransform(ratio, 0, 0, ratio, 0, 0)
-    labelCtx.clearRect(0, 0, labelColumnWidth, height)
-  }
-
-  const firstRow = firstVisibleRowIndex(top)
-  for (let rowIndex = firstRow; rowIndex < rows.length; rowIndex++) {
-    const row = rows[rowIndex]!
-    if (row.y > top + height) break
-    const sy = row.y - top
-    ctx.fillStyle = row.key === selectedKey.value ? '#e3f2fd' : '#f5f8fb'
-    ctx.fillRect(0, sy, width, summaryHeight - 2)
-    ctx.fillStyle = '#1976d2'
-    // The summary marks occurrences of the shortest logical window only.
-    // Longer membership is displayed exactly after selecting a window size.
-    const minPosition = (left - 2) / props.stepWidth
-    const maxPosition = (left + width + 2) / props.stepWidth
-    for (
-      let positionIndex = lowerBound(row.summaryPositions, minPosition);
-      positionIndex < row.summaryPositions.length &&
-        row.summaryPositions[positionIndex]! <= maxPosition;
-      positionIndex++
-    ) {
-      const x = row.summaryPositions[positionIndex]! * props.stepWidth - left
-      ctx.fillRect(x, sy + 5, 2, summaryHeight - 12)
-    }
-    if (labelCtx) {
-      labelCtx.fillStyle = row.key === selectedKey.value ? '#e3f2fd' : '#f5f8fb'
-      labelCtx.fillRect(0, sy, labelColumnWidth, summaryHeight - 2)
-      labelCtx.fillStyle = '#37474f'
-      labelCtx.font = '10px sans-serif'
-      labelCtx.fillText(
-        summaryLabel(row),
-        Math.min(row.depth * 8, 32) + 2, sy + 15,
-        labelColumnWidth - Math.min(row.depth * 8, 32) - 6,
-      )
-    }
-    if (!row.detailHeight) continue
-    const dy = row.detailY - top
-    ctx.fillStyle = 'rgba(25, 118, 210, 0.04)'
-    ctx.fillRect(0, dy, width, row.detailHeight)
-    if (labelCtx) {
-      labelCtx.fillStyle = '#1976d2'
-      labelCtx.font = '10px sans-serif'
-      labelCtx.fillText(`w=${selectedWindow.value}`, 7, dy + 12)
-    }
-    ctx.fillStyle = 'rgba(100,181,246,0.45)'
-    ctx.strokeStyle = '#1976d2'
-    const detailStartX = Math.max(0, left - row.maxItemWidth)
-    for (
-      let itemIndex = lowerBoundItemX(row.items, detailStartX);
-      itemIndex < row.items.length && row.items[itemIndex]!.x <= left + width;
-      itemIndex++
-    ) {
-      const item = row.items[itemIndex]!
-      const x = item.x - left
-      const iy = item.y - top
-      if (x + item.width < 0 || iy + props.rowHeight < 0 || iy > height) continue
-      ctx.fillRect(x, iy, item.width, props.rowHeight - 3)
-      ctx.strokeRect(x, iy, item.width, props.rowHeight - 3)
-    }
-  }
-}
-
-function scheduleDraw() {
-  if (rafId !== null) cancelAnimationFrame(rafId)
-  rafId = requestAnimationFrame(() => { rafId = null; draw() })
-}
-function updateViewport() {
-  if (!scrollWrapper.value) return
-  viewportWidth.value = Math.max(1, scrollWrapper.value.clientWidth)
-  viewportHeight.value = Math.max(1, scrollWrapper.value.clientHeight)
-  calculateLayout()
-  scheduleDraw()
-}
-function onScroll(event: Event) {
-  emit('scroll', event)
-  scheduleDraw()
-}
-function hit(event: MouseEvent) {
-  const wrapper = scrollWrapper.value
-  const element = canvas.value
-  if (!wrapper || !element) return null
-  const rect = element.getBoundingClientRect()
-  const x = event.clientX - rect.left + wrapper.scrollLeft
-  const y = event.clientY - rect.top + wrapper.scrollTop
-  const row = rowAtY(y)
-  if (!row) return null
-  if (y < row.detailY) return { row, item: null }
-  const startIndex = lowerBoundItemX(row.items, Math.max(0, x - row.maxItemWidth))
-  let item: DetailItem | null = null
-  for (let index = startIndex; index < row.items.length && row.items[index]!.x <= x; index++) {
-    const entry = row.items[index]!
-    if (
-      x >= entry.x && x <= entry.x + entry.width &&
-      y >= entry.y && y <= entry.y + props.rowHeight - 3
-    ) {
-      item = entry
-      break
-    }
-  }
-  return { row, item }
-}
-function onMouseMove(event: MouseEvent) {
-  const target = hit(event)
-  if (!target) { emit('hover-cluster', null); return }
-  canvas.value!.style.cursor = 'pointer'
-  if (target.item) {
-    emit('hover-cluster', {
-      indices: target.item.indices,
-      windowSize: target.item.windowSize,
-      id: target.item.clusterId,
-    })
-  } else if (target.row.detailHeight && event.clientY - canvas.value!.getBoundingClientRect().top +
-    (scrollWrapper.value?.scrollTop ?? 0) >= target.row.detailY) {
-    emit('hover-cluster', null)
-  } else if (!props.stepMap?.length) {
-    emit('hover-cluster', {
-      indices: target.row.summaryStarts,
-      windowSize: target.row.span.window_min,
-      id: String(target.row.span.cluster_ids[0]),
-    })
-  } else {
-    const localWindow = target.row.span.window_min
-    const x = event.clientX - canvas.value!.getBoundingClientRect().left +
-      (scrollWrapper.value?.scrollLeft ?? 0)
-    const targetPosition = x / props.stepWidth
-    const insertion = lowerBound(target.row.summaryPositions, targetPosition)
-    const candidates = [insertion - 1, insertion].filter(
-      index => index >= 0 && index < target.row.summaryPositions.length,
-    )
-    const nearest = candidates.reduce<number | null>((best, index) => {
-      if (best === null) return index
-      return Math.abs(target.row.summaryPositions[index]! - targetPosition) <
-        Math.abs(target.row.summaryPositions[best]! - targetPosition) ? index : best
-    }, null)
-    const hovered = nearest !== null &&
-      Math.abs(target.row.summaryPositions[nearest]! * props.stepWidth - x) <= 4
-        ? target.row.summaryMappedStarts[nearest]!
-        : undefined
-    const actualStart = hovered === undefined ? undefined : props.stepMap?.[hovered]
-    const actualEnd = hovered === undefined ? undefined : props.stepMap?.[hovered + localWindow - 1]
-    if (actualStart === undefined || actualEnd === undefined) {
-      emit('hover-cluster', null)
-      return
-    }
-    const actualWindow = actualEnd - actualStart + 1
-    const indices = target.row.summaryIndicesByActualWindow.get(actualWindow) ?? []
-    emit('hover-cluster', {
-      indices, windowSize: actualWindow,
-      id: String(target.row.span.cluster_ids[0]),
-    })
-  }
-}
-function onClick(event: MouseEvent) {
-  const target = hit(event)
-  if (!target) return
-  if (target.item) return
-  const y = event.clientY - canvas.value!.getBoundingClientRect().top +
-    (scrollWrapper.value?.scrollTop ?? 0)
-  if (y >= target.row.detailY) return
-  toggleDetails(target.row)
-}
-function onLabelClick(event: MouseEvent) {
-  const wrapper = scrollWrapper.value
-  const labels = labelsCanvas.value
-  if (!wrapper || !labels) return
-  const y = event.clientY - labels.getBoundingClientRect().top + wrapper.scrollTop
-  const row = rowAtY(y)
-  if (row && y < row.y + summaryHeight) toggleDetails(row)
-}
-function toggleDetails(row: SpanRow) {
-  selectedKey.value = row.key
-  lineageRootKey.value = row.key
-  selectedWindow.value = row.span.window_min
-}
-function showAllClusters() {
-  lineageRootKey.value = null
-  emit('hover-cluster', null)
-}
-function closeDetails() {
-  selectedKey.value = null
-  lineageRootKey.value = null
-  emit('hover-cluster', null)
-}
-function onMouseLeave() { emit('hover-cluster', null) }
-
 watch(() => [props.compressedData, props.stepMap], () => {
-  selectedKey.value = null
-  lineageRootKey.value = null
+  hoveredKey.value = null
+  focusedKey.value = null
   emit('hover-cluster', null)
   calculateLayout()
   nextTick(scheduleDraw)
 })
-watch(() => [props.stepWidth, props.rowHeight, props.maxSteps, selectedKey.value, selectedWindow.value, lineageRootKey.value], () => {
-  calculateLayout()
-  nextTick(scheduleDraw)
-}, { immediate: true })
+
+watch(
+  () => [props.stepWidth, props.rowHeight, props.maxSteps, focusedKey.value],
+  () => {
+    calculateLayout()
+    nextTick(scheduleDraw)
+  },
+  { immediate: true },
+)
+
 onMounted(() => {
   nextTick(updateViewport)
   if (scrollWrapper.value) {
@@ -553,42 +645,122 @@ onMounted(() => {
     resizeObserver.observe(scrollWrapper.value)
   }
 })
+
 onUnmounted(() => {
   stopResize()
   resizeObserver?.disconnect()
   if (rafId !== null) cancelAnimationFrame(rafId)
 })
+
 defineExpose({ scrollWrapper })
 </script>
 
 <style scoped>
-.roll-container { display: flex; border: 1px solid #ccc; background: white; height: 100%; position: relative; }
-.resize-handle { position: absolute; bottom: 0; left: 80px; right: 0; height: 9px;
-  cursor: ns-resize; touch-action: none; z-index: 3;
-  background: linear-gradient(to bottom, transparent 3px, #999 4px, transparent 5px); }
-.resize-handle:focus-visible { outline: 2px solid #1976d2; outline-offset: -2px; }
-.label-column { width: 80px; min-width: 80px; position: relative; border-right: 1px solid #eee; overflow: hidden; }
-.label-column canvas { position: absolute; top: 0; left: 0; cursor: pointer; }
-.title-label { position: absolute; top: 0; left: 0; right: 0; height: 21px;
-  display: flex; align-items: center; padding: 0 4px; color: #666; font-size: 10px;
-  background: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  box-sizing: border-box; }
-.scroll-wrapper { flex: 1; min-width: 0; min-height: 0; overflow: auto; scrollbar-width: none; }
-.scroll-wrapper::-webkit-scrollbar { display: none; }
-.canvas-space { position: relative; }
-canvas { position: sticky; top: 0; left: 0; display: block; }
-.length-control { position: absolute; right: 12px; top: 5px; display: flex; align-items: center; gap: 6px;
-  padding: 3px 6px; background: rgba(255,255,255,.96); border: 1px solid #90caf9;
-  border-radius: 4px; color: #263238; font: 11px sans-serif; z-index: 2; }
-.length-control input { width: 110px; }
-.length-control button { border: 0; background: transparent; cursor: pointer; font-size: 16px; }
-.length-control .show-all-button {
+.roll-container {
+  display: flex;
+  border: 1px solid #ccc;
+  background: white;
+  height: 100%;
+  position: relative;
+}
+
+.resize-handle {
+  position: absolute;
+  bottom: 0;
+  left: 80px;
+  right: 0;
+  height: 9px;
+  cursor: ns-resize;
+  touch-action: none;
+  z-index: 3;
+  background: linear-gradient(to bottom, transparent 3px, #999 4px, transparent 5px);
+}
+
+.resize-handle:focus-visible {
+  outline: 2px solid #1976d2;
+  outline-offset: -2px;
+}
+
+.label-column {
+  width: 80px;
+  min-width: 80px;
+  position: relative;
+  border-right: 1px solid #eee;
+  overflow: hidden;
+}
+
+.label-column canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.title-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 21px;
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  color: #666;
+  font-size: 10px;
+  background: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+  z-index: 2;
+}
+
+.scroll-wrapper {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: none;
+}
+
+.scroll-wrapper::-webkit-scrollbar {
+  display: none;
+}
+
+.canvas-space {
+  position: relative;
+}
+
+canvas {
+  position: sticky;
+  top: 0;
+  left: 0;
+  display: block;
+}
+
+.focus-control {
+  position: absolute;
+  right: 12px;
+  top: 5px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 6px;
+  background: rgba(255, 255, 255, .96);
+  border: 1px solid #90caf9;
+  border-radius: 4px;
+  color: #263238;
+  font: 11px sans-serif;
+  z-index: 4;
+}
+
+.focus-control .show-all-button {
   border: 1px solid #90caf9;
   border-radius: 3px;
   background: #fff;
   color: #1565c0;
   padding: 2px 7px;
   font-size: 11px;
+  cursor: pointer;
   white-space: nowrap;
 }
 </style>
