@@ -10,7 +10,7 @@
       <div class="canvas-space" :style="{ width: contentWidth + 'px', height: viewportHeight + 'px' }">
         <canvas
           ref="canvas"
-          :style="{ width: viewportWidth + 'px', height: viewportHeight + 'px' }"
+          :style="{ width: contentWidth + 'px', height: viewportHeight + 'px' }"
           @mousemove="onMouseMove"
           @mouseleave="onMouseLeave"
         ></canvas>
@@ -188,7 +188,7 @@ const draw = () => {
   if (!ctx) return
 
   const ratio = Math.min(window.devicePixelRatio || 1, 2)
-  const width = viewportWidth.value
+  const width = contentWidth.value
   const height = viewportHeight.value
   canvas.value.width = Math.ceil(width * ratio)
   canvas.value.height = Math.ceil(height * ratio)
@@ -199,7 +199,7 @@ const draw = () => {
   const firstStep = Math.max(0, Math.floor(left / stepWidth) - 1)
   const lastStep = Math.min(
     maxStepCount.value - 1,
-    Math.ceil((left + width) / stepWidth) + 1,
+    Math.ceil((left + viewportWidth.value) / stepWidth) + 1,
   )
   const values = props.streamValues as StreamCellValue[][]
   const velocities = props.streamVelocities as any[]
@@ -291,7 +291,6 @@ const draw = () => {
     }
   })
 
-
   if (props.playheadStep >= 0) {
     const x = props.playheadStep * stepWidth - left
     if (x >= -2 && x <= width + 2) {
@@ -307,7 +306,6 @@ const draw = () => {
   }
 }
 
-/** マウス移動 → step を逆算し、その step の値だけをヒットテスト */
 const onMouseMove = (e: MouseEvent) => {
   if (!canvas.value || !container.value || !scrollWrapper.value) return
 
@@ -344,8 +342,6 @@ const onMouseMove = (e: MouseEvent) => {
           const slotIndex = (metrics.stepsY - 1) - normalizedIndex
           const yCenter = slotIndex * metrics.slotHeight + metrics.slotHeight / 2
           const rectY = yCenter - metrics.barHeight / 2
-          // Thin piano-roll bars can be only a pixel or two high. Give hover
-          // a small vertical tolerance while still reporting the exact value.
           const hoverPadding = Math.max(2, Math.min(5, metrics.slotHeight * 0.4))
           if (yInCanvas >= rectY - hoverPadding && yInCanvas <= rectY + metrics.barHeight + hoverPadding) {
             hit = { step, value: numVal, streamIndex: sIdx }
