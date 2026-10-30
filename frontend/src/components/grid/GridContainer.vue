@@ -226,6 +226,7 @@
     <ParamGenDialog
       v-model="paramGenDialog"
       :initialParams="paramGenInit"
+      :value-step="focusedCell?.config?.step ?? (focusedCell?.config?.isInt ? 1 : 0.1)"
       @apply="applyGeneratedParams"
     />
   </div>
@@ -866,6 +867,19 @@ const focusCellAndScroll = async (rowIndex: number, colIndex: number, config: an
   clearHeaderSelections()
 }
 
+const getDecimalPlaces = (step: unknown): number => {
+  const value = Number(step)
+  if (!Number.isFinite(value) || value <= 0) return 1
+  const text = String(value).toLowerCase()
+  if (text.includes('e-')) return Math.min(12, Number(text.split('e-')[1]) || 0)
+  return Math.min(12, (text.split('.')[1] || '').length)
+}
+
+const roundToCellPrecision = (value: number, config: GridConfig): number => {
+  if (config.isInt) return Math.round(value)
+  return Number(value.toFixed(getDecimalPlaces(config.step ?? 0.1)))
+}
+
 const applyGeneratedParams = async (params: any) => {
   if (!focusedCell.value) return
   const { rowIndex, colIndex, config } = focusedCell.value
@@ -884,7 +898,10 @@ const applyGeneratedParams = async (params: any) => {
     generatedValues.forEach((value, offset) => {
       const writeIndex = colIndex + offset
       while (newData.length <= writeIndex) newData.push(0)
-      newData[writeIndex] = value
+      let roundedValue = roundToCellPrecision(Number(value), config)
+      if (roundedValue < config.min) roundedValue = config.min
+      if (roundedValue > config.max) roundedValue = config.max
+      newData[writeIndex] = roundedValue
     })
 
     const updatedRow = { ...targetRow, data: newData }
@@ -915,8 +932,7 @@ const applyGeneratedParams = async (params: any) => {
       val = randMin + Math.random() * (randMax - randMin)
     }
 
-    if (config.isInt) val = Math.round(val)
-    else val = Number(val.toFixed(2))
+    val = roundToCellPrecision(val, config)
 
     if (val < config.min) val = config.min
     if (val > config.max) val = config.max
