@@ -26,10 +26,10 @@
                     ></v-text-field>
                   </v-col>
                   <v-col cols="6">
-                    <v-text-field label="Start Value" type="number" v-model.number="localParams.start" step="0.1"></v-text-field>
+                    <v-text-field label="Start Value" type="number" v-model.number="localParams.start" :step="valueStep"></v-text-field>
                   </v-col>
                   <v-col cols="6">
-                    <v-text-field label="End Value" type="number" v-model.number="localParams.end" step="0.1"></v-text-field>
+                    <v-text-field label="End Value" type="number" v-model.number="localParams.end" :step="valueStep"></v-text-field>
                   </v-col>
                   <v-col cols="12">
                     <v-select
@@ -57,10 +57,10 @@
                     ></v-text-field>
                   </v-col>
                   <v-col cols="6">
-                    <v-text-field label="Min Value" type="number" v-model.number="localParams.randMin" step="0.1"></v-text-field>
+                    <v-text-field label="Min Value" type="number" v-model.number="localParams.randMin" :step="valueStep"></v-text-field>
                   </v-col>
                   <v-col cols="6">
-                    <v-text-field label="Max Value" type="number" v-model.number="localParams.randMax" step="0.1"></v-text-field>
+                    <v-text-field label="Max Value" type="number" v-model.number="localParams.randMax" :step="valueStep"></v-text-field>
                   </v-col>
                 </v-row>
               </v-window-item>
@@ -95,10 +95,10 @@
                   </v-col>
 
                   <v-col cols="4">
-                    <v-text-field label="Min" type="number" v-model.number="multiMin" step="0.1"></v-text-field>
+                    <v-text-field label="Min" type="number" v-model.number="multiMin" :step="valueStep"></v-text-field>
                   </v-col>
                   <v-col cols="4">
-                    <v-text-field label="Max" type="number" v-model.number="multiMax" step="0.1"></v-text-field>
+                    <v-text-field label="Max" type="number" v-model.number="multiMax" :step="valueStep"></v-text-field>
                   </v-col>
                   <v-col cols="4">
                     <v-text-field label="Steps" type="number" v-model.number="multiSteps" min="1" step="1"></v-text-field>
@@ -120,10 +120,10 @@
                     <div class="text-caption mb-2">Bulk edit selected blocks</div>
                     <v-row dense>
                       <v-col cols="3">
-                        <v-text-field label="Bulk min" type="number" v-model.number="bulkMin" step="0.1"></v-text-field>
+                        <v-text-field label="Bulk min" type="number" v-model.number="bulkMin" :step="valueStep"></v-text-field>
                       </v-col>
                       <v-col cols="3">
-                        <v-text-field label="Bulk max" type="number" v-model.number="bulkMax" step="0.1"></v-text-field>
+                        <v-text-field label="Bulk max" type="number" v-model.number="bulkMax" :step="valueStep"></v-text-field>
                       </v-col>
                       <v-col cols="3">
                         <v-text-field label="Bulk steps" type="number" v-model.number="bulkSteps" min="1" step="1"></v-text-field>
@@ -261,7 +261,7 @@ const getDecimalPlaces = (step: number): number => {
 const decimalPlaces = computed(() => getDecimalPlaces(props.valueStep))
 
 const formatValue = (value: number): string =>
-  String(Number(Number(value).toFixed(decimalPlaces.value)))
+  Number(value).toFixed(decimalPlaces.value)
 
 const arrowLinePath = (kind: TransitionKind): string => ({
   'min->min': 'M3 19 H27',
@@ -432,7 +432,7 @@ const randomizeSelected = () => {
   const kinds: TransitionKind[] = ['min->min', 'min->max', 'max->max', 'max->min']
   const lo = Math.min(Number(bulkMin.value), Number(bulkMax.value))
   const hi = Math.max(Number(bulkMin.value), Number(bulkMax.value))
-  const maxSteps = Math.max(1, Math.floor(Number(bulkSteps.value || 1)))
+  const maxSteps = Math.max(2, Math.floor(Number(bulkSteps.value || 1)))
 
   selectedIndices().forEach((index) => {
     const block = next[index]
