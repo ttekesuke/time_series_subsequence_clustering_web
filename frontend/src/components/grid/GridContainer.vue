@@ -226,7 +226,7 @@
     <ParamGenDialog
       v-model="paramGenDialog"
       :initialParams="paramGenInit"
-      :value-step="focusedCell?.config?.step ?? (focusedCell?.config?.isInt ? 1 : 0.1)"
+      :value-step="focusedCell?.config?.step || (focusedCell?.config?.isInt ? 1 : 0.1)"
       @apply="applyGeneratedParams"
     />
   </div>
