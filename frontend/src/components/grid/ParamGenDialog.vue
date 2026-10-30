@@ -5,17 +5,6 @@
       <v-card-text class="pt-4">
         <v-row>
           <v-col cols="12">
-            <v-text-field
-              label="Steps to Generate"
-              type="number"
-              v-model.number="localParams.steps"
-              min="1"
-              hint="Number of cells to fill from cursor"
-              persistent-hint
-            ></v-text-field>
-          </v-col>
-
-          <v-col cols="12">
             <v-tabs v-model="localParams.mode" density="compact" color="primary">
               <v-tab value="transition">Transition</v-tab>
               <v-tab value="random">Random</v-tab>
@@ -25,6 +14,17 @@
             <v-window v-model="localParams.mode" class="mt-4">
               <v-window-item value="transition">
                 <v-row>
+                  <v-col cols="12">
+                    <v-text-field
+                      label="Steps to Generate"
+                      type="number"
+                      v-model.number="localParams.steps"
+                      min="1"
+                      step="1"
+                      hint="Number of cells to fill from cursor"
+                      persistent-hint
+                    ></v-text-field>
+                  </v-col>
                   <v-col cols="6">
                     <v-text-field label="Start Value" type="number" v-model.number="localParams.start" step="0.1"></v-text-field>
                   </v-col>
@@ -45,6 +45,17 @@
 
               <v-window-item value="random">
                 <v-row>
+                  <v-col cols="12">
+                    <v-text-field
+                      label="Steps to Generate"
+                      type="number"
+                      v-model.number="localParams.steps"
+                      min="1"
+                      step="1"
+                      hint="Number of cells to fill from cursor"
+                      persistent-hint
+                    ></v-text-field>
+                  </v-col>
                   <v-col cols="6">
                     <v-text-field label="Min Value" type="number" v-model.number="localParams.randMin" step="0.1"></v-text-field>
                   </v-col>
@@ -65,13 +76,20 @@
                         size="small"
                         variant="outlined"
                         color="primary"
+                        class="transition-preset-button"
+                        :aria-label="preset.label"
+                        :title="preset.label"
                         @click="addBlock(preset.value)"
                       >
-                        <span class="d-inline-flex align-center ga-1">
-                          <span>{{ preset.left }}</span>
-                          <span>→</span>
-                          <span>{{ preset.right }}</span>
-                        </span>
+                        <svg
+                          class="transition-arrow"
+                          viewBox="0 0 30 24"
+                          role="img"
+                          :aria-label="preset.label"
+                        >
+                          <path :d="arrowLinePath(preset.value)" />
+                          <path :d="arrowHeadPath(preset.value)" />
+                        </svg>
                       </v-btn>
                     </div>
                   </v-col>
@@ -137,23 +155,31 @@
                         :key="`${block.kind}-${index}`"
                         class="block-item"
                         :class="{ selected: selectedBlockIndexes.includes(index) }"
+                        role="button"
+                        tabindex="0"
+                        :aria-pressed="selectedBlockIndexes.includes(index)"
                         @click="toggleSelection(index)"
+                        @keydown.enter.stop="toggleSelection(index)"
+                        @keydown.space.prevent.stop="toggleSelection(index)"
                       >
-                        <div class="d-flex align-center justify-space-between">
-                          <div class="d-flex align-center ga-2">
-                            <v-checkbox
-                              :model-value="selectedBlockIndexes.includes(index)"
-                              density="compact"
-                              hide-details
-                              @click.stop="toggleSelection(index)"
-                            />
-                            <span class="font-weight-medium">{{ formatKindLabel(block.kind) }}</span>
-                          </div>
-                          <v-btn icon="mdi-delete-outline" variant="text" size="small" @click.stop="removeBlock(index)"></v-btn>
+                        <div class="block-top-row">
+                          <span class="block-value">{{ formatValue(getBlockStartValue(block)) }}</span>
+                          <svg class="block-arrow" viewBox="0 0 30 24" aria-hidden="true">
+                            <path :d="arrowLinePath(block.kind)" />
+                            <path :d="arrowHeadPath(block.kind)" />
+                          </svg>
+                          <span class="block-value">{{ formatValue(getBlockEndValue(block)) }}</span>
+                          <v-btn
+                            class="block-delete"
+                            icon="mdi-delete-outline"
+                            variant="text"
+                            size="x-small"
+                            density="compact"
+                            aria-label="Delete block"
+                            @click.stop="removeBlock(index)"
+                          ></v-btn>
                         </div>
-                        <div class="block-meta text-caption text-medium-emphasis">
-                          min {{ block.minValue }} / max {{ block.maxValue }} / steps {{ block.steps }}
-                        </div>
+                        <div class="block-steps">steps: {{ block.steps }}</div>
                       </div>
                     </div>
                   </v-col>
@@ -173,7 +199,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 type TransitionKind = 'min->min' | 'min->max' | 'max->max' | 'max->min'
 
@@ -186,6 +212,10 @@ type MultiBlock = {
 
 const props = defineProps({
   modelValue: Boolean,
+  valueStep: {
+    type: Number,
+    default: 0.1
+  },
   initialParams: {
     type: Object,
     default: () => ({
@@ -215,11 +245,43 @@ const localParams = ref({
 })
 
 const transitionPresets = [
-  { label: 'min → min', left: 'min', right: 'min', value: 'min->min' },
-  { label: 'min → max', left: 'min', right: 'max', value: 'min->max' },
-  { label: 'max → max', left: 'max', right: 'max', value: 'max->max' },
-  { label: 'max → min', left: 'max', right: 'min', value: 'max->min' },
+  { label: 'min → min', value: 'min->min' },
+  { label: 'min → max', value: 'min->max' },
+  { label: 'max → max', value: 'max->max' },
+  { label: 'max → min', value: 'max->min' },
 ] as const
+
+const getDecimalPlaces = (step: number): number => {
+  if (!Number.isFinite(step) || step <= 0) return 0
+  const text = String(step).toLowerCase()
+  if (text.includes('e-')) return Math.min(12, Number(text.split('e-')[1]) || 0)
+  return Math.min(12, (text.split('.')[1] || '').length)
+}
+
+const decimalPlaces = computed(() => getDecimalPlaces(props.valueStep))
+
+const formatValue = (value: number): string =>
+  String(Number(Number(value).toFixed(decimalPlaces.value)))
+
+const arrowLinePath = (kind: TransitionKind): string => ({
+  'min->min': 'M3 19 H27',
+  'min->max': 'M3 19 L27 5',
+  'max->max': 'M3 5 H27',
+  'max->min': 'M3 5 L27 19',
+}[kind])
+
+const arrowHeadPath = (kind: TransitionKind): string => ({
+  'min->min': 'M20 13 L27 19 L20 23',
+  'min->max': 'M20 4 L27 5 L24 12',
+  'max->max': 'M20 1 L27 5 L20 9',
+  'max->min': 'M20 12 L27 19 L20 23',
+}[kind])
+
+const getBlockStartValue = (block: MultiBlock): number =>
+  block.kind.startsWith('min->') ? block.minValue : block.maxValue
+
+const getBlockEndValue = (block: MultiBlock): number =>
+  block.kind.endsWith('->min') ? block.minValue : block.maxValue
 
 const multiMin = ref(0)
 const multiMax = ref(1)
@@ -246,15 +308,7 @@ const normalizeBlock = (block: Partial<MultiBlock>): MultiBlock => ({
   steps: Math.max(1, Number(block.steps ?? 1)),
 })
 
-const formatKindLabel = (kind: TransitionKind) => {
-  const map: Record<TransitionKind, string> = {
-    'min->min': 'min → min',
-    'min->max': 'min → max',
-    'max->max': 'max → max',
-    'max->min': 'max → min',
-  }
-  return map[kind] || kind
-}
+
 
 const resetMultiDefaults = () => {
   multiMin.value = Number(localParams.value.randMin ?? 0)
@@ -375,18 +429,31 @@ const applyBulkToSelected = () => {
 const randomizeSelected = () => {
   if (selectedBlockIndexes.value.length === 0) return
   const next = [...localParams.value.blocks]
+  const kinds: TransitionKind[] = ['min->min', 'min->max', 'max->max', 'max->min']
+  const lo = Math.min(Number(bulkMin.value), Number(bulkMax.value))
+  const hi = Math.max(Number(bulkMin.value), Number(bulkMax.value))
+  const maxSteps = Math.max(1, Math.floor(Number(bulkSteps.value || 1)))
+
   selectedIndices().forEach((index) => {
     const block = next[index]
     if (!block) return
-    const lo = Math.min(Number(bulkMin.value), Number(bulkMax.value))
-    const hi = Math.max(Number(bulkMin.value), Number(bulkMax.value))
-    const start = lo + Math.random() * (hi - lo)
-    const end = lo + Math.random() * (hi - lo)
+
+    const availableKinds = kinds.filter(kind => kind !== block.kind)
+    const kind = availableKinds[Math.floor(Math.random() * availableKinds.length)]
+    const availableSteps = Array.from({ length: maxSteps }, (_, stepIndex) => stepIndex + 1)
+      .filter(steps => steps !== block.steps)
+    const steps = availableSteps.length > 0
+      ? availableSteps[Math.floor(Math.random() * availableSteps.length)]
+      : maxSteps
+
+    const first = lo + Math.random() * (hi - lo)
+    const second = lo + Math.random() * (hi - lo)
     next[index] = normalizeBlock({
       ...block,
-      minValue: Math.min(start, end),
-      maxValue: Math.max(start, end),
-      steps: Math.max(1, Number(bulkSteps.value || 1)),
+      kind,
+      minValue: Math.min(first, second),
+      maxValue: Math.max(first, second),
+      steps,
     })
   })
   localParams.value.blocks = next
@@ -414,7 +481,7 @@ const flattenBlockValues = (blocks: MultiBlock[]) => {
     for (let i = 0; i < steps; i++) {
       const t = steps > 1 ? i / (steps - 1) : 0
       const value = start + (end - start) * t
-      values.push(Number(value.toFixed(4)))
+      values.push(Number(value.toFixed(decimalPlaces.value)))
     }
   })
   return values
@@ -441,19 +508,30 @@ const onApply = () => {
 <style scoped>
 .block-list {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 260px;
-  overflow-y: auto;
-  padding-right: 4px;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 48px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 6px;
 }
 
 .block-item {
+  box-sizing: border-box;
+  display: flex;
+  flex: 0 0 64px;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 64px;
+  height: 42px;
+  padding: 2px 3px;
   border: 1px solid #d9d9d9;
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: 6px;
   background: #fafafa;
   cursor: pointer;
+  user-select: none;
 }
 
 .block-item.selected {
@@ -461,7 +539,62 @@ const onApply = () => {
   background: #edf5ff;
 }
 
-.block-meta {
-  margin-top: 4px;
+.block-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1px;
+  min-width: 0;
+  height: 21px;
+}
+
+.block-value {
+  overflow: hidden;
+  font-size: 9px;
+  line-height: 1;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.block-arrow {
+  flex: 0 0 15px;
+  width: 15px;
+  height: 15px;
+  overflow: visible;
+}
+
+.block-arrow path,
+.transition-arrow path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.transition-preset-button {
+  min-width: 42px;
+  padding-inline: 7px;
+}
+
+.transition-arrow {
+  width: 25px;
+  height: 21px;
+}
+
+.block-delete.v-btn {
+  flex: 0 0 17px;
+  width: 17px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0;
+}
+
+.block-steps {
+  overflow: hidden;
+  font-size: 9px;
+  line-height: 11px;
+  text-align: center;
+  white-space: nowrap;
 }
 </style>
