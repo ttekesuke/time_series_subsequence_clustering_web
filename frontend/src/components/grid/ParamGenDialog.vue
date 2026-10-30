@@ -129,13 +129,25 @@
                         <v-text-field label="Bulk steps" type="number" v-model.number="bulkSteps" min="1" step="1"></v-text-field>
                       </v-col>
                       <v-col cols="3">
-                        <v-select
-                          label="Kind"
-                          :items="transitionPresets"
-                          item-title="label"
-                          item-value="value"
-                          v-model="bulkKind"
-                        ></v-select>
+                        <div class="kind-selector d-flex align-center ga-1" aria-label="Bulk transition kind">
+                          <v-btn
+                            v-for="preset in transitionPresets"
+                            :key="preset.value"
+                            size="x-small"
+                            min-width="30"
+                            variant="outlined"
+                            :color="bulkKind === preset.value ? 'primary' : 'default'"
+                            :aria-label="preset.label"
+                            :aria-pressed="bulkKind === preset.value"
+                            :title="preset.label"
+                            @click="bulkKind = preset.value"
+                          >
+                            <svg class="kind-arrow" viewBox="0 0 30 24" aria-hidden="true">
+                              <path :d="arrowLinePath(preset.value)" />
+                              <path :d="arrowHeadPath(preset.value)" />
+                            </svg>
+                          </v-btn>
+                        </div>
                       </v-col>
                     </v-row>
                     <div class="d-flex ga-2 flex-wrap">
@@ -575,6 +587,23 @@ const onApply = () => {
 .transition-preset-button {
   min-width: 42px;
   padding-inline: 7px;
+}
+
+.kind-selector {
+  min-height: 40px;
+}
+
+.kind-arrow {
+  width: 21px;
+  height: 18px;
+}
+
+.kind-arrow path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .transition-arrow {
