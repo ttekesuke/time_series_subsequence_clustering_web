@@ -285,7 +285,6 @@ const props = defineProps({
   rowHeight: { type: Number, default: 30 },
   rowLabelWidth: { type: Number, default: 120 },
   rowPrefixWidth: { type: Number, default: 0 },
-  // 初期コンテキスト用: Streams 入力
   showStreamCount: { type: Boolean, default: false },
   streamCount: { type: Number, default: 0 }
 })
@@ -297,10 +296,9 @@ const emit = defineEmits([
   'selected-columns-change'
 ])
 
-// --- State ---
 const wrapperRef = ref<HTMLElement | null>(null)
 const virtualScrollRef = ref<any>(null)
-const focusedCell = ref<any>(null) // { rowIndex, colIndex, config }
+const focusedCell = ref<any>(null)
 const paramGenDialog = ref(false)
 const paramGenInit = ref<any>({})
 const stepsDraft = ref(String(props.steps))
@@ -311,8 +309,6 @@ const copiedTooltipVisible = ref(false)
 let copiedTooltipTimer: ReturnType<typeof setTimeout> | null = null
 
 const stickyIndices = [0]
-// The first virtual row renders only column headings; give it the same shape as
-// data rows so the slot's row type matches the data branch.
 const virtualItems = computed<GridRowData[]>(() => [
   { name: 'Steps', data: [], config: { min: 0, max: 0 } },
   ...props.rows,
@@ -323,28 +319,16 @@ const cellWidth = 56
 
 const canGenerateParameters = computed(() => Boolean(focusedCell.value) && focusedCell.value?.config?.inputMode !== 'note-array')
 
-watch(
-  () => props.steps,
-  (v) => { stepsDraft.value = String(v) }
-)
-watch(
-  () => props.streamCount,
-  (v) => { streamCountDraft.value = String(v) }
-)
-watch(
-  () => props.rows.length,
-  (len) => {
-    rowSelection.value = clampSelectionRange(rowSelection.value, len)
-    if (focusedCell.value && focusedCell.value.rowIndex >= len) focusedCell.value = null
-  }
-)
-watch(
-  () => props.steps,
-  (len) => {
-    colSelection.value = clampSelectionRange(colSelection.value, len)
-    if (focusedCell.value && focusedCell.value.colIndex >= len) focusedCell.value = null
-  }
-)
+watch(() => props.steps, (v) => { stepsDraft.value = String(v) })
+watch(() => props.streamCount, (v) => { streamCountDraft.value = String(v) })
+watch(() => props.rows.length, (len) => {
+  rowSelection.value = clampSelectionRange(rowSelection.value, len)
+  if (focusedCell.value && focusedCell.value.rowIndex >= len) focusedCell.value = null
+})
+watch(() => props.steps, (len) => {
+  colSelection.value = clampSelectionRange(colSelection.value, len)
+  if (focusedCell.value && focusedCell.value.colIndex >= len) focusedCell.value = null
+})
 
 onBeforeUnmount(() => {
   if (copiedTooltipTimer !== null) {
@@ -375,8 +359,6 @@ const getStickyLeftStyle = (x: unknown) => {
     maxInlineSize: `${props.rowLabelWidth}px`
   }
 }
-
-// --- Methods ---
 
 const makeRangeSelection = (anchor: number, current: number): RangeSelection => ({
   start: Math.min(anchor, current),
@@ -591,17 +573,9 @@ const applyColPaste = (clipboard: GridStructuredClipboard) => {
   if (changed) emit('update:rows', newRows)
 }
 
-// Steps 入力変更
 const onStepsInput = (e: Event) => {
   const target = e.target as HTMLInputElement
-  const raw = target.value
-  stepsDraft.value = raw
-  // try to update immediately when user types a valid integer
-  const v = parseInt(raw, 10)
-  if (!Number.isNaN(v) && v >= 1) {
-    if (v !== props.steps) emit('update:steps', v)
-    stepsDraft.value = String(v)
-  }
+  stepsDraft.value = target.value
 }
 
 const onStepsBlur = (e: Event) => {
@@ -624,7 +598,6 @@ const onStepsBlur = (e: Event) => {
   target.value = stepsDraft.value
 }
 
-// Streams 入力変更
 const onStreamInput = (e: Event) => {
   const target = e.target as HTMLInputElement
   streamCountDraft.value = target.value
@@ -753,7 +726,6 @@ const onWrapperPaste = (event: ClipboardEvent) => {
   applyColPaste(clipboard)
 }
 
-// フォーカスアウト時: コンポーネント外に出たら選択解除
 const onFocusOut = (event: FocusEvent) => {
   if (paramGenDialog.value) return
 
@@ -764,14 +736,12 @@ const onFocusOut = (event: FocusEvent) => {
   clearAllSelections()
 }
 
-// 行更新
 const updateRow = (index: number, newRow: GridRowData) => {
   const newRows = [...props.rows]
   newRows[index] = newRow
   emit('update:rows', newRows)
 }
 
-// 行数変更（汎用用）
 const updateRowCount = (e: Event) => {
   const target = e.target as HTMLInputElement
   const newCount = parseInt(target.value)
@@ -794,18 +764,15 @@ const updateRowCount = (e: Event) => {
   emit('update:rows', currentRows)
 }
 
-// フォーカス
 const onCellFocus = (payload: any) => {
   focusedCell.value = payload
   clearHeaderSelections()
 }
 
-// ダブルクリックで即 ParamGen を開く
 const onCellDblClick = (payload: any) => {
   openParamGenDialogAt(payload)
 }
 
-// ペースト
 const onCellPaste = (payload: any) => {
   const clipboard = getStructuredClipboard()
   const incomingText = normalizeClipboardText(payload.text ?? '')
@@ -833,7 +800,6 @@ const onCellPaste = (payload: any) => {
 
   const requiredLen = colIndex + values.length
 
-  // 列数の自動拡張
   if (requiredLen > props.steps) emit('update:steps', requiredLen)
 
   const newData = [...targetRow.data]
@@ -874,7 +840,6 @@ const openParamGenDialogAt = (cell: any) => {
   paramGenDialog.value = true
 }
 
-// ParamGen ダイアログオープン
 const openParamGenDialog = () => {
   if (!canGenerateParameters.value) return
   openParamGenDialogAt(focusedCell.value)
@@ -901,20 +866,39 @@ const focusCellAndScroll = async (rowIndex: number, colIndex: number, config: an
   clearHeaderSelections()
 }
 
-// 生成データ適用
 const applyGeneratedParams = async (params: any) => {
   if (!focusedCell.value) return
-  const { steps, mode, start, end, curve, randMin, randMax } = params
   const { rowIndex, colIndex, config } = focusedCell.value
+  const targetRow = props.rows[rowIndex]
+  if (!targetRow) return
 
-  const requiredLen = colIndex + steps
+  const existingData = [...targetRow.data]
+  const requiredLen = colIndex + params.steps
   if (requiredLen > props.steps) emit('update:steps', requiredLen)
 
-  const existingRow = props.rows[rowIndex]
-  if (!existingRow) return
-  const targetRow = { ...existingRow }
-  const newData = [...targetRow.data]
+  const newData = [...existingData]
   while (newData.length < requiredLen) newData.push(0)
+
+  if (params.mode === 'multiple' && Array.isArray(params.generatedValues)) {
+    const generatedValues = params.generatedValues as number[]
+    generatedValues.forEach((value, offset) => {
+      const writeIndex = colIndex + offset
+      while (newData.length <= writeIndex) newData.push(0)
+      newData[writeIndex] = value
+    })
+
+    const updatedRow = { ...targetRow, data: newData }
+    updateRow(rowIndex, updatedRow)
+    paramGenDialog.value = false
+    const nextColIndex = colIndex + generatedValues.length
+    const currentMaxSteps = Math.max(props.steps, requiredLen)
+    if (nextColIndex < currentMaxSteps) {
+      await focusCellAndScroll(rowIndex, nextColIndex, config)
+    }
+    return
+  }
+
+  const { steps, mode, start, end, curve, randMin, randMax } = params
 
   for (let i = 0; i < steps; i++) {
     let val = 0
@@ -940,8 +924,8 @@ const applyGeneratedParams = async (params: any) => {
     newData[colIndex + i] = val
   }
 
-  targetRow.data = newData
-  updateRow(rowIndex, targetRow)
+  const updatedRow = { ...targetRow, data: newData }
+  updateRow(rowIndex, updatedRow)
   paramGenDialog.value = false
 
   const nextColIndex = colIndex + steps
@@ -1049,48 +1033,5 @@ const applyGeneratedParams = async (params: any) => {
   left: 0;
   z-index: 4;
   background-color: white;
-  border-right: 2px solid #ccc;
-  border: 1px solid #e0e0e0;
-}
-.head-col {
-  font-weight: bold;
-  text-align: left;
-  padding-left: 8px;
-}
-.row-label {
-  vertical-align: middle;
-  display: flex;
-  align-items: stretch;
-  gap: 6px;
-}
-.row-header {
-  user-select: none;
-  cursor: pointer;
-}
-.row-prefix-space {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  min-height: 100%;
-  padding: 0;
-  box-sizing: border-box;
-}
-.row-label-text {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  line-height: 1.15;
-  overflow-wrap: anywhere;
-}
-.selected-header {
-  background-color: #e8f5e9 !important;
-  font-weight: bold;
-}
-.selected-cell {
-  background-color: #e8f5e9;
-}
-.row-disabled {
-  color: #9e9e9e;
 }
 </style>
