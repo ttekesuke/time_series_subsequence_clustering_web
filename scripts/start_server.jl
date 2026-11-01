@@ -228,8 +228,9 @@ function _run_startup_warmup(base_url::AbstractString)
   end
 
   clustering_query_enabled = _bool_env("CLUSTERING_QUERY_ENABLED", false)
+  generate_enabled = _bool_env("STARTUP_WARMUP_GENERATE_ENABLED", false)
   polyphonic_enabled = _bool_env("STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED", false)
-  println("[warmup] starting startup warmup actions=$(length(actions)) config=$(config_path) clustering_query_enabled=$(clustering_query_enabled) polyphonic_enabled=$(polyphonic_enabled)")
+  println("[warmup] starting startup warmup actions=$(length(actions)) config=$(config_path) clustering_query_enabled=$(clustering_query_enabled) generate_enabled=$(generate_enabled) polyphonic_enabled=$(polyphonic_enabled)")
   flush(stdout)
 
   headers = ["Content-Type" => "application/json", "Accept" => "application/json"]
@@ -241,6 +242,11 @@ function _run_startup_warmup(base_url::AbstractString)
       flush(stdout)
       continue
     end
+    if !generate_enabled && path == "/api/web/time_series/generate"
+      println("[warmup] action skipped name=$(name): STARTUP_WARMUP_GENERATE_ENABLED=false")
+      flush(stdout)
+      continue
+    end
     if !polyphonic_enabled && path == "/api/web/time_series/generate_polyphonic"
       println("[warmup] action skipped name=$(name): STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED=false")
       flush(stdout)
@@ -249,6 +255,8 @@ function _run_startup_warmup(base_url::AbstractString)
 
     payload = _json_get(action, "payload", Dict{String,Any}())
     url = string(base_url, path)
+    println("[warmup] action starting name=$(name) path=$(path)")
+    flush(stdout)
     t0 = time()
     try
       resp = HTTP.post(url, headers, JSON3.write(payload); status_exception=false, readtimeout=300)
