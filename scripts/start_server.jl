@@ -316,7 +316,9 @@ catch err
   println("[warmup] unexpected startup warmup error=$(err)")
   flush(stdout)
 finally
-  GC.gc(true)
+  # Signal readiness before any optional cleanup. A full GC can take a long
+  # time under the memory pressure of small Render instances; it must not
+  # keep the parent entrypoint waiting after all warmup actions have finished.
   _signal_startup_warmup_complete()
 end
 
