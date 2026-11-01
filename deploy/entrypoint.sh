@@ -121,7 +121,7 @@ echo "[entrypoint] Confirmed public IPv4 listener 0.0.0.0:${PORT}"
 # ---- Genie 起動（バックグラウンド）----
 # Render の環境変数を保持しつつ、書き込み可能な HOME で scuser として起動する。
 # build時に作成したportable cacheだけを使い、512MiB環境でのruntime precompileを禁止する。
-echo "[entrypoint] CLUSTERING_QUERY_ENABLED=${CLUSTERING_QUERY_ENABLED:-false} STARTUP_WARMUP_ENABLED=${STARTUP_WARMUP_ENABLED:-true} STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED=${STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED:-false}"
+echo "[entrypoint] CLUSTERING_QUERY_ENABLED=${CLUSTERING_QUERY_ENABLED:-false} STARTUP_WARMUP_ENABLED=${STARTUP_WARMUP_ENABLED:-true} STARTUP_WARMUP_ANALYSE_ENABLED=${STARTUP_WARMUP_ANALYSE_ENABLED:-false} STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED=${STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED:-false}"
 echo "[entrypoint] JULIA_CPU_TARGET=${JULIA_CPU_TARGET:-generic}; runtime precompile disabled"
 if id scuser >/dev/null 2>&1; then
   su --preserve-environment -s /bin/bash -c \
