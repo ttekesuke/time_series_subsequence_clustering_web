@@ -1,5 +1,5 @@
 server {
-  listen ${PORT};
+  listen 0.0.0.0:${PORT};
   server_name _;
 
   client_header_buffer_size 16k;
