@@ -60,10 +60,11 @@ end
     ];
     calibrator=calibrator,
   )
-  # Characterized legacy behavior: the closest combined score is the
-  # second candidate (candidate value 1.0). Keep this tied to the frozen
-  # pre-compression oracle rather than an obsolete hand-written expectation.
-  @test argmin(abs.(combined .- 0.3)) == 2
+  # Prediction and structural axes have equal configured weight (1.0).
+  # With this fixture, candidate value 0.0 is closest to the target after
+  # combining the predictive and structural scores.
+  @test _predictive_controller.Config.COMPLEXITY_PREDICTION_WEIGHT == 1.0
+  @test argmin(abs.(combined .- 0.3)) == 1
 end
 
 @testset "predictive distribution supports PolySet successors" begin
@@ -258,5 +259,6 @@ end
     1,
   )
 
-  @test selected == [2.0]
+  # At prediction weight 1.0, the combined global/stream score selects 0.0.
+  @test selected == [0.0]
 end
