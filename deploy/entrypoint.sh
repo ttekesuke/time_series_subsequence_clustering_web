@@ -90,7 +90,33 @@ envsubst '${PORT} ${GENIE_PORT}' \
 nginx -t
 nginx -g 'daemon off;' &
 NGINX_PID=$!
-echo "[entrypoint] Nginx is listening on port ${PORT} in warming-up mode"
+echo "[entrypoint] Nginx startup requested on 0.0.0.0:${PORT} in warming-up mode"
+
+PORT_HEX="$(printf '%04X' "${PORT}")"
+nginx_public_listener=false
+for ((attempt = 0; attempt < 20; attempt++)); do
+  if awk -v port="00000000:${PORT_HEX}" '$2 == port && $4 == "0A" { found=1 } END { exit !found }' /proc/net/tcp; then
+    nginx_public_listener=true
+    break
+  fi
+  if ! kill -0 "${NGINX_PID}" >/dev/null 2>&1; then
+    echo "[entrypoint] Nginx exited before binding 0.0.0.0:${PORT}"
+    wait "${NGINX_PID}" || true
+    exit 1
+  fi
+  sleep 0.25
+done
+
+if [[ "${nginx_public_listener}" != "true" ]]; then
+  echo "[entrypoint] ERROR: no IPv4 0.0.0.0:${PORT} listening socket found"
+  echo "[entrypoint] Effective Nginx listen directives:"
+  nginx -T 2>&1 | grep -E '^[[:space:]]*listen ' || true
+  kill "${NGINX_PID}" >/dev/null 2>&1 || true
+  wait "${NGINX_PID}" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+echo "[entrypoint] Confirmed public IPv4 listener 0.0.0.0:${PORT}"
 
 # ---- Genie 起動（バックグラウンド）----
 # Render の環境変数を保持しつつ、書き込み可能な HOME で scuser として起動する。
