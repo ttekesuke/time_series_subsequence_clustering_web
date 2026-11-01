@@ -10,7 +10,7 @@
       <div class="canvas-space" :style="{ width: contentWidth + 'px', height: viewportHeight + 'px' }">
         <canvas
           ref="canvas"
-          :style="{ width: contentWidth + 'px', height: viewportHeight + 'px' }"
+          :style="{ width: viewportWidth + 'px', height: viewportHeight + 'px' }"
           @mousemove="onMouseMove"
           @mouseleave="onMouseLeave"
         ></canvas>
@@ -188,7 +188,7 @@ const draw = () => {
   if (!ctx) return
 
   const ratio = Math.min(window.devicePixelRatio || 1, 2)
-  const width = contentWidth.value
+  const width = viewportWidth.value
   const height = viewportHeight.value
   canvas.value.width = Math.ceil(width * ratio)
   canvas.value.height = Math.ceil(height * ratio)
