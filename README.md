@@ -51,6 +51,8 @@ VOICEVOX_ENABLED=false
 - `ENSURE_INFLUX_DBRP_ON_START`: `true` にすると起動時に `scripts/ensure_influx_dbrp.jl` を実行。成功後は外してください
 - `SEED_ON_START`: `true` にするとコンテナ起動時に `scripts/seed_influx.jl` を実行。初回 seed 後は外してください
 - `STARTUP_WARMUP_ENABLED`: 起動後 JIT warmup を行うか。未設定時は `true`
+- `STARTUP_WARMUP_GENERATE_ENABLED`: 通常の `generate` API も起動時に warmup するか。未設定時は `false`（小さいインスタンスでは起動時間・メモリを圧迫するため）
+- `STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED`: `generate_polyphonic` API を起動時に warmup するか。未設定時は `false`
 - `STARTUP_WARMUP_DELAY_SECONDS`: warmup 開始までの待機秒数。未設定時は `3`
 - `STARTUP_WARMUP_READY_TIMEOUT_SECONDS`: `/api/health` が返るまで待つ最大秒数。未設定時は `180`
 - `STARTUP_WARMUP_CONFIG`: warmup payload 設定。未設定時は `config/warmup_actions.json`
