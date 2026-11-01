@@ -228,15 +228,21 @@ function _run_startup_warmup(base_url::AbstractString)
   end
 
   clustering_query_enabled = _bool_env("CLUSTERING_QUERY_ENABLED", false)
+  analyse_enabled = _bool_env("STARTUP_WARMUP_ANALYSE_ENABLED", false)
   generate_enabled = _bool_env("STARTUP_WARMUP_GENERATE_ENABLED", false)
   polyphonic_enabled = _bool_env("STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED", false)
-  println("[warmup] starting startup warmup actions=$(length(actions)) config=$(config_path) clustering_query_enabled=$(clustering_query_enabled) generate_enabled=$(generate_enabled) polyphonic_enabled=$(polyphonic_enabled)")
+  println("[warmup] starting startup warmup actions=$(length(actions)) config=$(config_path) clustering_query_enabled=$(clustering_query_enabled) analyse_enabled=$(analyse_enabled) generate_enabled=$(generate_enabled) polyphonic_enabled=$(polyphonic_enabled)")
   flush(stdout)
 
   headers = ["Content-Type" => "application/json", "Accept" => "application/json"]
   for action in actions
     name = string(_json_get(action, "name", "unknown"))
     path = string(_json_get(action, "path", ""))
+    if !analyse_enabled && path == "/api/web/time_series/analyse"
+      println("[warmup] action skipped name=$(name): STARTUP_WARMUP_ANALYSE_ENABLED=false")
+      flush(stdout)
+      continue
+    end
     if !clustering_query_enabled && path == "/api/web/time_series/query_db"
       println("[warmup] action skipped name=$(name): CLUSTERING_QUERY_ENABLED=false")
       flush(stdout)
