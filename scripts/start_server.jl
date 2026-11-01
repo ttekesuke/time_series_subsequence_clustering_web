@@ -296,15 +296,27 @@ else
   flush(stdout)
 end
 
-@async begin
-  try
-    _run_startup_warmup(_warmup_base_url(host, port))
-  catch err
-    println("[warmup] unexpected startup warmup error=$(err)")
-    flush(stdout)
-  finally
-    GC.gc(true)
-    _signal_startup_warmup_complete()
-  end
+server = Genie.up(port, host; async=true)
+server.webserver === nothing && error("Genie failed to create its HTTP listener on $(host):$(port).")
+isopen(server.webserver) || error("Genie HTTP listener is not open on $(host):$(port).")
+println("[start_server] Genie HTTP listener is accepting connections")
+flush(stdout)
+
+try
+  _run_startup_warmup(_warmup_base_url(host, port))
+catch err
+  println("[warmup] unexpected startup warmup error=$(err)")
+  flush(stdout)
+finally
+  GC.gc(true)
+  _signal_startup_warmup_complete()
 end
-Genie.up(port, host; async=false)
+
+# Keep the process alive while the asynchronous Genie listener is open.
+# The foreground task remains available for the startup warmup HTTP requests.
+while isopen(server.webserver)
+  sleep(0.5)
+end
+
+println("[start_server] Genie HTTP listener stopped")
+flush(stdout)
