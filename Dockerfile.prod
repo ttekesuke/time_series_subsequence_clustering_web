@@ -142,4 +142,7 @@ RUN chmod +x /entrypoint.sh
 # supercollider 用ユーザー（entrypoint が su する前提）
 RUN useradd -ms /bin/bash scuser && chown -R scuser:scuser /app
 
+# Render public HTTP port (Nginx); the internal Genie port stays loopback-only.
+EXPOSE 10000
+
 CMD ["/entrypoint.sh"]
