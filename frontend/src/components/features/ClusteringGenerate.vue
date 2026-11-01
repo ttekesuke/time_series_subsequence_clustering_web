@@ -179,9 +179,12 @@ const valueBounds = computed(() => seriesBounds(generate.value.timeseries))
 const minValue = computed(() => valueBounds.value.min)
 const maxValue = computed(() => valueBounds.value.max)
 
-// 画面幅に合わせてステップ幅を計算
+// 左側の固定ラベルを除いたプロット領域に合わせてステップ幅を計算
+const rollTitleWidth = 80
+const plotAreaWidth = computed(() => Math.max(1, containerWidth.value - rollTitleWidth))
+
 const computedStepWidth = computed(() => {
-  const widthPerStep = containerWidth.value / maxSteps.value
+  const widthPerStep = plotAreaWidth.value / Math.max(1, maxSteps.value)
   return Math.max(4, widthPerStep)
 })
 
