@@ -462,8 +462,6 @@ defineExpose({ scrollWrapper, redraw: draw, scrollToStep })
   min-height: 0;
   overflow-x: auto;
   overflow-y: auto;
-  -ms-overflow-style: none;
-  scrollbar-width: none;
 }
 
 .canvas-space {
@@ -476,11 +474,7 @@ defineExpose({ scrollWrapper, redraw: draw, scrollToStep })
   display: block;
 }
 
-.scroll-wrapper::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
-}
+
 
 .tooltip {
   position: absolute;

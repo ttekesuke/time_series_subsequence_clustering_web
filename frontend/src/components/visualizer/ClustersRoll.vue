@@ -719,12 +719,9 @@ defineExpose({ scrollWrapper })
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  scrollbar-width: none;
 }
 
-.scroll-wrapper::-webkit-scrollbar {
-  display: none;
-}
+
 
 .canvas-space {
   position: relative;
