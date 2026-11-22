@@ -261,7 +261,9 @@ gaps   = [5, 4, 7]
 
 `combine_structural_scores` は diversity、shape、occurrence、mass を候補集合内で0..1へ正規化します。候補間にspanがない軸や、出現間隔情報がまだない軸は無効にし、残った重みを再正規化します。
 
-interval scoreも distance と complexity の2つの構造指標だけで合成します。## 12. targetに最も近い候補を選ぶ
+interval scoreも distance と complexity の2つの構造指標だけで合成します。
+
+## 12. targetに最も近い候補を選ぶ
 
 `select_candidate_by_complexity_score` は候補順に走査し、
 
@@ -282,7 +284,7 @@ PolyphonicClusterManager.update_caches_permanently!(manager)
 
 でcommitされ、次stepの履歴になります。
 
-## 12. レスポンス
+## 13. レスポンス
 
 ```json
 {
@@ -312,7 +314,7 @@ PolyphonicClusterManager.update_caches_permanently!(manager)
 - `clusters`: `clusters_to_dict`
 - `processingTime`: `Config.PROCESSING_TIME_DIGITS=2` 桁へroundした秒数
 
-## 13. 実装上の注意
+## 14. 実装上の注意
 
 - `generate()` は単音生成ですが、内部は `PolyphonicClusterManager` を使います。
 - 候補試算は `simulate_add_and_calculate_all_extended` で、occurrence intervalまで含みます。
