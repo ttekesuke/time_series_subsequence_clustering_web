@@ -199,10 +199,7 @@ function select_notes_by_single_addition_greedy(
   return selected
 end
 
-function _normalize_candidate_axis(
-  values::Vector{Float64},
-  unavailable_fallback::Vector{Float64}=Float64[],
-)::Tuple{Vector{Float64},Bool}
+function _normalize_candidate_axis(values::Vector{Float64})::Tuple{Vector{Float64},Bool}
   finite_values = Float64[value for value in values if isfinite(value)]
   isempty(finite_values) && return (zeros(Float64, length(values)), false)
   lo = minimum(finite_values)
@@ -212,13 +209,9 @@ function _normalize_candidate_axis(
 
   normalized = Vector{Float64}(undef, length(values))
   for i in eachindex(values)
-    normalized[i] = if isfinite(values[i])
-      clamp((values[i] - lo) / span, 0.0, 1.0)
-    elseif i <= length(unavailable_fallback)
-      clamp(unavailable_fallback[i], 0.0, 1.0)
-    else
+    normalized[i] = isfinite(values[i]) ?
+      clamp((values[i] - lo) / span, 0.0, 1.0) :
       Config.DEFAULT_TARGET_01
-    end
   end
   return normalized, true
 end
