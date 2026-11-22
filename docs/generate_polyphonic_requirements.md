@@ -345,9 +345,9 @@ score = 0.5 + atan(direction * (raw - center) / scale) / pi
 
 ### 5.3 occurrence interval
 
-**SR-007:** cluster評価にはdistance、complexity、quantityに加え、occurrence interval complexityを含める。最終評価軸はprediction、diversity、shape、occurrence、massの5軸とする。
+**SR-007:** cluster評価にはdistance、complexity、quantityに加え、occurrence interval complexityを含める。最終評価軸はdiversity、shape、occurrence、massの4つの構造軸とする。
 
-**SR-008:** occurrence interval metricがreadyでない間は、利用可能なmetricで評価する。ready時は正規化後の総合scoreに概ね20%相当の寄与を持つ。
+**SR-008:** occurrence interval metricがreadyでない間は、その軸を除外する。ready時のinterval scoreはdistanceとcomplexityの構造指標だけから算出し、quantityは診断値として保持する。
 
 **SR-009:** candidate previewはmanager状態を恒久変更せず、採用候補のみcommitすることが設計意図である。
 

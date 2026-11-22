@@ -108,12 +108,7 @@ function generate()
       push!(temporal_metrics, metrics.occurrence_intervals)
     end
 
-    candidate_polysets = PolyphonicClusterManager.PolySet[
-      Float64[candidate] for candidate in candidates
-    ]
-    predictive_scores = predictive_surprise_scores(manager, candidate_polysets)
-    scores = combine_predictive_structural_scores(
-      predictive_scores,
+    scores = combine_structural_scores(
       raw_dist,
       raw_quantity,
       raw_complexity,

@@ -20,7 +20,7 @@ Analysed musical dimensions:
 
 Acoustic-only generation dimensions (brightness, noise, harmonicity, attack, decay/sustain, release) and composition-control parameters (recency, stream strength, register freedom) are not inferred from MusicXML.
 
-For each dimension, global and per-stream managers are analysed incrementally. The score at step t is evaluated from the committed history before t, then the observed value is committed. The response exposes Prediction, Diversity, Shape, Occurrence, Mass and Combined axes. These reuse the existing calibrators, predictive distribution and cluster metrics. Combined uses the same server-owned polyphonic weights as generate_polyphonic.
+For each dimension, global and per-stream managers are analysed incrementally. The score at step t is evaluated from the committed history before t, then the observed value is committed. The response exposes Diversity, Shape and Mass axes based on the existing cluster distance, complexity and quantity metrics.
 
 Concordance is an observed 0..1 agreement series derived from pairwise normalized distances between simultaneously sounding stream values. It is reported with each dimension but is not a composition target.
 

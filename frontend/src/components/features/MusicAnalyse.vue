@@ -222,7 +222,6 @@ type CompressedSpan = {
   indices: number[]; fit_limits: number[]; parent_index: number | null
 }
 type AxisBundle = {
-  prediction?: Array<number | null>
   diversity?: Array<number | null>
   shape?: Array<number | null>
   mass?: Array<number | null>
@@ -382,8 +381,8 @@ const sections = computed(() => {
     .map(key => ({ key, title: titleMap[key] ?? key, dimension: data.dimensions[key]! }))
 })
 
-const metricKeys = ['prediction', 'diversity', 'shape', 'mass'] as const
-const metricLabels = ['Prediction', 'Diversity', 'Shape', 'Mass']
+const metricKeys = ['diversity', 'shape', 'mass'] as const
+const metricLabels = ['Diversity', 'Shape', 'Mass']
 const hasConcordance = computed(() => sections.value.some(section =>
   section.dimension.values.concordance.some(value => value != null)
 ))

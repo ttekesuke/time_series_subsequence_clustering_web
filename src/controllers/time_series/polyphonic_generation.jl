@@ -118,8 +118,6 @@ struct CandidateMetric
   stream_comps::Vector{Float64}
   global_temporal::PolyphonicClusterManager.OccurrenceIntervalMetrics
   stream_temporals::Vector{PolyphonicClusterManager.OccurrenceIntervalMetrics}
-  global_predictive::Float64
-  stream_predictives::Vector{Float64}
   discordance::Float64
 end
 
@@ -280,12 +278,7 @@ function select_best_polyphonic_candidate_unified_with_cost(
   breakdowns = CandidateCostBreakdown[]
   sizehint!(breakdowns, length(metrics))
 
-  global_predictive_scores = Float64[
-    isfinite(m.global_predictive) ? m.global_predictive : NaN
-    for m in metrics
-  ]
-  global_scores = combine_predictive_structural_scores(
-    global_predictive_scores,
+  global_scores = combine_structural_scores(
     Float64[m.global_dist for m in metrics],
     Float64[m.global_qty for m in metrics],
     Float64[m.global_comp for m in metrics],
@@ -319,14 +312,7 @@ function select_best_polyphonic_candidate_unified_with_cost(
       s_idx <= length(stream_calibrators) ?
         stream_calibrators[s_idx] :
         DEFAULT_EXTENDED_METRIC_CALIBRATOR
-    predictive_stream_scores = Float64[
-      s_idx <= length(m.stream_predictives) && isfinite(m.stream_predictives[s_idx]) ?
-        m.stream_predictives[s_idx] :
-        NaN
-      for m in metrics
-    ]
-    stream_norm[s_idx] = combine_predictive_structural_scores(
-      predictive_stream_scores,
+    stream_norm[s_idx] = combine_structural_scores(
       raw_d,
       raw_q,
       raw_c,
@@ -418,11 +404,6 @@ function select_best_chord_for_dimension_with_cost(
     build_extended_metric_calibrator(actives[i].manager)
     for i in 1:min(n, length(actives))
   ]
-  global_predictor = build_predictive_distribution(mgrs[:global])
-  stream_predictors = PredictiveDistribution[
-    build_predictive_distribution(actives[i].manager)
-    for i in 1:min(n, length(actives))
-  ]
   metrics = CandidateMetric[]
 
   for cand_set in candidates
@@ -472,7 +453,6 @@ function select_best_chord_for_dimension_with_cost(
     stream_qtys = Float64[]
     stream_comps = Float64[]
     stream_temporals = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
-    stream_predictives = Float64[]
 
     for i in 1:n
       if i <= length(actives) && i <= length(ordered_polysets)
@@ -482,27 +462,13 @@ function select_best_chord_for_dimension_with_cost(
         push!(stream_qtys, isfinite(stream_metrics.quantity) ? stream_metrics.quantity : 0.0)
         push!(stream_comps, isfinite(stream_metrics.complexity) ? stream_metrics.complexity : 0.0)
         push!(stream_temporals, stream_metrics.occurrence_intervals)
-        predictive = predictive_surprise_score(
-          actives[i].manager,
-          stream_predictors[i],
-          ordered_polysets[i],
-        )
-        push!(stream_predictives, predictive === nothing ? NaN : predictive)
       else
         push!(stream_dists, 0.0)
         push!(stream_qtys, 0.0)
         push!(stream_comps, 0.0)
         push!(stream_temporals, PolyphonicClusterManager.EMPTY_OCCURRENCE_INTERVAL_METRICS)
-        push!(stream_predictives, NaN)
       end
     end
-
-    global_predictive = predictive_surprise_score(
-      mgrs[:global],
-      global_predictor,
-      global_vals,
-    )
-
     push!(metrics, CandidateMetric(
       ordered_vals,
       global_metrics.distance,
@@ -513,8 +479,6 @@ function select_best_chord_for_dimension_with_cost(
       stream_comps,
       global_metrics.occurrence_intervals,
       stream_temporals,
-      global_predictive === nothing ? NaN : global_predictive,
-      stream_predictives,
       disc,
     ))
   end
@@ -586,11 +550,6 @@ function select_best_values_for_dimension_greedy(
         build_extended_metric_calibrator(actives[stream_idx].manager) :
         DEFAULT_EXTENDED_METRIC_CALIBRATOR
     metrics = CandidateMetric[]
-    global_predictor = build_predictive_distribution(mgrs[:global])
-    stream_predictor =
-      stream_idx <= length(actives) ?
-        build_predictive_distribution(actives[stream_idx].manager) :
-        EMPTY_PREDICTIVE_DISTRIBUTION
     sizehint!(metrics, length(range_vec))
 
     for cand in range_vec
@@ -645,21 +604,6 @@ function select_best_values_for_dimension_greedy(
             PolyphonicClusterManager.EMPTY_OCCURRENCE_INTERVAL_METRICS,
           )
         end
-
-      global_predictive = predictive_surprise_score(
-        mgrs[:global],
-        global_predictor,
-        global_vals,
-      )
-      stream_predictive =
-        stream_idx <= length(actives) ?
-          predictive_surprise_score(
-            actives[stream_idx].manager,
-            stream_predictor,
-            Float64[float(cand)],
-          ) :
-          nothing
-
       push!(metrics, CandidateMetric(
         ordered_vals,
         global_metrics.distance,
@@ -672,8 +616,6 @@ function select_best_values_for_dimension_greedy(
         PolyphonicClusterManager.OccurrenceIntervalMetrics[
           stream_metrics.occurrence_intervals,
         ],
-        global_predictive === nothing ? NaN : global_predictive,
-        Float64[stream_predictive === nothing ? NaN : stream_predictive],
         disc,
       ))
     end
@@ -726,40 +668,20 @@ end
 function _observed_occurrence_complexity(
   temporal::PolyphonicClusterManager.OccurrenceIntervalMetrics,
   calibrator::ComplexityMetricCalibrator,
-  predictive,
 )
-  temporal.ready || return predictive
-
-  total = 0.0
-  denominator = 0.0
-
-  if isfinite(temporal.prediction)
-    w = max(Config.COMPLEXITY_PREDICTION_WEIGHT, 0.0)
-    total += w * clamp(temporal.prediction, 0.0, 1.0)
-    denominator += w
-  elseif predictive !== nothing
-    w = max(Config.COMPLEXITY_PREDICTION_WEIGHT, 0.0)
-    total += w * clamp(float(predictive), 0.0, 1.0)
-    denominator += w
-  end
-
-  w_div = max(Config.COMPLEXITY_DIVERSITY_WEIGHT, 0.0)
-  w_shape = max(Config.COMPLEXITY_SHAPE_WEIGHT, 0.0)
-  total += w_div * calibrate_metric(temporal.distance, calibrator.distance)
-  total += w_shape * calibrate_metric(temporal.complexity, calibrator.complexity)
-  denominator += w_div + w_shape
-
-  denominator <= 0.0 && return predictive
-  return clamp(total / denominator, 0.0, 1.0)
+  temporal.ready || return nothing
+  diversity_weight = max(Config.COMPLEXITY_DIVERSITY_WEIGHT, 0.0)
+  shape_weight = max(Config.COMPLEXITY_SHAPE_WEIGHT, 0.0)
+  denominator = diversity_weight + shape_weight
+  denominator <= 0.0 && return nothing
+  value = (
+    diversity_weight * calibrate_metric(temporal.distance, calibrator.distance) +
+    shape_weight * calibrate_metric(temporal.complexity, calibrator.complexity)
+  ) / denominator
+  return clamp(value, 0.0, 1.0)
 end
 
-"""Evaluate one observed value against committed history and then commit it.
-
-This is the analysis counterpart of candidate scoring in generate/generate_polyphonic:
-the same predictive distribution, structural metrics, calibrators and server-owned
-weights are used, but there is no candidate-set normalization because an existing
-score supplies exactly one observed next value.
-"""
+"""Evaluate an observed value using committed structural metrics, then commit it."""
 function evaluate_observed_complexity!(
   manager::PolyphonicClusterManager.Manager,
   value::PolyphonicClusterManager.PolySet;
@@ -781,17 +703,6 @@ function evaluate_observed_complexity!(
     )
   if phase_timings !== nothing
     phase_timings[:calibrator] += (time_ns() - phase_started) / 1.0e9
-    phase_started = time_ns()
-  end
-  distribution = PolyphonicClusterManager.build_predictive_distribution(manager)
-  predictive = PolyphonicClusterManager.predictive_surprise_score(
-    manager,
-    distribution,
-    value,
-  )
-  if phase_timings !== nothing
-    phase_timings[:prediction] += (time_ns() - phase_started) / 1.0e9
-    phase_started = time_ns()
   end
   metrics = PolyphonicClusterManager.add_observed_and_calculate_all_extended!(
     manager,
@@ -801,70 +712,30 @@ function evaluate_observed_complexity!(
     observed_distance_sums=observed_distance_sums,
     observed_quantity_totals=observed_quantity_totals,
   )
-
   diversity = calibrate_metric(metrics.distance, base_calibrator.distance)
   shape = calibrate_metric(metrics.complexity, base_calibrator.complexity)
   mass = calibrate_metric(metrics.quantity, base_calibrator.quantity)
+  raw = Dict("distance" => metrics.distance, "quantity" => metrics.quantity, "complexity" => metrics.complexity)
   if !manager.enable_occurrence_intervals
-    return Dict(
-      "prediction" => predictive,
-      "diversity" => diversity,
-      "shape" => shape,
-      "mass" => mass,
-      "raw" => Dict(
-        "distance" => metrics.distance,
-        "quantity" => metrics.quantity,
-        "complexity" => metrics.complexity,
-      ),
-    )
+    return Dict("diversity" => diversity, "shape" => shape, "mass" => mass, "raw" => raw)
   end
-  occurrence = _observed_occurrence_complexity(
-    metrics.occurrence_intervals,
-    calibrator.occurrence_intervals,
-    predictive,
-  )
-
-  total = 0.0
-  denominator = 0.0
-  if predictive !== nothing
-    w = max(Config.COMPLEXITY_PREDICTION_WEIGHT, 0.0)
-    total += w * clamp(float(predictive), 0.0, 1.0)
-    denominator += w
-  end
-
+  occurrence = _observed_occurrence_complexity(metrics.occurrence_intervals, calibrator.occurrence_intervals)
   w_div = max(Config.COMPLEXITY_DIVERSITY_WEIGHT * metric_weights[1], 0.0)
   w_shape = max(Config.COMPLEXITY_SHAPE_WEIGHT * metric_weights[3], 0.0)
   w_mass = max(Config.COMPLEXITY_MASS_WEIGHT * metric_weights[2], 0.0)
-  total += w_div * diversity + w_shape * shape + w_mass * mass
-  denominator += w_div + w_shape + w_mass
-
+  total = w_div * diversity + w_shape * shape + w_mass * mass
+  denominator = w_div + w_shape + w_mass
   if occurrence !== nothing
     w_occ = max(Config.COMPLEXITY_OCCURRENCE_WEIGHT, 0.0)
-    total += w_occ * clamp(float(occurrence), 0.0, 1.0)
+    total += w_occ * occurrence
     denominator += w_occ
   end
-
-  combined = denominator > 0.0 ?
-    clamp(total / denominator, 0.0, 1.0) :
-    Config.DEFAULT_TARGET_01
-
+  combined = denominator > 0.0 ? clamp(total / denominator, 0.0, 1.0) : Config.DEFAULT_TARGET_01
   temporal = metrics.occurrence_intervals
-  return Dict(
-    "prediction" => predictive,
-    "diversity" => diversity,
-    "shape" => shape,
-    "occurrence" => occurrence,
-    "mass" => mass,
-    "combined" => combined,
-    "raw" => Dict(
-      "distance" => metrics.distance,
-      "quantity" => metrics.quantity,
-      "complexity" => metrics.complexity,
-      "occurrenceDistance" => temporal.ready ? temporal.distance : nothing,
-      "occurrenceQuantity" => temporal.ready ? temporal.quantity : nothing,
-      "occurrenceComplexity" => temporal.ready ? temporal.complexity : nothing,
-    ),
-  )
+  raw["occurrenceDistance"] = temporal.ready ? temporal.distance : nothing
+  raw["occurrenceQuantity"] = temporal.ready ? temporal.quantity : nothing
+  raw["occurrenceComplexity"] = temporal.ready ? temporal.complexity : nothing
+  return Dict("diversity" => diversity, "shape" => shape, "occurrence" => occurrence, "mass" => mass, "combined" => combined, "raw" => raw)
 end
 
 # ------------------------------------------------------------
@@ -2366,7 +2237,6 @@ for s in 1:desired_stream_count
   sm = stream_pool[s].manager
   anchors = per_stream_anchor_candidates[s]
   stream_calibrator = build_extended_metric_calibrator(sm)
-  stream_predictor = build_predictive_distribution(sm)
 
   raw_d = Float64[]  # avg_dist (complex when larger)
   raw_q = Float64[]  # quantity (complex when smaller)
@@ -2401,14 +2271,7 @@ for s in 1:desired_stream_count
     push!(temporal_metrics, metrics.occurrence_intervals)
   end
 
-  predictive_scores = Float64[]
-  sizehint!(predictive_scores, length(anchors))
-  for (i, anchor) in enumerate(anchors)
-    predictive = predictive_surprise_score(sm, stream_predictor, Float64[float(anchor)])
-    push!(predictive_scores, predictive === nothing ? NaN : predictive)
-  end
-  scores = combine_predictive_structural_scores(
-    predictive_scores,
+  scores = combine_structural_scores(
     raw_d,
     raw_q,
     raw_c,
@@ -2455,7 +2318,6 @@ end
     chosen_area = fill(typemin(Int), desired_stream_count)
     area_order = step_stream_order
     area_global_calibrator = build_extended_metric_calibrator(area_gl)
-    area_global_predictor = build_predictive_distribution(area_gl)
 
     for stream_idx in area_order
       anchors = top_anchors[stream_idx]
@@ -2463,7 +2325,6 @@ end
       global_raw_q = Float64[]
       global_raw_c = Float64[]
       global_temporal = PolyphonicClusterManager.OccurrenceIntervalMetrics[]
-      global_candidates = PolyphonicClusterManager.PolySet[]
       sizehint!(global_raw_d, length(anchors))
       sizehint!(global_raw_q, length(anchors))
       sizehint!(global_raw_c, length(anchors))
@@ -2482,7 +2343,6 @@ end
         push!(partial_ids, plan.active_ids[stream_idx])
         push!(partial_values, float(cand_anchor))
         enc = _encode_streamwise_row(area_axis, partial_ids, partial_values, area_offset)
-        push!(global_candidates, enc)
 
         _set_generation_failure_context!(
           failure_context;
@@ -2498,24 +2358,7 @@ end
         push!(global_temporal, metrics.occurrence_intervals)
       end
 
-      global_predictive_scores = Float64[]
-      sizehint!(global_predictive_scores, length(global_candidates))
-      for i in eachindex(global_candidates)
-        predictive = predictive_surprise_score(
-          area_gl,
-          area_global_predictor,
-          global_candidates[i],
-        )
-        push!(global_predictive_scores, predictive === nothing ? NaN : predictive)
-      end
-      global_scores = combine_predictive_structural_scores(
-        global_predictive_scores,
-        global_raw_d,
-        global_raw_q,
-        global_raw_c,
-        global_temporal;
-        calibrator=area_global_calibrator,
-      )
+      global_scores = combine_structural_scores(global_raw_d, global_raw_q, global_raw_c, global_temporal; calibrator=area_global_calibrator)
       prefer_big_jump = ((area_global_target + area_stream_targets[stream_idx]) / 2.0) >= 0.5
       best_anchor = anchors[1]
       best_area_cost = Inf
@@ -2639,14 +2482,9 @@ end
     note_order = step_stream_order
     dissonance_calibrator = build_dissonance_calibrator(stm_mgr)
     note_global_calibrator = build_extended_metric_calibrator(note_mgrs[:global])
-    note_global_predictor = build_predictive_distribution(note_mgrs[:global])
     note_stream_containers = MultiStreamManager.active_stream_containers(note_mgrs[:stream], desired_stream_count)
     note_stream_calibrators = ExtendedMetricCalibrator[
       build_extended_metric_calibrator(note_stream_containers[i].manager)
-      for i in 1:min(desired_stream_count, length(note_stream_containers))
-    ]
-    note_stream_predictors = PredictiveDistribution[
-      build_predictive_distribution(note_stream_containers[i].manager)
       for i in 1:min(desired_stream_count, length(note_stream_containers))
     ]
 
@@ -2686,8 +2524,6 @@ end
       end
 
       function evaluate_note_complexity_cost_batch(chords::Vector{Vector{Int}})::Vector{Float64}
-        global_candidates = PolyphonicClusterManager.PolySet[]
-        stream_candidates = PolyphonicClusterManager.PolySet[]
         global_metrics = PolyphonicClusterManager.ExtendedClusterMetrics[]
         stream_metrics = PolyphonicClusterManager.ExtendedClusterMetrics[]
 
@@ -2711,8 +2547,6 @@ end
           global_anchor = partial_anchors[cld(length(partial_anchors), 2)]
           global_candidate = Float64[global_anchor]
           stream_candidate = Float64[cand_anchor]
-          push!(global_candidates, global_candidate)
-          push!(stream_candidates, stream_candidate)
           push!(
             global_metrics,
             _safe_simulate_add_and_calculate_all_extended(note_mgrs[:global], global_candidate),
@@ -2728,52 +2562,22 @@ end
           end
         end
 
-        predictive_global_scores = Float64[]
-        for i in eachindex(global_candidates)
-          predictive = predictive_surprise_score(
-            note_mgrs[:global],
-            note_global_predictor,
-            global_candidates[i],
-          )
-          push!(
-            predictive_global_scores,
-            predictive === nothing ? NaN : predictive,
-          )
-        end
-        global_scores = combine_predictive_structural_scores(
-          predictive_global_scores,
+        global_scores = combine_structural_scores(
           Float64[m.distance for m in global_metrics],
           Float64[m.quantity for m in global_metrics],
           Float64[m.complexity for m in global_metrics],
-          PolyphonicClusterManager.OccurrenceIntervalMetrics[
-            m.occurrence_intervals for m in global_metrics
-          ];
+          PolyphonicClusterManager.OccurrenceIntervalMetrics[m.occurrence_intervals for m in global_metrics];
           calibrator=note_global_calibrator,
         )
 
         stream_scores = fill(Config.DEFAULT_TARGET_01, length(chords))
         if stream_idx <= length(note_stream_containers)
           stream_calibrator = note_stream_calibrators[stream_idx]
-          predictive_stream_scores = Float64[]
-          for i in eachindex(stream_candidates)
-            predictive = predictive_surprise_score(
-              note_stream_containers[stream_idx].manager,
-              note_stream_predictors[stream_idx],
-              stream_candidates[i],
-            )
-            push!(
-              predictive_stream_scores,
-              predictive === nothing ? NaN : predictive,
-            )
-          end
-          stream_scores = combine_predictive_structural_scores(
-            predictive_stream_scores,
+          stream_scores = combine_structural_scores(
             Float64[m.distance for m in stream_metrics],
             Float64[m.quantity for m in stream_metrics],
             Float64[m.complexity for m in stream_metrics],
-            PolyphonicClusterManager.OccurrenceIntervalMetrics[
-              m.occurrence_intervals for m in stream_metrics
-            ];
+            PolyphonicClusterManager.OccurrenceIntervalMetrics[m.occurrence_intervals for m in stream_metrics];
             calibrator=stream_calibrator,
           )
         end
@@ -2868,13 +2672,11 @@ end
 
       chosen_ties = Dict{Int,Float64}()
       global_calibrator = build_extended_metric_calibrator(tie_global_mgr)
-      global_predictor = build_predictive_distribution(tie_global_mgr)
       for slot in step_stream_order
         slot in eligible_slots || continue
         stream_id = plan.active_ids[slot]
         container = tie_stream_mgr.containers_by_id[stream_id]
         stream_calibrator = build_extended_metric_calibrator(container.manager)
-        stream_predictor = build_predictive_distribution(container.manager)
         candidate_bits = _restrict_candidates_with_target_window(
           "tie",
           Float64[float(value) for value in Config.TIE_STEPS],
@@ -2900,46 +2702,20 @@ end
           push!(stream_metrics, _safe_simulate_add_and_calculate_all_extended(container.manager, Float64[bit]))
         end
 
-        global_scores = fill(NaN, length(candidate_bits))
-        stream_scores = fill(NaN, length(candidate_bits))
-        for (candidate_idx, bit) in enumerate(candidate_bits)
-          partial_bits = Float64[chosen_ties[s] for s in sort!(collect(keys(chosen_ties)))]
-          push!(partial_bits, bit)
-          projected_global = sum(partial_bits) / float(length(partial_bits))
-          global_predictive = predictive_surprise_score(
-            tie_global_mgr,
-            global_predictor,
-            Float64[projected_global],
-          )
-          stream_predictive = predictive_surprise_score(
-            container.manager,
-            stream_predictor,
-            Float64[bit],
-          )
-          global_predictive !== nothing && (global_scores[candidate_idx] = global_predictive)
-          stream_predictive !== nothing && (stream_scores[candidate_idx] = stream_predictive)
-        end
-        global_scores = combine_predictive_structural_scores(
-          global_scores,
+        global_scores = combine_structural_scores(
           Float64[m.distance for m in global_metrics],
           Float64[m.quantity for m in global_metrics],
           Float64[m.complexity for m in global_metrics],
-          PolyphonicClusterManager.OccurrenceIntervalMetrics[
-            m.occurrence_intervals for m in global_metrics
-          ];
+          PolyphonicClusterManager.OccurrenceIntervalMetrics[m.occurrence_intervals for m in global_metrics];
           calibrator=global_calibrator,
         )
-        stream_scores = combine_predictive_structural_scores(
-          stream_scores,
+        stream_scores = combine_structural_scores(
           Float64[m.distance for m in stream_metrics],
           Float64[m.quantity for m in stream_metrics],
           Float64[m.complexity for m in stream_metrics],
-          PolyphonicClusterManager.OccurrenceIntervalMetrics[
-            m.occurrence_intervals for m in stream_metrics
-          ];
+          PolyphonicClusterManager.OccurrenceIntervalMetrics[m.occurrence_intervals for m in stream_metrics];
           calibrator=stream_calibrator,
         )
-
         best_bit = 0.0
         best_cost = Inf
         for (candidate_idx, bit) in enumerate(candidate_bits)
