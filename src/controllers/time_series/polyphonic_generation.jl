@@ -715,7 +715,7 @@ function evaluate_observed_complexity!(
   diversity = calibrate_metric(metrics.distance, base_calibrator.distance)
   shape = calibrate_metric(metrics.complexity, base_calibrator.complexity)
   mass = calibrate_metric(metrics.quantity, base_calibrator.quantity)
-  raw = Dict("distance" => metrics.distance, "quantity" => metrics.quantity, "complexity" => metrics.complexity)
+  raw = Dict{String,Any}("distance" => metrics.distance, "quantity" => metrics.quantity, "complexity" => metrics.complexity)
   if !manager.enable_occurrence_intervals
     return Dict("diversity" => diversity, "shape" => shape, "mass" => mass, "raw" => raw)
   end
