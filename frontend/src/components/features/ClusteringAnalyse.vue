@@ -42,6 +42,7 @@ import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
 import { useScrollSync } from '../../composables/useScrollSync'
 import { seriesBounds } from '../../composables/seriesBounds'
+import { useRollViewportWidth } from '../../composables/useRollViewportWidth'
 
 import { ref, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import ClusteringAnalyseDialog from '../dialog/ClusteringAnalyseDialog.vue'
@@ -124,6 +125,7 @@ import { defineExpose } from 'vue'
 defineExpose({ openParams, saveToFile: save })
 
 const containerRef = ref<HTMLElement | null>(null)
+const rollViewportWidth = useRollViewportWidth(containerRef)
 const StreamsRollRef = ref(null)
 const clustersRollRef = ref(null)
 const containerWidth = ref(containerRef.value ? containerRef.value.clientWidth : 0)
@@ -160,7 +162,7 @@ const minValue = computed(() => valueBounds.value.min)
 const maxValue = computed(() => valueBounds.value.max)
 // 左側の固定ラベルを除いたプロット領域に合わせてステップ幅を計算
 const rollTitleWidth = 80
-const plotAreaWidth = computed(() => Math.max(1, containerWidth.value - rollTitleWidth))
+const plotAreaWidth = computed(() => Math.max(1, rollViewportWidth.value || containerWidth.value - rollTitleWidth))
 
 const computedStepWidth = computed(() => {
   const widthPerStep = plotAreaWidth.value / Math.max(1, maxSteps.value)
