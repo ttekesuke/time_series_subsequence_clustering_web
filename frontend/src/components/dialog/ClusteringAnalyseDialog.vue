@@ -12,6 +12,7 @@
         <v-card-text>
           <GridContainer
             v-model:rows="rows"
+            :rowLabelWidth="120"
             v-model:steps="steps"
             :showRowsLength="false"
           />

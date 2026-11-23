@@ -64,6 +64,7 @@
               <GridContainer
                 title="1. Initial Context (Past Context)"
                 v-model:rows="contextRowsForGrid"
+                :rowLabelWidth="120"
                 v-model:steps="contextSteps"
                 v-model:streamCount="contextStreamCount"
                 @selected-columns-change="onContextSelectedColumnsChange"
@@ -166,6 +167,7 @@
             <GridContainer
               title="Sound Check Grid"
               v-model:rows="soundCheckRows"
+              :rowLabelWidth="120"
               :steps="1"
               :showRowsLength="false"
               :showColsLength="false"

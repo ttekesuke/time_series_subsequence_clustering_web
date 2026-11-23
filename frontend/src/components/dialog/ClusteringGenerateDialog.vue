@@ -21,6 +21,7 @@
           <div class="mb-4">
             <GridContainer
               v-model:rows="firstRows"
+              :rowLabelWidth="120"
               v-model:steps="firstSteps"
               :showRowsLength="false"
               :showColsLength="true"
@@ -30,6 +31,7 @@
           <div class="mb-4">
             <GridContainer
               v-model:rows="complexityRows"
+              :rowLabelWidth="120"
               v-model:steps="complexitySteps"
               :showRowsLength="false"
               :showColsLength="true"
@@ -39,6 +41,7 @@
           <div class="mb-4">
             <GridContainer
               v-model:rows="recencyRows"
+              :rowLabelWidth="120"
               v-model:steps="recencySteps"
               :showRowsLength="false"
               :showColsLength="true"
