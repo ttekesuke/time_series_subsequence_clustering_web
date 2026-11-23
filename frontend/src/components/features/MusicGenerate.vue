@@ -214,6 +214,7 @@ import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
 import { useScrollSync } from '../../composables/useScrollSync'
 import { defineExpose } from 'vue'
+import { useRollViewportWidth } from '../../composables/useRollViewportWidth'
 
 // ===== refs =====
 const pianoRollRef = ref<any>(null)
@@ -229,6 +230,7 @@ const bottomScrollRef = ref<HTMLElement | null>(null)
 const dialogRef = ref<any>(null)
 
 const containerRef = ref<HTMLElement | null>(null)
+const rollViewportWidth = useRollViewportWidth(containerRef)
 const soundFilePath = ref('')
 const dispatchInfo = ref<any | null>(null)
 const uploadedResultJsonFile = ref<File | null>(null)
@@ -485,7 +487,7 @@ const onScroll = (e: Event) => syncScroll(e)
 const stepCount = ref(0)
 const maxSteps = computed(() => (stepCount.value > 0 ? stepCount.value : 100))
 const rollTitleWidth = 80
-const plotAreaWidth = computed(() => Math.max(1, containerWidth.value - rollTitleWidth))
+const plotAreaWidth = computed(() => Math.max(1, rollViewportWidth.value || containerWidth.value - rollTitleWidth))
 
 const computedStepWidth = computed(() => {
   const widthPerStep = plotAreaWidth.value / maxSteps.value
