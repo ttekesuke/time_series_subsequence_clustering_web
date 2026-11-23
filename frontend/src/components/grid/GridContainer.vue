@@ -106,7 +106,7 @@
           :item-size="rowHeight"
           :column-count="steps"
           :column-width="cellWidth"
-          :scroll-padding-start="{ x: rowLabelWidth }"
+          :scroll-padding-end="{ x: rowLabelWidth }"
           :buffer-before="8"
           :buffer-after="8"
           :sticky-indices="stickyIndices"
