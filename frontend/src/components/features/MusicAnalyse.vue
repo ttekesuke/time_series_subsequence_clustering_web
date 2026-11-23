@@ -99,6 +99,7 @@
               v-else
               :ref="el => setAnalysisRollRef(el, index)"
               :streamValues="complexityStreams(section)"
+              :maxSteps="stepCount"
               :streamLabels="complexityLabels(section)"
               :stepWidth="computedStepWidth"
               :minValue="0"
