@@ -106,6 +106,7 @@
               <StreamsRoll
                 :ref="el => setAnalysisRollRef(el, index)"
                 :streamValues="section.streams"
+                :maxSteps="maxSteps"
                 :streamLabels="section.labels"
                 :stepWidth="computedStepWidth"
                 :minValue="section.min"
