@@ -440,9 +440,10 @@ defineExpose({ scrollWrapper, redraw: draw, scrollToStep })
 }
 
 .title-label {
-  width: 80px;
-  min-width: 80px;
-  max-width: 80px;
+  /* Match ClustersRoll's 80px label column plus its 1px right border. */
+  width: 81px;
+  min-width: 81px;
+  max-width: 81px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
