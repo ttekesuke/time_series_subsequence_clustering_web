@@ -17,7 +17,7 @@ module, so existing callers and endpoint names remain unchanged.
 | `github_dispatch.jl` | GitHub Actions workflow dispatch, run discovery, payload compression, and dispatch endpoint response handling. |
 | `musicxml_response.jl` | ASAP MusicXML file access, phrase slicing, match highlighting, note-position extraction, and DB-point-to-score mapping endpoints. |
 | `scalar_actions.jl` | Scalar `analyse` and `generate` endpoints. |
-| `generation_scoring.jl` | Metric calibration, predictive/occurrence/structural scoring, dissonance candidate selection, and initial scoring-cache setup. |
+| `generation_scoring.jl` | Metric calibration, occurrence/structural scoring, dissonance candidate selection, and initial scoring-cache setup. |
 | `similarity_search.jl` | `query_db` orchestration, note/volume query strategy, and octave-invariant matching strategy. |
 | `query_match_filter.jl` | Exact match expansion, deduplication, containment filtering, and match score ordering. |
 | `query_memory_budget.jl` | Query series chunk sizing from environment, system memory, and cgroup limits. |
@@ -124,7 +124,7 @@ Relevant focused tests include:
 - `test/normalize_octave_invariance.jl`
 - `test/generate_polyphonic_validation.jl`
 - `test/metric_calibration_and_chord_greedy.jl`
-- `test/predictive_complexity.jl`
+- `test/structural_complexity.jl`
 - `test/occurrence_interval_complexity.jl`
 - `test/analyse_music.jl`
 - `test/analyse_music_jobs.jl`

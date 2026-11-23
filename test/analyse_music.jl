@@ -87,7 +87,7 @@ end
       committed_metrics_ref=baseline_preceding, observed_distance_sums=baseline_sums)
     actual = TC.evaluate_observed_complexity!(cached, value;
       committed_metrics_ref=preceding, observed_distance_sums=distance_sums)
-    for key in ("prediction", "diversity", "shape", "occurrence", "mass", "combined")
+    for key in ("diversity", "shape", "occurrence", "mass", "combined")
       left, right = expected[key], actual[key]
       @test isequal(left, right) ||
         (left !== nothing && right !== nothing && isapprox(left, right; atol=1e-8))
@@ -106,7 +106,7 @@ end
     left, right = preceding[].occurrence_intervals, fresh_occurrence
     @test left.ready == right.ready
     if left.ready
-      for field in (:distance, :quantity, :complexity, :prediction)
+      for field in (:distance, :quantity, :complexity)
         a, b = getfield(left, field), getfield(right, field)
         @test isequal(a, b) || isapprox(a, b; atol=1e-8)
       end
@@ -512,7 +512,7 @@ end
   ]
   axes = result["dimensions"]["note"]["analysis"]["global"]["axes"]
   raw = result["dimensions"]["note"]["analysis"]["global"]["raw"]
-  @test Set(keys(axes)) == Set(["prediction", "diversity", "shape", "mass"])
+  @test Set(keys(axes)) == Set(["diversity", "shape", "mass"])
   @test Set(keys(raw)) == Set(["distance", "quantity", "complexity"])
   for dim in ("area", "vol", "chord_range", "density", "tie", "dissonance", "stream_count")
     @test Set(keys(result["dimensions"][dim])) == Set(["values"])

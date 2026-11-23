@@ -9,7 +9,7 @@ The fundamental rule is:
 
 > Compression may change storage and computation reuse, but it must not change
 > any logical cluster, window size, cluster id, start index, representative,
-> score, prediction, occurrence metric, or simulation result.
+> score, occurrence metric, or simulation result.
 
 The frozen legacy implementation under
 `test/reference/polyphonic_cluster_manager_legacy.jl` is the behavioral oracle.
@@ -129,7 +129,6 @@ The following continue to operate on every logical window exactly as before:
 - shape complexity
 - recency weighting
 - occurrence-interval analysis
-- predictive distribution
 - candidate simulation
 - permanent commit
 
@@ -180,6 +179,6 @@ Both bulk and incremental paths are checked.
 
 The comparison covers logical nodes, window sizes, cluster ids, `si`, `as`,
 timeline output, transformed output, nested cluster JSON, caches, D/Q/C,
-occurrence metrics, predictive distributions, candidate simulation and rollback.
+occurrence metrics, candidate simulation and rollback.
 
 Any future storage optimization should be rejected if this oracle diverges.

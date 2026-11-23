@@ -26,26 +26,8 @@ function _norm_metrics(metrics)
       distance=_round12(temporal.distance),
       quantity=_round12(temporal.quantity),
       complexity=_round12(temporal.complexity),
-      prediction=isnan(temporal.prediction) ? "NaN" : _round12(temporal.prediction),
       ready=temporal.ready,
     ),
-  )
-end
-
-function _norm_prediction(M, mgr)
-  dist = M.build_predictive_distribution(mgr)
-  rows = [
-    (
-      value=[_round12(x) for x in successor.value],
-      mass=_round12(successor.mass),
-    )
-    for successor in dist.successors
-  ]
-  sort!(rows; by=row -> Tuple(row.value))
-  return (
-    ready=dist.ready,
-    peak=_round12(dist.peak_likelihood),
-    successors=rows,
   )
 end
 
@@ -161,7 +143,6 @@ function _logical_snapshot(M, mgr)
     quantity_cache=_norm_cache(mgr.cluster_quantity_cache),
     complexity_cache=_norm_cache(mgr.cluster_complexity_cache),
     metrics=_norm_metrics(M.calculate_all_extended_current_state(mgr)),
-    prediction=_norm_prediction(M, mgr),
   )
 end
 
@@ -425,7 +406,7 @@ const _compression_equivalence_scenarios = [
     candidates=[Float64[0.0], Float64[3.0]],
   ),
   (
-    name="predictive-repeated-continuation",
+    name="repeated-continuation",
     data=[Float64[x] for x in [0,7,4,7,0,7,4,7,0,7,4,7]],
     threshold=0.02,
     kwargs=(range_min=0.0, range_max=11.0, max_set_size=1),

@@ -36,40 +36,33 @@ function _issue_manager(values)
 end
 
 function _expected_voice_scores(manager, candidates)
-  distribution = IssuesPCM.build_predictive_distribution(manager)
   calibrator = IssuesController.build_extended_metric_calibrator(manager)
-  predictive = Float64[]
   d = Float64[]
   q = Float64[]
   c = Float64[]
   temporal = IssuesPCM.OccurrenceIntervalMetrics[]
   for candidate in candidates
     metrics = IssuesPCM.simulate_add_and_calculate_all_extended(manager, candidate)
-    p = IssuesPCM.predictive_surprise_score(manager, distribution, candidate)
-    push!(predictive, p === nothing ? NaN : float(p))
     push!(d, metrics.distance)
     push!(q, metrics.quantity)
     push!(c, metrics.complexity)
     push!(temporal, metrics.occurrence_intervals)
   end
-  return IssuesController.combine_predictive_structural_scores(
-    predictive, d, q, c, temporal; calibrator=calibrator,
-  ), predictive
+  return IssuesController.combine_structural_scores(d, q, c, temporal; calibrator=calibrator)
 end
 
-@testset "#20 voice token complexity uses common score ready/not-ready" begin
+@testset "#20 voice token complexity uses structural cluster metrics" begin
   candidates = Vector{Float64}[[0.0], [4.0], [9.0]]
 
   not_ready = _issue_manager([1.0, 2.0])
   actual_nr = IssuesVoice._candidate_complexity_scores(not_ready, candidates)
-  expected_nr, predictive_nr = _expected_voice_scores(not_ready, candidates)
+  expected_nr = _expected_voice_scores(not_ready, candidates)
   @test actual_nr ≈ expected_nr atol=1e-12
   @test all(isfinite, actual_nr)
-  @test any(!isfinite, predictive_nr) || length(unique(round.(predictive_nr; digits=10))) <= 1
 
   ready = _issue_manager([1.0, 2.0, 1.0, 3.0, 1.0, 5.0, 1.0, 7.0])
   actual_r = IssuesVoice._candidate_complexity_scores(ready, candidates)
-  expected_r, predictive_r = _expected_voice_scores(ready, candidates)
+  expected_r = _expected_voice_scores(ready, candidates)
   @test actual_r ≈ expected_r atol=1e-12
   @test length(actual_r) == length(candidates)
   @test all(x -> 0.0 <= x <= 1.0, actual_r)

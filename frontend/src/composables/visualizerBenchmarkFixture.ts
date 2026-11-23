@@ -13,7 +13,6 @@ const normalizedWave = (step: number, phase: number, period: number) =>
   clamp01(0.5 + 0.45 * Math.sin((step + phase) / period))
 
 const metricAxes = (steps: number, phase: number) => ({
-  prediction: Array.from({ length: steps }, (_, step) => normalizedWave(step, phase, 13)),
   diversity: Array.from({ length: steps }, (_, step) => normalizedWave(step, phase + 17, 23)),
   shape: Array.from({ length: steps }, (_, step) => normalizedWave(step, phase + 31, 37)),
   mass: Array.from({ length: steps }, (_, step) => normalizedWave(step, phase + 47, 53)),

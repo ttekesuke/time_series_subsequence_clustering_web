@@ -239,9 +239,7 @@ function _candidate_complexity_scores(
 )::Vector{Float64}
   isempty(candidates) && return Float64[]
   scoring = _time_series_scoring_module()
-  distribution = PolyphonicClusterManager.build_predictive_distribution(manager)
   calibrator = scoring.build_extended_metric_calibrator(manager)
-  predictive_scores = Float64[]
   raw_distance = Float64[]
   raw_quantity = Float64[]
   raw_complexity = Float64[]
@@ -249,16 +247,13 @@ function _candidate_complexity_scores(
 
   for candidate in candidates
     metrics = PolyphonicClusterManager.simulate_add_and_calculate_all_extended(manager, candidate)
-    predictive = PolyphonicClusterManager.predictive_surprise_score(manager, distribution, candidate)
-    push!(predictive_scores, predictive === nothing ? NaN : float(predictive))
     push!(raw_distance, metrics.distance)
     push!(raw_quantity, metrics.quantity)
     push!(raw_complexity, metrics.complexity)
     push!(temporal_metrics, metrics.occurrence_intervals)
   end
 
-  return scoring.combine_predictive_structural_scores(
-    predictive_scores,
+  return scoring.combine_structural_scores(
     raw_distance,
     raw_quantity,
     raw_complexity,
