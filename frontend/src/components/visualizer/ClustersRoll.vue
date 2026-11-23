@@ -1,6 +1,6 @@
 <template>
   <div class="roll-container" ref="container">
-    <div class="label-column">
+    <div ref="labelColumn" class="label-column">
       <canvas
         ref="labelsCanvas"
         :style="{ height: viewportHeight + 'px' }"
@@ -8,11 +8,11 @@
         @mouseleave="onMouseLeave"
         @click="onLabelClick"
       />
-      <span class="title-label" :title="title">{{ title }}</span>
+      <span ref="titleLabel" class="title-label" :title="title">{{ title }}</span>
     </div>
 
     <div ref="scrollWrapper" class="scroll-wrapper" @scroll="onScroll">
-      <div class="canvas-space" :style="{ width: contentWidth + 'px', height: contentHeight + 'px' }">
+      <div ref="canvasSpace" class="canvas-space" :style="{ width: contentWidth + 'px', height: contentHeight + 'px' }">
         <canvas
           ref="canvas"
           :style="{ width: viewportWidth + 'px', height: viewportHeight + 'px' }"
@@ -22,6 +22,24 @@
         />
       </div>
     </div>
+
+    <RollGeometryDebug
+      title="ClustersRoll"
+      :root-element="container"
+      :label-element="labelColumn"
+      :label-title-element="titleLabel"
+      :scroll-element="scrollWrapper"
+      :content-element="canvasSpace"
+      :canvas-element="canvas"
+      :label-canvas-element="labelsCanvas"
+      :step-width="props.stepWidth"
+      :max-steps="props.maxSteps"
+      :data-steps="dataStepCount"
+      :viewport-width="viewportWidth"
+      :viewport-height="viewportHeight"
+      :content-width="contentWidth"
+      :content-height="contentHeight"
+    />
 
     <div v-if="focusedSpan" class="focus-control" @click.stop>
       <span>Focus {{ spanLabel(focusedSpan) }}</span>
@@ -46,6 +64,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import RollGeometryDebug from './RollGeometryDebug.vue'
 
 type CompressedSpan = {
   window_min: number
@@ -97,6 +116,9 @@ const emit = defineEmits<{
 }>()
 
 const container = ref<HTMLElement | null>(null)
+const labelColumn = ref<HTMLElement | null>(null)
+const titleLabel = ref<HTMLElement | null>(null)
+const canvasSpace = ref<HTMLElement | null>(null)
 const scrollWrapper = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const labelsCanvas = ref<HTMLCanvasElement | null>(null)
@@ -105,6 +127,23 @@ const viewportWidth = ref(1)
 const viewportHeight = ref(1)
 const contentHeight = ref(1)
 const contentWidth = computed(() => Math.max(viewportWidth.value, props.maxSteps * props.stepWidth))
+const dataStepCount = computed(() => {
+  let maxEnd = 0
+  for (const span of props.compressedData) {
+    const windowSize = span.window_max
+    for (const start of occurrences(span, windowSize)) {
+      if (!props.stepMap?.length) {
+        maxEnd = Math.max(maxEnd, start + windowSize)
+        continue
+      }
+      const actualEnd = props.stepMap[start + windowSize - 1]
+      if (actualEnd !== undefined && Number.isFinite(actualEnd)) {
+        maxEnd = Math.max(maxEnd, actualEnd + 1)
+      }
+    }
+  }
+  return maxEnd
+})
 
 const hoveredKey = ref<string | null>(null)
 const focusedKey = ref<string | null>(null)
