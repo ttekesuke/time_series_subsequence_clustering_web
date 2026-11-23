@@ -213,6 +213,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRollViewportWidth } from '../../composables/useRollViewportWidth'
 import axios from 'axios'
 import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
@@ -285,6 +286,7 @@ const visualizerBenchmarkEnabled = () =>
   new URLSearchParams(window.location.search).get('visualizerBenchmark') === '1'
 
 const containerRef = ref<HTMLElement | null>(null)
+const rollViewportWidth = useRollViewportWidth(containerRef)
 const pianoRollRef = ref<any>(null)
 // Template function refs run during rendering; this list is only read by scroll event handlers.
 const analysisRollRefs: { value: any[] } = { value: [] }
@@ -305,7 +307,7 @@ const { syncScroll } = useScrollSync([pianoRollRef, analysisRollRefs, bottomScro
 const onScroll = (e: Event) => syncScroll(e)
 
 const stepCount = computed(() => result.value?.timing?.stepCount ?? 0)
-const plotAreaWidth = computed(() => Math.max(1, containerWidth.value - 80))
+const plotAreaWidth = computed(() => Math.max(1, rollViewportWidth.value || containerWidth.value - 80))
 const computedStepWidth = computed(() => {
   const count = Math.max(stepCount.value, 1)
   return Math.max(1, Math.min(8, plotAreaWidth.value / count, 30000 / count))
