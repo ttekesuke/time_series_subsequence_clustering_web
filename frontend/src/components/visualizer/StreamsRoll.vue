@@ -52,6 +52,7 @@ const props = defineProps({
   minValue: { type: Number, default: 0 },
   maxValue: { type: Number, default: 127 },
   stepWidth: { type: Number, default: 10 },
+  maxSteps: { type: Number, default: 0 },
   highlightIndices: { type: Array as () => number[], default: () => [] },
   highlightWindowSize: { type: Number, default: 0 },
   playheadStep: { type: Number, default: -1 },
@@ -151,7 +152,12 @@ const calcScale = (step: number) => {
 const updateGeometry = () => {
   if (!scrollWrapper.value) return
   const values = props.streamValues as StreamCellValue[][]
-  maxStepCount.value = Math.max(0, ...values.map(stream => Array.isArray(stream) ? stream.length : 0))
+  const dataStepCount = Math.max(0, ...values.map(stream => Array.isArray(stream) ? stream.length : 0))
+  const configuredStepCount = Number(props.maxSteps)
+  maxStepCount.value = Math.max(
+    dataStepCount,
+    Number.isFinite(configuredStepCount) ? Math.max(0, Math.floor(configuredStepCount)) : 0,
+  )
   const rawStepWidth = Number(props.stepWidth)
   const safeStepWidth = Number.isFinite(rawStepWidth) && rawStepWidth > 0 ? rawStepWidth : 1
   effectiveStepWidth.value = maxStepCount.value > 0
@@ -395,6 +401,7 @@ watch(
     props.playheadStep,
     props.hiddenStreamIndices,
     props.stepWidth,
+    props.maxSteps,
     props.minValue,
     props.maxValue,
     props.valueResolution,
@@ -457,7 +464,7 @@ defineExpose({ scrollWrapper, redraw: draw, scrollToStep })
 }
 
 .scroll-wrapper {
-  flex-grow: 1;
+  flex: 1;
   min-width: 0;
   min-height: 0;
   overflow-x: auto;

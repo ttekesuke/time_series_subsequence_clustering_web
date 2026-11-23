@@ -5,6 +5,7 @@
         <StreamsRoll
           ref="timeseriesStreamsRollRef"
           :streamValues="[generate.timeseries]"
+          :maxSteps="maxSteps"
           :minValue="minValue"
           :maxValue="maxValue"
           :highlightIndices="highlightedIndices"
@@ -18,6 +19,7 @@
         <StreamsRoll
           ref="complexityTransitionStreamsRollRef"
           :streamValues="[generate.complexityTransition]"
+          :maxSteps="maxSteps"
           :minValue="0"
           :maxValue="1"
           :valueResolution="0.01"

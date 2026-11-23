@@ -33,6 +33,7 @@
           <StreamsRoll
             ref="pianoRollRef"
             :streamValues="pianoStreams"
+            :maxSteps="stepCount"
             :streamVelocities="pianoVelocities"
             :streamLabels="pianoLabels"
             :hiddenStreamIndices="hiddenPianoStreamIndices"
@@ -98,6 +99,7 @@
               v-else
               :ref="el => setAnalysisRollRef(el, index)"
               :streamValues="complexityStreams(section)"
+              :maxSteps="stepCount"
               :streamLabels="complexityLabels(section)"
               :stepWidth="computedStepWidth"
               :minValue="0"

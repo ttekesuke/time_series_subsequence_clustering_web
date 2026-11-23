@@ -5,6 +5,7 @@
         <StreamsRoll
           ref="StreamsRollRef"
           :streamValues="[analyse.timeseries]"
+          :maxSteps="maxSteps"
           :minValue="minValue"
           :maxValue="maxValue"
           :stepWidth="computedStepWidth"
