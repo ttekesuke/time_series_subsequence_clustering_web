@@ -10,6 +10,7 @@
           <div style="height:240px; overflow:auto;" class="mb-4">
             <GridContainer
               v-model:rows="queryRows"
+              :rowLabelWidth="120"
               v-model:steps="querySteps"
               :showRowsLength="false"
               :showColsLength="true"
