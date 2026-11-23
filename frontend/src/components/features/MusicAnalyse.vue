@@ -33,7 +33,7 @@
           <StreamsRoll
             ref="pianoRollRef"
             :streamValues="pianoStreams"
-          :maxSteps="stepCount"
+            :maxSteps="stepCount"
             :streamVelocities="pianoVelocities"
             :streamLabels="pianoLabels"
             :hiddenStreamIndices="hiddenPianoStreamIndices"
