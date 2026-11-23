@@ -1,13 +1,13 @@
 <template>
   <div class="roll-container" ref="container">
-    <span class="title-label" :title="props.title">{{ props.title }}</span>
+    <span ref="titleLabel" class="title-label" :title="props.title">{{ props.title }}</span>
     <div
       class="scroll-wrapper"
       ref="scrollWrapper"
       @scroll="onScroll"
       :style="{ cursor: cursorStyle }"
     >
-      <div class="canvas-space" :style="{ width: contentWidth + 'px', height: viewportHeight + 'px' }">
+      <div ref="canvasSpace" class="canvas-space" :style="{ width: contentWidth + 'px', height: viewportHeight + 'px' }">
         <canvas
           ref="canvas"
           :style="{ width: viewportWidth + 'px', height: viewportHeight + 'px' }"
@@ -16,6 +16,21 @@
         ></canvas>
       </div>
     </div>
+
+    <RollGeometryDebug
+      title="StreamsRoll"
+      :root-element="container"
+      :label-element="titleLabel"
+      :scroll-element="scrollWrapper"
+      :content-element="canvasSpace"
+      :canvas-element="canvas"
+      :step-width="props.stepWidth"
+      :max-steps="maxStepCount"
+      :data-steps="dataStepCount"
+      :viewport-width="viewportWidth"
+      :viewport-height="viewportHeight"
+      :content-width="contentWidth"
+    />
 
     <div
       v-if="hoverInfo"
@@ -43,6 +58,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import RollGeometryDebug from './RollGeometryDebug.vue'
 
 type StreamCellValue = number | number[] | null | undefined
 
@@ -73,6 +89,8 @@ const emit = defineEmits<{
 }>()
 
 const container = ref<HTMLElement | null>(null)
+const titleLabel = ref<HTMLElement | null>(null)
+const canvasSpace = ref<HTMLElement | null>(null)
 const scrollWrapper = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const tooltipEl = ref<HTMLElement | null>(null)
