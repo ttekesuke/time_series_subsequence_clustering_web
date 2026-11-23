@@ -28,7 +28,12 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: true,
-    hmr: false,
+    // Docker/WSL bind mounts do not reliably emit native filesystem events.
+    // Poll so Vue SFC edits are picked up, and keep Vite's HMR enabled.
+    watch: {
+      usePolling: true,
+      interval: 300,
+    },
     proxy: {
       "/api": { target: apiTarget, changeOrigin: true },
     },

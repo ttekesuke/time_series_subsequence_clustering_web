@@ -309,7 +309,7 @@ span = exp((1-r)*log(64))
 weight = (1-r) + r*exp(-age/span)
 ```
 
-recencyはpredictive successor票だけでなく、`recency>0` のときのdistance / quantity / shape集計にも作用します。
+recencyは `recency>0` のときのdistance / quantity / shape集計に作用します。
 
 ## 12. 通常dimensionの生成順
 
@@ -396,26 +396,17 @@ abs(global_complexity_score - global_target)
 
 `vol` が複数streamの場合のみ `use_global_score=false` となり、global complexity termを外します。
 
-## 14. complexity scoreの中身
+## 14. structure scoreの中身
 
 通常dimension、AREA、note anchor、clustered tieで使う基本scoreは共通です。
 
-候補を `simulate_add_and_calculate_all_extended` で仮追加して:
+候補を `simulate_add_and_calculate_all_extended` で仮追加して、distance、quantity、shape complexity、occurrence interval metricsを得ます。
 
-- distance
-- quantity
-- shape complexity
-- occurrence interval metrics
-
-を得ます。
-
-さらにcommit済みmanagerからmulti-window predictive distributionを作り、候補のpredictive surpriseを求めます。
-
-基本5軸:
+基本4軸:
 
 ```text
-prediction : diversity : shape : occurrence : mass
-= 6 : 1 : 1 : 1 : 1
+diversity : shape : occurrence : mass
+= 1 : 1 : 1 : 1
 ```
 
 各軸は候補集合内で正規化され、候補間に差がない軸は除外されます。
@@ -431,62 +422,24 @@ global (distance, quantity, complexity) = (0.2, 2.0, 2.0)
 stream (distance, quantity, complexity) = (0.2, 2.0, 2.0)
 ```
 
-したがって通常の5軸の基本重み `6 : 1 : 1 : 1 : 1` に対して、D/Q/C倍率適用後は概念的に:
+したがって通常の構造軸の重みは、D/Q/C倍率適用後に概念的に:
 
 ```text
-prediction : diversity : shape : occurrence : mass
-= 6 : 0.2 : 2 : 1 : 2
+diversity : shape : occurrence : mass
+= 0.2 : 2 : 1 : 2
 ```
 
-です。候補間に差がない軸は従来どおり除外され、残った軸で再正規化されます。
+です。候補間に差がない軸は除外され、残った軸で再正規化されます。
 
 旧 `*_dist_weight` / `*_qty_weight` / `*_comp_weight` request fields（dimension固有aliasを含む）は生成時に参照しません。
 
-## 15. predictive distribution
+## 15. occurrence interval structure
 
-`PolyphonicClusterManager.build_predictive_distribution` は、現在末尾が属する複数window sizeのクラスタから過去successorを集めます。
+同じクラスタの出現start index間隔を別時系列として扱います。最低3 occurrenceが必要です。
 
-主要定数:
+間隔系列は最大64件を保持し、最大4種類のbase scaleを選んで評価します。interval scoreはdistanceによるdiversityとcomplexityによるshapeだけで構成します。interval quantityは計算・診断に残しますが、scoreには合成しません。
 
-```text
-max context = 32
-history per context = 64
-support prior = 2
-context bandwidth = 0.10
-successor bandwidth = 0.22
-```
-
-window weight:
-
-```text
-window_size * support_reliability * context_cohesion
-```
-
-successor occurrenceの票にはrecencyとcontext similarityが掛かります。
-
-候補surprise:
-
-```text
-1 - likelihood(candidate) / peak_likelihood
-```
-
-## 16. occurrence interval complexity
-
-同じクラスタの出現start index間隔を別時系列として扱います。
-
-最低3 occurrenceが必要です。
-
-間隔系列は最大64件を保持し、最大4種類のbase scaleを選んで評価します。
-
-occurrence axis内部は:
-
-- interval prediction
-- interval diversity
-- interval shape
-
-を合成します。interval quantityは計算されますが、この内部合成には直接入りません。
-
-## 17. AREA生成
+## 16. AREA生成
 
 AREAは実noteそのものではなく4-semitone band下端です。
 
@@ -521,7 +474,7 @@ total = global_cost + stream_cost + conc_cost + register_cost
 
 `area` fixed policyならgreedy結果を使わず固定bandを使用しますが、決定値自体はAREA managerへcommitされます。
 
-## 18. chord_range / densityからnote poolを作る
+## 17. chord_range / densityからnote poolを作る
 
 各streamで:
 
@@ -542,7 +495,7 @@ note_count = clamp(note_count, 1, slot_count)
 
 したがって `density=0` でも最低1音鳴ります。
 
-## 19. voice streamのnote range
+## 18. voice streamのnote range
 
 VOICEVOXが有効で、`voice_stream_counts` が指定されている場合:
 
@@ -564,7 +517,7 @@ MIDI 57..76
 
 AREA/CR poolと57..76が重ならない場合は、57..76全体へfallbackします。単一の境界音へ固定しません。
 
-## 20. 実note選択
+## 19. 実note選択
 
 note候補は和音組合せ全列挙ではなく、**1音ずつ追加するgreedy** です。
 
@@ -611,7 +564,7 @@ abs(global_note_score - area_global_target)
 
 です。
 
-## 21. note manager
+## 20. note manager
 
 note managerはchord全体を保存せずanchorを保存します。
 
@@ -627,7 +580,7 @@ note managerはchord全体を保存せずanchorを保存します。
 
 に使います。
 
-## 22. dissonance STM
+## 21. dissonance STM
 
 `DissonanceStmManager.evaluate` は:
 
@@ -686,7 +639,7 @@ MIDI_C4 + (midi_note mod 12)
 
 ただし初期STM seedと最終commitには**実際のabsolute MIDI note**を使います。
 
-## 23. dissonance calibrator
+## 22. dissonance calibrator
 
 candidate比較前に、commit済みSTM memoryの `dissonance_current` 正値をsortし、そのmedianをscaleとして固定します。
 
@@ -698,7 +651,7 @@ roughness01 = roughness / (roughness + scale)
 
 候補ごとにscaleを変えないため、同step内の比較尺度を固定します。
 
-## 24. STMとnote managerへのcommit
+## 23. STMとnote managerへのcommit
 
 全streamの実note決定後:
 
@@ -710,7 +663,7 @@ roughness01 = roughness / (roughness + scale)
 
 volumeは各streamのchord音数で割り、1noteあたりampとしてSTMへ渡します。
 
-## 25. tie
+## 24. tie
 
 ### 3値
 
@@ -774,7 +727,7 @@ global tie managerにはeligible tie値の平均を1 scalarとしてcommitしま
 
 ineligible boundaryはtie履歴へ通常のOFFとしてcommitしません。
 
-## 26. voice token生成
+## 25. voice token生成
 
 voice streamがある場合、音程決定後に `VoiceTokenGeneration.generate_tokens!` を呼びます。
 
@@ -811,17 +764,7 @@ null/空textはsynth扱いです。
 
 ### token complexity
 
-各token embeddingを候補として `simulate_add_and_calculate_all_extended` し、predictive surpriseが使える場合は:
-
-```text
-(6 * prediction + distance + complexity) / 8
-```
-
-を候補集合内で0..1正規化します。
-
-predictive distributionがなければdistanceをprediction代替にします。
-
-このvoice token専用scoreは、通常dimensionで使う5軸合成とは別実装です。
+各token embeddingを候補として `simulate_add_and_calculate_all_extended` し、クラスタ距離・shape・occurrence・quantityの構造指標から共通scoreを求めます。候補間で差がない軸や未準備のinterval軸は除外され、利用可能な軸だけで再正規化されます。
 
 ### token選択順位
 
@@ -847,7 +790,7 @@ abs(stream_score - stream_target)
 
 同stable ID・同note集合・直前もvoice・現在tie=1なら、直前tokenの最後のかな母音を調べ、その母音tokenがinventoryにあればforced continuation tokenとして使います。
 
-## 27. output
+## 26. output
 
 主なresponse:
 
@@ -949,7 +892,7 @@ tie
 
 現在は常に `nothing` / JSON null相当です。
 
-## 28. SuperCollider renderとの境界
+## 27. SuperCollider renderとの境界
 
 `generate_polyphonic()` 自体は音声ファイルを作りません。
 
@@ -959,7 +902,7 @@ rendererもstrict 11要素recordとstable stream IDを受け取ります。
 
 tieはrenderer側でrun接続へ変換されます。stable IDがrun identityのkeyになります。
 
-## 29. 現行実装上の注意
+## 28. 現行実装上の注意
 
 - 探索はglobal optimumではなくgreedyです。
 - 通常dimension・AREA・stream間note決定はstream priority順に先行決定を固定します。
@@ -980,5 +923,5 @@ tieはrenderer側でrun接続へ変換されます。stable IDがrun identityの
 - stream lifecycleのstrength sourceは、volumeが生成対象かfixedかに関係なく `vol` の0..1 presence履歴です。note/pitch managerへのfallbackはありません。
 - dissonance STMのnote座標系はpitch-class canonical（C4基準）です。seed・preview・commit・memory eventで共通です。
 - BPM未指定時はbackend/frontendとも `480 BPM` です。`stepDuration = 60 / BPM` なのでdefaultは `0.125 s` です。
-- voice tokenのcomplexity targetは通常dimensionと同じ `prediction + diversity(distance) + shape(complexity) + occurrence + mass(quantity)` の共通scoreです。predictionが利用不能ならprediction軸を除外して残りを再正規化します。
+- voice tokenのcomplexity targetは通常dimensionと同じ diversity(distance) + shape(complexity) + occurrence + mass(quantity) の構造scoreです。候補間で差がない軸や未準備のinterval軸を除外して残りを再正規化します。
 - `use_recent_position_weight`, `debug_score`, `debug_score_key`, `debug_score_top_n`, `debug_poly` は公開生成parameterとして扱いません。frontend payloadからも送信しません。

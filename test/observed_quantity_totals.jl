@@ -45,7 +45,7 @@ end
       actual = _quantity_controller.evaluate_observed_complexity!(optimized, value;
         committed_metrics_ref=optimized_prior, observed_distance_sums=optimized_distances,
         observed_quantity_totals=totals)
-      for key in ("prediction", "diversity", "shape", "mass")
+      for key in ("diversity", "shape", "mass")
         a, b = actual[key], expected[key]
         @test isequal(a, b) || (a !== nothing && b !== nothing && isapprox(a, b; atol=1e-8, rtol=1e-8))
       end

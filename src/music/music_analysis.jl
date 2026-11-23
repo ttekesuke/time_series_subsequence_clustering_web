@@ -665,7 +665,6 @@ function _analyse_manager(
     @info "[analyse_music] clustering start" label=String(log_label) steps=n min_window=min_window empty_steps=empty_steps zero_steps=zero_steps
   end
   axes = Dict(
-    "prediction" => Any[nothing for _ in 1:n],
     "diversity" => Any[nothing for _ in 1:n],
     "shape" => Any[nothing for _ in 1:n],
     "mass" => Any[nothing for _ in 1:n],
@@ -715,7 +714,6 @@ function _analyse_manager(
     progress_interval = max(cld(total_observed_steps, 10), 1)
     phase_timings = Dict{Symbol,Float64}(
       :calibrator => 0.0,
-      :prediction => 0.0,
       :metrics => 0.0,
       :metrics_aggregate => 0.0,
       :metrics_rebase => 0.0,
@@ -769,8 +767,8 @@ function _analyse_manager(
         now = time()
         interval_s = now - last_progress_time
         interval_steps = processed - last_progress_steps
-        measured_s = sum(phase_timings[phase] for phase in (:calibrator, :prediction, :metrics, :commit, :cache))
-        @info "[analyse_music] clustering progress" label=String(log_label) progress="$(percent)%" processed=processed total=total_observed_steps elapsed_s=round(now - log_started_at; digits=2) interval_s=round(interval_s; digits=2) ms_per_step=round(1000 * interval_s / interval_steps; digits=1) calibrator_s=round(phase_timings[:calibrator]; digits=2) prediction_s=round(phase_timings[:prediction]; digits=2) metrics_s=round(phase_timings[:metrics]; digits=2) commit_s=round(phase_timings[:commit]; digits=2) cache_s=round(phase_timings[:cache]; digits=2) other_s=round(max(interval_s - measured_s, 0.0); digits=2) active_tasks=length(manager.tasks)
+        measured_s = sum(phase_timings[phase] for phase in (:calibrator, :metrics, :commit, :cache))
+        @info "[analyse_music] clustering progress" label=String(log_label) progress="$(percent)%" processed=processed total=total_observed_steps elapsed_s=round(now - log_started_at; digits=2) interval_s=round(interval_s; digits=2) ms_per_step=round(1000 * interval_s / interval_steps; digits=1) calibrator_s=round(phase_timings[:calibrator]; digits=2) metrics_s=round(phase_timings[:metrics]; digits=2) commit_s=round(phase_timings[:commit]; digits=2) cache_s=round(phase_timings[:cache]; digits=2) other_s=round(max(interval_s - measured_s, 0.0); digits=2) active_tasks=length(manager.tasks)
         @info "[analyse_music] cache breakdown" label=String(log_label) progress="$(percent)%" collect_s=round(phase_timings[:cache_collect]; digits=2) distance_s=round(phase_timings[:cache_distance]; digits=2) quantity_s=round(phase_timings[:cache_quantity]; digits=2) occurrence_s=round(phase_timings[:cache_occurrence]; digits=2) windows=Int(phase_timings[:cache_windows]) distance_pairs=Int(phase_timings[:cache_distance_pairs]) distance_revised_pairs=Int(phase_timings[:cache_distance_revised_pairs]) distance_prefix_hits=Int(phase_timings[:cache_distance_prefix_hits]) complexity_evals=Int(phase_timings[:cache_complexity_evals]) complexity_prefix_hits=Int(phase_timings[:cache_complexity_prefix_hits]) occurrence_targets=Int(phase_timings[:cache_occurrence_targets])
         distance_measured = sum(phase_timings[key] for key in (:cache_distance_new_full_s, :cache_distance_new_prefix_s, :cache_distance_old_full_s, :cache_distance_old_prefix_s))
         @info "[analyse_music] distance detail" label=String(log_label) progress="$(percent)%" new_full_s=round(phase_timings[:cache_distance_new_full_s]; digits=2) new_full_pairs=Int(phase_timings[:cache_distance_new_full_pairs]) new_full_rows=Int(phase_timings[:cache_distance_new_full_rows]) new_prefix_s=round(phase_timings[:cache_distance_new_prefix_s]; digits=2) new_prefix_pairs=Int(phase_timings[:cache_distance_prefix_hits]) old_full_s=round(phase_timings[:cache_distance_old_full_s]; digits=2) old_full_pairs=Int(phase_timings[:cache_distance_old_full_pairs]) old_full_rows=Int(phase_timings[:cache_distance_old_full_rows]) old_prefix_s=round(phase_timings[:cache_distance_old_prefix_s]; digits=2) old_prefix_pairs=Int(phase_timings[:cache_distance_old_prefix_hits]) old_prefix_check_s=round(phase_timings[:cache_distance_old_prefix_check_s]; digits=2) revised_pairs=Int(phase_timings[:cache_distance_revised_pairs]) loop_s=round(max(phase_timings[:cache_distance] - distance_measured, 0.0); digits=2)

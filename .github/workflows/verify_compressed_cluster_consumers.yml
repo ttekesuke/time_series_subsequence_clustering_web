@@ -21,7 +21,7 @@ jobs:
           - normalize_octave_invariance.jl
           - occurrence_interval_complexity.jl
           - polyphonic_compression_equivalence.jl
-          - predictive_complexity.jl
+          - structural_complexity.jl
           - tie_rendering.jl
           - transaction_safety.jl
           - voice_token_generation.jl

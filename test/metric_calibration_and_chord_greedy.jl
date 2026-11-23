@@ -13,7 +13,7 @@ const _pcm = Main.TimeseriesClusteringAPI.PolyphonicClusterManager
 
   # Calibration itself is determined entirely by the committed-state
   # calibrator. Candidate-set normalization happens later in
-  # combine_predictive_structural_scores and is intentionally a separate step.
+  # combine_structural_scores and is intentionally a separate step.
   scores_a = [_controller.calibrate_metric(x, dist) for x in [10.0, 12.0]]
   scores_b = [_controller.calibrate_metric(x, dist) for x in [-100.0, 10.0, 12.0, 100.0]]
 
