@@ -84,16 +84,12 @@ const dataStepCount = computed(() => {
 })
 const maxStepCount = computed(() => {
   const configured = Number(props.maxSteps)
-  const configuredSteps = Number.isFinite(configured) ? Math.max(0, Math.floor(configured)) : 0
-  return Math.max(dataStepCount.value, configuredSteps)
+  return Number.isFinite(configured) && configured > 0
+    ? Math.floor(configured)
+    : dataStepCount.value
 })
-const effectiveStepWidth = computed(() => {
-  const width = Number(props.stepWidth)
-  return Number.isFinite(width) && width > 0 ? width : 1
-})
-// Keep the same horizontal content-width rule as ClustersRoll.
 const contentWidth = computed(() =>
-  Math.max(viewportWidth.value, maxStepCount.value * effectiveStepWidth.value)
+  Math.max(viewportWidth.value, maxStepCount.value * props.stepWidth)
 )
 
 const hoverInfo = ref<null | { x: number; y: number; step: number; value: number; streamIndex: number }>(null)
@@ -199,7 +195,7 @@ const draw = () => {
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
 
   const left = scrollWrapper.value.scrollLeft
-  const stepWidth = effectiveStepWidth.value
+  const stepWidth = props.stepWidth
   const firstStep = Math.max(0, Math.floor(left / stepWidth) - 1)
   const lastStep = Math.min(
     maxStepCount.value - 1,
@@ -318,7 +314,7 @@ const onMouseMove = (e: MouseEvent) => {
   const xInViewport = e.clientX - canvasRect.left
   const yInCanvas = e.clientY - canvasRect.top
   const xInContent = xInViewport + scrollWrapper.value.scrollLeft
-  const stepWidth = effectiveStepWidth.value
+  const stepWidth = props.stepWidth
   const step = Math.floor(xInContent / stepWidth)
 
   let hit: { step: number; value: number; streamIndex: number } | null = null
@@ -384,7 +380,7 @@ const scrollToStep = (step: number, windowSize = 1) => {
   if (!scrollWrapper.value) return
   const safeStep = Math.max(0, Number(step) || 0)
   const safeWindow = Math.max(1, Number(windowSize) || 1)
-  const highlightCenter = (safeStep + safeWindow / 2) * effectiveStepWidth.value
+  const highlightCenter = (safeStep + safeWindow / 2) * props.stepWidth
   const nextLeft = highlightCenter - scrollWrapper.value.clientWidth / 2
   const maxLeft = Math.max(0, scrollWrapper.value.scrollWidth - scrollWrapper.value.clientWidth)
   scrollWrapper.value.scrollLeft = clamp(nextLeft, 0, maxLeft)
