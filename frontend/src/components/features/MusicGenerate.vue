@@ -6,6 +6,7 @@
           v-if="resultViewMode === 'pianoRoll'"
           ref="pianoRollRef"
           :streamValues="chordPitchStreams"
+          :maxSteps="maxSteps"
           :streamLabels="pianoResultStreamLabels"
           :stepWidth="computedStepWidth"
           :minValue="minPitch"
@@ -21,6 +22,7 @@
           v-else-if="resultViewMode === 'timbreRoll'"
           ref="timbreRollRef"
           :streamValues="timbreResultStreams"
+          :maxSteps="maxSteps"
           :streamLabels="timbreResultStreamLabels"
           :stepWidth="computedStepWidth"
           :minValue="0"
@@ -34,6 +36,7 @@
           v-else-if="resultViewMode === 'volRoll'"
           ref="volRollRef"
           :streamValues="volResultStreams"
+          :maxSteps="maxSteps"
           :streamLabels="volResultStreamLabels"
           :stepWidth="computedStepWidth"
           :minValue="0"
@@ -47,6 +50,7 @@
           v-else-if="resultViewMode === 'chordRangeRoll'"
           ref="chordRangeRollRef"
           :streamValues="generate.chordRange"
+          :maxSteps="maxSteps"
           :streamLabels="chordRangeResultStreamLabels"
           :stepWidth="computedStepWidth"
           :minValue="0"
@@ -60,6 +64,7 @@
           v-else
           ref="densityRollRef"
           :streamValues="generate.density"
+          :maxSteps="maxSteps"
           :streamLabels="densityResultStreamLabels"
           :stepWidth="computedStepWidth"
           :minValue="0"
@@ -101,6 +106,7 @@
               <StreamsRoll
                 :ref="el => setAnalysisRollRef(el, index)"
                 :streamValues="section.streams"
+                :maxSteps="maxSteps"
                 :streamLabels="section.labels"
                 :stepWidth="computedStepWidth"
                 :minValue="section.min"
@@ -208,6 +214,7 @@ import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
 import { useScrollSync } from '../../composables/useScrollSync'
 import { defineExpose } from 'vue'
+import { useRollViewportWidth } from '../../composables/useRollViewportWidth'
 
 // ===== refs =====
 const pianoRollRef = ref<any>(null)
@@ -223,6 +230,7 @@ const bottomScrollRef = ref<HTMLElement | null>(null)
 const dialogRef = ref<any>(null)
 
 const containerRef = ref<HTMLElement | null>(null)
+const rollViewportWidth = useRollViewportWidth(containerRef)
 const soundFilePath = ref('')
 const dispatchInfo = ref<any | null>(null)
 const uploadedResultJsonFile = ref<File | null>(null)
@@ -479,7 +487,7 @@ const onScroll = (e: Event) => syncScroll(e)
 const stepCount = ref(0)
 const maxSteps = computed(() => (stepCount.value > 0 ? stepCount.value : 100))
 const rollTitleWidth = 80
-const plotAreaWidth = computed(() => Math.max(1, containerWidth.value - rollTitleWidth))
+const plotAreaWidth = computed(() => Math.max(1, rollViewportWidth.value || containerWidth.value - rollTitleWidth))
 
 const computedStepWidth = computed(() => {
   const widthPerStep = plotAreaWidth.value / maxSteps.value

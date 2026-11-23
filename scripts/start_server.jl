@@ -228,16 +228,28 @@ function _run_startup_warmup(base_url::AbstractString)
   end
 
   clustering_query_enabled = _bool_env("CLUSTERING_QUERY_ENABLED", false)
+  analyse_enabled = _bool_env("STARTUP_WARMUP_ANALYSE_ENABLED", false)
+  generate_enabled = _bool_env("STARTUP_WARMUP_GENERATE_ENABLED", false)
   polyphonic_enabled = _bool_env("STARTUP_WARMUP_GENERATE_POLYPHONIC_ENABLED", false)
-  println("[warmup] starting startup warmup actions=$(length(actions)) config=$(config_path) clustering_query_enabled=$(clustering_query_enabled) polyphonic_enabled=$(polyphonic_enabled)")
+  println("[warmup] starting startup warmup actions=$(length(actions)) config=$(config_path) clustering_query_enabled=$(clustering_query_enabled) analyse_enabled=$(analyse_enabled) generate_enabled=$(generate_enabled) polyphonic_enabled=$(polyphonic_enabled)")
   flush(stdout)
 
   headers = ["Content-Type" => "application/json", "Accept" => "application/json"]
   for action in actions
     name = string(_json_get(action, "name", "unknown"))
     path = string(_json_get(action, "path", ""))
+    if !analyse_enabled && path == "/api/web/time_series/analyse"
+      println("[warmup] action skipped name=$(name): STARTUP_WARMUP_ANALYSE_ENABLED=false")
+      flush(stdout)
+      continue
+    end
     if !clustering_query_enabled && path == "/api/web/time_series/query_db"
       println("[warmup] action skipped name=$(name): CLUSTERING_QUERY_ENABLED=false")
+      flush(stdout)
+      continue
+    end
+    if !generate_enabled && path == "/api/web/time_series/generate"
+      println("[warmup] action skipped name=$(name): STARTUP_WARMUP_GENERATE_ENABLED=false")
       flush(stdout)
       continue
     end
@@ -249,6 +261,8 @@ function _run_startup_warmup(base_url::AbstractString)
 
     payload = _json_get(action, "payload", Dict{String,Any}())
     url = string(base_url, path)
+    println("[warmup] action starting name=$(name) path=$(path)")
+    flush(stdout)
     t0 = time()
     try
       resp = HTTP.post(url, headers, JSON3.write(payload); status_exception=false, readtimeout=300)
@@ -296,15 +310,29 @@ else
   flush(stdout)
 end
 
-@async begin
-  try
-    _run_startup_warmup(_warmup_base_url(host, port))
-  catch err
-    println("[warmup] unexpected startup warmup error=$(err)")
-    flush(stdout)
-  finally
-    GC.gc(true)
-    _signal_startup_warmup_complete()
-  end
+server = Genie.up(port, host; async=true)
+server.webserver === nothing && error("Genie failed to create its HTTP listener on $(host):$(port).")
+isopen(server.webserver) || error("Genie HTTP listener is not open on $(host):$(port).")
+println("[start_server] Genie HTTP listener is accepting connections")
+flush(stdout)
+
+try
+  _run_startup_warmup(_warmup_base_url(host, port))
+catch err
+  println("[warmup] unexpected startup warmup error=$(err)")
+  flush(stdout)
+finally
+  # Signal readiness before any optional cleanup. A full GC can take a long
+  # time under the memory pressure of small Render instances; it must not
+  # keep the parent entrypoint waiting after all warmup actions have finished.
+  _signal_startup_warmup_complete()
 end
-Genie.up(port, host; async=false)
+
+# Keep the process alive while the asynchronous Genie listener is open.
+# The foreground task remains available for the startup warmup HTTP requests.
+while isopen(server.webserver)
+  sleep(0.5)
+end
+
+println("[start_server] Genie HTTP listener stopped")
+flush(stdout)

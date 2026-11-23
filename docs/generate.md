@@ -4,15 +4,14 @@
 
 `generate()` は初期系列を部分列クラスタリングした後、各生成 step で候補値を1つずつ**仮追加**し、候補追加後の構造がユーザー指定の `complexity_transition` に最も近くなる値を選びます。
 
-現在の複雑度 score は、次の5軸を候補集合内で正規化して合成します。
+現在の複雑度 score は、クラスタリング結果から得られる次の4つの構造軸を候補集合内で正規化して合成します。
 
-- prediction: 現在文脈から予測される後続値に対する surprise
 - diversity: クラスタ代表間距離
 - shape: クラスタ代表系列内部の変化量
 - occurrence: クラスタの出現間隔系列の構造
 - mass: 反復クラスタ量（quantity）
 
-基本重みは `prediction:diversity:shape:occurrence:mass = 6:1:1:1:1` です。候補間で変化しない軸や、まだ計算できない軸は除外し、残った重みだけで再正規化します。
+各軸は等しい基本重みで扱い、候補間で変化しない軸や、まだ計算できない軸は除外して残りを再正規化します。
 
 ## 1. エンドポイント
 
@@ -81,9 +80,9 @@ range_min:range_max
 4. `process_data!` で初期系列を部分列クラスタリングする。
 5. `transform_clusters` と `initial_calc_values!` で距離・quantity・shape complexity の初期キャッシュを作る。
 6. 各生成 step で `recency` を設定する。
-7. commit済み状態から metric calibrator と predictive distribution を構築する。
+7. commit済み状態から metric calibrator を構築する。
 8. `range_min:range_max` の各候補について `simulate_add_and_calculate_all_extended` を実行する。
-9. 候補ごとに prediction / diversity / shape / occurrence / mass を合成する。
+9. 候補ごとに diversity / shape / occurrence / mass を合成する。
 10. `abs(score-target)` が最小の候補を選ぶ。
 11. 選ばれた候補だけを `add_data_point_permanently!` で本当に追加する。
 12. `update_caches_permanently!` で永続キャッシュと occurrence interval 状態を更新する。
@@ -213,58 +212,7 @@ distance と shape complexity は大きいほど複雑側、quantityは大きい
 
 calibratorは候補ごとに作り直さず、同じstepの全候補比較で固定します。
 
-## 9. predictive distribution
-
-`build_predictive_distribution` は現在末尾を含む複数window sizeのクラスタを使います。
-
-各windowについて:
-
-1. 現在末尾の context が属するクラスタを見つける。
-2. 同じクラスタに属した過去 context の開始位置を取る。
-3. その直後に実際に現れた値を successor として集める。
-4. 過去contextと現在contextの距離を Gaussian similarity にする。
-5. recency weight と掛けて各 occurrence の票にする。
-6. そのwindow内で票を合計1へ正規化する。
-7. window長、support reliability、context cohesionからwindow自体の重みを決める。
-8. 全windowの successor distribution を合成する。
-
-主要定数は次です。
-
-```text
-PREDICTIVE_MAX_CONTEXT_LENGTH = 32
-PREDICTIVE_HISTORY_LIMIT_PER_CONTEXT = 64
-PREDICTIVE_SUPPORT_PRIOR = 2.0
-PREDICTIVE_CONTEXT_DISTANCE_BANDWIDTH = 0.10
-PREDICTIVE_SUCCESSOR_DISTANCE_BANDWIDTH = 0.22
-```
-
-window重みは
-
-```text
-reliability = support / (support + 2)
-cohesion = mean(context_similarity)
-scale_weight = window_size * reliability * cohesion
-```
-
-です。
-
-## 10. predictive surprise
-
-候補と各successorの距離へGaussian kernelをかけます。
-
-```text
-likelihood(candidate)
-  = sum(successor_mass * exp(-0.5*(distance/0.22)^2))
-
-surprise
-  = 1 - likelihood(candidate) / peak_likelihood
-```
-
-既知の典型的な後続に近いほど0、予測分布から外れるほど1へ近づきます。
-
-predictive distributionを構築できない場合、prediction軸は利用不可です。
-
-## 11. recency
+## 9. recency
 
 `manager.recency` は各stepの `recency_center` から設定されます。
 
@@ -286,15 +234,15 @@ weight = (1-r) + r*exp(-age/span)
 
 `recency=0` では全 occurrence が等重みです。
 
-recency は predictive distribution の投票だけでなく、`recency>0` 時の distance / quantity / shape metric 集計にも反映されます。
+`recency>0` の場合、distance / quantity / shape metric の集計に recency weighting が反映されます。
 
 - distance: クラスタ同士のrecency weightの幾何平均で重み付け
 - quantity: 各 occurrence のrecency weightを加算
 - complexity: クラスタの最終出現位置に基づいて重み付け
 
-したがって「recencyはpredictionだけに作用する」わけではありません。
+したがって recency は通常の構造指標に作用します。
 
-## 12. occurrence interval complexity
+## 10. occurrence interval complexity
 
 現在末尾を含み、出現回数が `OCCURRENCE_INTERVAL_MIN_OCCURRENCES = 3` 以上のクラスタについて、開始index列から出現間隔を作ります。
 
@@ -303,71 +251,19 @@ starts = [2, 7, 11, 18]
 gaps   = [5, 4, 7]
 ```
 
-これを初期間隔scaleで正規化し、最大 `OCCURRENCE_INTERVAL_RATIO_MAX = 4.0` へclampして、別の `PolyphonicClusterManager` に投入します。
+間隔を正規化して別の `PolyphonicClusterManager` に投入し、距離・quantity・complexityを計算します。interval manager自身は再帰的に間隔系列を作らないよう `enable_occurrence_intervals=false` です。
 
-interval manager自身は再帰的にoccurrence intervalを作らないよう `enable_occurrence_intervals=false` です。
+候補評価に使うのは interval diversity（距離）と interval shape（complexity）です。quantityは診断値として保持しますが、interval scoreには含めません。利用可能なbase windowが多い場合は最大 `OCCURRENCE_INTERVAL_MAX_BASE_SCALES = 4` スケールを選んで平均します。
 
-候補追加によって新しい出現間隔が生じる場合、その間隔についても
+## 11. 4軸score合成
 
-- prediction
-- diversity
-- shape
+候補ごとに得たraw値は `metrics.distance`、`metrics.quantity`、`metrics.complexity`、`metrics.occurrence_intervals` です。
 
-を評価します。interval quantityは診断値として計算されますが、`combine_occurrence_interval_scores` の最終3軸合成には直接入りません。
+`combine_structural_scores` は diversity、shape、occurrence、mass を候補集合内で0..1へ正規化します。候補間にspanがない軸や、出現間隔情報がまだない軸は無効にし、残った重みを再正規化します。
 
-利用可能なbase windowが多い場合は最大 `OCCURRENCE_INTERVAL_MAX_BASE_SCALES = 4` スケールへ間引いて平均します。
+interval scoreも distance と complexity の2つの構造指標だけで合成します。
 
-## 13. 5軸score合成
-
-各候補について得たraw値は:
-
-- `metrics.distance`
-- `metrics.quantity`
-- `metrics.complexity`
-- `metrics.occurrence_intervals`
-- `predictive_surprise`
-
-です。
-
-`combine_predictive_structural_scores` は候補集合内で各軸を0..1化します。
-
-基本重み:
-
-```text
-prediction = 6
-diversity  = 1
-shape      = 1
-occurrence = 1
-mass       = 1
-```
-
-概念的には:
-
-```text
-combined = (
-  6 * prediction
-  + 1 * diversity
-  + 1 * shape
-  + 1 * occurrence
-  + 1 * mass
-) / active_weight_sum
-```
-
-です。
-
-ただし実装では候補間にspanがない軸は無効になります。またpredictionが全候補で利用できないとprediction weightは0です。occurrenceが準備できない場合もその軸は0 weightになります。
-
-occurrence内部は概念的に:
-
-```text
-6 * interval_prediction
-+ 1 * interval_diversity
-+ 1 * interval_shape
-```
-
-を利用可能軸だけで再正規化します。
-
-## 14. targetに最も近い候補を選ぶ
+## 12. targetに最も近い候補を選ぶ
 
 `select_candidate_by_complexity_score` は候補順に走査し、
 
@@ -388,7 +284,7 @@ PolyphonicClusterManager.update_caches_permanently!(manager)
 
 でcommitされ、次stepの履歴になります。
 
-## 15. レスポンス
+## 13. レスポンス
 
 ```json
 {
@@ -418,13 +314,13 @@ PolyphonicClusterManager.update_caches_permanently!(manager)
 - `clusters`: `clusters_to_dict`
 - `processingTime`: `Config.PROCESSING_TIME_DIGITS=2` 桁へroundした秒数
 
-## 16. 実装上の注意
+## 14. 実装上の注意
 
 - `generate()` は単音生成ですが、内部は `PolyphonicClusterManager` を使います。
 - 候補試算は `simulate_add_and_calculate_all_extended` で、occurrence intervalまで含みます。
 - `range_min/range_max` は候補集合と距離scaleの両方を決めます。
-- recencyはpredictive successor票だけでなく、通常のdistance/quantity/shape集計にも作用します。
-- predictionが作れない初期段階でも、残りの構造軸で候補比較できます。
+- recencyは通常のdistance/quantity/shape集計に作用します。
+- 候補間で差がない構造軸は除外し、残りの軸で候補比較します。
 - quantityは大きいほど単純側としてcalibrateされます。
 - scoreの各軸はabsoluteな0..1尺度だけではなく、候補集合内で再正規化される部分があります。
 - 生成値は整数候補だけです。

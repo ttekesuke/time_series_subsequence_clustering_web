@@ -1,21 +1,36 @@
 <template>
   <div class="roll-container" ref="container">
-    <span class="title-label" :title="props.title">{{ props.title }}</span>
+    <span ref="titleLabel" class="title-label" :title="props.title">{{ props.title }}</span>
     <div
       class="scroll-wrapper"
       ref="scrollWrapper"
       @scroll="onScroll"
       :style="{ cursor: cursorStyle }"
     >
-      <div class="canvas-space" :style="{ width: contentWidth + 'px', height: viewportHeight + 'px' }">
+      <div ref="canvasSpace" class="canvas-space" :style="{ width: contentWidth + 'px', height: viewportHeight + 'px' }">
         <canvas
           ref="canvas"
-          :style="{ width: contentWidth + 'px', height: viewportHeight + 'px' }"
+          :style="{ width: viewportWidth + 'px', height: viewportHeight + 'px' }"
           @mousemove="onMouseMove"
           @mouseleave="onMouseLeave"
         ></canvas>
       </div>
     </div>
+
+    <RollGeometryDebug
+      title="StreamsRoll"
+      :root-element="container"
+      :label-element="titleLabel"
+      :scroll-element="scrollWrapper"
+      :content-element="canvasSpace"
+      :canvas-element="canvas"
+      :step-width="props.stepWidth"
+      :max-steps="maxStepCount"
+      :data-steps="dataStepCount"
+      :viewport-width="viewportWidth"
+      :viewport-height="viewportHeight"
+      :content-width="contentWidth"
+    />
 
     <div
       v-if="hoverInfo"
@@ -42,7 +57,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import RollGeometryDebug from './RollGeometryDebug.vue'
 
 type StreamCellValue = number | number[] | null | undefined
 
@@ -52,6 +68,7 @@ const props = defineProps({
   minValue: { type: Number, default: 0 },
   maxValue: { type: Number, default: 127 },
   stepWidth: { type: Number, default: 10 },
+  maxSteps: { type: Number, default: 0 },
   highlightIndices: { type: Array as () => number[], default: () => [] },
   highlightWindowSize: { type: Number, default: 0 },
   playheadStep: { type: Number, default: -1 },
@@ -72,14 +89,26 @@ const emit = defineEmits<{
 }>()
 
 const container = ref<HTMLElement | null>(null)
+const titleLabel = ref<HTMLElement | null>(null)
+const canvasSpace = ref<HTMLElement | null>(null)
 const scrollWrapper = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const tooltipEl = ref<HTMLElement | null>(null)
 const viewportWidth = ref(1)
 const viewportHeight = ref(1)
-const contentWidth = ref(1)
-const effectiveStepWidth = ref(1)
-const maxStepCount = ref(0)
+const dataStepCount = computed(() => {
+  const values = props.streamValues as StreamCellValue[][]
+  return Math.max(0, ...values.map(stream => Array.isArray(stream) ? stream.length : 0))
+})
+const maxStepCount = computed(() => {
+  const configured = Number(props.maxSteps)
+  return Number.isFinite(configured) && configured > 0
+    ? Math.floor(configured)
+    : dataStepCount.value
+})
+const contentWidth = computed(() =>
+  Math.max(viewportWidth.value, maxStepCount.value * props.stepWidth)
+)
 
 const hoverInfo = ref<null | { x: number; y: number; step: number; value: number; streamIndex: number }>(null)
 const cursorStyle = ref<string>('default')
@@ -128,8 +157,6 @@ const startResize = (event: PointerEvent) => {
   window.addEventListener('pointerup', stopResize)
   window.addEventListener('pointercancel', stopResize)
 }
-const MAX_CANVAS_WIDTH = 30000
-
 /**
  * 小数ステップ対策:
  * valueResolution が整数になるまで 10倍して、整数世界で index 計算する
@@ -148,18 +175,10 @@ const calcScale = (step: number) => {
   return s
 }
 
-const updateGeometry = () => {
+const updateViewport = () => {
   if (!scrollWrapper.value) return
-  const values = props.streamValues as StreamCellValue[][]
-  maxStepCount.value = Math.max(0, ...values.map(stream => Array.isArray(stream) ? stream.length : 0))
-  const rawStepWidth = Number(props.stepWidth)
-  const safeStepWidth = Number.isFinite(rawStepWidth) && rawStepWidth > 0 ? rawStepWidth : 1
-  effectiveStepWidth.value = maxStepCount.value > 0
-    ? Math.max(1, Math.min(safeStepWidth, MAX_CANVAS_WIDTH / maxStepCount.value))
-    : safeStepWidth
   viewportWidth.value = Math.max(1, scrollWrapper.value.clientWidth)
-  viewportHeight.value = Math.max(1, scrollWrapper.value.clientHeight || 200)
-  contentWidth.value = Math.max(viewportWidth.value, maxStepCount.value * effectiveStepWidth.value)
+  viewportHeight.value = Math.max(1, scrollWrapper.value.clientHeight)
 }
 
 const plotMetrics = () => {
@@ -183,19 +202,18 @@ const plotMetrics = () => {
 
 const draw = () => {
   if (!canvas.value || !scrollWrapper.value) return
-  updateGeometry()
   const ctx = canvas.value.getContext('2d')
   if (!ctx) return
 
   const ratio = Math.min(window.devicePixelRatio || 1, 2)
-  const width = contentWidth.value
+  const width = viewportWidth.value
   const height = viewportHeight.value
   canvas.value.width = Math.ceil(width * ratio)
   canvas.value.height = Math.ceil(height * ratio)
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
 
   const left = scrollWrapper.value.scrollLeft
-  const stepWidth = effectiveStepWidth.value
+  const stepWidth = props.stepWidth
   const firstStep = Math.max(0, Math.floor(left / stepWidth) - 1)
   const lastStep = Math.min(
     maxStepCount.value - 1,
@@ -314,7 +332,7 @@ const onMouseMove = (e: MouseEvent) => {
   const xInViewport = e.clientX - canvasRect.left
   const yInCanvas = e.clientY - canvasRect.top
   const xInContent = xInViewport + scrollWrapper.value.scrollLeft
-  const stepWidth = effectiveStepWidth.value
+  const stepWidth = props.stepWidth
   const step = Math.floor(xInContent / stepWidth)
 
   let hit: { step: number; value: number; streamIndex: number } | null = null
@@ -380,7 +398,7 @@ const scrollToStep = (step: number, windowSize = 1) => {
   if (!scrollWrapper.value) return
   const safeStep = Math.max(0, Number(step) || 0)
   const safeWindow = Math.max(1, Number(windowSize) || 1)
-  const highlightCenter = (safeStep + safeWindow / 2) * effectiveStepWidth.value
+  const highlightCenter = (safeStep + safeWindow / 2) * props.stepWidth
   const nextLeft = highlightCenter - scrollWrapper.value.clientWidth / 2
   const maxLeft = Math.max(0, scrollWrapper.value.scrollWidth - scrollWrapper.value.clientWidth)
   scrollWrapper.value.scrollLeft = clamp(nextLeft, 0, maxLeft)
@@ -395,23 +413,24 @@ watch(
     props.playheadStep,
     props.hiddenStreamIndices,
     props.stepWidth,
+    props.maxSteps,
     props.minValue,
     props.maxValue,
     props.valueResolution,
     props.title,
   ],
-  () => { nextTick(() => { updateGeometry(); scheduleDraw() }) },
+  () => { nextTick(scheduleDraw) },
 )
 
 onMounted(() => {
   nextTick(() => {
-    updateGeometry()
+    updateViewport()
     scheduleDraw()
   })
   if (scrollWrapper.value) {
     resizeObserver = new ResizeObserver(() => {
       nextTick(() => {
-        updateGeometry()
+        updateViewport()
         scheduleDraw()
       })
     })
@@ -439,9 +458,10 @@ defineExpose({ scrollWrapper, redraw: draw, scrollToStep })
 }
 
 .title-label {
-  width: 80px;
-  min-width: 80px;
-  max-width: 80px;
+  /* Match ClustersRoll's 80px label column plus its 1px right border. */
+  width: 81px;
+  min-width: 81px;
+  max-width: 81px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -457,11 +477,10 @@ defineExpose({ scrollWrapper, redraw: draw, scrollToStep })
 }
 
 .scroll-wrapper {
-  flex-grow: 1;
+  flex: 1;
   min-width: 0;
   min-height: 0;
-  overflow-x: auto;
-  overflow-y: auto;
+  overflow: auto;
 }
 
 .canvas-space {
@@ -473,8 +492,6 @@ defineExpose({ scrollWrapper, redraw: draw, scrollToStep })
   left: 0;
   display: block;
 }
-
-
 
 .tooltip {
   position: absolute;

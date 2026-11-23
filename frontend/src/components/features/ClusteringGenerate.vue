@@ -5,6 +5,7 @@
         <StreamsRoll
           ref="timeseriesStreamsRollRef"
           :streamValues="[generate.timeseries]"
+          :maxSteps="maxSteps"
           :minValue="minValue"
           :maxValue="maxValue"
           :highlightIndices="highlightedIndices"
@@ -18,6 +19,7 @@
         <StreamsRoll
           ref="complexityTransitionStreamsRollRef"
           :streamValues="[generate.complexityTransition]"
+          :maxSteps="maxSteps"
           :minValue="0"
           :maxValue="1"
           :valueResolution="0.01"
@@ -55,6 +57,7 @@ import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
 import { useScrollSync } from '../../composables/useScrollSync'
 import { seriesBounds } from '../../composables/seriesBounds'
+import { useRollViewportWidth } from '../../composables/useRollViewportWidth'
 
 import { ref, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import ClusteringGenerateDialog from '../dialog/ClusteringGenerateDialog.vue'
@@ -146,6 +149,7 @@ import { defineExpose } from 'vue'
 defineExpose({ openParams, saveToFile: save })
 
 const containerRef = ref<HTMLElement | null>(null)
+const rollViewportWidth = useRollViewportWidth(containerRef)
 const timeseriesStreamsRollRef = ref(null)
 const complexityTransitionStreamsRollRef = ref(null)
 const clustersRollRef = ref(null)
@@ -179,9 +183,12 @@ const valueBounds = computed(() => seriesBounds(generate.value.timeseries))
 const minValue = computed(() => valueBounds.value.min)
 const maxValue = computed(() => valueBounds.value.max)
 
-// 画面幅に合わせてステップ幅を計算
+// 左側の固定ラベルを除いたプロット領域に合わせてステップ幅を計算
+const rollTitleWidth = 80
+const plotAreaWidth = computed(() => Math.max(1, rollViewportWidth.value || containerWidth.value - rollTitleWidth))
+
 const computedStepWidth = computed(() => {
-  const widthPerStep = containerWidth.value / maxSteps.value
+  const widthPerStep = plotAreaWidth.value / Math.max(1, maxSteps.value)
   return Math.max(4, widthPerStep)
 })
 

@@ -86,36 +86,11 @@ struct ClusterTask
   representative_version::Int
 end
 
-"""Complexity metrics of the interval series derived from a cluster's starts."""
+"""Structural metrics of the interval series derived from a cluster's starts."""
 struct OccurrenceIntervalMetrics
   distance::Float64
   quantity::Float64
   complexity::Float64
-  prediction::Float64
-  ready::Bool
-end
-
-OccurrenceIntervalMetrics(
-  distance::Real,
-  quantity::Real,
-  complexity::Real,
-  ready::Bool,
-) = OccurrenceIntervalMetrics(
-  float(distance),
-  float(quantity),
-  float(complexity),
-  NaN,
-  ready,
-)
-
-struct PredictiveSuccessor
-  value::PolySet
-  mass::Float64
-end
-
-struct PredictiveDistribution
-  successors::Vector{PredictiveSuccessor}
-  peak_likelihood::Float64
   ready::Bool
 end
 
@@ -129,8 +104,6 @@ end
 
 const EMPTY_OCCURRENCE_INTERVAL_METRICS =
   OccurrenceIntervalMetrics(0.0, 0.0, 0.0, false)
-const EMPTY_PREDICTIVE_DISTRIBUTION =
-  PredictiveDistribution(PredictiveSuccessor[], 0.0, false)
 
 abstract type AbstractClusterManager end
 
@@ -2253,142 +2226,6 @@ function collect_clusters_each(mgr::Manager)::Dict{Int,Dict{Int,SpanClusterRef}}
   return clusters_each
 end
 
-@inline function predictive_gaussian_similarity(distance::Real, bandwidth::Real)::Float64
-  sigma = max(abs(float(bandwidth)), eps(Float64))
-  z = max(float(distance), 0.0) / sigma
-  return exp(-0.5 * z * z)
-end
-
-function predictive_likelihood(
-  mgr::Manager,
-  successors::Vector{PredictiveSuccessor},
-  candidate::PolySet,
-)::Float64
-  likelihood = 0.0
-  for successor in successors
-    distance = min_avg_distance(mgr, candidate, successor.value)
-    likelihood += successor.mass * predictive_gaussian_similarity(
-      distance,
-      Config.PREDICTIVE_SUCCESSOR_DISTANCE_BANDWIDTH,
-    )
-  end
-  return likelihood
-end
-
-"""Build a weighted successor distribution from every eligible suffix cluster."""
-function build_predictive_distribution(mgr::Manager)::PredictiveDistribution
-  data_length = length(mgr.data)
-  data_length <= mgr.min_window_size && return EMPTY_PREDICTIVE_DISTRIBUTION
-
-  max_context = min(
-    data_length - 1,
-    max(Config.PREDICTIVE_MAX_CONTEXT_LENGTH, mgr.min_window_size),
-  )
-  clusters_each = collect_clusters_each(
-    mgr,
-    Set(mgr.min_window_size:max_context),
-  )
-  now_index = data_length - 1
-  scale_rows = Tuple{Float64,Vector{PolySet},Vector{Float64}}[]
-
-  for window_size in sort!(collect(keys(clusters_each)))
-    window_size < mgr.min_window_size && continue
-    window_size > max_context && continue
-    latest_start = data_length - window_size
-    latest_start < 0 && continue
-
-    current_context = mgr.data[(latest_start + 1):data_length]
-    target = nothing
-    for node in values(clusters_each[window_size])
-      if latest_start in _cluster_si_view(node)
-        target = node
-        break
-      end
-    end
-    target === nothing && continue
-
-    historical_starts = sort!(unique(Int[
-      start for start in _cluster_si_view(target)
-      if start < latest_start && start + window_size < data_length
-    ]))
-    isempty(historical_starts) && continue
-    history_limit = max(Config.PREDICTIVE_HISTORY_LIMIT_PER_CONTEXT, 1)
-    if length(historical_starts) > history_limit
-      historical_starts = historical_starts[(end - history_limit + 1):end]
-    end
-
-    successors = PolySet[]
-    occurrence_weights = Float64[]
-    context_similarity_sum = 0.0
-    for start in historical_starts
-      past_context = mgr.data[(start + 1):(start + window_size)]
-      context_distance =
-        euclidean_distance(mgr, current_context, past_context) /
-        sqrt(float(max(window_size, 1)))
-      context_similarity = predictive_gaussian_similarity(
-        context_distance,
-        Config.PREDICTIVE_CONTEXT_DISTANCE_BANDWIDTH,
-      )
-      successor_index = start + window_size
-      occurrence_weight =
-        recency_weight(mgr, now_index, successor_index) * context_similarity
-      occurrence_weight <= 0.0 && continue
-      push!(successors, copy(mgr.data[successor_index + 1]))
-      push!(occurrence_weights, occurrence_weight)
-      context_similarity_sum += context_similarity
-    end
-    isempty(successors) && continue
-
-    occurrence_total = sum(occurrence_weights)
-    occurrence_total <= 0.0 && continue
-    occurrence_weights ./= occurrence_total
-
-    support = float(length(successors))
-    reliability = support / (support + Config.PREDICTIVE_SUPPORT_PRIOR)
-    cohesion = context_similarity_sum / support
-    scale_weight = float(window_size) * reliability * cohesion
-    scale_weight <= 0.0 && continue
-    push!(scale_rows, (scale_weight, successors, occurrence_weights))
-  end
-
-  isempty(scale_rows) && return EMPTY_PREDICTIVE_DISTRIBUTION
-  scale_total = sum(row[1] for row in scale_rows)
-  scale_total <= 0.0 && return EMPTY_PREDICTIVE_DISTRIBUTION
-
-  masses = Dict{Tuple{Vararg{Float64}},Float64}()
-  for (scale_weight, successors, occurrence_weights) in scale_rows
-    normalized_scale_weight = scale_weight / scale_total
-    for i in eachindex(successors)
-      key = Tuple(successors[i])
-      masses[key] = get(masses, key, 0.0) + normalized_scale_weight * occurrence_weights[i]
-    end
-  end
-
-  combined = PredictiveSuccessor[
-    PredictiveSuccessor(Float64[key...], mass)
-    for (key, mass) in masses
-    if mass > 0.0
-  ]
-  isempty(combined) && return EMPTY_PREDICTIVE_DISTRIBUTION
-  sort!(combined; by=x -> Tuple(x.value))
-  peak_likelihood = maximum(
-    predictive_likelihood(mgr, combined, successor.value)
-    for successor in combined
-  )
-  peak_likelihood <= 0.0 && return EMPTY_PREDICTIVE_DISTRIBUTION
-  return PredictiveDistribution(combined, peak_likelihood, true)
-end
-
-function predictive_surprise_score(
-  mgr::Manager,
-  distribution::PredictiveDistribution,
-  candidate::PolySet,
-)::Union{Nothing,Float64}
-  distribution.ready || return nothing
-  likelihood = predictive_likelihood(mgr, distribution.successors, candidate)
-  return clamp(1.0 - likelihood / distribution.peak_likelihood, 0.0, 1.0)
-end
-
 function _aggregate_current_metrics(
   mgr::Manager,
   clusters_each;
@@ -2625,16 +2462,8 @@ function _occurrence_interval_metrics_for_starts(
     min_window_size,
   )
   candidate = Float64[_normalize_occurrence_gap(retained_gaps[end], scale)]
-  distribution = build_predictive_distribution(interval_mgr)
-  prediction = predictive_surprise_score(interval_mgr, distribution, candidate)
   d, q, c = simulate_add_and_calculate_all(interval_mgr, candidate)
-  return OccurrenceIntervalMetrics(
-    d,
-    q,
-    c,
-    prediction === nothing ? NaN : prediction,
-    true,
-  )
+  return OccurrenceIntervalMetrics(d, q, c, true)
 end
 
 function _preview_occurrence_interval_metrics(
@@ -2657,16 +2486,8 @@ function _preview_occurrence_interval_metrics(
     interval_manager = state.manager::Manager
     gap = starts[end] - starts[end - 1]
     candidate = Float64[_normalize_occurrence_gap(gap, state.scale)]
-    distribution = build_predictive_distribution(interval_manager)
-    prediction = predictive_surprise_score(interval_manager, distribution, candidate)
     d, q, c = simulate_add_and_calculate_all(interval_manager, candidate)
-    return OccurrenceIntervalMetrics(
-      d,
-      q,
-      c,
-      prediction === nothing ? NaN : prediction,
-      true,
-    )
+    return OccurrenceIntervalMetrics(d, q, c, true)
   end
 
   return _occurrence_interval_metrics_for_starts(
@@ -2734,8 +2555,6 @@ function latest_occurrence_interval_metrics(
   sum_distance = 0.0
   sum_quantity = 0.0
   sum_complexity = 0.0
-  sum_prediction = 0.0
-  prediction_count = 0
   ready_count = 0
 
   for (window_size, cluster_id, target) in targets
@@ -2746,10 +2565,6 @@ function latest_occurrence_interval_metrics(
     sum_distance += temporal.distance
     sum_quantity += temporal.quantity
     sum_complexity += temporal.complexity
-    if isfinite(temporal.prediction)
-      sum_prediction += temporal.prediction
-      prediction_count += 1
-    end
     ready_count += 1
   end
 
@@ -2759,7 +2574,6 @@ function latest_occurrence_interval_metrics(
     sum_distance / denom,
     sum_quantity / denom,
     sum_complexity / denom,
-    prediction_count > 0 ? sum_prediction / float(prediction_count) : NaN,
     true,
   )
 end
@@ -2775,8 +2589,6 @@ function current_occurrence_interval_metrics(
   sum_distance = 0.0
   sum_quantity = 0.0
   sum_complexity = 0.0
-  sum_prediction = 0.0
-  prediction_count = 0
   ready_count = 0
 
   for (_, _, target) in targets
@@ -2790,10 +2602,6 @@ function current_occurrence_interval_metrics(
     sum_distance += temporal.distance
     sum_quantity += temporal.quantity
     sum_complexity += temporal.complexity
-    if isfinite(temporal.prediction)
-      sum_prediction += temporal.prediction
-      prediction_count += 1
-    end
     ready_count += 1
   end
 
@@ -2803,7 +2611,6 @@ function current_occurrence_interval_metrics(
     sum_distance / denom,
     sum_quantity / denom,
     sum_complexity / denom,
-    prediction_count > 0 ? sum_prediction / float(prediction_count) : NaN,
     true,
   )
 end

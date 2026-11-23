@@ -386,8 +386,11 @@ const deleteSelection = () => {
 }
 
 const copySelection = () => {
-  const selected = selectedIndices()
-  clipboard.value = selected.map(index => normalizeBlock(localParams.value.blocks[index]))
+  const blocks = localParams.value.blocks
+  clipboard.value = selectedIndices().flatMap(index => {
+    const block = blocks[index]
+    return block ? [normalizeBlock(block)] : []
+  })
 }
 
 const cutSelection = () => {
@@ -404,7 +407,7 @@ const appendClipboard = () => {
 const insertClipboard = () => {
   if (clipboard.value.length === 0) return
   const selected = selectedIndices()
-  const insertionIndex = selected.length > 0 ? selected[0] : localParams.value.blocks.length
+  const insertionIndex = selected[0] ?? localParams.value.blocks.length
   const next = [...localParams.value.blocks]
   next.splice(insertionIndex, 0, ...clipboard.value.map(normalizeBlock))
   localParams.value.blocks = next
@@ -416,8 +419,12 @@ const overwriteSelection = () => {
   const selected = selectedIndices()
   const next = [...localParams.value.blocks]
   const replacement = clipboard.value.map(normalizeBlock)
+  const fallback = replacement.at(-1)
   selected.forEach((index, offset) => {
-    next[index] = replacement[offset] ?? replacement[replacement.length - 1]
+    const replacementBlock = replacement[offset] ?? fallback
+    if (replacementBlock && index >= 0 && index < next.length) {
+      next[index] = replacementBlock
+    }
   })
   localParams.value.blocks = next
   selectedBlockIndexes.value = []

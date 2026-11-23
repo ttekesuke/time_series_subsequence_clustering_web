@@ -33,6 +33,7 @@
           <StreamsRoll
             ref="pianoRollRef"
             :streamValues="pianoStreams"
+            :maxSteps="stepCount"
             :streamVelocities="pianoVelocities"
             :streamLabels="pianoLabels"
             :hiddenStreamIndices="hiddenPianoStreamIndices"
@@ -98,6 +99,7 @@
               v-else
               :ref="el => setAnalysisRollRef(el, index)"
               :streamValues="complexityStreams(section)"
+              :maxSteps="stepCount"
               :streamLabels="complexityLabels(section)"
               :stepWidth="computedStepWidth"
               :minValue="0"
@@ -211,6 +213,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRollViewportWidth } from '../../composables/useRollViewportWidth'
 import axios from 'axios'
 import StreamsRoll from '../visualizer/StreamsRoll.vue'
 import ClustersRoll from '../visualizer/ClustersRoll.vue'
@@ -222,7 +225,6 @@ type CompressedSpan = {
   indices: number[]; fit_limits: number[]; parent_index: number | null
 }
 type AxisBundle = {
-  prediction?: Array<number | null>
   diversity?: Array<number | null>
   shape?: Array<number | null>
   mass?: Array<number | null>
@@ -284,6 +286,7 @@ const visualizerBenchmarkEnabled = () =>
   new URLSearchParams(window.location.search).get('visualizerBenchmark') === '1'
 
 const containerRef = ref<HTMLElement | null>(null)
+const rollViewportWidth = useRollViewportWidth(containerRef)
 const pianoRollRef = ref<any>(null)
 // Template function refs run during rendering; this list is only read by scroll event handlers.
 const analysisRollRefs: { value: any[] } = { value: [] }
@@ -304,7 +307,7 @@ const { syncScroll } = useScrollSync([pianoRollRef, analysisRollRefs, bottomScro
 const onScroll = (e: Event) => syncScroll(e)
 
 const stepCount = computed(() => result.value?.timing?.stepCount ?? 0)
-const plotAreaWidth = computed(() => Math.max(1, containerWidth.value - 80))
+const plotAreaWidth = computed(() => Math.max(1, rollViewportWidth.value || containerWidth.value - 80))
 const computedStepWidth = computed(() => {
   const count = Math.max(stepCount.value, 1)
   return Math.max(1, Math.min(8, plotAreaWidth.value / count, 30000 / count))
@@ -382,8 +385,8 @@ const sections = computed(() => {
     .map(key => ({ key, title: titleMap[key] ?? key, dimension: data.dimensions[key]! }))
 })
 
-const metricKeys = ['prediction', 'diversity', 'shape', 'mass'] as const
-const metricLabels = ['Prediction', 'Diversity', 'Shape', 'Mass']
+const metricKeys = ['diversity', 'shape', 'mass'] as const
+const metricLabels = ['Diversity', 'Shape', 'Mass']
 const hasConcordance = computed(() => sections.value.some(section =>
   section.dimension.values.concordance.some(value => value != null)
 ))
